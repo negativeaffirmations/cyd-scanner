@@ -114,6 +114,13 @@ void Touch::calibrate(TFT_eSPI& tft) {
   const int16_t ty[2] = {inset, (int16_t)(TOUCH_NATIVE_H - 1 - inset)};
   int16_t rx[2] = {0, 0}, ry[2] = {0, 0};
 
+  // The two markers sit at opposite diagonal corners, so a valid tap pair always
+  // swings the raw ADC by a large amount on BOTH axes (~1300+ in practice). A stray
+  // touch (e.g. a palm on this case-less board) collapses one axis; reject the pair
+  // and restart when either span is implausibly small. Guard against an endless loop.
+  const int MIN_SPAN = 400;
+  int strayRetries = 0;
+
   for (int i = 0; i < 2; i++) {
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
@@ -130,6 +137,25 @@ void Touch::calibrate(TFT_eSPI& tft) {
       tft.drawString("timeout - retry", TOUCH_NATIVE_W / 2, 90, 2);
       i--;  // retry this point
       delay(500);
+      continue;
+    }
+
+    // Reject a stray/second-corner tap that didn't move far enough from the first.
+    if (i == 1 && (abs(rx[1] - rx[0]) < MIN_SPAN || abs(ry[1] - ry[0]) < MIN_SPAN)) {
+      tft.fillScreen(TFT_BLACK);
+      tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+      tft.drawString("Stray touch detected", TOUCH_NATIVE_W / 2, TOUCH_NATIVE_H / 2 - 10, 2);
+      tft.drawString("Tap ONLY the marker", TOUCH_NATIVE_W / 2, TOUCH_NATIVE_H / 2 + 10, 2);
+      delay(1400);
+      if (++strayRetries >= 4) {  // give up; keep any previous calibration
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.drawString("Calibration cancelled", TOUCH_NATIVE_W / 2, TOUCH_NATIVE_H / 2, 2);
+        delay(1200);
+        tft.setRotation(savedRotation);
+        return;
+      }
+      i = -1;  // don't know which tap was stray -> restart both points
       continue;
     }
     delay(250);
