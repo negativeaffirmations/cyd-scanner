@@ -37,4 +37,10 @@ bool downloadRequested();
 // True once if the app asked to reload the signature DB (consumed on read).
 bool reloadRequested();
 
+// True once if the app asked to download the log over BLE (consumed on read).
+bool logRequested();
+
+// Notify a chunk of log data to the connected phone (used during BLE log download).
+void logNotify(const uint8_t* data, size_t len);
+
 }  // namespace phone

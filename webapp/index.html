@@ -59,14 +59,7 @@
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
   <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
-  <button id="dlBtn" disabled>Download logs (Wi-Fi)</button>
-  <button id="stopDlBtn" class="secondary" disabled>Stop download mode</button>
-
-  <div class="note" id="dlNote">
-    <b>Download mode on.</b> On the scanner's screen, scan the QR code with your camera
-    to join its Wi-Fi, then open <b>http://192.168.4.1</b> to download <code>scanlog.csv</code>.
-    (Your phone leaves its normal Wi-Fi while connected.)
-  </div>
+  <button id="dlBtn" disabled>Download logs</button>
 
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
@@ -77,6 +70,7 @@ const TIME = "9a1e0001-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const GPS  = "9a1e0002-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const CMD  = "9a1e0003-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const STAT = "9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+const LOG  = "9a1e0005-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
 const enc = new TextEncoder();
 let chars = {}, device = null, gpsWatch = null, connected = false;
@@ -103,12 +97,15 @@ async function connect(){
     chars.gps  = await svc.getCharacteristic(GPS);
     chars.cmd  = await svc.getCharacteristic(CMD);
     chars.stat = await svc.getCharacteristic(STAT);
+    chars.log  = await svc.getCharacteristic(LOG);
     await chars.stat.startNotifications();
     chars.stat.addEventListener("characteristicvaluechanged", onStatus);
+    await chars.log.startNotifications();
+    chars.log.addEventListener("characteristicvaluechanged", onLogData);
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["syncBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=false);
+    ["syncBtn","reloadBtn","dlBtn"].forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
     startGps();
@@ -117,7 +114,7 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["syncBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=true);
+  ["syncBtn","reloadBtn","dlBtn"].forEach(id=>$(id).disabled=true);
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
 async function reloadDb(){
@@ -126,7 +123,8 @@ async function reloadDb(){
 }
 
 async function syncTime(){
-  try{ const epoch=Math.floor(Date.now()/1000).toString();
+  try{ // send LOCAL epoch so the device clock shows local time
+    const epoch=Math.floor((Date.now()-new Date().getTimezoneOffset()*60000)/1000).toString();
     await chars.time.writeValue(enc.encode(epoch)); log("Time synced ("+epoch+")."); }
   catch(e){ log("Time sync failed: "+e.message); }
 }
@@ -147,11 +145,36 @@ function gpsOnce(){
     {enableHighAccuracy:true});
 }
 
-async function setDownload(on){
-  try{ await chars.cmd.writeValue(enc.encode(on?"1":"0"));
-    $("dlNote").style.display = on ? "block":"none";
-    log(on?"Requested download mode.":"Stopped download mode."); }
-  catch(e){ log("Command failed: "+e.message); }
+// --- BLE log download: request "L", collect SIZE header then chunks, save file ---
+let logState = { expect:0, got:0, chunks:[] };
+function onLogData(ev){
+  const dv = ev.target.value;
+  const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  if (logState.expect === 0) {
+    const txt = new TextDecoder().decode(v);
+    if (txt.startsWith("SIZE=")) {
+      logState.expect = parseInt(txt.slice(5),10) || 0;
+      logState.got = 0; logState.chunks = [];
+      if (logState.expect === 0) log("No log on device yet.");
+      return;
+    }
+  }
+  logState.chunks.push(new Uint8Array(v));
+  logState.got += v.length;
+  if (logState.got >= logState.expect) {
+    const blob = new Blob(logState.chunks, {type:"text/csv"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "scanlog.csv"; a.click();
+    URL.revokeObjectURL(a.href);
+    log("Log downloaded ("+logState.got+" bytes).");
+    logState = { expect:0, got:0, chunks:[] };
+  }
+}
+async function downloadLog(){
+  try{ logState = { expect:0, got:0, chunks:[] };
+    await chars.cmd.writeValue(enc.encode("L"));
+    log("Requesting log over BLE…"); }
+  catch(e){ log("Download failed: "+e.message); }
 }
 
 function onStatus(ev){
@@ -176,8 +199,7 @@ function onStatus(ev){
 $("connectBtn").onclick = connect;
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
-$("dlBtn").onclick = ()=>setDownload(true);
-$("stopDlBtn").onclick = ()=>setDownload(false);
+$("dlBtn").onclick = downloadLog;
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");
 </script>
 </body>

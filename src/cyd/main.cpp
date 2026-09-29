@@ -13,6 +13,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <Preferences.h>
 #include <algorithm>
 #include <TFT_eSPI.h>
 #include <qrcode.h>
@@ -27,7 +28,7 @@ using namespace link_protocol;
 // >>> Set to 1 to run the link connection monitor, 0 for the normal scanner. <<<
 #define LINK_MONITOR 0
 
-static constexpr uint8_t UI_ROTATION = 1;  // landscape 320x240
+static constexpr uint8_t UI_ROTATION = 0;  // portrait 240x320 (90 CCW from landscape)
 static const char*       DEVICE_NAME = "CYD-Scanner";
 
 TFT_eSPI       tft = TFT_eSPI();
@@ -184,10 +185,27 @@ static void countTiers(int& susp, int& lk, int& conf) {
   }
 }
 
+// Bump LOG_GEN to force a one-time wipe of the SD log on the next boot.
+static constexpr uint32_t LOG_GEN = 2;
+
+static void wipeLogsIfNeeded() {
+  Preferences p;
+  p.begin("cydscan", false);
+  uint32_t gen = p.getULong("loggen", 0);
+  if (gen != LOG_GEN) {
+    if (SD.exists(kLogPath)) SD.remove(kLogPath);
+    p.putULong("loggen", LOG_GEN);
+    Serial.printf("[CYD] log wipe (gen %lu -> %lu); fresh file will be created\n",
+                  (unsigned long)gen, (unsigned long)LOG_GEN);
+  }
+  p.end();
+}
+
 static void initSD() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   g_sdOk = SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
+  wipeLogsIfNeeded();
   if (!SD.exists(kLogPath)) {
     File f = SD.open(kLogPath, FILE_WRITE);
     if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name,score,tier,signature"); f.close(); }
@@ -226,6 +244,34 @@ static int logNewDetections() {
   }
   if (f) f.close();
   return n;
+}
+
+// Stream /scanlog.csv to the phone over BLE: first a "SIZE=<n>" header, then the
+// raw file in chunks. The web app reassembles and downloads it (no Wi-Fi needed).
+static void transferLog() {
+  if (!g_sdOk || !SD.exists(kLogPath)) {
+    phone::logNotify((const uint8_t*)"SIZE=0", 6);
+    Serial.println("[CYD] BLE log: no file");
+    return;
+  }
+  File f = SD.open(kLogPath, "r");
+  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  size_t sz = f.size();
+  char hdr[24];
+  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)sz);
+  phone::logNotify((const uint8_t*)hdr, hn);
+  delay(30);
+  uint8_t buf[180];  // chunk < MTU-3 (Android negotiates a large MTU)
+  size_t sent = 0;
+  while (f.available()) {
+    int n = f.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    phone::logNotify(buf, n);
+    sent += n;
+    delay(15);
+  }
+  f.close();
+  Serial.printf("[CYD] BLE log sent %u/%u bytes\n", (unsigned)sent, (unsigned)sz);
 }
 
 static void requestScan(uint32_t timeoutMs = 5000) {
@@ -268,31 +314,77 @@ static void pushStatus() {
   phone::setStatus(String(s));
 }
 
+// --- status-bar icons (drawn with primitives, ~14 px) ---
+static void iconBle(int x, int y, uint16_t c) {  // stylized Bluetooth rune
+  int cx = x + 5;
+  tft.drawLine(cx, y,     cx, y + 14, c);
+  tft.drawLine(cx, y,     x + 9, y + 4,  c);
+  tft.drawLine(x + 9, y + 4, cx, y + 7,  c);
+  tft.drawLine(cx, y + 7, x + 9, y + 10, c);
+  tft.drawLine(x + 9, y + 10, cx, y + 14, c);
+  tft.drawLine(x + 1, y + 4, cx, y + 7, c);
+  tft.drawLine(x + 1, y + 10, cx, y + 7, c);
+}
+static void iconWifi(int x, int y, uint16_t c) {  // fan of arcs + node
+  int cx = x + 7, cy = y + 12;
+  tft.fillCircle(cx, cy, 1, c);
+  tft.drawCircleHelper(cx, cy, 4, 0x3, c);   // top two corners
+  tft.drawCircleHelper(cx, cy, 7, 0x3, c);
+  tft.drawCircleHelper(cx, cy, 10, 0x3, c);
+}
+static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
+  int cx = x + 7, cy = y + 7;
+  tft.drawCircle(cx, cy, 6, c);
+  tft.drawLine(cx - 4, cy - 4, cx + 4, cy + 4, c);
+}
+
+static void drawStatusBar() {
+  int W = tft.width();
+  tft.fillRect(0, 0, W, 21, TFT_BLACK);
+  // connection state icon
+  if (webshare::active())        iconWifi(2, 3, TFT_CYAN);
+  else if (phone::connected())   iconBle(3, 3, TFT_BLUE);
+  else                           iconNoConn(2, 3, TFT_DARKGREY);
+  // time
+  tft.setTextDatum(TL_DATUM);
+  char t[8];
+  if (phone::hasTime()) {
+    uint32_t e = phone::epochNow();
+    snprintf(t, sizeof(t), "%02u:%02u", (unsigned)((e / 3600) % 24), (unsigned)((e / 60) % 60));
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  } else { strcpy(t, "00:00"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
+  tft.drawString(t, 24, 4, 2);
+  // GPS (abbreviated)
+  char g[24];
+  if (phone::hasGps()) {
+    snprintf(g, sizeof(g), "%.2f,%.2f", phone::lat(), phone::lon());
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  } else { strcpy(g, "Lat:- Lon:-"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
+  tft.drawString(g, 78, 7, 1);
+  tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
+}
+
 static void render() {
   int n24, n5, nble; countBands(n24, n5, nble);
+  int susp, lk, conf; countTiers(susp, lk, conf);
   tft.fillScreen(TFT_BLACK);
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.drawString("cyd-scanner", 6, 2, 4);
+  drawStatusBar();
 
-  char buf[56];
+  tft.setTextDatum(TL_DATUM);
+  char buf[48];
   tft.setTextColor(g_linkOk ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "link:%s SD:%s BT:%s t:%s g:%s",
-           g_linkOk ? "up" : "DN", g_sdOk ? "on" : "off",
-           phone::connected() ? "on" : "..",
-           phone::hasTime() ? "y" : "n", phone::hasGps() ? "y" : "n");
-  tft.drawString(buf, 6, 34, 2);
+  snprintf(buf, sizeof(buf), "link:%s  SD:%s  db:%s",
+           g_linkOk ? "up" : "DN", g_sdOk ? "on" : "off", sigdb::loaded() ? "on" : "fb");
+  tft.drawString(buf, 4, 26, 1);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d uniq:%d", n24, n5, nble, g_seenCount);
-  tft.drawString(buf, 6, 54, 2);
+  tft.drawString(buf, 4, 38, 1);
 
-  int susp, lk, conf; countTiers(susp, lk, conf);
   uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
   tft.setTextColor(tcol, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "threats S:%d L:%d C:%d  db:%s",
-           susp, lk, conf, sigdb::loaded() ? "on" : "off");
-  tft.drawString(buf, 6, 72, 2);
+  snprintf(buf, sizeof(buf), "threats  S:%d  L:%d  C:%d", susp, lk, conf);
+  tft.drawString(buf, 4, 50, 1);
 
   // Sort by threat tier first, then RSSI, so flagged devices surface at the top.
   static int idx[MAX_DET];
@@ -301,7 +393,8 @@ static void render() {
     if (g_score[a].tier != g_score[b].tier) return g_score[a].tier > g_score[b].tier;
     return g_dets[a].rssi > g_dets[b].rssi;
   });
-  int rows = min(g_detCount, 6);
+  int maxRows = (tft.height() - 64) / 13;  // rows from y64, 13 px each
+  int rows = min(g_detCount, maxRows);
   for (int r = 0; r < rows; r++) {
     int i = idx[r];
     const Detection& d = g_dets[i];
@@ -314,68 +407,58 @@ static void render() {
                    : d.channel > 14 ? TFT_CYAN : TFT_WHITE;
     }
     tft.setTextColor(col, TFT_BLACK);
-    char name[15];
-    strncpy(name, d.name[0] ? d.name : "<hidden>", 14);
-    name[14] = 0;
+    char name[16];
+    strncpy(name, d.name[0] ? d.name : "<hidden>", 15);
+    name[15] = 0;
     char flag = g_score[i].tier != sigdb::Tier::None ? '!' : ' ';
-    snprintf(buf, sizeof(buf), "%c%-3s %-13s %4d", flag, srcTag(d), name, d.rssi);
-    tft.drawString(buf, 6, 92 + r * 16, 2);
+    snprintf(buf, sizeof(buf), "%c%-3s %-15s %4d", flag, srcTag(d), name, d.rssi);
+    tft.drawString(buf, 4, 64 + r * 13, 1);
   }
 }
 
-static void drawDownloadScreen() {
+// Draw a QR centered horizontally at the given top y; returns the y just below it.
+static int drawCenteredQr(const char* text, int qy) {
   QRCode qr;
   static uint8_t qrbuf[256];  // fits version 4
-  String payload = webshare::wifiQr();
-  qrcode_initText(&qr, qrbuf, 4, ECC_LOW, payload.c_str());
-
-  tft.fillScreen(TFT_BLACK);
-  const int scale = 5, qx = 14, qy = 46;
-  int side = qr.size * scale;
+  qrcode_initText(&qr, qrbuf, 4, ECC_LOW, text);
+  const int scale = 6, side = qr.size * scale;
+  const int qx = (tft.width() - side) / 2;
   tft.fillRect(qx - 6, qy - 6, side + 12, side + 12, TFT_WHITE);  // quiet zone
   for (uint8_t y = 0; y < qr.size; y++)
     for (uint8_t x = 0; x < qr.size; x++)
       if (qrcode_getModule(&qr, x, y))
         tft.fillRect(qx + x * scale, qy + y * scale, scale, scale, TFT_BLACK);
+  return qy + side + 6;
+}
 
-  int tx = qx + side + 18;
-  tft.setTextDatum(TL_DATUM);
+static void drawDownloadScreen() {
+  tft.fillScreen(TFT_BLACK);
+  int W = tft.width();
+  tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("LOG DOWNLOAD", tx, 10, 2);
+  tft.drawString("LOG DOWNLOAD (Wi-Fi)", W / 2, 14, 2);
+  int ty = drawCenteredQr(webshare::wifiQr().c_str(), 40) + 12;
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Scan QR to join", tx, 40, 2);
-  tft.drawString("WiFi, then open:", tx, 58, 2);
+  tft.drawString("Scan to join, then open", W / 2, ty, 2);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString(webshare::url(), tx, 78, 2);
+  tft.drawString(webshare::url(), W / 2, ty + 18, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(String("SSID:") + webshare::ssid(), tx, 108, 2);
-  tft.drawString(String("PW:") + webshare::password(), tx, 126, 2);
+  tft.drawString(String("SSID ") + webshare::ssid(), W / 2, ty + 36, 1);
+  tft.drawString(String("PW ") + webshare::password(), W / 2, ty + 48, 1);
 }
 
 // QR linking to the hosted web app, so the phone can open it by scanning.
 static void drawAppQrScreen() {
-  QRCode qr;
-  static uint8_t qrbuf[256];  // fits version 4 (URL ~55 bytes < 78 cap)
-  qrcode_initText(&qr, qrbuf, 4, ECC_LOW, APP_URL);
-
   tft.fillScreen(TFT_BLACK);
-  const int scale = 5, qx = 14, qy = 46;
-  int side = qr.size * scale;
-  tft.fillRect(qx - 6, qy - 6, side + 12, side + 12, TFT_WHITE);
-  for (uint8_t y = 0; y < qr.size; y++)
-    for (uint8_t x = 0; x < qr.size; x++)
-      if (qrcode_getModule(&qr, x, y))
-        tft.fillRect(qx + x * scale, qy + y * scale, scale, scale, TFT_BLACK);
-
-  int tx = qx + side + 18;
-  tft.setTextDatum(TL_DATUM);
+  int W = tft.width();
+  tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("OPEN APP", tx, 10, 2);
+  tft.drawString("OPEN APP", W / 2, 14, 2);
+  int ty = drawCenteredQr(APP_URL, 40) + 14;
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Scan to open the", tx, 46, 2);
-  tft.drawString("control web app", tx, 64, 2);
+  tft.drawString("Scan to open the app", W / 2, ty, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("BOOT again to exit", tx, 120, 2);
+  tft.drawString("BOOT again to exit", W / 2, ty + 20, 2);
 }
 
 void setup() {
@@ -392,6 +475,9 @@ void setup() {
 void loop() {
   // Phone asked to reload the signature DB from SD (after an edit/push).
   if (phone::reloadRequested()) sigdb::reload();
+
+  // Phone asked to download the log over BLE.
+  if (phone::logRequested()) transferLog();
 
   // BOOT button shows a QR linking to the web app; press again to return.
   if (g_showAppQr) {
