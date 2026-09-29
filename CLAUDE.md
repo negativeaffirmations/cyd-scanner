@@ -61,15 +61,13 @@ Each board is a separate MCU with its own firmware binary, so each gets its **ow
 PlatformIO environment** — but both live in **one project/repo** because they share
 a UART link protocol and are developed together.
 
-- **CYD is the master.** It drives the UI and 2.4 GHz scanning, and sends scan
-  commands to the C5 over UART.
-- **C5 is the scanning co-processor.** It runs Wi-Fi (esp. 5 GHz) / BLE / 802.15.4
-  scanning and streams detections back to the CYD.
-- **Phone link (future):** the CYD will also expose BLE (GATT) or Wi-Fi (SoftAP +
-  web server) to a phone. This is CYD-only firmware and does not change the project
-  structure — but note the CYD's ESP32 must then juggle display + touch + 2.4 GHz
-  scan + phone radio + UART link at once. Offloading heavy scanning to the C5 is
-  what keeps that budget viable.
+- **CYD is the master.** It drives the UI, polls the C5, scores detections against
+  the signature DB, logs to SD, and hosts the phone link.
+- **C5 is the scanning co-processor.** It runs Wi-Fi (2.4 + 5 GHz) / BLE scanning
+  (802.15.4 planned) continuously and streams detections back to the CYD on request.
+- **Phone link (implemented):** the CYD is a BLE GATT peripheral for a phone web app
+  (time/GPS sync, log download, DB reload) and can raise an on-demand Wi-Fi SoftAP for
+  bulk log download. See "Phone link + web app" below.
 
 Planned layout:
 
@@ -158,29 +156,65 @@ back (5 GHz included). Things that matter, learned the hard way:
   dumps its current table (fast, no blocking scan), and the CYD shows per-source
   counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI.
 - **SD logging (CYD).** First-seen devices (dedup by source+MAC for the session) are
-  appended to `/scanlog.csv`: `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name`.
-  `epoch`/`lat`/`lon` are populated once the phone app has sent time + GPS (0/blank
-  before that); `ms_since_boot` is always present.
-- SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch
-  is not instantiated in the scanner build, leaving HSPI free for SD.
+  appended to `/scanlog.csv`:
+  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name,score,tier,signature`.
+  `epoch` is LOCAL time once the phone has synced (it sends UTC + tz offset; 0 before);
+  `lat`/`lon` fill once GPS is sent; `score`/`tier`/`signature` come from the signature DB.
+  A one-time wipe (bump `LOG_GEN` in `main.cpp`) forces a fresh log after a schema change.
+- SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
+  NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
+  UI would need a software-SPI touch driver first. The physical BOOT button is used
+  instead (press to show the web-app QR).
 
-### Phone link + web app (Web Bluetooth)
+### Signature matching (Phase 1 — implemented)
 
-- **CYD BLE GATT peripheral** (`src/cyd/phone.*`, NimBLE) advertises as `CYD-Scanner`
-  with one service (`9a1e0000-…`) and four characteristics: time-sync (write, epoch
-  secs), GPS (write, "lat,lon"), command (write, "1"/"0" = download on/off), and
-  status (read/notify, "key=val;…"). BLE peripheral coexists with the Wi-Fi AP.
-- **Web app** `webapp/index.html` — a standalone page that MUST be served over HTTPS
-  (Web Bluetooth + geolocation both require a secure context). Host it (e.g. GitHub
-  Pages) and open in **Chrome on Android** (Web Bluetooth is unsupported on iOS
-  Safari). It connects over BLE, auto-syncs phone time, watches/pushes GPS, shows
-  live counts, and triggers log download.
-- **Log download over Wi-Fi** (`src/cyd/webshare.*`): when the app sends the download
-  command, the CYD raises a SoftAP + HTTP server and shows a **QR code** on screen
-  (Wi-Fi join string). The phone scans it to join, then opens `http://192.168.4.1`
-  to pull `scanlog.csv`. (A QR can't carry the whole log — it just bootstraps the
-  Wi-Fi join.) Download mode pauses scanning; it ends when the app sends "0" or the
-  phone disconnects.
+- **`src/cyd/sigdb.*`** loads `/signatures.csv` from SD into bounded RAM (~4 KB; caps
+  64 OUI + 48 name rules) and scores each detection. Weights sum across layers
+  (OUI + device-name), best-per-layer, mapped to **suspect / likely / confirmed** tiers
+  (thresholds in the CSV). Shared vendor OUIs (Espressif/Qualcomm) carry LOW weight so
+  they only escalate when combined with an SSID/BLE-name hit — this is what suppresses
+  false positives.
+- The DB **self-seeds** to the card on first boot and is editable on the card or
+  reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
+- Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>` and `exact|prefix|contains,<pattern>,…`;
+  `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`: W/B/4/A. No on-device regex.
+- Design + roadmap (Phases 2–6): [docs/signature-matching.md](docs/signature-matching.md).
+
+### Display / UI (portrait)
+
+- Rotation `0` (portrait 240×320). Top **status bar**: local time (left), abbreviated
+  GPS (middle), connection icon (right: Bluetooth / Wi-Fi / circle-slash). Below it:
+  link/SD/db line, per-band counts, a threats line, then detection rows sorted
+  threat-tier-first then RSSI (tier colors: suspect=yellow, likely=orange, confirmed=red).
+- **BOOT button** toggles a full-screen QR that links to the hosted web app.
+
+### Phone link + web app (Web Bluetooth) — working
+
+- **CYD BLE GATT peripheral** (`src/cyd/phone.*`, NimBLE) advertises as `CYD-Scanner`,
+  service `9a1e0000-…` with characteristics:
+  - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
+  - `…0002` GPS (write) — `"lat,lon"`
+  - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download on/off · `"R"` reload DB · `"L"` BLE log download
+  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,uniq,time,gps,dl,susp,lk,conf,db`
+  - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
+  - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
+    128-bit service UUID fills the adv packet, so the name overflows. We call
+    `enableScanResponse(true)` + set the name in the scan response, and the web app
+    filters by **service UUID** (not name). Without this the phone finds nothing.
+- **Web app** `webapp/index.html` — hosted at
+  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). MUST be
+  HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
+  (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers,
+  downloads the log, reloads the DB.
+- **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
+  characteristic; the app reassembles and saves the file. One button, stays in-app.
+- **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
+  HTTP server; the CYD screen shows a QR that is the Wi-Fi-join code until the phone joins,
+  then switches to `http://192.168.4.1` so scanning opens the download page. Pauses scanning.
+- **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
+  `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
+  it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is
+  the default.
 - Needs `board_build.partitions = huge_app.csv` (BLE + Wi-Fi + web server + TFT).
 
 ## Subagents (`.claude/agents/`)

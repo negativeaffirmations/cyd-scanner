@@ -16,19 +16,25 @@ an **ESP32-C5 DevKit** radio co-processor.
 The scanner passively monitors the RF environment and matches observed devices
 against signatures of known surveillance equipment:
 
-- **Wi-Fi** — APs and clients across 2.4 GHz (CYD) and **5 GHz** (ESP32-C5),
-  matched on MAC OUI ranges, SSID patterns, and probe/beacon behavior.
-- **Bluetooth LE** — advertising devices and beacons.
-- **802.15.4** — Zigbee / Thread devices (ESP32-C5).
+- **Wi-Fi** — APs across 2.4 GHz and **5 GHz** (ESP32-C5), matched on MAC OUI ranges
+  and SSID patterns.
+- **Bluetooth LE** — advertising devices, matched on name patterns (service-UUID /
+  company-ID matching planned).
+- **802.15.4** — Zigbee / Thread devices (ESP32-C5, planned).
 
-Detections are shown on the CYD's touchscreen, with signal strength for rough
-proximity and (optionally) logging to microSD.
+Each detection is scored against a **signature database** on the SD card (weighted OUI +
+name rules → **suspect / likely / confirmed** tiers). Results are shown on the CYD's
+portrait touchscreen — a status bar (time, GPS, connection), per-band counts, and the
+strongest devices sorted threat-first — and logged to microSD with time and GPS.
+
+A **phone web app** (Web Bluetooth) pairs over BLE to sync the phone's time and GPS into
+the device, view live counts/threats, reload the signature DB, and download the log.
 
 ## Hardware
 
 | Board | Role | Radios | Notes |
 |-------|------|--------|-------|
-| **ESP32-2432S028R (CYD)** | Host, touchscreen UI, storage | Wi-Fi 2.4 GHz b/g/n, BT Classic + BLE 4.2 | 2.8" 240×320 ILI9341/ST7789 TFT, XPT2046 resistive touch, microSD, RGB LED, speaker |
+| **ESP32-2432S028R (CYD)** | Host, touchscreen UI, storage | Wi-Fi 2.4 GHz b/g/n, BT Classic + BLE 4.2 | 2.8" 240×320 ILI9341/ST7789 TFT, XPT2046 resistive touch, microSD, RGB LED (speaker header unused → GPIO26 free) |
 | **ESP32-C5 DevKit** (DOIT ESPC5-32) | Radio co-processor | Wi-Fi 6 dual-band 2.4 **+ 5 GHz**, BLE 5.0, IEEE 802.15.4 (Zigbee/Thread) | 32-bit RISC-V @240 MHz, 29 GPIO, USB-Serial/JTAG |
 
 The two boards are linked over a serial (UART) connection: the CYD drives the UI
@@ -78,20 +84,37 @@ Both use the pioarduino espressif32 platform + Arduino framework (see
 
 ## Status
 
-Early development. Hardware selected and documented; firmware in progress.
+Working end to end on hardware:
+
+- ✅ Both boards bring-up: CYD display + calibrated touch + SD + RGB LED; C5 dual-band
+  Wi-Fi + BLE.
+- ✅ Inter-board UART link (framed protocol, synchronous request/response).
+- ✅ C5 continuous async scanning (Wi-Fi 2.4 + 5 GHz, BLE) → detection table streamed to CYD.
+- ✅ **Signature matching (Phase 1):** SD-based signature DB + weighted confidence scoring.
+- ✅ Portrait UI with status bar; SD logging (time/GPS/score/tier).
+- ✅ Phone web app over BLE: time/GPS sync, live status, BLE log download, DB reload;
+  optional Wi-Fi SoftAP bulk download.
+
+Next up: signature-DB tuning, promiscuous-mode Wi-Fi capture (probe/IE), BLE
+service-UUID matching, 802.15.4, and the supervised capture/merge/correlation workflow.
+See [docs/signature-matching.md](docs/signature-matching.md) and
+[HANDOFF.md](HANDOFF.md).
 
 ## Repository layout
 
 ```
 cyd-scanner/
-├── CLAUDE.md          # guidance for AI-assisted development
+├── CLAUDE.md          # architecture, gotchas, guidance for AI-assisted dev
+├── HANDOFF.md         # current state + next steps (start here for a new session)
 ├── README.md          # this file
-├── platformio.ini     # PlatformIO configuration
-├── src/               # firmware sources
-├── include/           # headers
-├── lib/               # project libraries
-├── test/              # tests
-└── hardware/          # datasheets, pinouts, images, PINOUT.md
+├── platformio.ini     # PlatformIO config (env:cyd, env:c5)
+├── src/cyd/           # CYD host firmware (main, pins, phone, webshare, sigdb, touch)
+├── src/c5/            # ESP32-C5 scanner firmware
+├── lib/link_protocol/ # shared UART message protocol
+├── webapp/            # phone control web app (Web Bluetooth, hosted on GitHub Pages)
+├── docs/              # signature-matching research + design
+├── hardware/          # datasheets, pinouts, PINOUT.md
+└── .claude/           # agents + hooks for AI-assisted development
 ```
 
 ## Legal
