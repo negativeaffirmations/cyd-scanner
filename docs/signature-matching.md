@@ -115,6 +115,65 @@ Begin with **(1) SD signature DB + (3) weighted confidence scoring** applied to 
 detection table we already stream from the C5 — high value, no promiscuous-mode rework
 yet. Then add promiscuous capture, BLE matching, 802.15.4, and spatial correlation.
 
+## 7. Supervised signature discovery (labeled captures → merge → offline correlation)
+
+The principled way to *derive* new signatures: capture near a KNOWN device, label it,
+repeat over hours/days/weeks, and correlate offline. Fully passive — you record
+broadcast RF from a device you already know about; nothing is probed.
+
+### Why it works
+Fingerprints seen in *most* sessions of known-device X, but *absent* from "control"
+sessions (no known device), are X-specific candidates (discriminative / TF-IDF-style
+ranking = intersection + control subtraction). MAC randomization *helps* here: fixed
+surveillance infrastructure persists across sessions; transient random-MAC devices
+(phones, passersby) don't repeat and fall out.
+
+### Capture sessions (device)
+- A session has a shared **session id**, agreed at start over BLE (phone generates id +
+  label, sends to device; device tags every record).
+- During the session the device writes the FULL deduped detection set (all sources) to
+  SD, e.g. `/sessions/<id>.jsonl` — each record tagged with session id, GPS, time, RSSI,
+  channel/behavior. This is distinct from `/scanlog.csv` first-seen logging.
+- Capture **control** sessions (no known device) too, so the offline tool can subtract
+  ambient noise.
+
+### Session metadata (phone web app)
+- Start/stop, name, mark **"known device present" + type/model**, free-text **notes**,
+  attach **photos** (phone camera), and a **map with a marker per GPS'd capture**
+  (Leaflet + OpenStreetMap). Photos + rich notes live on the phone (IndexedDB); RF
+  captures live on the device SD; the two are joined by session id.
+
+### Merge flow (when a capture is complete)
+1. User ends the session in the app.
+2. App sends a BLE command → device enters transfer mode and shows a **Wi-Fi-join QR**
+   on screen (reuse `webshare` + the existing QR render).
+3. Phone scans the QR → joins the device SoftAP (it leaves its normal Wi-Fi; on the
+   phone, BLE and Wi-Fi are independent radios so the BLE link stays up. Device-side
+   BLE-peripheral + SoftAP coexistence is designed in but still needs real-phone testing).
+4. Phone pulls the session capture file over HTTP (`http://192.168.4.1/session/<id>…`)
+   — **bulk transfer over Wi-Fi, not BLE**.
+5. Phone **merges** the device's RF captures with its own session metadata (notes,
+   photos, GPS) by session id → a combined bundle stored on the phone.
+6. On transfer complete, phone sends a BLE "end transfer" command → device tears down
+   the SoftAP; phone rejoins its normal Wi-Fi; BLE resumes as the primary control link.
+   - BLE remains connected throughout, so "reconnect BLE" is really "AP down → BLE-primary
+     resumes." Fallback if coexistence is flaky: drop BLE during Wi-Fi, phone signals
+     completion via an HTTP `/done` endpoint, then the device re-advertises and the phone
+     reconnects BLE.
+
+### Offline correlation (desktop/host script — NOT on the device or phone)
+- Export merged session bundles from the phone to a desktop tool.
+- The tool runs the discriminative correlation across many sessions and emits ranked
+  **candidate signature rules** in the `/signatures.csv` schema (§4) for human review.
+- Reviewed rules are pushed back to the device via the Phase-1 DB-update path
+  (edit-on-SD / phone push) — closing the loop from field capture to live detection.
+
+### Reuse
+`webshare` (Wi-Fi AP + QR + HTTP file serving), the phone BLE link (session control +
+metadata + teardown command), the SD stack (session files), GPS/time (phone link), and
+the Phase-1 signature DB (promotion target). The only genuinely new off-board piece is
+the desktop correlation script.
+
 ## Sources
 
 - DeFlock — https://deflock.org/
