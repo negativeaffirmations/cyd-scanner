@@ -26,6 +26,11 @@ bool     connected();
 // filter out its own advertisement from the scan results. Returns false if unknown.
 bool     ownMac(uint8_t out[6]);
 
+// The connected phone's BLE address (from the GATT link), MSB-first. Best-effort
+// self-ecosystem filter — returns false when no phone is connected. Note: phones use
+// rotating random addresses, so this may not always match their scanned advertisements.
+bool     peerMac(uint8_t out[6]);
+
 // Time sync
 bool     hasTime();
 uint32_t epochNow();  // current UTC epoch seconds, or 0 if never synced

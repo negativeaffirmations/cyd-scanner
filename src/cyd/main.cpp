@@ -409,6 +409,7 @@ static bool isSelfDet(const Detection& d) {
 static void requestScan(uint32_t timeoutMs = 5000) {
   g_detCount = 0;
   bool sawStart = false, done = false;
+  uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
   while (LinkSerial.available()) LinkSerial.read();
   parser.reset();
   ScanConfig cfg{};
@@ -422,8 +423,11 @@ static void requestScan(uint32_t timeoutMs = 5000) {
       uint8_t t = parser.type();
       if (t == (uint8_t)Reply::Detection && parser.length() >= sizeof(Detection)) {
         if (g_detCount < MAX_DET) {
-          memcpy(&g_dets[g_detCount], parser.payload(), sizeof(Detection));
-          if (!isSelfDet(g_dets[g_detCount])) g_detCount++;  // drop our own advertisement
+          Detection& nd = g_dets[g_detCount];
+          memcpy(&nd, parser.payload(), sizeof(Detection));
+          bool isPhone = havePeer && nd.source == (uint8_t)Source::BleScan &&
+                         memcmp(nd.mac, peer, 6) == 0;
+          if (!isSelfDet(nd) && !isPhone) g_detCount++;  // drop our own + the paired phone
         }
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());

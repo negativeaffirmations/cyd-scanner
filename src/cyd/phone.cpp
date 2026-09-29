@@ -27,15 +27,24 @@ bool     g_reload     = false;
 bool     g_logReq     = false;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
+uint8_t  g_peerMac[6] = {0};
+bool     g_havePeer   = false;
 
 class ServerCB : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
+  void onConnect(NimBLEServer*, NimBLEConnInfo& ci) override {
     g_connected = true;
-    Serial.println("[phone] connected");
+    std::string mac = ci.getAddress().toString();  // connected phone's BLE address
+    unsigned b[6];
+    if (sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
+      for (int i = 0; i < 6; i++) g_peerMac[i] = (uint8_t)b[i];
+      g_havePeer = true;
+    }
+    Serial.printf("[phone] connected (peer %s)\n", mac.c_str());
   }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo&, int) override {
     g_connected = false;
     g_download  = false;  // drop download mode if the phone leaves
+    g_havePeer  = false;  // stop filtering the (now gone) phone
     Serial.println("[phone] disconnected");
     NimBLEDevice::getAdvertising()->start();  // keep discoverable
   }
@@ -126,6 +135,12 @@ void begin(const char* devName) {
 bool ownMac(uint8_t out[6]) {
   if (!g_haveOwnMac) return false;
   memcpy(out, g_ownMac, 6);
+  return true;
+}
+
+bool peerMac(uint8_t out[6]) {
+  if (!g_havePeer) return false;
+  memcpy(out, g_peerMac, 6);
   return true;
 }
 

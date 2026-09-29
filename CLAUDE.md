@@ -160,9 +160,11 @@ back (5 GHz included). Things that matter, learned the hard way:
 - **CYD = poller + UI + logger.** Every ~2 s it sends `StartScan`, the C5 instantly
   dumps its current table (fast, no blocking scan), and the CYD shows per-source
   counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI. It drops its
-  **own** BLE advertisement from the results by matching the device's runtime BLE MAC
-  (`phone::ownMac()`, captured from `NimBLEDevice::getAddress()`) — device-agnostic, so
-  it works on any CYD unit.
+  **own** BLE advertisement (`phone::ownMac()`, from `NimBLEDevice::getAddress()`) and the
+  **connected phone's** BLE address (`phone::peerMac()`, from the GATT link) from the
+  results — both captured at runtime, so device-agnostic. The phone filter is best-effort:
+  phones use rotating random BLE addresses, so their scanned advertisements may not match
+  the connection address.
 - **SD logging (CYD).** First-seen devices (dedup by source+MAC for the session) are
   appended to `/scanlog.csv`:
   `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature`.
