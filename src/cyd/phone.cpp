@@ -42,12 +42,16 @@ class WriteCB : public NimBLECharacteristicCallbacks {
     std::string uuid = c->getUUID().toString();
     std::string val  = c->getValue();
     if (uuid == TIME_UUID) {
-      uint32_t e = (uint32_t)strtoul(val.c_str(), nullptr, 10);
-      if (e > 1600000000UL) {  // sanity: after 2020
-        g_epochBase = e;
+      // "utcEpoch;tzOffsetMinutes" (offset = UTC-local, as JS getTimezoneOffset()).
+      // Store the LOCAL epoch so the display reads local time. Bare "epoch" also works.
+      long utc = 0, offMin = 0;
+      int n = sscanf(val.c_str(), "%ld;%ld", &utc, &offMin);
+      if (n >= 1 && utc > 1600000000L) {  // sanity: after 2020
+        g_epochBase = (uint32_t)(utc - offMin * 60);
         g_baseMillis = millis();
         g_haveTime = true;
-        Serial.printf("[phone] time sync: %lu\n", (unsigned long)e);
+        Serial.printf("[phone] time sync: utc=%ld offMin=%ld -> local base %lu\n",
+                      utc, offMin, (unsigned long)g_epochBase);
       }
     } else if (uuid == GPS_UUID) {
       float la, lo;

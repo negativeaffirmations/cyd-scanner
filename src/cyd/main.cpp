@@ -341,26 +341,27 @@ static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
 static void drawStatusBar() {
   int W = tft.width();
   tft.fillRect(0, 0, W, 21, TFT_BLACK);
-  // connection state icon
-  if (webshare::active())        iconWifi(2, 3, TFT_CYAN);
-  else if (phone::connected())   iconBle(3, 3, TFT_BLUE);
-  else                           iconNoConn(2, 3, TFT_DARKGREY);
-  // time
   tft.setTextDatum(TL_DATUM);
+  // time (left) — local, from the phone's timezone
   char t[8];
   if (phone::hasTime()) {
     uint32_t e = phone::epochNow();
     snprintf(t, sizeof(t), "%02u:%02u", (unsigned)((e / 3600) % 24), (unsigned)((e / 60) % 60));
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
   } else { strcpy(t, "00:00"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
-  tft.drawString(t, 24, 4, 2);
-  // GPS (abbreviated)
+  tft.drawString(t, 4, 4, 2);
+  // GPS (middle, abbreviated)
   char g[24];
   if (phone::hasGps()) {
     snprintf(g, sizeof(g), "%.2f,%.2f", phone::lat(), phone::lon());
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
   } else { strcpy(g, "Lat:- Lon:-"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
-  tft.drawString(g, 78, 7, 1);
+  tft.drawString(g, 66, 7, 1);
+  // connection icon (right)
+  int ix = W - 18;
+  if (webshare::active())      iconWifi(ix, 3, TFT_CYAN);
+  else if (phone::connected()) iconBle(ix + 2, 3, TFT_BLUE);
+  else                         iconNoConn(ix, 3, TFT_DARKGREY);
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
 }
 
