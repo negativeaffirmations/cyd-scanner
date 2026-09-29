@@ -22,6 +22,10 @@ void setStatus(const String& s);
 
 bool     connected();
 
+// This device's own BLE MAC (as the C5 would report it, MSB-first). Lets the CYD
+// filter out its own advertisement from the scan results. Returns false if unknown.
+bool     ownMac(uint8_t out[6]);
+
 // Time sync
 bool     hasTime();
 uint32_t epochNow();  // current UTC epoch seconds, or 0 if never synced

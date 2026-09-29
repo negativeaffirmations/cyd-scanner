@@ -25,6 +25,8 @@ bool     g_haveGps    = false;
 bool     g_download   = false;
 bool     g_reload     = false;
 bool     g_logReq     = false;
+uint8_t  g_ownMac[6]  = {0};
+bool     g_haveOwnMac = false;
 
 class ServerCB : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
@@ -109,7 +111,22 @@ void begin(const char* devName) {
   adv->setScanResponseData(scanResp);
   adv->enableScanResponse(true);
   adv->start();
-  Serial.printf("[phone] BLE advertising as '%s'\n", devName);
+
+  // Cache our own BLE MAC (same MSB-first text form the C5 parses) so the scanner
+  // can drop its own advertisement. Runtime value -> works on any CYD unit.
+  std::string mac = NimBLEDevice::getAddress().toString();
+  unsigned b[6];
+  if (sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
+    for (int i = 0; i < 6; i++) g_ownMac[i] = (uint8_t)b[i];
+    g_haveOwnMac = true;
+  }
+  Serial.printf("[phone] BLE advertising as '%s' (own MAC %s)\n", devName, mac.c_str());
+}
+
+bool ownMac(uint8_t out[6]) {
+  if (!g_haveOwnMac) return false;
+  memcpy(out, g_ownMac, 6);
+  return true;
 }
 
 void setStatus(const String& s) {

@@ -395,6 +395,17 @@ static void transferLog() {
   Serial.printf("[CYD] BLE log sent %u/%u bytes\n", (unsigned)sent, (unsigned)sz);
 }
 
+// This device's own BLE MAC, cached at boot so we can drop our own advertisement
+// from the scan results (the CYD's phone-link peripheral is visible to the C5's BLE
+// scan). Captured at runtime -> device-agnostic, works on any CYD unit.
+static uint8_t g_ownMac[6]   = {0};
+static bool    g_haveOwnMac  = false;
+
+static bool isSelfDet(const Detection& d) {
+  return g_haveOwnMac && d.source == (uint8_t)Source::BleScan &&
+         memcmp(d.mac, g_ownMac, 6) == 0;
+}
+
 static void requestScan(uint32_t timeoutMs = 5000) {
   g_detCount = 0;
   bool sawStart = false, done = false;
@@ -410,8 +421,10 @@ static void requestScan(uint32_t timeoutMs = 5000) {
       if (!parser.feed(LinkSerial.read())) continue;
       uint8_t t = parser.type();
       if (t == (uint8_t)Reply::Detection && parser.length() >= sizeof(Detection)) {
-        if (g_detCount < MAX_DET)
-          memcpy(&g_dets[g_detCount++], parser.payload(), sizeof(Detection));
+        if (g_detCount < MAX_DET) {
+          memcpy(&g_dets[g_detCount], parser.payload(), sizeof(Detection));
+          if (!isSelfDet(g_dets[g_detCount])) g_detCount++;  // drop our own advertisement
+        }
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         if (st->scanning != 0) sawStart = true;
@@ -731,6 +744,7 @@ void setup() {
   g_touch.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN);
   g_touchOk = g_touch.loadCal();
   phone::begin(DEVICE_NAME);
+  g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering
   g_linkOk = pingC5();  // check the C5 link so the menu dot is correct before any scan
   Serial.printf("[CYD] ready (link=%s, touch=%s, bright=%d%%)\n",
                 g_linkOk ? "up" : "down", g_touchOk ? "cal" : "uncal", g_brightness);

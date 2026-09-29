@@ -159,7 +159,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   Promiscuous capture is **receive-only** — nothing is transmitted (passive scope).
 - **CYD = poller + UI + logger.** Every ~2 s it sends `StartScan`, the C5 instantly
   dumps its current table (fast, no blocking scan), and the CYD shows per-source
-  counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI.
+  counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI. It drops its
+  **own** BLE advertisement from the results by matching the device's runtime BLE MAC
+  (`phone::ownMac()`, captured from `NimBLEDevice::getAddress()`) — device-agnostic, so
+  it works on any CYD unit.
 - **SD logging (CYD).** First-seen devices (dedup by source+MAC for the session) are
   appended to `/scanlog.csv`:
   `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature`.
