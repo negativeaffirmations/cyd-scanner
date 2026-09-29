@@ -20,6 +20,7 @@
 #include "link_protocol.h"
 #include "phone.h"
 #include "webshare.h"
+#include "sigdb.h"
 
 using namespace link_protocol;
 
@@ -47,6 +48,7 @@ static void setLed(bool r, bool g, bool b) {  // active low
 }
 
 static void initCommon() {
+  pinMode(0, INPUT_PULLUP);  // BOOT button (runtime use: pop up the app QR)
   pinMode(LED_R_PIN, OUTPUT);
   pinMode(LED_G_PIN, OUTPUT);
   pinMode(LED_B_PIN, OUTPUT);
@@ -119,9 +121,23 @@ void loop() {
 static constexpr int MAX_DET  = 96;
 static constexpr int MAX_SEEN = 400;
 
-Detection g_dets[MAX_DET];
-int       g_detCount = 0;
-bool      g_linkOk   = false;
+Detection          g_dets[MAX_DET];
+sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
+int                g_detCount = 0;
+bool               g_linkOk   = false;
+bool               g_showAppQr = false;  // BOOT button shows the webapp QR
+
+// URL of the hosted control web app (GitHub Pages). Scan the QR to open it.
+static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner/webapp/";
+
+// Rising-to-pressed edge detector for the BOOT button (active low).
+static bool bootEdge() {
+  static bool prevLow = false;
+  bool low = (digitalRead(0) == LOW);
+  bool edge = low && !prevLow;
+  prevLow = low;
+  return edge;
+}
 
 SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
@@ -151,13 +167,30 @@ static void countBands(int& n24, int& n5, int& nble) {
   }
 }
 
+// Score every current detection against the signature DB (aligned into g_score[]).
+static void computeScores() {
+  for (int i = 0; i < g_detCount; i++) sigdb::score(g_dets[i], g_score[i]);
+}
+
+static void countTiers(int& susp, int& lk, int& conf) {
+  susp = lk = conf = 0;
+  for (int i = 0; i < g_detCount; i++) {
+    switch (g_score[i].tier) {
+      case sigdb::Tier::Suspect:   susp++; break;
+      case sigdb::Tier::Likely:    lk++;   break;
+      case sigdb::Tier::Confirmed: conf++; break;
+      default: break;
+    }
+  }
+}
+
 static void initSD() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   g_sdOk = SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
   if (!SD.exists(kLogPath)) {
     File f = SD.open(kLogPath, FILE_WRITE);
-    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name"); f.close(); }
+    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name,score,tier,signature"); f.close(); }
   }
   Serial.printf("[CYD] SD ready - logging to %s\n", kLogPath);
 }
@@ -179,12 +212,17 @@ static int logNewDetections() {
     strncpy(safe, d.name, sizeof(safe) - 1);
     safe[sizeof(safe) - 1] = 0;
     for (char* p = safe; *p; ++p) if (*p == ',' || *p == '\n' || *p == '\r') *p = ' ';
+    const sigdb::ScoreResult& sc = g_score[i];
+    char sig[24];
+    strncpy(sig, sigdb::labelFor(sc), sizeof(sig) - 1);
+    sig[sizeof(sig) - 1] = 0;
+    for (char* p = sig; *p; ++p) if (*p == ',' || *p == '\n' || *p == '\r') *p = ' ';
     f.printf("%lu,%lu,", (unsigned long)epoch, (unsigned long)ms);
     if (gps) f.printf("%.6f,%.6f,", phone::lat(), phone::lon());
     else     f.print(",,");
-    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%s\n", srcTag(d),
+    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%s,%d,%s,%s\n", srcTag(d),
              d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
-             d.rssi, d.channel, safe);
+             d.rssi, d.channel, safe, sc.score, sigdb::tierName(sc.tier), sig);
   }
   if (f) f.close();
   return n;
@@ -219,12 +257,14 @@ static void requestScan(uint32_t timeoutMs = 5000) {
 
 static void pushStatus() {
   int n24, n5, nble; countBands(n24, n5, nble);
-  char s[128];
+  int susp, lk, conf; countTiers(susp, lk, conf);
+  char s[176];
   snprintf(s, sizeof(s),
-           "link=%d;w24=%d;w5=%d;ble=%d;uniq=%d;time=%d;gps=%d;dl=%d",
+           "link=%d;w24=%d;w5=%d;ble=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
+           "susp=%d;lk=%d;conf=%d;db=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
-           webshare::active() ? 1 : 0);
+           webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0);
   phone::setStatus(String(s));
 }
 
@@ -244,24 +284,42 @@ static void render() {
   tft.drawString(buf, 6, 34, 2);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "2.4:%d  5G:%d  BLE:%d  uniq:%d", n24, n5, nble, g_seenCount);
+  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d uniq:%d", n24, n5, nble, g_seenCount);
   tft.drawString(buf, 6, 54, 2);
 
+  int susp, lk, conf; countTiers(susp, lk, conf);
+  uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
+  tft.setTextColor(tcol, TFT_BLACK);
+  snprintf(buf, sizeof(buf), "threats S:%d L:%d C:%d  db:%s",
+           susp, lk, conf, sigdb::loaded() ? "on" : "off");
+  tft.drawString(buf, 6, 72, 2);
+
+  // Sort by threat tier first, then RSSI, so flagged devices surface at the top.
   static int idx[MAX_DET];
   for (int i = 0; i < g_detCount; i++) idx[i] = i;
-  std::sort(idx, idx + g_detCount,
-            [](int a, int b) { return g_dets[a].rssi > g_dets[b].rssi; });
+  std::sort(idx, idx + g_detCount, [](int a, int b) {
+    if (g_score[a].tier != g_score[b].tier) return g_score[a].tier > g_score[b].tier;
+    return g_dets[a].rssi > g_dets[b].rssi;
+  });
   int rows = min(g_detCount, 6);
   for (int r = 0; r < rows; r++) {
-    const Detection& d = g_dets[idx[r]];
-    uint16_t col = d.source == (uint8_t)Source::BleScan ? TFT_MAGENTA
-                 : d.channel > 14                        ? TFT_CYAN : TFT_WHITE;
+    int i = idx[r];
+    const Detection& d = g_dets[i];
+    uint16_t col;
+    switch (g_score[i].tier) {
+      case sigdb::Tier::Confirmed: col = TFT_RED;    break;
+      case sigdb::Tier::Likely:    col = TFT_ORANGE; break;
+      case sigdb::Tier::Suspect:   col = TFT_YELLOW; break;
+      default: col = d.source == (uint8_t)Source::BleScan ? TFT_MAGENTA
+                   : d.channel > 14 ? TFT_CYAN : TFT_WHITE;
+    }
     tft.setTextColor(col, TFT_BLACK);
     char name[15];
     strncpy(name, d.name[0] ? d.name : "<hidden>", 14);
     name[14] = 0;
-    snprintf(buf, sizeof(buf), "%-3s %-14s %4d", srcTag(d), name, d.rssi);
-    tft.drawString(buf, 6, 78 + r * 16, 2);
+    char flag = g_score[i].tier != sigdb::Tier::None ? '!' : ' ';
+    snprintf(buf, sizeof(buf), "%c%-3s %-13s %4d", flag, srcTag(d), name, d.rssi);
+    tft.drawString(buf, 6, 92 + r * 16, 2);
   }
 }
 
@@ -294,17 +352,55 @@ static void drawDownloadScreen() {
   tft.drawString(String("PW:") + webshare::password(), tx, 126, 2);
 }
 
+// QR linking to the hosted web app, so the phone can open it by scanning.
+static void drawAppQrScreen() {
+  QRCode qr;
+  static uint8_t qrbuf[256];  // fits version 4 (URL ~55 bytes < 78 cap)
+  qrcode_initText(&qr, qrbuf, 4, ECC_LOW, APP_URL);
+
+  tft.fillScreen(TFT_BLACK);
+  const int scale = 5, qx = 14, qy = 46;
+  int side = qr.size * scale;
+  tft.fillRect(qx - 6, qy - 6, side + 12, side + 12, TFT_WHITE);
+  for (uint8_t y = 0; y < qr.size; y++)
+    for (uint8_t x = 0; x < qr.size; x++)
+      if (qrcode_getModule(&qr, x, y))
+        tft.fillRect(qx + x * scale, qy + y * scale, scale, scale, TFT_BLACK);
+
+  int tx = qx + side + 18;
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString("OPEN APP", tx, 10, 2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("Scan to open the", tx, 46, 2);
+  tft.drawString("control web app", tx, 64, 2);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("BOOT again to exit", tx, 120, 2);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
   initCommon();
   initSD();
+  sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
   phone::begin(DEVICE_NAME);
   Serial.println("[CYD] ready");
 }
 
 void loop() {
+  // Phone asked to reload the signature DB from SD (after an edit/push).
+  if (phone::reloadRequested()) sigdb::reload();
+
+  // BOOT button shows a QR linking to the web app; press again to return.
+  if (g_showAppQr) {
+    if (bootEdge()) g_showAppQr = false;
+    delay(20);
+    return;
+  }
+  if (bootEdge()) { g_showAppQr = true; drawAppQrScreen(); return; }
+
   // Download mode: SoftAP + web server + QR on screen, no scanning meanwhile.
   if (phone::downloadRequested()) {
     if (!webshare::active()) { webshare::start(); drawDownloadScreen(); }
@@ -317,14 +413,22 @@ void loop() {
   if (webshare::active()) webshare::stop();  // just left download mode
 
   requestScan();
+  computeScores();
   setLed(!g_linkOk, g_linkOk, false);
   int newCount = logNewDetections();
   int n24, n5, nble; countBands(n24, n5, nble);
-  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d) new=%d uniq=%d bt=%d t=%d g=%d\n",
+  int susp, lk, conf; countTiers(susp, lk, conf);
+  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
                 g_detCount, n24, n5, nble, newCount, g_seenCount,
-                phone::connected(), phone::hasTime(), phone::hasGps());
+                susp, lk, conf, sigdb::loaded());
   render();
   pushStatus();
-  delay(2000);
+
+  // Responsive ~2 s wait that also enters the app-QR screen on a BOOT press.
+  uint32_t t0 = millis();
+  while (millis() - t0 < 2000) {
+    if (bootEdge()) { g_showAppQr = true; drawAppQrScreen(); return; }
+    delay(20);
+  }
 }
 #endif

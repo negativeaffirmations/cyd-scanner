@@ -34,4 +34,7 @@ float lon();
 // Wi-Fi log-download mode requested by the app.
 bool downloadRequested();
 
+// True once if the app asked to reload the signature DB (consumed on read).
+bool reloadRequested();
+
 }  // namespace phone

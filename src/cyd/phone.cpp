@@ -19,6 +19,7 @@ bool     g_haveTime   = false;
 float    g_lat = 0, g_lon = 0;
 bool     g_haveGps    = false;
 bool     g_download   = false;
+bool     g_reload     = false;
 
 class ServerCB : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
@@ -52,8 +53,13 @@ class WriteCB : public NimBLECharacteristicCallbacks {
         Serial.printf("[phone] gps: %.5f,%.5f\n", la, lo);
       }
     } else if (uuid == CMD_UUID) {
-      g_download = (!val.empty() && (val[0] == '1'));
-      Serial.printf("[phone] cmd download=%d\n", g_download);
+      if (!val.empty() && (val[0] == 'R' || val[0] == 'r')) {
+        g_reload = true;
+        Serial.println("[phone] cmd reload signature DB");
+      } else {
+        g_download = (!val.empty() && (val[0] == '1'));
+        Serial.printf("[phone] cmd download=%d\n", g_download);
+      }
     }
   }
 };
@@ -79,8 +85,9 @@ void begin(const char* devName) {
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(SVC_UUID);
+  adv->addServiceUUID(SVC_UUID);       // service UUID in the adv packet (filterable)
   adv->setName(devName);
+  adv->enableScanResponse(true);       // name overflows to scan response; must be enabled
   adv->start();
   Serial.printf("[phone] BLE advertising as '%s'\n", devName);
 }
@@ -98,5 +105,6 @@ bool     hasGps()           { return g_haveGps; }
 float    lat()              { return g_lat; }
 float    lon()              { return g_lon; }
 bool     downloadRequested(){ return g_download; }
+bool     reloadRequested()  { bool r = g_reload; g_reload = false; return r; }
 
 }  // namespace phone

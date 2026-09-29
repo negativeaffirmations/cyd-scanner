@@ -50,8 +50,16 @@
     <div class="card"><div class="k">GPS fix</div><div class="v" id="gpsState">–</div></div>
   </div>
 
+  <div class="grid">
+    <div class="card"><div class="k">Suspect</div><div class="v" id="susp">–</div></div>
+    <div class="card"><div class="k">Likely</div><div class="v" id="lk">–</div></div>
+    <div class="card"><div class="k">Confirmed</div><div class="v" id="conf">–</div></div>
+    <div class="card"><div class="k">Signature DB</div><div class="v" id="db">–</div></div>
+  </div>
+
   <button id="timeBtn" class="secondary" disabled>Sync time now</button>
   <button id="gpsBtn" class="secondary" disabled>Send GPS now</button>
+  <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
   <button id="dlBtn" disabled>Download logs (Wi-Fi)</button>
   <button id="stopDlBtn" class="secondary" disabled>Stop download mode</button>
 
@@ -84,7 +92,9 @@ async function connect(){
   try{
     setConn("connecting");
     device = await navigator.bluetooth.requestDevice({
-      filters:[{name:"CYD-Scanner"}], optionalServices:[SVC]
+      // Filter by the advertised service UUID (robust) rather than the name,
+      // which rides in the scan response and isn't always seen by the name filter.
+      filters:[{services:[SVC]}], optionalServices:[SVC]
     });
     device.addEventListener("gattserverdisconnected", onDisconnect);
     log("Connecting to "+device.name+"…");
@@ -97,7 +107,7 @@ async function connect(){
     await chars.stat.startNotifications();
     chars.stat.addEventListener("characteristicvaluechanged", onStatus);
     setConn("connected");
-    ["timeBtn","gpsBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=false);
+    ["timeBtn","gpsBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
     startGps();
@@ -105,8 +115,13 @@ async function connect(){
 }
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected.");
-  ["timeBtn","gpsBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=true);
+  ["timeBtn","gpsBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=true);
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
+
+async function reloadDb(){
+  try{ await chars.cmd.writeValue(enc.encode("R")); log("Requested signature-DB reload."); }
+  catch(e){ log("Reload failed: "+e.message); }
+}
 
 async function syncTime(){
   try{ const epoch=Math.floor(Date.now()/1000).toString();
@@ -146,11 +161,17 @@ function onStatus(ev){
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   if("time"in kv) $("timeState").textContent = kv.time==="1"?"yes":"no";
   if("gps" in kv) $("gpsState").textContent  = kv.gps==="1"?"yes":"no";
+  if("susp"in kv) $("susp").textContent = kv.susp;
+  if("lk"  in kv) $("lk").textContent   = kv.lk;
+  if("conf"in kv){ $("conf").textContent = kv.conf;
+    $("conf").style.color = (+kv.conf>0) ? "#f85149" : ""; }
+  if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
 }
 
 $("connectBtn").onclick = connect;
 $("timeBtn").onclick = syncTime;
 $("gpsBtn").onclick = gpsOnce;
+$("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = ()=>setDownload(true);
 $("stopDlBtn").onclick = ()=>setDownload(false);
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");
