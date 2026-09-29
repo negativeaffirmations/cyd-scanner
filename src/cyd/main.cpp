@@ -151,6 +151,9 @@ static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
 // Shared menu-row geometry (used for drawing AND touch hit-testing).
 static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
 
+// Scan-screen "stop" button (full-width bar under the status bar).
+static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
+
 enum BtnEv { BTN_NONE, BTN_SHORT, BTN_LONG };
 static constexpr uint32_t LONG_PRESS_MS = 550;
 
@@ -219,6 +222,22 @@ static int tappedRow(int count) {
         int y = ROW_Y0 + i * ROW_STEP;
         if (sx >= 6 && sx <= tft.width() - 6 && sy >= y - 5 && sy <= y - 5 + ROW_H) { hit = i; break; }
       }
+  }
+  prev = now;
+  return hit;
+}
+
+// True on a fresh tap inside the scan screen's top "stop" button.
+static bool stopButtonTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return false; }
+  bool now = g_touch.touched();
+  bool hit = false;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z))
+      hit = (sx >= STOP_X && sx <= tft.width() - STOP_X &&
+             sy >= STOP_Y && sy <= STOP_Y + STOP_H);
   }
   prev = now;
   return hit;
@@ -442,13 +461,14 @@ static void requestScan(uint32_t timeoutMs = 5000) {
 static void pushStatus() {
   int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  char s[192];
+  char s[208];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
-           webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0);
+           webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
+           g_screen == SCR_SCAN ? 1 : 0);
   phone::setStatus(String(s));
 }
 
@@ -540,27 +560,36 @@ static void render() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
 
+  // Full-width stop button across the top: tap to end the scan and return to the
+  // menu (a long BOOT hold does the same).
+  int W = tft.width();
+  tft.fillRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, TFT_MAROON);
+  tft.drawRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, TFT_RED);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_MAROON);
+  tft.drawString("STOP SCAN  <  MENU", W / 2, STOP_Y + STOP_H / 2, 1);
+
   tft.setTextDatum(TL_DATUM);
   char buf[48];
-  // Link status now lives in the status-bar dot; this line covers SD + DB.
+  // Link status lives in the status-bar dot; this line covers SD + DB.
   tft.setTextColor(g_sdOk ? TFT_WHITE : TFT_RED, TFT_BLACK);
   snprintf(buf, sizeof(buf), "SD:%s  db:%s",
            g_sdOk ? "on" : "off", sigdb::loaded() ? "on" : "fb");
-  tft.drawString(buf, 4, 26, 1);
+  tft.drawString(buf, 4, 46, 1);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d U:%d", n24, n5, nble, nprb, g_seenCount);
-  tft.drawString(buf, 4, 38, 1);
+  tft.drawString(buf, 4, 58, 1);
 
   uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
   tft.setTextColor(tcol, TFT_BLACK);
   snprintf(buf, sizeof(buf), "threats  S:%d  L:%d  C:%d", susp, lk, conf);
-  tft.drawString(buf, 4, 50, 1);
+  tft.drawString(buf, 4, 70, 1);
 
   // Sort by threat tier first, then RSSI, so flagged devices surface at the top.
   static int idx[MAX_DET];
   buildSorted(idx);
-  int maxRows = (tft.height() - 64) / 13;  // rows from y64, 13 px each
+  int maxRows = (tft.height() - 84) / 13;  // rows from y84, 13 px each
   int rows = min(g_detCount, maxRows);
   for (int r = 0; r < rows; r++) {
     int i = idx[r];
@@ -579,7 +608,7 @@ static void render() {
     name[15] = 0;
     char flag = g_score[i].tier != sigdb::Tier::None ? '!' : ' ';
     snprintf(buf, sizeof(buf), "%c%-3s %-15s %4d", flag, srcTag(d), name, d.rssi);
-    tft.drawString(buf, 4, 64 + r * 13, 1);
+    tft.drawString(buf, 4, 84 + r * 13, 1);
   }
 }
 
@@ -764,6 +793,10 @@ void loop() {
   if (phone::downloadRequested()) { runDownload(); return; }
   if (webshare::active()) webshare::stop();  // just left download mode
 
+  // Phone can start/stop the scan remotely (single toggle in the web app).
+  if (phone::scanStartRequested()) g_screen = SCR_SCAN;
+  if (phone::scanStopRequested())  { g_screen = SCR_MENU; drawMenu(); pushStatus(); }
+
   BtnEv ev = buttonEvent();
 
   switch (g_screen) {
@@ -778,6 +811,7 @@ void loop() {
           lastPing = millis();
           g_linkOk = pingC5();
           drawStatusBar();  // just the top bar — no full-screen flicker
+          pushStatus();     // keep the phone informed (incl. scan=0) while idle
         }
       }
       delay(20);
@@ -799,14 +833,16 @@ void loop() {
       return;
 
     case SCR_SCAN:
-      if (ev == BTN_LONG) { g_screen = SCR_MENU; drawMenu(); return; }
+      // Stop via the on-screen button (touch), a long BOOT hold, or the phone.
+      if (ev == BTN_LONG || stopButtonTapped()) { g_screen = SCR_MENU; drawMenu(); pushStatus(); return; }
       runScanCycle();
-      // Responsive ~2 s wait: a long hold returns to the menu; a pending phone
-      // download is handled on the next loop.
+      // Responsive ~2 s wait that also honors stop requests and pending downloads.
       {
         uint32_t t0 = millis();
         while (millis() - t0 < 2000) {
-          if (buttonEvent() == BTN_LONG) { g_screen = SCR_MENU; drawMenu(); return; }
+          if (buttonEvent() == BTN_LONG || stopButtonTapped() || phone::scanStopRequested()) {
+            g_screen = SCR_MENU; drawMenu(); pushStatus(); return;
+          }
           if (phone::downloadRequested()) return;
           delay(20);
         }

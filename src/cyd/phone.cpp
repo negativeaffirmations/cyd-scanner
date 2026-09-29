@@ -25,6 +25,8 @@ bool     g_haveGps    = false;
 bool     g_download   = false;
 bool     g_reload     = false;
 bool     g_logReq     = false;
+bool     g_scanStart  = false;
+bool     g_scanStop   = false;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -80,6 +82,12 @@ class WriteCB : public NimBLECharacteristicCallbacks {
       } else if (c0 == 'L' || c0 == 'l') {
         g_logReq = true;
         Serial.println("[phone] cmd BLE log download");
+      } else if (c0 == 'G' || c0 == 'g') {
+        g_scanStart = true;
+        Serial.println("[phone] cmd start scan");
+      } else if (c0 == 'X' || c0 == 'x') {
+        g_scanStop = true;
+        Serial.println("[phone] cmd stop scan");
       } else {
         g_download = (c0 == '1');
         Serial.printf("[phone] cmd download=%d\n", g_download);
@@ -158,7 +166,9 @@ float    lat()              { return g_lat; }
 float    lon()              { return g_lon; }
 bool     downloadRequested(){ return g_download; }
 bool     reloadRequested()  { bool r = g_reload; g_reload = false; return r; }
-bool     logRequested()     { bool r = g_logReq; g_logReq = false; return r; }
+bool     logRequested()       { bool r = g_logReq; g_logReq = false; return r; }
+bool     scanStartRequested() { bool r = g_scanStart; g_scanStart = false; return r; }
+bool     scanStopRequested()  { bool r = g_scanStop; g_scanStop = false; return r; }
 
 void logNotify(const uint8_t* data, size_t len) {
   if (!g_logData || !g_connected) return;

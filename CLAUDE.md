@@ -209,8 +209,10 @@ back (5 GHz included). Things that matter, learned the hard way:
 - **BOOT button = the only input** (touch is unused). It drives a **main menu**
   (`SCR_MENU` → `SCR_SCAN` / `SCR_APPQR` state machine in `main.cpp`): a short **tap**
   moves the highlight, a long **hold** selects, and a hold from any screen returns to the
-  menu. Items: **Start Scan** (the live scanner) and **Connect to Phone** (full-screen
-  web-app QR). Boots into the menu.
+  menu. Items: **Start Scan** (the live scanner), **Connect to Phone** (full-screen
+  web-app QR), and **Settings**. Boots into the menu. The scan screen has a full-width
+  **STOP** button across the top (tap to end the scan and return to the menu). Scanning
+  can also be started/stopped from the web app (a single toggle button, CMD `G`/`X`).
 
 ### Phone link + web app (Web Bluetooth) — working
 
@@ -218,8 +220,9 @@ back (5 GHz included). Things that matter, learned the hard way:
   service `9a1e0000-…` with characteristics:
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
   - `…0002` GPS (write) — `"lat,lon"`
-  - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download on/off · `"R"` reload DB · `"L"` BLE log download
-  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db` (`prb` = probe-request count)
+  - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download on/off · `"R"` reload DB · `"L"` BLE log
+    download · `"G"/"X"` start/stop scan (the web app's single toggle button)
+  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db,scan` (`prb` = probe-request count, `scan` = 1 while scanning)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle: a `D:<count>` header then `<count>` tab-separated rows

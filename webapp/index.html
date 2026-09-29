@@ -19,6 +19,7 @@
     background: #238636; color: #fff; width: 100%; margin: .35em 0; cursor: pointer;
   }
   button.secondary { background: #30363d; }
+  button.danger { background: #a1222b; }
   button:disabled { opacity: .45; }
   .pill { display:inline-block; padding:.15em .6em; border-radius:999px; font-size:.8rem; }
   .up { background:#1a7f37; } .down { background:#a12; } .wait { background:#9a6700; }
@@ -48,6 +49,7 @@
   <div class="sub">Counter-surveillance scanner &middot; phone control over Bluetooth</div>
 
   <button id="connectBtn">Connect to scanner</button>
+  <button id="scanBtn" disabled>&#9654; Start Scan</button>
 
   <div class="grid">
     <div class="card"><div class="k">Wi-Fi 2.4</div><div class="v" id="w24">–</div></div>
@@ -91,7 +93,19 @@ const LOG  = "9a1e0005-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const DETS = "9a1e0006-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
 const enc = new TextEncoder();
-let chars = {}, device = null, gpsWatch = null, connected = false, wifiOn = false;
+let chars = {}, device = null, gpsWatch = null, connected = false, wifiOn = false, scanning = false;
+
+function updateScanBtn(){
+  const b = $("scanBtn");
+  b.textContent = scanning ? "⏹ Stop Scan" : "▶ Start Scan";
+  b.classList.toggle("danger", scanning);
+}
+async function toggleScan(){
+  const want = !scanning;                       // authoritative state comes back via status
+  try { await chars.cmd.writeValue(enc.encode(want ? "G" : "X"));
+    log(want ? "Start scan requested." : "Stop scan requested."); }
+  catch(e){ log("Scan command failed: " + e.message); }
+}
 
 const $ = id => document.getElementById(id);
 function log(msg){ const el=$("log"); el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
@@ -129,7 +143,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=false);
+    ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
     startGps();
@@ -138,8 +152,9 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=true);
+  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=true);
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
+  scanning=false; updateScanBtn();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
@@ -260,9 +275,11 @@ function onStatus(ev){
   if("conf"in kv){ $("conf").textContent = kv.conf;
     $("conf").style.color = (+kv.conf>0) ? "#f85149" : ""; }
   if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
+  if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
 }
 
 $("connectBtn").onclick = connect;
+$("scanBtn").onclick = toggleScan;
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
