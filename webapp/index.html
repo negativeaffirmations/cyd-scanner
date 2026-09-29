@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CYD Scanner Control</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #0e1116; color: #e6edf3; padding: 16px; max-width: 560px;
+    margin-inline: auto; -webkit-tap-highlight-color: transparent;
+  }
+  h1 { font-size: 1.3rem; margin: .2em 0 .1em; }
+  .sub { color: #8b949e; font-size: .85rem; margin-bottom: 1em; }
+  button {
+    font-size: 1rem; padding: .8em 1em; border: 0; border-radius: 10px;
+    background: #238636; color: #fff; width: 100%; margin: .35em 0; cursor: pointer;
+  }
+  button.secondary { background: #30363d; }
+  button:disabled { opacity: .45; }
+  .pill { display:inline-block; padding:.15em .6em; border-radius:999px; font-size:.8rem; }
+  .up { background:#1a7f37; } .down { background:#a12; } .wait { background:#9a6700; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:12px 0; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:10px; }
+  .card .k { color:#8b949e; font-size:.75rem; } .card .v { font-size:1.2rem; font-weight:600; }
+  #log { background:#0b0e13; border:1px solid #30363d; border-radius:10px; padding:8px;
+         font-family: ui-monospace, monospace; font-size:.75rem; height:130px; overflow:auto;
+         white-space:pre-wrap; color:#9db4c9; }
+  .note { background:#161b22; border-left:3px solid #d29922; padding:.7em .9em;
+          border-radius:6px; font-size:.85rem; margin:.6em 0; display:none; }
+</style>
+</head>
+<body>
+  <h1>CYD Scanner <span id="conn" class="pill down">disconnected</span></h1>
+  <div class="sub">Counter-surveillance scanner &middot; phone control over Bluetooth</div>
+
+  <button id="connectBtn">Connect to scanner</button>
+
+  <div class="grid">
+    <div class="card"><div class="k">Wi-Fi 2.4</div><div class="v" id="w24">–</div></div>
+    <div class="card"><div class="k">Wi-Fi 5 GHz</div><div class="v" id="w5">–</div></div>
+    <div class="card"><div class="k">BLE</div><div class="v" id="ble">–</div></div>
+    <div class="card"><div class="k">Unique logged</div><div class="v" id="uniq">–</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">Time synced</div><div class="v" id="timeState">–</div></div>
+    <div class="card"><div class="k">GPS fix</div><div class="v" id="gpsState">–</div></div>
+  </div>
+
+  <button id="timeBtn" class="secondary" disabled>Sync time now</button>
+  <button id="gpsBtn" class="secondary" disabled>Send GPS now</button>
+  <button id="dlBtn" disabled>Download logs (Wi-Fi)</button>
+  <button id="stopDlBtn" class="secondary" disabled>Stop download mode</button>
+
+  <div class="note" id="dlNote">
+    <b>Download mode on.</b> On the scanner's screen, scan the QR code with your camera
+    to join its Wi-Fi, then open <b>http://192.168.4.1</b> to download <code>scanlog.csv</code>.
+    (Your phone leaves its normal Wi-Fi while connected.)
+  </div>
+
+  <h3 style="margin-bottom:.3em">Activity</h3>
+  <div id="log"></div>
+
+<script>
+const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+const TIME = "9a1e0001-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+const GPS  = "9a1e0002-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+const CMD  = "9a1e0003-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+const STAT = "9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+
+const enc = new TextEncoder();
+let chars = {}, device = null, gpsWatch = null;
+
+const $ = id => document.getElementById(id);
+function log(msg){ const el=$("log"); el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
+function setConn(state){ const p=$("conn"); p.textContent=state;
+  p.className="pill "+(state==="connected"?"up":state==="connecting"?"wait":"down"); }
+
+async function connect(){
+  if(!navigator.bluetooth){ log("Web Bluetooth not available. Use Chrome on Android."); return; }
+  try{
+    setConn("connecting");
+    device = await navigator.bluetooth.requestDevice({
+      filters:[{name:"CYD-Scanner"}], optionalServices:[SVC]
+    });
+    device.addEventListener("gattserverdisconnected", onDisconnect);
+    log("Connecting to "+device.name+"…");
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SVC);
+    chars.time = await svc.getCharacteristic(TIME);
+    chars.gps  = await svc.getCharacteristic(GPS);
+    chars.cmd  = await svc.getCharacteristic(CMD);
+    chars.stat = await svc.getCharacteristic(STAT);
+    await chars.stat.startNotifications();
+    chars.stat.addEventListener("characteristicvaluechanged", onStatus);
+    setConn("connected");
+    ["timeBtn","gpsBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=false);
+    log("Connected.");
+    await syncTime();
+    startGps();
+  }catch(e){ setConn("disconnected"); log("Connect failed: "+e.message); }
+}
+
+function onDisconnect(){ setConn("disconnected"); log("Disconnected.");
+  ["timeBtn","gpsBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=true);
+  if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
+
+async function syncTime(){
+  try{ const epoch=Math.floor(Date.now()/1000).toString();
+    await chars.time.writeValue(enc.encode(epoch)); log("Time synced ("+epoch+")."); }
+  catch(e){ log("Time sync failed: "+e.message); }
+}
+
+async function sendGps(pos){
+  try{ const s=pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
+    await chars.gps.writeValue(enc.encode(s)); log("GPS sent "+s); }
+  catch(e){ log("GPS send failed: "+e.message); }
+}
+function startGps(){
+  if(!navigator.geolocation){ log("No geolocation on this device."); return; }
+  gpsWatch = navigator.geolocation.watchPosition(sendGps,
+    e=>log("GPS error: "+e.message), {enableHighAccuracy:true, maximumAge:5000});
+}
+function gpsOnce(){
+  if(!navigator.geolocation){ log("No geolocation."); return; }
+  navigator.geolocation.getCurrentPosition(sendGps, e=>log("GPS error: "+e.message),
+    {enableHighAccuracy:true});
+}
+
+async function setDownload(on){
+  try{ await chars.cmd.writeValue(enc.encode(on?"1":"0"));
+    $("dlNote").style.display = on ? "block":"none";
+    log(on?"Requested download mode.":"Stopped download mode."); }
+  catch(e){ log("Command failed: "+e.message); }
+}
+
+function onStatus(ev){
+  const txt = new TextDecoder().decode(ev.target.value);
+  const kv = {}; txt.split(";").forEach(p=>{const[a,b]=p.split("=");if(a)kv[a]=b;});
+  if("w24" in kv) $("w24").textContent = kv.w24;
+  if("w5"  in kv) $("w5").textContent  = kv.w5;
+  if("ble" in kv) $("ble").textContent = kv.ble;
+  if("uniq"in kv) $("uniq").textContent= kv.uniq;
+  if("time"in kv) $("timeState").textContent = kv.time==="1"?"yes":"no";
+  if("gps" in kv) $("gpsState").textContent  = kv.gps==="1"?"yes":"no";
+}
+
+$("connectBtn").onclick = connect;
+$("timeBtn").onclick = syncTime;
+$("gpsBtn").onclick = gpsOnce;
+$("dlBtn").onclick = ()=>setDownload(true);
+$("stopDlBtn").onclick = ()=>setDownload(false);
+if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");
+</script>
+</body>
+</html>
