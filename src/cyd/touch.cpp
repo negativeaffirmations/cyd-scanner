@@ -1,16 +1,64 @@
-// touch.cpp — see touch.h for the design.
+// touch.cpp — see touch.h for the design. Bit-bang XPT2046 driver.
 #include "touch.h"
 #include <Preferences.h>
 
 static Preferences s_prefs;
 static const char* kNamespace = "touchcal";
 
-Touch::Touch(uint8_t csPin, uint8_t irqPin) : ts_(csPin, irqPin) {}
+// XPT2046 control bytes: start=1, channel select, 12-bit, PD=00 (keep PENIRQ on).
+static constexpr uint8_t CMD_X = 0xD0;  // X position
+static constexpr uint8_t CMD_Y = 0x90;  // Y position
 
-void Touch::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t cs) {
-  spi_.begin(sck, miso, mosi, cs);
-  ts_.begin(spi_);
-  ts_.setRotation(0);  // always read in the native frame; we rotate in software
+void Touch::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq) {
+  sck_ = sck; miso_ = miso; mosi_ = mosi; cs_ = cs; irq_ = irq;
+  pinMode(sck_, OUTPUT);
+  pinMode(mosi_, OUTPUT);
+  pinMode(cs_, OUTPUT);
+  pinMode(miso_, INPUT);
+  if (irq_ >= 0) pinMode(irq_, INPUT);
+  digitalWrite(cs_, HIGH);   // idle: deselected
+  digitalWrite(sck_, LOW);   // SPI mode 0: clock idle low
+}
+
+// One conversion: shift the 8-bit command out (MSB first), then clock 12 result
+// bits in. SPI mode 0 — MOSI set while clock low, MISO sampled on the rising edge.
+uint16_t Touch::readChan(uint8_t cmd) {
+  for (int8_t i = 7; i >= 0; i--) {
+    digitalWrite(mosi_, (cmd >> i) & 1);
+    digitalWrite(sck_, HIGH);
+    digitalWrite(sck_, LOW);
+  }
+  uint16_t v = 0;
+  for (int8_t i = 11; i >= 0; i--) {
+    digitalWrite(sck_, HIGH);
+    if (digitalRead(miso_)) v |= (1u << i);
+    digitalWrite(sck_, LOW);
+  }
+  return v;  // 0..4095
+}
+
+bool Touch::touched() {
+  if (irq_ >= 0) return digitalRead(irq_) == LOW;  // PENIRQ asserts low on press
+  return false;
+}
+
+// Average several X/Y conversions while pressed, discarding obvious outliers.
+bool Touch::readRaw(int16_t& rx, int16_t& ry) {
+  if (!touched()) return false;
+  long sx = 0, sy = 0;
+  int  n = 0;
+  digitalWrite(cs_, LOW);
+  for (int i = 0; i < 12 && touched(); i++) {
+    uint16_t x = readChan(CMD_X);
+    uint16_t y = readChan(CMD_Y);
+    if (x == 0 || x == 4095 || y == 0 || y == 4095) continue;  // rail = noise
+    sx += x; sy += y; n++;
+  }
+  digitalWrite(cs_, HIGH);
+  if (n < 3) return false;
+  rx = (int16_t)(sx / n);
+  ry = (int16_t)(sy / n);
+  return true;
 }
 
 bool Touch::loadCal() {
@@ -39,23 +87,21 @@ void Touch::saveCal() {
 
 bool Touch::readStableRaw(int16_t& rx, int16_t& ry, uint32_t timeoutMs) {
   uint32_t t0 = millis();
-  while (!ts_.touched()) {
+  while (!touched()) {
     if (millis() - t0 > timeoutMs) return false;
     delay(10);
   }
   long sx = 0, sy = 0;
   int  n = 0;
-  while (ts_.touched() && n < 64) {
-    TS_Point p = ts_.getPoint();
-    sx += p.x;
-    sy += p.y;
-    n++;
+  while (touched() && n < 64) {
+    int16_t x, y;
+    if (readRaw(x, y)) { sx += x; sy += y; n++; }
     delay(5);
   }
   if (n == 0) return false;
   rx = (int16_t)(sx / n);
   ry = (int16_t)(sy / n);
-  while (ts_.touched()) delay(10);  // wait for release
+  while (touched()) delay(10);  // wait for release
   return true;
 }
 
@@ -112,17 +158,17 @@ void Touch::calibrate(TFT_eSPI& tft) {
 }
 
 bool Touch::getScreen(TFT_eSPI& tft, int16_t& sx, int16_t& sy, int16_t& z) {
-  if (!ts_.touched()) return false;
-  TS_Point p = ts_.getPoint();  // native frame
-  z = p.z;
+  int16_t px, py;
+  if (!readRaw(px, py)) return false;
+  z = 1;  // pressed (bit-bang path uses PENIRQ for presence, not analog pressure)
 
   // Normalize raw -> native pixels (handles inverted axes via signed spans).
   float spanX = (float)(cal_.rawRight - cal_.rawLeft);
   float spanY = (float)(cal_.rawBottom - cal_.rawTop);
   if (spanX == 0) spanX = 1;
   if (spanY == 0) spanY = 1;
-  int nx = lroundf((p.x - cal_.rawLeft) / spanX * (TOUCH_NATIVE_W - 1));
-  int ny = lroundf((p.y - cal_.rawTop)  / spanY * (TOUCH_NATIVE_H - 1));
+  int nx = lroundf((px - cal_.rawLeft) / spanX * (TOUCH_NATIVE_W - 1));
+  int ny = lroundf((py - cal_.rawTop)  / spanY * (TOUCH_NATIVE_H - 1));
   nx = constrain(nx, 0, TOUCH_NATIVE_W - 1);
   ny = constrain(ny, 0, TOUCH_NATIVE_H - 1);
 

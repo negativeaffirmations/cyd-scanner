@@ -1,0 +1,8 @@
+{
+  // Resolve IntelliSense per-file from the merged compile database so BOTH boards'
+  // sources analyze against their own target (e.g. the C5's UART_CLK_SRC_XTAL, which
+  // doesn't exist on the classic-ESP32 CYD). Regenerate after adding/removing files:
+  //   pio run -t compiledb -e c5  &&  pio run -t compiledb -e cyd
+  // then merge both (the c5+cyd arrays) into compile_commands.json.
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/compile_commands.json"
+}

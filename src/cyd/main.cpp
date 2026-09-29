@@ -22,6 +22,7 @@
 #include "phone.h"
 #include "webshare.h"
 #include "sigdb.h"
+#include "touch.h"
 
 using namespace link_protocol;
 
@@ -54,8 +55,8 @@ static void initCommon() {
   pinMode(LED_G_PIN, OUTPUT);
   pinMode(LED_B_PIN, OUTPUT);
   setLed(false, false, false);
-  pinMode(TFT_BL_PIN, OUTPUT);
-  digitalWrite(TFT_BL_PIN, HIGH);
+  ledcAttach(TFT_BL_PIN, 5000, 8);   // backlight on PWM (8-bit) for brightness control
+  ledcWrite(TFT_BL_PIN, 255);        // full brightness until a saved level is applied
   tft.init();
   tft.setRotation(UI_ROTATION);
   LinkSerial.setRxBufferSize(2048);
@@ -128,17 +129,27 @@ sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 int                g_detCount = 0;
 bool               g_linkOk   = false;
 
+Touch    g_touch;
+bool     g_touchOk    = false;   // calibration loaded/valid -> touch selection enabled
+uint8_t  g_brightness = 100;     // backlight %, persisted in NVS
+
 // URL of the hosted control web app (GitHub Pages). Scan the QR to open it.
 static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner/webapp/";
 
-// --- On-device navigation (BOOT button is the only input; touch shares the SD
-// HSPI bus and is unused). A short tap moves through the menu; a long hold
-// selects, and a long hold from any screen returns to the menu. ---
-enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR };
+// --- On-device navigation. Two inputs: the BOOT button (always works) and the
+// touchscreen (once calibrated). A short tap of BOOT moves through the menu; a long
+// hold selects, and a long hold from any screen returns to the menu. With touch, tap
+// an item to select it directly. ---
+enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
-static const char* kMenuItems[] = { "Start Scan", "Connect to Phone" };
+static int    g_setSel  = 0;
+static const char* kMenuItems[] = { "Start Scan", "Connect to Phone", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
+static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
+
+// Shared menu-row geometry (used for drawing AND touch hit-testing).
+static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
 
 enum BtnEv { BTN_NONE, BTN_SHORT, BTN_LONG };
 static constexpr uint32_t LONG_PRESS_MS = 550;
@@ -160,6 +171,57 @@ static BtnEv buttonEvent() {
   }
   prevLow = low;
   return ev;
+}
+
+// Send a Ping and wait briefly for the C5's Pong — used to light the link dot on the
+// menu BEFORE any scan is started. Safe when idle: the C5 answers Ping immediately
+// (scanning is async and never blocks its link reader).
+static bool pingC5(uint32_t timeoutMs = 400) {
+  while (LinkSerial.available()) LinkSerial.read();
+  parser.reset();
+  sendFrame((uint8_t)Command::Ping, nullptr, 0);
+  uint32_t t0 = millis();
+  while (millis() - t0 < timeoutMs) {
+    while (LinkSerial.available())
+      if (parser.feed(LinkSerial.read()) && parser.type() == (uint8_t)Reply::Pong) return true;
+    delay(2);
+  }
+  return false;
+}
+
+// --- Backlight brightness: LEDC PWM on TFT_BL_PIN, persisted in NVS ---
+static void applyBrightness() {
+  ledcWrite(TFT_BL_PIN, map(g_brightness, 0, 100, 20, 255));  // floor so never fully dark
+}
+static void loadBrightness() {
+  Preferences p; p.begin("cydui", true);
+  g_brightness = p.getUChar("bright", 100);
+  p.end();
+  if (g_brightness < 10 || g_brightness > 100) g_brightness = 100;
+}
+static void saveBrightness() {
+  Preferences p; p.begin("cydui", false);
+  p.putUChar("bright", g_brightness);
+  p.end();
+}
+
+// Touch hit-test over the shared menu-row geometry. On a fresh touch-down edge,
+// returns the tapped row index (0..count-1), else -1. No-op until touch is calibrated.
+static int tappedRow(int count) {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return -1; }
+  bool now = g_touch.touched();
+  int  hit = -1;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z))
+      for (int i = 0; i < count; i++) {
+        int y = ROW_Y0 + i * ROW_STEP;
+        if (sx >= 6 && sx <= tft.width() - 6 && sy >= y - 5 && sy <= y - 5 + ROW_H) { hit = i; break; }
+      }
+  }
+  prev = now;
+  return hit;
 }
 
 SPIClass  sdSPI(HSPI);
@@ -548,16 +610,56 @@ static void drawMenu() {
   tft.drawString("MAIN MENU", 10, 32, 4);
   for (int i = 0; i < MENU_N; i++) {
     bool sel = (i == g_menuSel);
-    int  y   = 80 + i * 40;
-    if (sel) tft.fillRoundRect(6, y - 5, W - 12, 34, 6, TFT_NAVY);
-    else     tft.drawRoundRect(6, y - 5, W - 12, 34, 6, TFT_DARKGREY);
+    int  y   = ROW_Y0 + i * ROW_STEP;
+    if (sel) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
+    else     tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
     tft.setTextColor(sel ? TFT_WHITE : TFT_LIGHTGREY, sel ? TFT_NAVY : TFT_BLACK);
     tft.drawString(kMenuItems[i], 18, y, 4);
   }
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
-  tft.drawString("Tap: next item", 10, tft.height() - 34, 2);
-  tft.drawString("Hold: select", 10, tft.height() - 18, 2);
+  tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
+                           : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+}
+
+// Settings screen: Calibrate Touch / Brightness / Back.
+static void drawSettings() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  int W = tft.width();
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString("SETTINGS", 10, 32, 4);
+  char bright[24];
+  snprintf(bright, sizeof(bright), "Brightness: %d%%", g_brightness);
+  const char* items[SET_N] = { "Calibrate Touch", bright, "Back" };
+  for (int i = 0; i < SET_N; i++) {
+    bool sel = (i == g_setSel);
+    int  y   = ROW_Y0 + i * ROW_STEP;
+    if (sel) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
+    else     tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
+    tft.setTextColor(sel ? TFT_WHITE : TFT_LIGHTGREY, sel ? TFT_NAVY : TFT_BLACK);
+    tft.drawString(items[i], 18, y, 4);
+  }
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(g_touchOk ? "Touch OK - tap an item" : "Touch not calibrated yet",
+                 10, tft.height() - 18, 1);
+}
+
+// Act on a settings row (touch tap or long-press select).
+static void activateSettings(int sel) {
+  if (sel == 0) {                                  // Calibrate Touch
+    g_touch.calibrate(tft);
+    g_touchOk = g_touch.cal().valid;
+    drawSettings();
+  } else if (sel == 1) {                           // Brightness: cycle 25/50/75/100%
+    g_brightness = (g_brightness >= 100) ? 25 : (uint8_t)(g_brightness + 25);
+    applyBrightness();
+    saveBrightness();
+    drawSettings();
+  } else {                                         // Back
+    g_screen = SCR_MENU; g_menuSel = 0; drawMenu();
+  }
 }
 
 // One scan → score → log → render cycle, also mirrored to the phone app.
@@ -588,10 +690,11 @@ static void runDownload() {
   delay(2);
 }
 
-// Act on the highlighted menu item (long-press select).
+// Act on the highlighted menu item (touch tap or long-press select).
 static void activateMenu() {
   if (g_menuSel == 0)      g_screen = SCR_SCAN;                    // first cycle draws it
-  else if (g_menuSel == 1) { g_screen = SCR_APPQR; drawAppQrScreen(); }
+  else if (g_menuSel == 1) { g_screen = SCR_APPQR;    drawAppQrScreen(); }
+  else if (g_menuSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
 }
 
 void setup() {
@@ -599,10 +702,16 @@ void setup() {
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
   initCommon();
+  loadBrightness();
+  applyBrightness();
   initSD();
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
+  g_touch.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN);
+  g_touchOk = g_touch.loadCal();
   phone::begin(DEVICE_NAME);
-  Serial.println("[CYD] ready");
+  g_linkOk = pingC5();  // check the C5 link so the menu dot is correct before any scan
+  Serial.printf("[CYD] ready (link=%s, touch=%s, bright=%d%%)\n",
+                g_linkOk ? "up" : "down", g_touchOk ? "cal" : "uncal", g_brightness);
   drawMenu();      // start on the home menu
 }
 
@@ -618,15 +727,31 @@ void loop() {
   BtnEv ev = buttonEvent();
 
   switch (g_screen) {
-    case SCR_MENU:
+    case SCR_MENU: {
+      int t = tappedRow(MENU_N);
+      if (t >= 0)               { g_menuSel = t; activateMenu(); return; }  // touch select
       if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % MENU_N; drawMenu(); }
       else if (ev == BTN_LONG)  { activateMenu(); }
-      else {  // idle: refresh the status bar (clock/connection) now and then
-        static uint32_t lastDraw = 0;
-        if (millis() - lastDraw > 5000) { lastDraw = millis(); drawMenu(); }
+      else {  // idle: re-check the C5 link and refresh the status bar (dot + clock)
+        static uint32_t lastPing = 0;
+        if (millis() - lastPing > 2000) {
+          lastPing = millis();
+          g_linkOk = pingC5();
+          drawStatusBar();  // just the top bar — no full-screen flicker
+        }
       }
       delay(20);
       return;
+    }
+
+    case SCR_SETTINGS: {
+      int t = tappedRow(SET_N);
+      if (t >= 0)               { g_setSel = t; activateSettings(t); return; }  // touch select
+      if      (ev == BTN_SHORT) { g_setSel = (g_setSel + 1) % SET_N; drawSettings(); }
+      else if (ev == BTN_LONG)  { activateSettings(g_setSel); }
+      delay(20);
+      return;
+    }
 
     case SCR_APPQR:
       if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }  // any press: back
