@@ -60,6 +60,7 @@
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
   <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
   <button id="dlBtn" disabled>Download logs</button>
+  <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
 
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
@@ -73,7 +74,7 @@ const STAT = "9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const LOG  = "9a1e0005-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
 const enc = new TextEncoder();
-let chars = {}, device = null, gpsWatch = null, connected = false;
+let chars = {}, device = null, gpsWatch = null, connected = false, wifiOn = false;
 
 const $ = id => document.getElementById(id);
 function log(msg){ const el=$("log"); el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
@@ -105,7 +106,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["syncBtn","reloadBtn","dlBtn"].forEach(id=>$(id).disabled=false);
+    ["syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
     startGps();
@@ -114,8 +115,18 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["syncBtn","reloadBtn","dlBtn"].forEach(id=>$(id).disabled=true);
+  ["syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=true);
+  wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
+
+async function toggleWifi(){
+  wifiOn=!wifiOn;
+  try{ await chars.cmd.writeValue(enc.encode(wifiOn?"1":"0"));
+    $("wifiBtn").textContent = wifiOn ? "Stop Wi-Fi download" : "Wi-Fi download mode";
+    log(wifiOn ? "Wi-Fi download on — scan the QR on the device to join, then again to open."
+              : "Wi-Fi download off."); }
+  catch(e){ wifiOn=!wifiOn; log("Wi-Fi cmd failed: "+e.message); }
+}
 
 async function reloadDb(){
   try{ await chars.cmd.writeValue(enc.encode("R")); log("Requested signature-DB reload."); }
@@ -200,6 +211,7 @@ $("connectBtn").onclick = connect;
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
+$("wifiBtn").onclick = toggleWifi;
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");
 </script>
 </body>

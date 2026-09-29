@@ -435,16 +435,27 @@ static void drawDownloadScreen() {
   tft.fillScreen(TFT_BLACK);
   int W = tft.width();
   tft.setTextDatum(MC_DATUM);
+  bool joined = webshare::clientConnected();
+
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("LOG DOWNLOAD (Wi-Fi)", W / 2, 14, 2);
-  int ty = drawCenteredQr(webshare::wifiQr().c_str(), 40) + 12;
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Scan to join, then open", W / 2, ty, 2);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString(webshare::url(), W / 2, ty + 18, 2);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(String("SSID ") + webshare::ssid(), W / 2, ty + 36, 1);
-  tft.drawString(String("PW ") + webshare::password(), W / 2, ty + 48, 1);
+  tft.drawString(joined ? "OPEN DOWNLOAD" : "JOIN WI-FI", W / 2, 14, 2);
+
+  if (joined) {
+    // Phone is on the AP — QR now opens the download page directly.
+    int ty = drawCenteredQr(webshare::url(), 40) + 12;
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("Scan to open & download", W / 2, ty, 2);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString(webshare::url(), W / 2, ty + 18, 2);
+  } else {
+    // Not joined yet — QR joins the Wi-Fi network.
+    int ty = drawCenteredQr(webshare::wifiQr().c_str(), 40) + 12;
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("Scan to join Wi-Fi", W / 2, ty, 2);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString(String("SSID ") + webshare::ssid(), W / 2, ty + 18, 1);
+    tft.drawString(String("PW ") + webshare::password(), W / 2, ty + 30, 1);
+  }
 }
 
 // QR linking to the hosted web app, so the phone can open it by scanning.
@@ -489,7 +500,10 @@ void loop() {
 
   // Download mode: SoftAP + web server + QR on screen, no scanning meanwhile.
   if (phone::downloadRequested()) {
-    if (!webshare::active()) { webshare::start(); drawDownloadScreen(); }
+    static int lastJoined = -1;
+    if (!webshare::active()) { webshare::start(); lastJoined = -1; }
+    int joined = webshare::clientConnected() ? 1 : 0;
+    if (joined != lastJoined) { lastJoined = joined; drawDownloadScreen(); }  // swap QR
     webshare::handle();
     static uint32_t lastS = 0;
     if (millis() - lastS > 1000) { lastS = millis(); pushStatus(); }

@@ -11,6 +11,7 @@ namespace webshare {
 void        start();       // bring up SoftAP + web server
 void        stop();        // tear down
 bool        active();
+bool        clientConnected();  // true if a phone has joined the SoftAP
 void        handle();      // call frequently while active
 
 const char* ssid();

@@ -62,6 +62,7 @@ void stop() {
 }
 
 bool        active()   { return g_active; }
+bool        clientConnected() { return g_active && WiFi.softAPgetStationNum() > 0; }
 void        handle()   { if (g_active) g_server.handleClient(); }
 const char* ssid()     { return g_ssid; }
 const char* password() { return g_pw; }
