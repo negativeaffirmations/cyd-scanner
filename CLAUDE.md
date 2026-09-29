@@ -183,6 +183,28 @@ back (5 GHz included). Things that matter, learned the hard way:
   phone disconnects.
 - Needs `board_build.partitions = huge_app.csv` (BLE + Wi-Fi + web server + TFT).
 
+## Subagents (`.claude/agents/`)
+
+A specialized agent suite is available (adapted from the owner's other firmware project):
+- **orchestrator** — entry point for multi-step tasks; delegates to the others.
+- **architect** — design/planning, board-split + flash/RAM trade-offs (read-only).
+- **fixer** — implements C++ for CYD/C5 (read-write).
+- **tester** — runs `pio run -e cyd`/`-e c5`, reports build + flash/RAM.
+- **reviewer** — code quality, memory/concurrency, link-protocol correctness (read-only).
+- **security** — enforces passive-only scope, captured-data privacy, attack surface (read-only).
+- **hardware-docs** — datasheets/pinout images → pin tables & docs; keeps `pins.h` ↔ `PINOUT.md`.
+
+## Reading datasheets (PDF)
+
+The Read tool renders PDF pages via poppler (`pdftoppm`, installed). If Read reports
+`pdftoppm is not installed` (stale PATH after a fresh install — fixed by restarting the
+session), convert pages manually and Read the PNGs:
+```bash
+pdftoppm -png -r 150 -f <first> -l <last> "hardware/.../file.pdf" "<tmp>/pg"
+pdftotext -layout "hardware/.../file.pdf" -   # text-only extraction
+```
+Don't commit rendered pages. The `hardware-docs` agent handles this end to end.
+
 ## Conventions
 
 - Keep pin definitions centralized (a `pins.h` / config header per board), sourced
