@@ -299,11 +299,30 @@ static void wipeLogsIfNeeded() {
   p.end();
 }
 
+// Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
+// the firmware (e.g. after adding seed rules). This DISCARDS any on-card DB edits, so
+// only bump it when that's intended.
+static constexpr uint32_t DB_GEN = 1;  // 1: Phase-3 seed adds the Flock GATT bleuuid rule
+
+static void reseedDbIfNeeded() {
+  Preferences p;
+  p.begin("cydscan", false);
+  uint32_t gen = p.getULong("dbgen", 0);
+  if (gen != DB_GEN) {
+    if (SD.exists("/signatures.csv")) SD.remove("/signatures.csv");
+    p.putULong("dbgen", DB_GEN);
+    Serial.printf("[CYD] DB reseed (gen %lu -> %lu); signatures.csv rewritten from firmware\n",
+                  (unsigned long)gen, (unsigned long)DB_GEN);
+  }
+  p.end();
+}
+
 static void initSD() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   g_sdOk = SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
   wipeLogsIfNeeded();
+  reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
   if (!SD.exists(kLogPath)) {
     File f = SD.open(kLogPath, FILE_WRITE);
     if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature"); f.close(); }
