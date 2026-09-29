@@ -22,7 +22,7 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 2;       // v2: Detection gains flags + ie_hash
+static constexpr uint8_t  PROTOCOL_VERSION = 3;       // v3: Detection gains BLE companyId + svc UUID
 static constexpr uint16_t MAX_PAYLOAD      = 256;     // sanity cap for RX buffers
 
 // --- CYD -> C5 : commands ---------------------------------------------------
@@ -74,13 +74,15 @@ struct ScanConfig {
 
 // One detected device reported by the C5 (Reply::Detection payload).
 struct Detection {
-  uint8_t  source;    // Source
-  uint8_t  channel;   // Wi-Fi / 802.15.4 channel (0 if not applicable)
-  int8_t   rssi;      // signal strength, dBm
-  uint8_t  flags;     // DetFlags bitfield (0 if none)
-  uint8_t  mac[6];    // device MAC / BSSID (probe: client source address)
-  uint32_t ie_hash;   // 802.11 IE-order fingerprint (0 = none / not applicable)
-  char     name[32];  // SSID or BLE name, NUL-terminated (may be empty)
+  uint8_t  source;     // Source
+  uint8_t  channel;    // Wi-Fi / 802.15.4 channel (0 if not applicable)
+  int8_t   rssi;       // signal strength, dBm
+  uint8_t  flags;      // DetFlags bitfield (0 if none)
+  uint8_t  mac[6];     // device MAC / BSSID (probe: client source address)
+  uint32_t ie_hash;    // 802.11 IE-order fingerprint (Wi-Fi; 0 = none)
+  uint16_t companyId;  // BLE manufacturer company ID, host order (0 = none)
+  uint8_t  svc[16];    // BLE primary service UUID, 128-bit big-endian (all 0 = none)
+  char     name[32];   // SSID or BLE name, NUL-terminated (may be empty)
 };
 
 // Sequenced heartbeat for the link connection monitor (Reply::Heartbeat payload).

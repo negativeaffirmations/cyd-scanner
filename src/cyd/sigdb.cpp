@@ -9,6 +9,8 @@ namespace {
 constexpr int MAX_OUI   = 64;
 constexpr int MAX_STR   = 48;
 constexpr int MAX_IE    = 32;
+constexpr int MAX_UUID  = 24;
+constexpr int MAX_CID   = 24;
 constexpr int LABEL_LEN = 20;
 constexpr int PAT_LEN   = 24;
 constexpr int LINE_BUF  = 160;
@@ -18,14 +20,18 @@ const char* kTmpPath = "/signatures.tmp";  // used by phone push (atomic replace
 
 enum class StrKind : uint8_t { Exact, Prefix, Contains };
 
-struct OuiRule { uint8_t prefix[3]; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
-struct StrRule { StrKind kind; uint8_t weight; uint8_t srcMask; char pat[PAT_LEN]; char label[LABEL_LEN]; };
-struct IeRule  { uint32_t hash; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
+struct OuiRule  { uint8_t prefix[3]; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
+struct StrRule  { StrKind kind; uint8_t weight; uint8_t srcMask; char pat[PAT_LEN]; char label[LABEL_LEN]; };
+struct IeRule   { uint32_t hash; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
+struct UuidRule { uint8_t uuid[16]; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
+struct CidRule  { uint16_t cid; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
 
 OuiRule  g_oui[MAX_OUI];
 StrRule  g_str[MAX_STR];
 IeRule   g_ie[MAX_IE];
-int      g_ouiN = 0, g_strN = 0, g_ieN = 0;
+UuidRule g_uuid[MAX_UUID];
+CidRule  g_cid[MAX_CID];
+int      g_ouiN = 0, g_strN = 0, g_ieN = 0, g_uuidN = 0, g_cidN = 0;
 uint8_t  g_suspect = 40, g_likely = 70, g_confirmed = 100;
 bool     g_loaded = false;
 
@@ -38,6 +44,8 @@ const char* kSeedCsv =
     "# Expand OUIs from community sources (e.g. flock-you). Edit freely.\n"
     "# 'ie,<8-hex>,...' matches an 802.11 IE fingerprint (see the 'ie' column in\n"
     "# scanlog.csv). No Flock IE hashes are seeded yet — capture them in the field.\n"
+    "# 'bleuuid,<uuid>,...' matches a BLE service UUID (16-bit or full 128-bit);\n"
+    "# 'blecid,<hex>,...' matches a BLE manufacturer company ID (see the uuid/cid cols).\n"
     "thresholds,40,70,100\n"
     "oui,B4:1E:52,70,A,Flock IEEE\n"
     "oui,70:C9:4E,40,W,Flock (community)\n"
@@ -53,9 +61,45 @@ const char* kSeedCsv =
     "oui,B4:E6:2D,15,A,Espressif (shared)\n"
     "prefix,Flock,50,W,Flock SoftAP\n"
     "prefix,Penguin-,50,B,Flock Penguin\n"
-    "exact,FS Ext Battery,50,B,Flock Penguin batt\n";
+    "exact,FS Ext Battery,50,B,Flock Penguin batt\n"
+    "bleuuid,e8ccbb38-9532-46a8-9fe5-1814df172e6f,60,B,Flock GATT\n";
 
-void resetTables() { g_ouiN = 0; g_strN = 0; g_ieN = 0; g_suspect = 40; g_likely = 70; g_confirmed = 100; }
+void resetTables() {
+  g_ouiN = g_strN = g_ieN = g_uuidN = g_cidN = 0;
+  g_suspect = 40; g_likely = 70; g_confirmed = 100;
+}
+
+// Parse a service-UUID string into 16 canonical (big-endian) bytes. Accepts a full
+// 128-bit UUID (dashes optional) or a 16-bit short UUID, which expands to the
+// Bluetooth base UUID 0000xxxx-0000-1000-8000-00805f9b34fb.
+bool parseUuid(const char* s, uint8_t out[16]) {
+  char hex[33];
+  int  n = 0;
+  for (const char* p = s; *p && n < 32; ++p) {
+    if (*p == '-') continue;
+    if (!isxdigit((unsigned char)*p)) return false;
+    hex[n++] = *p;
+  }
+  hex[n] = 0;
+  static const uint8_t base[16] = {
+    0x00,0x00,0x00,0x00, 0x00,0x00,0x10,0x00,
+    0x80,0x00,0x00,0x80, 0x5F,0x9B,0x34,0xFB};
+  if (n == 4) {                       // 16-bit short UUID
+    uint16_t v = (uint16_t)strtoul(hex, nullptr, 16);
+    memcpy(out, base, 16);
+    out[2] = (uint8_t)(v >> 8);
+    out[3] = (uint8_t)(v & 0xFF);
+    return true;
+  }
+  if (n == 32) {                      // full 128-bit UUID
+    for (int i = 0; i < 16; i++) {
+      char b[3] = {hex[i * 2], hex[i * 2 + 1], 0};
+      out[i] = (uint8_t)strtoul(b, nullptr, 16);
+    }
+    return true;
+  }
+  return false;
+}
 
 void trim(char* s) {
   int n = strlen(s);
@@ -129,6 +173,30 @@ void parseLine(char* line) {
     return;
   }
 
+  if (strcmp(f[0], "bleuuid") == 0 && nf >= 5) {
+    if (g_uuidN >= MAX_UUID) return;  // cap: extra rules skipped
+    UuidRule& r = g_uuid[g_uuidN];
+    if (!parseUuid(f[1], r.uuid)) return;  // bad UUID -> skip
+    r.weight = (uint8_t)atoi(f[2]);
+    r.srcMask = srcMaskFromChar(f[3][0]);
+    strncpy(r.label, f[4], LABEL_LEN - 1); r.label[LABEL_LEN - 1] = 0;
+    g_uuidN++;
+    return;
+  }
+
+  if (strcmp(f[0], "blecid") == 0 && nf >= 5) {
+    if (g_cidN >= MAX_CID) return;  // cap: extra rules skipped
+    uint16_t cid = (uint16_t)strtoul(f[1], nullptr, 16);
+    if (cid == 0) return;  // 0 is the "no company ID" sentinel
+    CidRule& r = g_cid[g_cidN];
+    r.cid = cid;
+    r.weight = (uint8_t)atoi(f[2]);
+    r.srcMask = srcMaskFromChar(f[3][0]);
+    strncpy(r.label, f[4], LABEL_LEN - 1); r.label[LABEL_LEN - 1] = 0;
+    g_cidN++;
+    return;
+  }
+
   StrKind kind;
   if      (strcmp(f[0], "exact") == 0)    kind = StrKind::Exact;
   else if (strcmp(f[0], "prefix") == 0)   kind = StrKind::Prefix;
@@ -162,7 +230,7 @@ bool loadFrom(const char* path) {
   char line[LINE_BUF];
   while (readLine(f, line, LINE_BUF)) parseLine(line);
   f.close();
-  return (g_ouiN + g_strN + g_ieN) > 0;
+  return (g_ouiN + g_strN + g_ieN + g_uuidN + g_cidN) > 0;
 }
 
 void loadFallback() {
@@ -196,13 +264,15 @@ bool begin() {
 bool reload() {
   if (loadFrom(kDbPath)) {
     g_loaded = true;
-    Serial.printf("[sigdb] loaded %d OUI + %d name + %d IE rules from %s (thr %d/%d/%d)\n",
-                  g_ouiN, g_strN, g_ieN, kDbPath, g_suspect, g_likely, g_confirmed);
+    Serial.printf("[sigdb] loaded %d OUI + %d name + %d IE + %d bleuuid + %d blecid rules "
+                  "from %s (thr %d/%d/%d)\n",
+                  g_ouiN, g_strN, g_ieN, g_uuidN, g_cidN, kDbPath,
+                  g_suspect, g_likely, g_confirmed);
     return true;
   }
   loadFallback();
-  Serial.printf("[sigdb] using built-in fallback (%d OUI + %d name + %d IE rules)\n",
-                g_ouiN, g_strN, g_ieN);
+  Serial.printf("[sigdb] using built-in fallback (%d OUI + %d name + %d IE + %d bleuuid + %d blecid)\n",
+                g_ouiN, g_strN, g_ieN, g_uuidN, g_cidN);
   return false;
 }
 
@@ -246,7 +316,29 @@ void score(const Detection& d, ScoreResult& out) {
     }
   }
 
-  int total = ouiW + strW + ieW;
+  int uuidW = 0;
+  bool haveSvc = false;
+  for (int k = 0; k < 16; k++) if (d.svc[k]) { haveSvc = true; break; }
+  if (haveSvc) {
+    for (int i = 0; i < g_uuidN; i++) {
+      if (!(g_uuid[i].srcMask & srcBit)) continue;
+      if (memcmp(d.svc, g_uuid[i].uuid, 16) == 0 && g_uuid[i].weight > uuidW) {
+        uuidW = g_uuid[i].weight; out.bestUuid = (int8_t)i;
+      }
+    }
+  }
+
+  int cidW = 0;
+  if (d.companyId) {
+    for (int i = 0; i < g_cidN; i++) {
+      if (!(g_cid[i].srcMask & srcBit)) continue;
+      if (g_cid[i].cid == d.companyId && g_cid[i].weight > cidW) {
+        cidW = g_cid[i].weight; out.bestCid = (int8_t)i;
+      }
+    }
+  }
+
+  int total = ouiW + strW + ieW + uuidW + cidW;
   out.score = (uint8_t)(total > 255 ? 255 : total);
   out.tier = out.score >= g_confirmed ? Tier::Confirmed
            : out.score >= g_likely    ? Tier::Likely
@@ -255,12 +347,15 @@ void score(const Detection& d, ScoreResult& out) {
 }
 
 const char* labelFor(const ScoreResult& r) {
-  int ow = r.bestOui >= 0 ? g_oui[r.bestOui].weight : 0;
-  int sw = r.bestStr >= 0 ? g_str[r.bestStr].weight : 0;
-  int iw = r.bestIe  >= 0 ? g_ie[r.bestIe].weight   : 0;
-  if (ow == 0 && sw == 0 && iw == 0) return "";
-  if (iw >= ow && iw >= sw) return g_ie[r.bestIe].label;
-  return (ow >= sw) ? g_oui[r.bestOui].label : g_str[r.bestStr].label;
+  // Return the label of the single highest-weight matched layer.
+  int         best = 0;
+  const char* lbl  = "";
+  if (r.bestOui  >= 0 && g_oui[r.bestOui].weight   > best) { best = g_oui[r.bestOui].weight;   lbl = g_oui[r.bestOui].label; }
+  if (r.bestStr  >= 0 && g_str[r.bestStr].weight   > best) { best = g_str[r.bestStr].weight;   lbl = g_str[r.bestStr].label; }
+  if (r.bestIe   >= 0 && g_ie[r.bestIe].weight     > best) { best = g_ie[r.bestIe].weight;     lbl = g_ie[r.bestIe].label; }
+  if (r.bestUuid >= 0 && g_uuid[r.bestUuid].weight > best) { best = g_uuid[r.bestUuid].weight; lbl = g_uuid[r.bestUuid].label; }
+  if (r.bestCid  >= 0 && g_cid[r.bestCid].weight   > best) { best = g_cid[r.bestCid].weight;   lbl = g_cid[r.bestCid].label; }
+  return lbl;
 }
 
 const char* tierName(Tier t) {
@@ -273,6 +368,6 @@ const char* tierName(Tier t) {
 }
 
 bool     loaded()    { return g_loaded; }
-uint16_t ruleCount() { return (uint16_t)(g_ouiN + g_strN + g_ieN); }
+uint16_t ruleCount() { return (uint16_t)(g_ouiN + g_strN + g_ieN + g_uuidN + g_cidN); }
 
 }  // namespace sigdb

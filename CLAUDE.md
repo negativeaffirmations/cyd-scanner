@@ -162,9 +162,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI.
 - **SD logging (CYD).** First-seen devices (dedup by source+MAC for the session) are
   appended to `/scanlog.csv`:
-  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,name,score,tier,signature`.
+  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature`.
   `source` is `2.4`/`5G`/`BLE`/`PRB` (PRB = promiscuous probe request); `ie` is the
-  8-hex 802.11 IE fingerprint (`00000000` when not applicable, e.g. BLE).
+  8-hex 802.11 IE fingerprint (Wi-Fi); `cid` is the 4-hex BLE company ID and `uuid` the
+  BLE service UUID (both blank/`0000` when not applicable).
   `epoch` is LOCAL time once the phone has synced (it sends UTC + tz offset; 0 before);
   `lat`/`lon` fill once GPS is sent; `score`/`tier`/`signature` come from the signature DB.
   A one-time wipe (bump `LOG_GEN` in `main.cpp`) forces a fresh log after a schema change.
@@ -184,11 +185,12 @@ back (5 GHz included). Things that matter, learned the hard way:
 - The DB **self-seeds** to the card on first boot and is editable on the card or
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
 - Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,
-  and `ie,<8-hex-fingerprint>,<weight>,<srcmask>,<label>` (Phase 2 — matches the C5's
-  802.11 IE hash; no Flock hashes seeded yet, capture them in the field);
-  `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`: W/B/4/A (a probe-request
-  detection also matches W/A rules). Weights sum across the OUI + name + IE layers.
-  No on-device regex.
+  `ie,<8-hex-fingerprint>,…` (Phase 2 — matches the C5's 802.11 IE hash),
+  `bleuuid,<uuid>,…` (Phase 3 — matches a BLE service UUID, 16-bit or full 128-bit;
+  the Flock GATT UUID is seeded), and `blecid,<hex>,…` (Phase 3 — matches a BLE
+  manufacturer company ID); `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`:
+  W/B/4/A (a probe-request detection also matches W/A rules). Weights sum across the
+  OUI + name + IE + BLE-UUID + company-ID layers. No on-device regex.
 - Design + roadmap (Phases 2–6): [docs/signature-matching.md](docs/signature-matching.md).
 
 ### Display / UI (portrait)

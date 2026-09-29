@@ -89,11 +89,18 @@ static void mergeDetection(const Detection& d) {
   for (int i = 0; i < MAX_ENTRIES; i++) {
     if (!g_table[i].used) { if (freeIdx < 0) freeIdx = i; continue; }
     if (sameDev(g_table[i].d, d)) {
-      uint32_t keepIe = d.ie_hash ? d.ie_hash : g_table[i].d.ie_hash;  // don't lose a fingerprint
-      uint8_t  keepFl = d.flags | g_table[i].d.flags;                  // flags are sticky
+      // Don't lose identifying info a later, sparser advertisement might omit.
+      uint32_t keepIe  = d.ie_hash ? d.ie_hash : g_table[i].d.ie_hash;
+      uint8_t  keepFl  = d.flags | g_table[i].d.flags;                  // flags are sticky
+      uint16_t keepCid = d.companyId ? d.companyId : g_table[i].d.companyId;
+      bool     haveSvc = false;
+      for (int k = 0; k < 16; k++) if (d.svc[k]) { haveSvc = true; break; }
+      Detection prev = g_table[i].d;
       g_table[i].d = d;
-      g_table[i].d.ie_hash = keepIe;
-      g_table[i].d.flags   = keepFl;
+      g_table[i].d.ie_hash   = keepIe;
+      g_table[i].d.flags     = keepFl;
+      g_table[i].d.companyId = keepCid;
+      if (!haveSvc) memcpy(g_table[i].d.svc, prev.svc, 16);  // keep prior UUID
       g_table[i].lastSeen = millis();
       xSemaphoreGive(g_mux);
       return;
@@ -120,6 +127,19 @@ class ScanCB : public NimBLEScanCallbacks {
       for (int i = 0; i < 6; i++) d.mac[i] = (uint8_t)v[i];
     std::string nm = dev->getName();
     if (!nm.empty()) strncpy(d.name, nm.c_str(), sizeof(d.name) - 1);
+
+    // BLE manufacturer company ID (first 2 bytes of manufacturer data, LE).
+    std::string md = dev->getManufacturerData();
+    if (md.size() >= 2)
+      d.companyId = (uint16_t)((uint8_t)md[0] | ((uint8_t)md[1] << 8));
+
+    // Primary advertised service UUID, normalized to canonical big-endian 128-bit
+    // (NimBLE stores it little-endian; a 16-bit UUID expands to the Bluetooth base).
+    if (dev->getServiceUUIDCount() > 0) {
+      NimBLEUUID u = dev->getServiceUUID(0).to128();
+      const uint8_t* le = u.getValue();  // 16 bytes, little-endian
+      for (int i = 0; i < 16; i++) d.svc[i] = le[15 - i];
+    }
     mergeDetection(d);
   }
   void onScanEnd(const NimBLEScanResults&, int) override {

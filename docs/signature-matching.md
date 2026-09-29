@@ -126,6 +126,15 @@ yet. Then add promiscuous capture, BLE matching, 802.15.4, and spatial correlati
 > capture can catalogue real Flock fingerprints. **Not yet:** 5 GHz promiscuous hopping,
 > IE-content (HT/VHT/HE cap) enrichment beyond the OUI fold, and behavioral scoring of the
 > wildcard-probe flag — all straightforward follow-ons.
+>
+> **(4) BLE signature matching is now implemented** (Phase 3): the C5 extracts each BLE
+> device's **manufacturer company ID** and **primary service UUID** (normalized to
+> canonical 128-bit) into `Detection.companyId` / `svc[16]` (link protocol bumped to v3),
+> and the CYD scores them via new `bleuuid,<uuid>,…` (16- or 128-bit) and `blecid,<hex>,…`
+> DB rule layers, logging both (`cid`/`uuid` columns, log schema v4). The Flock GATT UUID
+> `e8ccbb38-9532-46a8-9fe5-1814df172e6f` is seeded. **Not yet:** matching *multiple*
+> advertised UUIDs per device (only the first is captured), and Raven's 0x3100–0x3500
+> service range (add specific `bleuuid` rules as they're confirmed in the field).
 
 ## 7. Supervised signature discovery (labeled captures → merge → offline correlation)
 

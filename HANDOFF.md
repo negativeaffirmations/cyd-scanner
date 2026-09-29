@@ -113,8 +113,12 @@ them via the supervised-capture workflow (Phase 6).
    via `ie,<hash>` DB rules, logged (`ie` column, log schema v3). **TODO:** 5 GHz
    promiscuous hopping, IE-content enrichment, behavioral scoring of the wildcard flag,
    and capturing real Flock IE hashes in the field to seed `ie,` rules.
-3. **Phase 3** — BLE service-UUID / company-ID matching (one deliberate `link_protocol`
-   version bump to carry the extra fields; rebuilds both boards).
+3. **Phase 3** — BLE service-UUID / company-ID matching: **DONE** — C5 extracts BLE
+   `companyId` + primary service `svc[16]` UUID (link protocol v3); CYD scores via
+   `bleuuid,<uuid>` / `blecid,<hex>` DB rules, logs `cid`/`uuid` (log schema v4); Flock
+   GATT UUID seeded. **TODO:** multiple UUIDs per device, Raven 0x3100–0x3500 rules.
+   NOTE: existing SD cards keep their old DB — delete `/signatures.csv` (re-seeds with the
+   new `bleuuid` rule) or add the line to adopt seeded rules.
 4. **Phase 4** — 802.15.4 presence/fingerprint (C5; a differentiator no other Flock tool has).
 5. **Phase 5** — spatial/temporal correlation ("seen at N GPS points", "following me").
 6. **Phase 6** — supervised capture sessions + phone notes/photos/map + merge (BLE control,

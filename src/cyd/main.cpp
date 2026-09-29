@@ -284,7 +284,7 @@ static void countTiers(int& susp, int& lk, int& conf) {
 }
 
 // Bump LOG_GEN to force a one-time wipe of the SD log on the next boot.
-static constexpr uint32_t LOG_GEN = 3;  // v3: added the 'ie' fingerprint column
+static constexpr uint32_t LOG_GEN = 4;  // v4: added BLE 'cid' + 'uuid' columns
 
 static void wipeLogsIfNeeded() {
   Preferences p;
@@ -306,7 +306,7 @@ static void initSD() {
   wipeLogsIfNeeded();
   if (!SD.exists(kLogPath)) {
     File f = SD.open(kLogPath, FILE_WRITE);
-    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,name,score,tier,signature"); f.close(); }
+    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature"); f.close(); }
   }
   Serial.printf("[CYD] SD ready - logging to %s\n", kLogPath);
 }
@@ -333,12 +333,15 @@ static int logNewDetections() {
     strncpy(sig, sigdb::labelFor(sc), sizeof(sig) - 1);
     sig[sizeof(sig) - 1] = 0;
     for (char* p = sig; *p; ++p) if (*p == ',' || *p == '\n' || *p == '\r') *p = ' ';
+    char uuidStr[33]; uuidStr[0] = 0;
+    for (int k = 0; k < 16; k++)
+      if (d.svc[k]) { for (int j = 0; j < 16; j++) sprintf(uuidStr + j * 2, "%02X", d.svc[j]); break; }
     f.printf("%lu,%lu,", (unsigned long)epoch, (unsigned long)ms);
     if (gps) f.printf("%.6f,%.6f,", phone::lat(), phone::lon());
     else     f.print(",,");
-    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%08lX,%s,%d,%s,%s\n", srcTag(d),
+    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%08lX,%04X,%s,%s,%d,%s,%s\n", srcTag(d),
              d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
-             d.rssi, d.channel, (unsigned long)d.ie_hash, safe,
+             d.rssi, d.channel, (unsigned long)d.ie_hash, d.companyId, uuidStr, safe,
              sc.score, sigdb::tierName(sc.tier), sig);
   }
   if (f) f.close();
