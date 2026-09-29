@@ -57,8 +57,7 @@
     <div class="card"><div class="k">Signature DB</div><div class="v" id="db">–</div></div>
   </div>
 
-  <button id="timeBtn" class="secondary" disabled>Sync time now</button>
-  <button id="gpsBtn" class="secondary" disabled>Send GPS now</button>
+  <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
   <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
   <button id="dlBtn" disabled>Download logs (Wi-Fi)</button>
   <button id="stopDlBtn" class="secondary" disabled>Stop download mode</button>
@@ -80,7 +79,7 @@ const CMD  = "9a1e0003-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const STAT = "9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
 const enc = new TextEncoder();
-let chars = {}, device = null, gpsWatch = null;
+let chars = {}, device = null, gpsWatch = null, connected = false;
 
 const $ = id => document.getElementById(id);
 function log(msg){ const el=$("log"); el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`; el.scrollTop=el.scrollHeight; }
@@ -107,15 +106,18 @@ async function connect(){
     await chars.stat.startNotifications();
     chars.stat.addEventListener("characteristicvaluechanged", onStatus);
     setConn("connected");
-    ["timeBtn","gpsBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=false);
+    connected = true;
+    $("connectBtn").style.display = "none";
+    ["syncBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
     startGps();
   }catch(e){ setConn("disconnected"); log("Connect failed: "+e.message); }
 }
 
-function onDisconnect(){ setConn("disconnected"); log("Disconnected.");
-  ["timeBtn","gpsBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=true);
+function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
+  $("connectBtn").style.display = "";
+  ["syncBtn","reloadBtn","dlBtn","stopDlBtn"].forEach(id=>$(id).disabled=true);
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
 async function reloadDb(){
@@ -161,6 +163,9 @@ function onStatus(ev){
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   if("time"in kv) $("timeState").textContent = kv.time==="1"?"yes":"no";
   if("gps" in kv) $("gpsState").textContent  = kv.gps==="1"?"yes":"no";
+  // Gray the sync button once both time and GPS are synced.
+  const bothSynced = ($("timeState").textContent==="yes" && $("gpsState").textContent==="yes");
+  $("syncBtn").disabled = !connected || bothSynced;
   if("susp"in kv) $("susp").textContent = kv.susp;
   if("lk"  in kv) $("lk").textContent   = kv.lk;
   if("conf"in kv){ $("conf").textContent = kv.conf;
@@ -169,8 +174,7 @@ function onStatus(ev){
 }
 
 $("connectBtn").onclick = connect;
-$("timeBtn").onclick = syncTime;
-$("gpsBtn").onclick = gpsOnce;
+$("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = ()=>setDownload(true);
 $("stopDlBtn").onclick = ()=>setDownload(false);

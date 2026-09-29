@@ -87,7 +87,12 @@ void begin(const char* devName) {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(SVC_UUID);       // service UUID in the adv packet (filterable)
   adv->setName(devName);
-  adv->enableScanResponse(true);       // name overflows to scan response; must be enabled
+  // The 128-bit service UUID fills the adv packet, so put the name in an explicit
+  // scan response so Chrome shows "CYD-Scanner" instead of "Unknown device".
+  NimBLEAdvertisementData scanResp;
+  scanResp.setName(devName);
+  adv->setScanResponseData(scanResp);
+  adv->enableScanResponse(true);
   adv->start();
   Serial.printf("[phone] BLE advertising as '%s'\n", devName);
 }
