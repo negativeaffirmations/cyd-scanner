@@ -9,3 +9,4 @@ compile_commands.json
 
 # Claude Code personal/local settings (may hold machine-specific paths)
 .claude/settings.local.json
+scanlogs
