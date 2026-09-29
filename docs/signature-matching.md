@@ -115,6 +115,18 @@ Begin with **(1) SD signature DB + (3) weighted confidence scoring** applied to 
 detection table we already stream from the C5 — high value, no promiscuous-mode rework
 yet. Then add promiscuous capture, BLE matching, 802.15.4, and spatial correlation.
 
+> **Status:** (1) + (3) shipped (Phase 1). **(2) promiscuous-mode Wi-Fi capture is now
+> implemented** (`src/c5/promisc.*`): the C5 time-slices the radio between the async AP
+> scan and a passive promiscuous window that hops 2.4 GHz 1/6/11, capturing client
+> **probe requests** (new `PRB` source, wildcard-probe flagged) and **beacon/probe-resp
+> 802.11 IE fingerprints**. The fingerprint is a 32-bit FNV-1a hash of the ordered IE
+> element-ID list (folding vendor-specific OUIs in) — compact, MAC-randomization-robust,
+> carried in `Detection.ie_hash` (link protocol bumped to v2). The CYD scores it via a
+> new `ie,<hash>,…` DB rule layer and logs the hash (`ie` column, log schema v3) so field
+> capture can catalogue real Flock fingerprints. **Not yet:** 5 GHz promiscuous hopping,
+> IE-content (HT/VHT/HE cap) enrichment beyond the OUI fold, and behavioral scoring of the
+> wildcard-probe flag — all straightforward follow-ons.
+
 ## 7. Supervised signature discovery (labeled captures → merge → offline correlation)
 
 The principled way to *derive* new signatures: capture near a KNOWN device, label it,

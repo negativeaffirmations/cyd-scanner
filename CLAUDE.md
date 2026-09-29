@@ -147,24 +147,31 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 ### Scanner architecture (current)
 
-- **C5 = continuous async scanner.** It runs Wi-Fi dual-band scans asynchronously
-  (`WiFi.scanNetworks(true)` polled from `loop()`, ~3 s gap between scans) and BLE
-  continuously (NimBLE callback), merging both into a shared **detection table**
-  (dedup by source+MAC, 30 s TTL, mutex-guarded because the BLE callback runs in a
-  separate task). Scanning never blocks the link.
+- **C5 = continuous async scanner.** It **time-slices the Wi-Fi radio** between two
+  phases (see `src/c5/promisc.*`): an async dual-band AP scan (`WiFi.scanNetworks(true)`,
+  2.4 + 5 GHz beacons) and a **passive promiscuous-mode capture window** (Phase 2) that
+  hops the 2.4 GHz probe hotspots 1/6/11 (~200 ms dwell, ~3 s window) to catch Wi-Fi
+  **client probe requests** + **beacon/probe-resp 802.11 IE fingerprints** — the client
+  behavior `scanNetworks()` can't see. BLE runs continuously (NimBLE callback) alongside.
+  All sources merge into a shared **detection table** (dedup by source+MAC, 30 s TTL,
+  mutex-guarded because the BLE + promiscuous callbacks run in separate tasks; a captured
+  IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
+  Promiscuous capture is **receive-only** — nothing is transmitted (passive scope).
 - **CYD = poller + UI + logger.** Every ~2 s it sends `StartScan`, the C5 instantly
   dumps its current table (fast, no blocking scan), and the CYD shows per-source
   counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI.
 - **SD logging (CYD).** First-seen devices (dedup by source+MAC for the session) are
   appended to `/scanlog.csv`:
-  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name,score,tier,signature`.
+  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,name,score,tier,signature`.
+  `source` is `2.4`/`5G`/`BLE`/`PRB` (PRB = promiscuous probe request); `ie` is the
+  8-hex 802.11 IE fingerprint (`00000000` when not applicable, e.g. BLE).
   `epoch` is LOCAL time once the phone has synced (it sends UTC + tz offset; 0 before);
   `lat`/`lon` fill once GPS is sent; `score`/`tier`/`signature` come from the signature DB.
   A one-time wipe (bump `LOG_GEN` in `main.cpp`) forces a fresh log after a schema change.
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
-  UI would need a software-SPI touch driver first. The physical BOOT button is used
-  instead (press to show the web-app QR).
+  UI would need a software-SPI touch driver first. The physical BOOT button drives a
+  simple on-device **main menu** instead (tap = next item, hold = select).
 
 ### Signature matching (Phase 1 — implemented)
 
@@ -176,17 +183,27 @@ back (5 GHz included). Things that matter, learned the hard way:
   false positives.
 - The DB **self-seeds** to the card on first boot and is editable on the card or
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
-- Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>` and `exact|prefix|contains,<pattern>,…`;
-  `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`: W/B/4/A. No on-device regex.
+- Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,
+  and `ie,<8-hex-fingerprint>,<weight>,<srcmask>,<label>` (Phase 2 — matches the C5's
+  802.11 IE hash; no Flock hashes seeded yet, capture them in the field);
+  `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`: W/B/4/A (a probe-request
+  detection also matches W/A rules). Weights sum across the OUI + name + IE layers.
+  No on-device regex.
 - Design + roadmap (Phases 2–6): [docs/signature-matching.md](docs/signature-matching.md).
 
 ### Display / UI (portrait)
 
 - Rotation `0` (portrait 240×320). Top **status bar**: local time (left), abbreviated
-  GPS (middle), connection icon (right: Bluetooth / Wi-Fi / circle-slash). Below it:
-  link/SD/db line, per-band counts, a threats line, then detection rows sorted
-  threat-tier-first then RSSI (tier colors: suspect=yellow, likely=orange, confirmed=red).
-- **BOOT button** toggles a full-screen QR that links to the hosted web app.
+  GPS (middle), phone connection icon (Bluetooth / Wi-Fi / circle-slash) with the
+  **CYD↔C5 link dot** to its right (solid green = link up, solid red = down). Below it:
+  SD/db line, per-band counts (2.4 / 5G / BLE / PRB / unique), a threats line, then
+  detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow,
+  likely=orange, confirmed=red).
+- **BOOT button = the only input** (touch is unused). It drives a **main menu**
+  (`SCR_MENU` → `SCR_SCAN` / `SCR_APPQR` state machine in `main.cpp`): a short **tap**
+  moves the highlight, a long **hold** selects, and a hold from any screen returns to the
+  menu. Items: **Start Scan** (the live scanner) and **Connect to Phone** (full-screen
+  web-app QR). Boots into the menu.
 
 ### Phone link + web app (Web Bluetooth) — working
 
@@ -195,8 +212,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download on/off · `"R"` reload DB · `"L"` BLE log download
-  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,uniq,time,gps,dl,susp,lk,conf,db`
+  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db` (`prb` = probe-request count)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
+  - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
+    scan cycle: a `D:<count>` header then `<count>` tab-separated rows
+    `tier\tsrc\trssi\tmac\tie\tname` (top-of-list first, capped at 12). The web app renders
+    it as a live, tier-colored table.
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app
@@ -204,8 +225,8 @@ back (5 GHz included). Things that matter, learned the hard way:
 - **Web app** `webapp/index.html` — hosted at
   **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). MUST be
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
-  (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers,
-  downloads the log, reloads the DB.
+  (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
+  a **live detection list** (mirrors the device screen), downloads the log, reloads the DB.
 - **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +

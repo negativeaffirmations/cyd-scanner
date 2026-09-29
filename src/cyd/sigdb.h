@@ -23,6 +23,7 @@ struct ScoreResult {
   Tier    tier  = Tier::None;
   int8_t  bestOui = -1;  // index into the OUI table, -1 = no match
   int8_t  bestStr = -1;  // index into the string table, -1 = no match
+  int8_t  bestIe  = -1;  // index into the IE-fingerprint table, -1 = no match
 };
 
 // Load /signatures.csv (writing the built-in seed first if the file is absent).

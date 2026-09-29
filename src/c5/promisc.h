@@ -1,0 +1,30 @@
+// promisc.h — passive promiscuous-mode Wi-Fi capture (Phase 2).
+//
+// Sniffs 802.11 MANAGEMENT frames the AP-only WiFi.scanNetworks() never sees:
+//   - probe REQUESTS  -> Wi-Fi clients (Flock cameras act as clients that
+//                        channel-hop 1/6/11 with wildcard SSIDs — a strong tell)
+//   - beacons / probe RESPONSES -> APs, enriched with an IE fingerprint
+// For each frame it computes an IE-order fingerprint hash (survives MAC
+// randomization) and hands a Detection to the registered sink.
+//
+// Strictly PASSIVE: receive-only. Nothing is transmitted or injected. The radio
+// is owned by main.cpp, which time-slices AP scanning and promiscuous capture;
+// this module only toggles promiscuous mode and hops channels on request.
+#pragma once
+
+#include <stdint.h>
+#include "link_protocol.h"
+
+namespace promisc {
+
+// Sink called (from the Wi-Fi task context) once per captured frame. Keep it
+// fast; main.cpp routes it into the shared, mutex-guarded detection table.
+using DetCb = void (*)(const link_protocol::Detection& d);
+
+void begin(DetCb cb);        // register the detection sink (call once, at boot)
+void enable();               // turn promiscuous mode on (management-frame filter)
+void disable();              // turn promiscuous mode off (before an AP scan)
+void setChannel(uint8_t ch); // park the radio on a channel while capturing
+bool active();               // true while promiscuous mode is on
+
+}  // namespace promisc

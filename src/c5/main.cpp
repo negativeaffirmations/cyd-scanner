@@ -14,6 +14,7 @@
 #include <NimBLEDevice.h>
 #include "pins.h"
 #include "link_protocol.h"
+#include "promisc.h"
 
 using namespace link_protocol;
 
@@ -88,7 +89,11 @@ static void mergeDetection(const Detection& d) {
   for (int i = 0; i < MAX_ENTRIES; i++) {
     if (!g_table[i].used) { if (freeIdx < 0) freeIdx = i; continue; }
     if (sameDev(g_table[i].d, d)) {
+      uint32_t keepIe = d.ie_hash ? d.ie_hash : g_table[i].d.ie_hash;  // don't lose a fingerprint
+      uint8_t  keepFl = d.flags | g_table[i].d.flags;                  // flags are sticky
       g_table[i].d = d;
+      g_table[i].d.ie_hash = keepIe;
+      g_table[i].d.flags   = keepFl;
       g_table[i].lastSeen = millis();
       xSemaphoreGive(g_mux);
       return;
@@ -123,41 +128,87 @@ class ScanCB : public NimBLEScanCallbacks {
 };
 static ScanCB g_scanCB;
 
-// --- WiFi: async scan state machine, polled from loop() ---
-static bool     g_wifiScanning = false;
-static uint32_t g_lastWifiDone = 0;
+// --- WiFi: two-phase capture, polled from loop() ---
+//
+// The radio can't do an all-channel WiFi.scanNetworks() and a fixed-channel
+// promiscuous capture at once, so we time-slice:
+//   PH_SCAN    — async dual-band AP scan (2.4 + 5 GHz beacons via scanNetworks)
+//   PH_PROMISC — passive promiscuous capture, hopping the 2.4 GHz probe hotspots
+//                (1/6/11) to catch client probe requests + IE fingerprints.
+// BLE runs continuously throughout (separate controller, coexistence-managed).
+enum WifiPhase { PH_SCAN, PH_PROMISC };
+static WifiPhase g_phase        = PH_SCAN;
+static bool      g_wifiScanning = false;
+static uint32_t  g_lastWifiDone = 0;
+
+// Channels Flock-class cameras channel-hop across as clients (~125 ms dwell).
+static const uint8_t   kHopChans[]      = {1, 6, 11};
+static constexpr int   NUM_HOPS         = sizeof(kHopChans) / sizeof(kHopChans[0]);
+static constexpr uint32_t PROMISC_MS    = 3000;  // length of a capture window
+static constexpr uint32_t HOP_DWELL_MS  = 200;   // per-channel dwell while capturing
+static uint32_t g_promStart = 0, g_lastHop = 0;
+static int      g_hopIdx    = 0;
+
+// Promiscuous sink (Wi-Fi task context): just fold each frame into the table.
+static void onPromisc(const Detection& d) { mergeDetection(d); }
+
+static void enterPromisc() {
+  g_phase     = PH_PROMISC;
+  g_hopIdx    = 0;
+  g_promStart = millis();
+  g_lastHop   = g_promStart;
+  promisc::enable();
+  promisc::setChannel(kHopChans[0]);
+}
 
 static void wifiTick() {
-  if (!g_wifiScanning) {
-    if (millis() - g_lastWifiDone < WIFI_GAP_MS) return;
-    WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);  // 2.4 + 5 GHz
-    g_wifiScanning = true;
+  if (g_phase == PH_SCAN) {
+    if (!g_wifiScanning) {
+      if (millis() - g_lastWifiDone < WIFI_GAP_MS) return;
+      WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);  // 2.4 + 5 GHz
+      g_wifiScanning = true;
+      return;
+    }
+    int n = WiFi.scanComplete();
+    if (n >= 0) {
+      for (int i = 0; i < n; i++) {
+        Detection d{};
+        d.source  = (uint8_t)Source::WifiScan;
+        d.channel = (uint8_t)WiFi.channel(i);
+        d.rssi    = (int8_t)WiFi.RSSI(i);
+        memcpy(d.mac, WiFi.BSSID(i), 6);
+        strncpy(d.name, WiFi.SSID(i).c_str(), sizeof(d.name) - 1);
+        mergeDetection(d);
+      }
+      WiFi.scanDelete();
+      g_wifiScanning = false;
+      enterPromisc();                 // hand the radio to promiscuous capture
+    } else if (n == WIFI_SCAN_FAILED) {
+      g_wifiScanning = false;
+      enterPromisc();
+    }
     return;
   }
-  int n = WiFi.scanComplete();
-  if (n >= 0) {
-    for (int i = 0; i < n; i++) {
-      Detection d{};
-      d.source  = (uint8_t)Source::WifiScan;
-      d.channel = (uint8_t)WiFi.channel(i);
-      d.rssi    = (int8_t)WiFi.RSSI(i);
-      memcpy(d.mac, WiFi.BSSID(i), 6);
-      strncpy(d.name, WiFi.SSID(i).c_str(), sizeof(d.name) - 1);
-      mergeDetection(d);
-    }
-    WiFi.scanDelete();
-    g_wifiScanning = false;
-    g_lastWifiDone = millis();
-  } else if (n == WIFI_SCAN_FAILED) {
-    g_wifiScanning = false;
-    g_lastWifiDone = millis();
+
+  // PH_PROMISC: hop channels for the capture window, then return to scanning.
+  uint32_t now = millis();
+  if (now - g_promStart >= PROMISC_MS) {
+    promisc::disable();
+    g_phase        = PH_SCAN;
+    g_lastWifiDone = now;             // honor WIFI_GAP_MS before the next scan
+    return;
+  }
+  if (now - g_lastHop >= HOP_DWELL_MS) {
+    g_lastHop = now;
+    g_hopIdx  = (g_hopIdx + 1) % NUM_HOPS;
+    promisc::setChannel(kHopChans[g_hopIdx]);
   }
 }
 
 static void sendStatus(uint8_t scanning, uint16_t total) {
   Status st{};
   st.scanning       = scanning;
-  st.active_sources = MASK_WIFI | MASK_BLE;
+  st.active_sources = MASK_WIFI | MASK_BLE | MASK_PROBE;
   st.seen_total     = total;
   st.uptime_ms      = millis();
   sendFrame((uint8_t)Reply::Status, &st, sizeof(st));
@@ -199,12 +250,13 @@ static void handleFrame(uint8_t type, const uint8_t*, uint16_t) {
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("\n[C5] boot: async scanner (Wi-Fi dual-band + BLE)");
+  Serial.println("\n[C5] boot: async scanner (Wi-Fi dual-band scan + promiscuous probe/beacon + BLE)");
 
   g_mux = xSemaphoreCreateMutex();
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  promisc::begin(&onPromisc);  // promiscuous capture feeds the same table
 
   NimBLEDevice::init("");
   NimBLEScan* scan = NimBLEDevice::getScan();

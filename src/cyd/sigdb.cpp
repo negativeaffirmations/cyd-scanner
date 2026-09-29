@@ -8,6 +8,7 @@ namespace {
 
 constexpr int MAX_OUI   = 64;
 constexpr int MAX_STR   = 48;
+constexpr int MAX_IE    = 32;
 constexpr int LABEL_LEN = 20;
 constexpr int PAT_LEN   = 24;
 constexpr int LINE_BUF  = 160;
@@ -19,10 +20,12 @@ enum class StrKind : uint8_t { Exact, Prefix, Contains };
 
 struct OuiRule { uint8_t prefix[3]; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
 struct StrRule { StrKind kind; uint8_t weight; uint8_t srcMask; char pat[PAT_LEN]; char label[LABEL_LEN]; };
+struct IeRule  { uint32_t hash; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
 
 OuiRule  g_oui[MAX_OUI];
 StrRule  g_str[MAX_STR];
-int      g_ouiN = 0, g_strN = 0;
+IeRule   g_ie[MAX_IE];
+int      g_ouiN = 0, g_strN = 0, g_ieN = 0;
 uint8_t  g_suspect = 40, g_likely = 70, g_confirmed = 100;
 bool     g_loaded = false;
 
@@ -33,6 +36,8 @@ bool     g_loaded = false;
 const char* kSeedCsv =
     "# cyd-scanner signature DB. kind,pattern,weight,srcmask,label\n"
     "# Expand OUIs from community sources (e.g. flock-you). Edit freely.\n"
+    "# 'ie,<8-hex>,...' matches an 802.11 IE fingerprint (see the 'ie' column in\n"
+    "# scanlog.csv). No Flock IE hashes are seeded yet — capture them in the field.\n"
     "thresholds,40,70,100\n"
     "oui,B4:1E:52,70,A,Flock IEEE\n"
     "oui,70:C9:4E,40,W,Flock (community)\n"
@@ -50,7 +55,7 @@ const char* kSeedCsv =
     "prefix,Penguin-,50,B,Flock Penguin\n"
     "exact,FS Ext Battery,50,B,Flock Penguin batt\n";
 
-void resetTables() { g_ouiN = 0; g_strN = 0; g_suspect = 40; g_likely = 70; g_confirmed = 100; }
+void resetTables() { g_ouiN = 0; g_strN = 0; g_ieN = 0; g_suspect = 40; g_likely = 70; g_confirmed = 100; }
 
 void trim(char* s) {
   int n = strlen(s);
@@ -111,6 +116,19 @@ void parseLine(char* line) {
     return;
   }
 
+  if (strcmp(f[0], "ie") == 0 && nf >= 5) {
+    if (g_ieN >= MAX_IE) return;  // cap: extra rules skipped
+    uint32_t hash = (uint32_t)strtoul(f[1], nullptr, 16);
+    if (hash == 0) return;        // 0 is the "no fingerprint" sentinel
+    IeRule& r = g_ie[g_ieN];
+    r.hash = hash;
+    r.weight = (uint8_t)atoi(f[2]);
+    r.srcMask = srcMaskFromChar(f[3][0]);
+    strncpy(r.label, f[4], LABEL_LEN - 1); r.label[LABEL_LEN - 1] = 0;
+    g_ieN++;
+    return;
+  }
+
   StrKind kind;
   if      (strcmp(f[0], "exact") == 0)    kind = StrKind::Exact;
   else if (strcmp(f[0], "prefix") == 0)   kind = StrKind::Prefix;
@@ -144,7 +162,7 @@ bool loadFrom(const char* path) {
   char line[LINE_BUF];
   while (readLine(f, line, LINE_BUF)) parseLine(line);
   f.close();
-  return (g_ouiN + g_strN) > 0;
+  return (g_ouiN + g_strN + g_ieN) > 0;
 }
 
 void loadFallback() {
@@ -178,18 +196,23 @@ bool begin() {
 bool reload() {
   if (loadFrom(kDbPath)) {
     g_loaded = true;
-    Serial.printf("[sigdb] loaded %d OUI + %d name rules from %s (thr %d/%d/%d)\n",
-                  g_ouiN, g_strN, kDbPath, g_suspect, g_likely, g_confirmed);
+    Serial.printf("[sigdb] loaded %d OUI + %d name + %d IE rules from %s (thr %d/%d/%d)\n",
+                  g_ouiN, g_strN, g_ieN, kDbPath, g_suspect, g_likely, g_confirmed);
     return true;
   }
   loadFallback();
-  Serial.printf("[sigdb] using built-in fallback (%d OUI + %d name rules)\n", g_ouiN, g_strN);
+  Serial.printf("[sigdb] using built-in fallback (%d OUI + %d name + %d IE rules)\n",
+                g_ouiN, g_strN, g_ieN);
   return false;
 }
 
 void score(const Detection& d, ScoreResult& out) {
   out = ScoreResult{};
   uint8_t srcBit = (uint8_t)(1u << d.source);
+  // A promiscuous probe request is still a Wi-Fi frame: let W/A OUI, name and IE
+  // rules match its client MAC and fingerprint (its own MASK_PROBE bit lets a rule
+  // target probes specifically if it ever wants to).
+  if (d.source == (uint8_t)Source::WifiProbe) srcBit |= MASK_WIFI;
 
   int ouiW = 0;
   for (int i = 0; i < g_ouiN; i++) {
@@ -213,7 +236,17 @@ void score(const Detection& d, ScoreResult& out) {
     }
   }
 
-  int total = ouiW + strW;
+  int ieW = 0;
+  if (d.ie_hash) {
+    for (int i = 0; i < g_ieN; i++) {
+      if (!(g_ie[i].srcMask & srcBit)) continue;
+      if (g_ie[i].hash == d.ie_hash && g_ie[i].weight > ieW) {
+        ieW = g_ie[i].weight; out.bestIe = (int8_t)i;
+      }
+    }
+  }
+
+  int total = ouiW + strW + ieW;
   out.score = (uint8_t)(total > 255 ? 255 : total);
   out.tier = out.score >= g_confirmed ? Tier::Confirmed
            : out.score >= g_likely    ? Tier::Likely
@@ -224,7 +257,9 @@ void score(const Detection& d, ScoreResult& out) {
 const char* labelFor(const ScoreResult& r) {
   int ow = r.bestOui >= 0 ? g_oui[r.bestOui].weight : 0;
   int sw = r.bestStr >= 0 ? g_str[r.bestStr].weight : 0;
-  if (ow == 0 && sw == 0) return "";
+  int iw = r.bestIe  >= 0 ? g_ie[r.bestIe].weight   : 0;
+  if (ow == 0 && sw == 0 && iw == 0) return "";
+  if (iw >= ow && iw >= sw) return g_ie[r.bestIe].label;
   return (ow >= sw) ? g_oui[r.bestOui].label : g_str[r.bestStr].label;
 }
 
@@ -238,6 +273,6 @@ const char* tierName(Tier t) {
 }
 
 bool     loaded()    { return g_loaded; }
-uint16_t ruleCount() { return (uint16_t)(g_ouiN + g_strN); }
+uint16_t ruleCount() { return (uint16_t)(g_ouiN + g_strN + g_ieN); }
 
 }  // namespace sigdb

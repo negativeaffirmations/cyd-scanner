@@ -22,7 +22,7 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 1;
+static constexpr uint8_t  PROTOCOL_VERSION = 2;       // v2: Detection gains flags + ie_hash
 static constexpr uint16_t MAX_PAYLOAD      = 256;     // sanity cap for RX buffers
 
 // --- CYD -> C5 : commands ---------------------------------------------------
@@ -44,9 +44,10 @@ enum class Reply : uint8_t {
 
 // Which radio/band a detection came from.
 enum class Source : uint8_t {
-  WifiScan   = 0,
+  WifiScan   = 0,   // AP/beacon from WiFi.scanNetworks() OR a promiscuous beacon
   BleScan    = 1,
   Ieee802154 = 2,   // Zigbee / Thread
+  WifiProbe  = 3,   // Wi-Fi CLIENT probe request captured in promiscuous mode
 };
 
 // Bitmask values for ScanConfig.sources (1 << Source).
@@ -54,7 +55,13 @@ enum SourceMask : uint8_t {
   MASK_WIFI     = 1 << 0,
   MASK_BLE      = 1 << 1,
   MASK_154      = 1 << 2,
+  MASK_PROBE    = 1 << 3,  // promiscuous Wi-Fi probe-request capture
   MASK_ALL      = MASK_WIFI | MASK_BLE | MASK_154,
+};
+
+// Per-detection behavioral flags (Detection.flags bitfield).
+enum DetFlags : uint8_t {
+  FLAG_WILDCARD_PROBE = 1 << 0,  // probe request with a zero-length (broadcast) SSID
 };
 
 #pragma pack(push, 1)
@@ -67,11 +74,13 @@ struct ScanConfig {
 
 // One detected device reported by the C5 (Reply::Detection payload).
 struct Detection {
-  uint8_t source;    // Source
-  uint8_t channel;   // Wi-Fi / 802.15.4 channel (0 if not applicable)
-  int8_t  rssi;      // signal strength, dBm
-  uint8_t mac[6];    // device MAC / BSSID
-  char    name[32];  // SSID or BLE name, NUL-terminated (may be empty)
+  uint8_t  source;    // Source
+  uint8_t  channel;   // Wi-Fi / 802.15.4 channel (0 if not applicable)
+  int8_t   rssi;      // signal strength, dBm
+  uint8_t  flags;     // DetFlags bitfield (0 if none)
+  uint8_t  mac[6];    // device MAC / BSSID (probe: client source address)
+  uint32_t ie_hash;   // 802.11 IE-order fingerprint (0 = none / not applicable)
+  char     name[32];  // SSID or BLE name, NUL-terminated (may be empty)
 };
 
 // Sequenced heartbeat for the link connection monitor (Reply::Heartbeat payload).

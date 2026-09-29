@@ -11,9 +11,11 @@ const char* GPS_UUID    = "9a1e0002-2b7e-4c1a-9b00-1a2b3c4d5e6f";  // write: "la
 const char* CMD_UUID    = "9a1e0003-2b7e-4c1a-9b00-1a2b3c4d5e6f";  // write: "1"/"0"/"R"/"L"
 const char* STATUS_UUID = "9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";  // read/notify
 const char* LOGDATA_UUID= "9a1e0005-2b7e-4c1a-9b00-1a2b3c4d5e6f";  // notify: log chunks
+const char* DETS_UUID   = "9a1e0006-2b7e-4c1a-9b00-1a2b3c4d5e6f";  // notify: live detections
 
 NimBLECharacteristic* g_status  = nullptr;
 NimBLECharacteristic* g_logData = nullptr;
+NimBLECharacteristic* g_dets    = nullptr;
 bool     g_connected  = false;
 uint32_t g_epochBase  = 0;   // epoch secs at g_baseMillis
 uint32_t g_baseMillis = 0;
@@ -94,6 +96,7 @@ void begin(const char* devName) {
   g_status = svc->createCharacteristic(
       STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   g_logData = svc->createCharacteristic(LOGDATA_UUID, NIMBLE_PROPERTY::NOTIFY);
+  g_dets    = svc->createCharacteristic(DETS_UUID, NIMBLE_PROPERTY::NOTIFY);
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
@@ -129,6 +132,12 @@ void logNotify(const uint8_t* data, size_t len) {
   if (!g_logData || !g_connected) return;
   g_logData->setValue(data, len);
   g_logData->notify();
+}
+
+void detsNotify(const String& line) {
+  if (!g_dets || !g_connected) return;
+  g_dets->setValue((uint8_t*)line.c_str(), line.length());
+  g_dets->notify();
 }
 
 }  // namespace phone

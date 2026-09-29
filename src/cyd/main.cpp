@@ -63,7 +63,8 @@ static void initCommon() {
 }
 
 static const char* srcTag(const Detection& d) {
-  if (d.source == (uint8_t)Source::BleScan) return "BLE";
+  if (d.source == (uint8_t)Source::BleScan)   return "BLE";
+  if (d.source == (uint8_t)Source::WifiProbe) return "PRB";  // Wi-Fi client probe
   return d.channel > 14 ? "5G" : "2.4";
 }
 
@@ -126,18 +127,39 @@ Detection          g_dets[MAX_DET];
 sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 int                g_detCount = 0;
 bool               g_linkOk   = false;
-bool               g_showAppQr = false;  // BOOT button shows the webapp QR
 
 // URL of the hosted control web app (GitHub Pages). Scan the QR to open it.
 static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner/webapp/";
 
-// Rising-to-pressed edge detector for the BOOT button (active low).
-static bool bootEdge() {
-  static bool prevLow = false;
-  bool low = (digitalRead(0) == LOW);
-  bool edge = low && !prevLow;
+// --- On-device navigation (BOOT button is the only input; touch shares the SD
+// HSPI bus and is unused). A short tap moves through the menu; a long hold
+// selects, and a long hold from any screen returns to the menu. ---
+enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR };
+static Screen g_screen  = SCR_MENU;
+static int    g_menuSel = 0;
+static const char* kMenuItems[] = { "Start Scan", "Connect to Phone" };
+static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
+
+enum BtnEv { BTN_NONE, BTN_SHORT, BTN_LONG };
+static constexpr uint32_t LONG_PRESS_MS = 550;
+
+// Poll the BOOT button (GPIO0, active low). Returns a SHORT event on a quick
+// tap-release, and a LONG event once the hold passes the threshold (while still
+// held, so it feels responsive). Call frequently.
+static BtnEv buttonEvent() {
+  static bool     prevLow   = false;
+  static uint32_t downAt    = 0;
+  static bool     longFired = false;
+  bool  low = (digitalRead(0) == LOW);
+  BtnEv ev  = BTN_NONE;
+  if (low && !prevLow) { downAt = millis(); longFired = false; }        // pressed
+  else if (low && !longFired && millis() - downAt >= LONG_PRESS_MS) {   // held long
+    ev = BTN_LONG; longFired = true;
+  } else if (!low && prevLow && !longFired && millis() - downAt < LONG_PRESS_MS) {
+    ev = BTN_SHORT;                                                     // quick release
+  }
   prevLow = low;
-  return edge;
+  return ev;
 }
 
 SPIClass  sdSPI(HSPI);
@@ -160,17 +182,31 @@ static void seenAdd(const Detection& d) {
   g_seenCount++;
 }
 
-static void countBands(int& n24, int& n5, int& nble) {
-  n24 = n5 = nble = 0;
+static void countBands(int& n24, int& n5, int& nble, int& nprb) {
+  n24 = n5 = nble = nprb = 0;
   for (int i = 0; i < g_detCount; i++) {
-    if (g_dets[i].source == (uint8_t)Source::BleScan) nble++;
-    else (g_dets[i].channel > 14 ? n5 : n24)++;
+    switch (g_dets[i].source) {
+      case (uint8_t)Source::BleScan:   nble++; break;
+      case (uint8_t)Source::WifiProbe: nprb++; break;
+      default: (g_dets[i].channel > 14 ? n5 : n24)++; break;
+    }
   }
 }
 
 // Score every current detection against the signature DB (aligned into g_score[]).
 static void computeScores() {
   for (int i = 0; i < g_detCount; i++) sigdb::score(g_dets[i], g_score[i]);
+}
+
+// Fill idx[0..g_detCount) with detection indices sorted threat-tier-first then
+// RSSI — the order shown on screen and streamed to the phone. Returns the count.
+static int buildSorted(int* idx) {
+  for (int i = 0; i < g_detCount; i++) idx[i] = i;
+  std::sort(idx, idx + g_detCount, [](int a, int b) {
+    if (g_score[a].tier != g_score[b].tier) return g_score[a].tier > g_score[b].tier;
+    return g_dets[a].rssi > g_dets[b].rssi;
+  });
+  return g_detCount;
 }
 
 static void countTiers(int& susp, int& lk, int& conf) {
@@ -186,7 +222,7 @@ static void countTiers(int& susp, int& lk, int& conf) {
 }
 
 // Bump LOG_GEN to force a one-time wipe of the SD log on the next boot.
-static constexpr uint32_t LOG_GEN = 2;
+static constexpr uint32_t LOG_GEN = 3;  // v3: added the 'ie' fingerprint column
 
 static void wipeLogsIfNeeded() {
   Preferences p;
@@ -208,7 +244,7 @@ static void initSD() {
   wipeLogsIfNeeded();
   if (!SD.exists(kLogPath)) {
     File f = SD.open(kLogPath, FILE_WRITE);
-    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,name,score,tier,signature"); f.close(); }
+    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,name,score,tier,signature"); f.close(); }
   }
   Serial.printf("[CYD] SD ready - logging to %s\n", kLogPath);
 }
@@ -238,9 +274,10 @@ static int logNewDetections() {
     f.printf("%lu,%lu,", (unsigned long)epoch, (unsigned long)ms);
     if (gps) f.printf("%.6f,%.6f,", phone::lat(), phone::lon());
     else     f.print(",,");
-    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%s,%d,%s,%s\n", srcTag(d),
+    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%08lX,%s,%d,%s,%s\n", srcTag(d),
              d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
-             d.rssi, d.channel, safe, sc.score, sigdb::tierName(sc.tier), sig);
+             d.rssi, d.channel, (unsigned long)d.ie_hash, safe,
+             sc.score, sigdb::tierName(sc.tier), sig);
   }
   if (f) f.close();
   return n;
@@ -280,7 +317,7 @@ static void requestScan(uint32_t timeoutMs = 5000) {
   while (LinkSerial.available()) LinkSerial.read();
   parser.reset();
   ScanConfig cfg{};
-  cfg.sources  = MASK_WIFI | MASK_BLE;
+  cfg.sources  = MASK_WIFI | MASK_BLE | MASK_PROBE;
   cfg.dwell_ms = 0;
   sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
   uint32_t t0 = millis();
@@ -302,16 +339,46 @@ static void requestScan(uint32_t timeoutMs = 5000) {
 }
 
 static void pushStatus() {
-  int n24, n5, nble; countBands(n24, n5, nble);
+  int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  char s[176];
+  char s[192];
   snprintf(s, sizeof(s),
-           "link=%d;w24=%d;w5=%d;ble=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
+           "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d",
-           g_linkOk ? 1 : 0, n24, n5, nble, g_seenCount,
+           g_linkOk ? 1 : 0, n24, n5, nble, nprb, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0);
   phone::setStatus(String(s));
+}
+
+// Stream the live detection list to the phone so its app mirrors the CYD screen:
+// a "D:<count>" header then one row per device (top-of-list first). Tab-separated
+// so the app can split cleanly; the name is last and stripped of tabs. Capped so
+// the burst stays small on the BLE link.
+static constexpr int DETS_STREAM_MAX = 12;
+static void pushDetections() {
+  if (!phone::connected()) return;
+  static int idx[MAX_DET];
+  buildSorted(idx);
+  int n = min(g_detCount, DETS_STREAM_MAX);
+  char hdr[16];
+  snprintf(hdr, sizeof(hdr), "D:%d", n);
+  phone::detsNotify(String(hdr));
+  for (int r = 0; r < n; r++) {
+    int i = idx[r];
+    const Detection& d = g_dets[i];
+    char name[24];
+    strncpy(name, d.name[0] ? d.name : "<hidden>", sizeof(name) - 1);
+    name[sizeof(name) - 1] = 0;
+    for (char* p = name; *p; ++p) if (*p == '\t' || *p == '\n' || *p == '\r') *p = ' ';
+    char row[96];
+    snprintf(row, sizeof(row), "%d\t%s\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%08lX\t%s",
+             (int)g_score[i].tier, srcTag(d), d.rssi,
+             d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
+             (unsigned long)d.ie_hash, name);
+    phone::detsNotify(String(row));
+    delay(6);  // let the BLE stack drain each notification
+  }
 }
 
 // --- status-bar icons (drawn with primitives, ~14 px) ---
@@ -357,29 +424,31 @@ static void drawStatusBar() {
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
   } else { strcpy(g, "Lat:- Lon:-"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
   tft.drawString(g, 66, 7, 1);
-  // connection icon (right)
-  int ix = W - 18;
+  // phone connection icon (right) + C5-link status dot to its right
+  int ix = W - 30;
   if (webshare::active())      iconWifi(ix, 3, TFT_CYAN);
   else if (phone::connected()) iconBle(ix + 2, 3, TFT_BLUE);
   else                         iconNoConn(ix, 3, TFT_DARKGREY);
+  tft.fillCircle(W - 8, 10, 4, g_linkOk ? TFT_GREEN : TFT_RED);  // C5 link up/down
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
 }
 
 static void render() {
-  int n24, n5, nble; countBands(n24, n5, nble);
+  int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
   int susp, lk, conf; countTiers(susp, lk, conf);
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
 
   tft.setTextDatum(TL_DATUM);
   char buf[48];
-  tft.setTextColor(g_linkOk ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "link:%s  SD:%s  db:%s",
-           g_linkOk ? "up" : "DN", g_sdOk ? "on" : "off", sigdb::loaded() ? "on" : "fb");
+  // Link status now lives in the status-bar dot; this line covers SD + DB.
+  tft.setTextColor(g_sdOk ? TFT_WHITE : TFT_RED, TFT_BLACK);
+  snprintf(buf, sizeof(buf), "SD:%s  db:%s",
+           g_sdOk ? "on" : "off", sigdb::loaded() ? "on" : "fb");
   tft.drawString(buf, 4, 26, 1);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d uniq:%d", n24, n5, nble, g_seenCount);
+  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d U:%d", n24, n5, nble, nprb, g_seenCount);
   tft.drawString(buf, 4, 38, 1);
 
   uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
@@ -389,11 +458,7 @@ static void render() {
 
   // Sort by threat tier first, then RSSI, so flagged devices surface at the top.
   static int idx[MAX_DET];
-  for (int i = 0; i < g_detCount; i++) idx[i] = i;
-  std::sort(idx, idx + g_detCount, [](int a, int b) {
-    if (g_score[a].tier != g_score[b].tier) return g_score[a].tier > g_score[b].tier;
-    return g_dets[a].rssi > g_dets[b].rssi;
-  });
+  buildSorted(idx);
   int maxRows = (tft.height() - 64) / 13;  // rows from y64, 13 px each
   int rows = min(g_detCount, maxRows);
   for (int r = 0; r < rows; r++) {
@@ -465,12 +530,68 @@ static void drawAppQrScreen() {
   int W = tft.width();
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("OPEN APP", W / 2, 14, 2);
+  tft.drawString("CONNECT TO PHONE", W / 2, 14, 2);
   int ty = drawCenteredQr(APP_URL, 40) + 14;
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("Scan to open the app", W / 2, ty, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("BOOT again to exit", W / 2, ty + 20, 2);
+  tft.drawString("Press button: back to menu", W / 2, ty + 20, 2);
+}
+
+// Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
+static void drawMenu() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  int W = tft.width();
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString("MAIN MENU", 10, 32, 4);
+  for (int i = 0; i < MENU_N; i++) {
+    bool sel = (i == g_menuSel);
+    int  y   = 80 + i * 40;
+    if (sel) tft.fillRoundRect(6, y - 5, W - 12, 34, 6, TFT_NAVY);
+    else     tft.drawRoundRect(6, y - 5, W - 12, 34, 6, TFT_DARKGREY);
+    tft.setTextColor(sel ? TFT_WHITE : TFT_LIGHTGREY, sel ? TFT_NAVY : TFT_BLACK);
+    tft.drawString(kMenuItems[i], 18, y, 4);
+  }
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+  tft.drawString("Tap: next item", 10, tft.height() - 34, 2);
+  tft.drawString("Hold: select", 10, tft.height() - 18, 2);
+}
+
+// One scan → score → log → render cycle, also mirrored to the phone app.
+static void runScanCycle() {
+  requestScan();
+  computeScores();
+  setLed(!g_linkOk, g_linkOk, false);
+  int newCount = logNewDetections();
+  int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
+  int susp, lk, conf; countTiers(susp, lk, conf);
+  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
+                g_detCount, n24, n5, nble, nprb, newCount, g_seenCount,
+                susp, lk, conf, sigdb::loaded());
+  render();
+  pushStatus();
+  pushDetections();
+}
+
+// Phone-initiated Wi-Fi bulk-download mode: SoftAP + web server + on-screen QR.
+static void runDownload() {
+  static int lastJoined = -1;
+  if (!webshare::active()) { webshare::start(); lastJoined = -1; }
+  int joined = webshare::clientConnected() ? 1 : 0;
+  if (joined != lastJoined) { lastJoined = joined; drawDownloadScreen(); }  // swap QR
+  webshare::handle();
+  static uint32_t lastS = 0;
+  if (millis() - lastS > 1000) { lastS = millis(); pushStatus(); }
+  delay(2);
+}
+
+// Act on the highlighted menu item (long-press select).
+static void activateMenu() {
+  if (g_menuSel == 0)      g_screen = SCR_SCAN;                    // first cycle draws it
+  else if (g_menuSel == 1) { g_screen = SCR_APPQR; drawAppQrScreen(); }
 }
 
 void setup() {
@@ -482,54 +603,50 @@ void setup() {
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
   phone::begin(DEVICE_NAME);
   Serial.println("[CYD] ready");
+  drawMenu();      // start on the home menu
 }
 
 void loop() {
-  // Phone asked to reload the signature DB from SD (after an edit/push).
+  // Phone commands are honored from any screen.
   if (phone::reloadRequested()) sigdb::reload();
+  if (phone::logRequested())    transferLog();
 
-  // Phone asked to download the log over BLE.
-  if (phone::logRequested()) transferLog();
-
-  // BOOT button shows a QR linking to the web app; press again to return.
-  if (g_showAppQr) {
-    if (bootEdge()) g_showAppQr = false;
-    delay(20);
-    return;
-  }
-  if (bootEdge()) { g_showAppQr = true; drawAppQrScreen(); return; }
-
-  // Download mode: SoftAP + web server + QR on screen, no scanning meanwhile.
-  if (phone::downloadRequested()) {
-    static int lastJoined = -1;
-    if (!webshare::active()) { webshare::start(); lastJoined = -1; }
-    int joined = webshare::clientConnected() ? 1 : 0;
-    if (joined != lastJoined) { lastJoined = joined; drawDownloadScreen(); }  // swap QR
-    webshare::handle();
-    static uint32_t lastS = 0;
-    if (millis() - lastS > 1000) { lastS = millis(); pushStatus(); }
-    delay(2);
-    return;
-  }
+  // Phone-initiated Wi-Fi download overrides the current screen while active.
+  if (phone::downloadRequested()) { runDownload(); return; }
   if (webshare::active()) webshare::stop();  // just left download mode
 
-  requestScan();
-  computeScores();
-  setLed(!g_linkOk, g_linkOk, false);
-  int newCount = logNewDetections();
-  int n24, n5, nble; countBands(n24, n5, nble);
-  int susp, lk, conf; countTiers(susp, lk, conf);
-  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
-                g_detCount, n24, n5, nble, newCount, g_seenCount,
-                susp, lk, conf, sigdb::loaded());
-  render();
-  pushStatus();
+  BtnEv ev = buttonEvent();
 
-  // Responsive ~2 s wait that also enters the app-QR screen on a BOOT press.
-  uint32_t t0 = millis();
-  while (millis() - t0 < 2000) {
-    if (bootEdge()) { g_showAppQr = true; drawAppQrScreen(); return; }
-    delay(20);
+  switch (g_screen) {
+    case SCR_MENU:
+      if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % MENU_N; drawMenu(); }
+      else if (ev == BTN_LONG)  { activateMenu(); }
+      else {  // idle: refresh the status bar (clock/connection) now and then
+        static uint32_t lastDraw = 0;
+        if (millis() - lastDraw > 5000) { lastDraw = millis(); drawMenu(); }
+      }
+      delay(20);
+      return;
+
+    case SCR_APPQR:
+      if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }  // any press: back
+      delay(20);
+      return;
+
+    case SCR_SCAN:
+      if (ev == BTN_LONG) { g_screen = SCR_MENU; drawMenu(); return; }
+      runScanCycle();
+      // Responsive ~2 s wait: a long hold returns to the menu; a pending phone
+      // download is handled on the next loop.
+      {
+        uint32_t t0 = millis();
+        while (millis() - t0 < 2000) {
+          if (buttonEvent() == BTN_LONG) { g_screen = SCR_MENU; drawMenu(); return; }
+          if (phone::downloadRequested()) return;
+          delay(20);
+        }
+      }
+      return;
   }
 }
 #endif

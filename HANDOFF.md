@@ -16,13 +16,18 @@ Wi-Fi + BLE scanner co-processor), one PlatformIO project, shared UART link prot
 
 - Both boards bring up; inter-board UART link solid (framed, synchronous request/response).
 - **C5**: continuous async Wi-Fi (2.4+5 GHz) + BLE scan → mutex-guarded detection table,
-  streamed to the CYD on `StartScan`.
+  streamed to the CYD on `StartScan`. **Phase 2**: also runs a passive promiscuous-mode
+  capture window (time-sliced with the AP scan, hops 2.4 GHz 1/6/11) for client **probe
+  requests** + **802.11 IE fingerprints** (`src/c5/promisc.*`).
 - **CYD**: polls ~2 s, scores each detection against the SD signature DB, logs first-seen
   devices to `/scanlog.csv`, renders portrait UI with status bar + threat tiers.
 - **Signature matching (Phase 1)**: `src/cyd/sigdb.*` + `/signatures.csv` (self-seeds),
   weighted OUI+name scoring → suspect/likely/confirmed.
-- **Phone web app** (BLE, Web Bluetooth): connect, sync time+GPS, live counts/threats,
+- **Phone web app** (BLE, Web Bluetooth): connect, sync time+GPS, live counts/threats +
+  **live detection list** (mirrors the device screen, DETS char `…0006`), probe-req count,
   **BLE log download** (default), Wi-Fi SoftAP bulk download (optional), DB reload.
+- **On-device UI**: BOOT-button **main menu** (tap = next, hold = select) → Start Scan /
+  Connect to Phone (web-app QR). Boots to the menu.
 - Hosted app: **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (Android/Chrome).
 
 ## Build / flash / test
@@ -71,6 +76,7 @@ to 1 in both `main.cpp` for the heartbeat/loss connection tester.
 - `src/cyd/webshare.*` — Wi-Fi SoftAP + HTTP log server. `src/cyd/touch.*` — (unused here).
 - `src/cyd/pins.h`, `src/c5/pins.h` — pin maps (source of truth: `hardware/PINOUT.md`).
 - `src/c5/main.cpp` — async scanner + link responder (`LINK_MONITOR` mode inside).
+- `src/c5/promisc.*` — passive promiscuous capture (probe reqs + beacons → IE fingerprint).
 - `lib/link_protocol/link_protocol.h` — shared message types, `encodeFrame`/`FrameParser`.
 - `webapp/index.html` — phone control app. `/signatures.csv` — signature DB (on the SD card).
 
@@ -81,6 +87,7 @@ thresholds,40,70,100
 oui,B4:1E:52,70,A,Flock IEEE          # kind,pattern,weight,srcmask(W/B/4/A),label
 prefix,Flock,50,W,Flock SoftAP
 exact,FS Ext Battery,50,B,Flock Penguin batt
+ie,1A2B3C4D,60,W,Flock IE fp          # 8-hex 802.11 IE fingerprint (Phase 2; from field capture)
 ```
 Editable on the card or reloadable from the phone (no reflash). Weights are seeds — tune
 them via the supervised-capture workflow (Phase 6).
@@ -88,6 +95,10 @@ them via the supervised-capture workflow (Phase 6).
 ## Untested / needs eyes
 
 - Portrait layout + hand-drawn status-bar icons (BLE/Wi-Fi/no-conn) — visually unverified.
+- **New (this session), not yet hardware-tested:** BOOT-button main menu (tap/hold timing —
+  `LONG_PRESS_MS` 550 ms), the status-bar link dot, and the phone live-detection list
+  (DETS stream, 12-row cap, ~6 ms/row). Confirm the menu feels right and the live list
+  keeps up on a real phone; the list only updates while the Start-Scan screen is active.
 - BLE log-download chunk size is 180 B assuming a large negotiated MTU (worked on the test
   phone); add MTU-aware chunking if a download stalls.
 - C5 **GPIO25/26** are unverified/possibly swapped — test before using.
@@ -96,8 +107,12 @@ them via the supervised-capture workflow (Phase 6).
 ## Next steps (roadmap — see docs/signature-matching.md)
 
 1. **Tune the signature DB** — expand OUIs from community sources; add BLE names.
-2. **Phase 2** — promiscuous-mode Wi-Fi capture (probe requests + IE fingerprint) on the C5;
-   biggest architectural change (coexists awkwardly with the current scan loop).
+2. **Phase 2** — promiscuous-mode Wi-Fi capture (probe requests + IE fingerprint) on the C5:
+   **DONE (first pass)** — `src/c5/promisc.*`, time-sliced with the AP scan, hops 2.4 GHz
+   1/6/11; `PRB` source + `ie_hash` fingerprint carried in the link protocol (v2), scored
+   via `ie,<hash>` DB rules, logged (`ie` column, log schema v3). **TODO:** 5 GHz
+   promiscuous hopping, IE-content enrichment, behavioral scoring of the wildcard flag,
+   and capturing real Flock IE hashes in the field to seed `ie,` rules.
 3. **Phase 3** — BLE service-UUID / company-ID matching (one deliberate `link_protocol`
    version bump to carry the extra fields; rebuilds both boards).
 4. **Phase 4** — 802.15.4 presence/fingerprint (C5; a differentiator no other Flock tool has).

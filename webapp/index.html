@@ -30,6 +30,17 @@
          white-space:pre-wrap; color:#9db4c9; }
   .note { background:#161b22; border-left:3px solid #d29922; padding:.7em .9em;
           border-radius:6px; font-size:.85rem; margin:.6em 0; display:none; }
+  .dets { background:#0b0e13; border:1px solid #30363d; border-radius:10px; padding:4px;
+          max-height:280px; overflow:auto; }
+  .det { display:flex; align-items:center; gap:8px; padding:5px 6px;
+         border-bottom:1px solid #161b22; font-size:.82rem; }
+  .det:last-child { border-bottom:0; }
+  .det .tag { font-family:ui-monospace,monospace; color:#8b949e; width:2.6em; flex:none; }
+  .det .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .det .rssi { font-family:ui-monospace,monospace; color:#9db4c9; flex:none; }
+  .badge { width:9px; height:9px; border-radius:50%; flex:none; }
+  .t0{color:#e6edf3;} .t1{color:#e3b341;} .t2{color:#db8b2a;} .t3{color:#f85149;font-weight:600;}
+  .b0{background:#30363d;} .b1{background:#e3b341;} .b2{background:#db8b2a;} .b3{background:#f85149;}
 </style>
 </head>
 <body>
@@ -42,6 +53,7 @@
     <div class="card"><div class="k">Wi-Fi 2.4</div><div class="v" id="w24">–</div></div>
     <div class="card"><div class="k">Wi-Fi 5 GHz</div><div class="v" id="w5">–</div></div>
     <div class="card"><div class="k">BLE</div><div class="v" id="ble">–</div></div>
+    <div class="card"><div class="k">Probe reqs</div><div class="v" id="prb">–</div></div>
     <div class="card"><div class="k">Unique logged</div><div class="v" id="uniq">–</div></div>
   </div>
 
@@ -56,6 +68,10 @@
     <div class="card"><div class="k">Confirmed</div><div class="v" id="conf">–</div></div>
     <div class="card"><div class="k">Signature DB</div><div class="v" id="db">–</div></div>
   </div>
+
+  <h3 style="margin:.6em 0 .3em">Live detections
+    <span class="sub" style="font-weight:400">— mirrors the device screen</span></h3>
+  <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
   <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
@@ -72,6 +88,7 @@ const GPS  = "9a1e0002-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const CMD  = "9a1e0003-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const STAT = "9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const LOG  = "9a1e0005-2b7e-4c1a-9b00-1a2b3c4d5e6f";
+const DETS = "9a1e0006-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
 const enc = new TextEncoder();
 let chars = {}, device = null, gpsWatch = null, connected = false, wifiOn = false;
@@ -103,6 +120,12 @@ async function connect(){
     chars.stat.addEventListener("characteristicvaluechanged", onStatus);
     await chars.log.startNotifications();
     chars.log.addEventListener("characteristicvaluechanged", onLogData);
+    // Live detection stream (optional — older firmware may not expose it).
+    try {
+      chars.dets = await svc.getCharacteristic(DETS);
+      await chars.dets.startNotifications();
+      chars.dets.addEventListener("characteristicvaluechanged", onDets);
+    } catch(e){ log("No live-detection stream on this device."); }
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
@@ -117,6 +140,7 @@ function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connecte
   $("connectBtn").style.display = "";
   ["syncBtn","reloadBtn","dlBtn","wifiBtn"].forEach(id=>$(id).disabled=true);
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
+  $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
 async function toggleWifi(){
@@ -190,12 +214,41 @@ async function downloadLog(){
   catch(e){ log("Download failed: "+e.message); }
 }
 
+// --- Live detections: "D:<n>" header then n tab-separated rows, per scan cycle ---
+let detState = { expect:0, rows:[] };
+function esc(s){ return (s||"").replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function onDets(ev){
+  const txt = new TextDecoder().decode(ev.target.value);
+  if (txt.startsWith("D:")) {                       // new snapshot header
+    detState = { expect: parseInt(txt.slice(2),10) || 0, rows:[] };
+    if (detState.expect === 0) renderDets([]);      // empty table
+    return;
+  }
+  const p = txt.split("\t");                          // tier tag rssi mac ie name…
+  if (p.length >= 6)
+    detState.rows.push({tier:+p[0], tag:p[1], rssi:+p[2], mac:p[3], ie:p[4], name:p.slice(5).join("\t")});
+  if (detState.rows.length >= detState.expect) renderDets(detState.rows);
+}
+function renderDets(rows){
+  const el = $("dets");
+  if (!rows.length){ el.innerHTML = '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
+  el.innerHTML = rows.map(r=>{
+    const nm = esc(r.name) || "&lt;hidden&gt;";
+    const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
+    return `<div class="det" title="${title}"><span class="badge b${r.tier}"></span>`+
+           `<span class="tag">${esc(r.tag)}</span>`+
+           `<span class="nm t${r.tier}">${nm}</span>`+
+           `<span class="rssi">${r.rssi} dBm</span></div>`;
+  }).join("");
+}
+
 function onStatus(ev){
   const txt = new TextDecoder().decode(ev.target.value);
   const kv = {}; txt.split(";").forEach(p=>{const[a,b]=p.split("=");if(a)kv[a]=b;});
   if("w24" in kv) $("w24").textContent = kv.w24;
   if("w5"  in kv) $("w5").textContent  = kv.w5;
   if("ble" in kv) $("ble").textContent = kv.ble;
+  if("prb" in kv) $("prb").textContent = kv.prb;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   if("time"in kv) $("timeState").textContent = kv.time==="1"?"yes":"no";
   if("gps" in kv) $("gpsState").textContent  = kv.gps==="1"?"yes":"no";

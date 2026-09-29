@@ -43,4 +43,8 @@ bool logRequested();
 // Notify a chunk of log data to the connected phone (used during BLE log download).
 void logNotify(const uint8_t* data, size_t len);
 
+// Notify one line of the live detection snapshot (mirrors the CYD screen). The
+// caller sends a "D:<count>" header then <count> rows each scan cycle.
+void detsNotify(const String& line);
+
 }  // namespace phone
