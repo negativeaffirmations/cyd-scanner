@@ -272,6 +272,31 @@ A specialized agent suite is available (adapted from the owner's other firmware 
 - **security** — enforces passive-only scope, captured-data privacy, attack surface (read-only).
 - **hardware-docs** — datasheets/pinout images → pin tables & docs; keeps `pins.h` ↔ `PINOUT.md`.
 
+### Automatic delegation (standing authorization)
+
+The user does **not** want to pick an agent manually. Treat this section as durable
+permission to route work to the right agent on your own — proactively spawn the matching
+subagent (via the Agent tool) for the task types below, without asking first. Relay what
+matters from the agent's report back to the user (its final report isn't shown to them).
+
+| When the task is…                                                                 | Delegate to    |
+|-----------------------------------------------------------------------------------|----------------|
+| Multi-step / spans several of the roles below (e.g. "design, build, test & review")| **orchestrator** |
+| Architecture, planning, which board owns a feature, flash/RAM trade-offs, link-protocol design | **architect** |
+| Implementing a feature or bug fix in C++ (CYD or C5)                               | **fixer**      |
+| Build validation / resource audit (`pio run -e cyd`/`-e c5`, flash/RAM deltas)     | **tester**     |
+| Reviewing existing code for correctness, memory/concurrency, link-protocol issues  | **reviewer**   |
+| Security/safety audit: passive-only scope, captured-data privacy, BLE/Wi-Fi attack surface | **security** |
+| Datasheets, pinouts, pin tables, `pins.h` ↔ `PINOUT.md` sync                        | **hardware-docs** |
+
+Judgment still applies — don't spawn an agent for trivial or read-only work you can finish
+faster inline (a one-line edit, answering a question, a quick grep, reading a file). Delegate
+when the task is substantial and squarely in an agent's specialty, or when it's multi-step
+(→ orchestrator). When a change lands, prefer routing the follow-up build to **tester** and,
+for non-trivial diffs, a **reviewer** and/or **security** pass — the whole cycle without the
+user naming an agent. If the best fit is ambiguous, make a reasonable choice and say which
+agent you used and why rather than stopping to ask.
+
 ## Reading datasheets (PDF)
 
 The Read tool renders PDF pages via poppler (`pdftoppm`, installed). If Read reports
