@@ -34,6 +34,14 @@
   details { background:#161b22; border:1px solid #30363d; border-radius:10px;
             padding:.6em .8em; margin:.35em 0; }
   summary { cursor:pointer; font-weight:600; }
+  dialog { background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:12px;
+           padding:1em 1.1em; width:min(92vw,420px); }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  .modalhdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:.8em; }
+  .modalhdr strong { font-size:1.1rem; }
+  .xbtn { width:auto; background:transparent; color:#8b949e; font-size:1.5rem; line-height:1;
+          padding:.05em .45em; margin:0; border-radius:8px; }
+  .xbtn:hover { color:#e6edf3; background:#30363d; }
   input[type=range] { width:100%; accent-color:#238636; margin-top:.4em; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
@@ -98,11 +106,16 @@
     <button id="sessDlBtn" disabled>Download selected session</button>
   </details>
 
-  <details id="settingsBox">
-    <summary>Settings</summary>
+  <button id="settingsBtn" class="secondary" disabled>Settings</button>
+
+  <dialog id="settingsDlg">
+    <div class="modalhdr">
+      <strong>Settings</strong>
+      <button id="settingsClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
     <label class="k" for="briSlider">Brightness: <span id="briVal">–</span>%</label>
     <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
-  </details>
+  </dialog>
 
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
@@ -167,7 +180,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider"]
+    ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -177,8 +190,9 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessSel","briSlider"]
+  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessSel","briSlider","settingsBtn"]
     .forEach(id=>$(id).disabled=true);
+  if($("settingsDlg").open) $("settingsDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
   scanning=false; updateScanBtn();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
@@ -355,6 +369,9 @@ $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
+$("settingsBtn").onclick = ()=> $("settingsDlg").showModal();
+$("settingsClose").onclick = ()=> $("settingsDlg").close();
+$("settingsDlg").addEventListener("click", e=>{ if(e.target === $("settingsDlg")) $("settingsDlg").close(); });
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");
 </script>
 </body>
