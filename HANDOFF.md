@@ -3,7 +3,7 @@
 Snapshot for the next session. Read this, then [CLAUDE.md](CLAUDE.md) for architecture
 and gotchas, and [docs/signature-matching.md](docs/signature-matching.md) for the roadmap.
 
-_Last updated: 2026-09-29. Repo: https://github.com/negativeaffirmations/cyd-scanner (public)._
+_Last updated: 2026-09-30. Repo: https://github.com/negativeaffirmations/cyd-scanner (public)._
 
 ## What this is
 
@@ -12,23 +12,43 @@ on two boards: **CYD** (ESP32-2432S028R, host/UI/SD/phone-link) + **ESP32-C5** (
 Wi-Fi + BLE scanner co-processor), one PlatformIO project, shared UART link protocol.
 **Passive only** — never add jamming/deauth/injection.
 
+## >>> FIX FIRST (known bug, 2026-09-30) <<<
+
+**Stopping Wi-Fi download mode does not return the CYD to the main menu.** After tapping
+stop-Wi-Fi in the web app (CMD `"0"`), the AP tears down but the screen stays stuck on the
+last-drawn download/QR screen.
+- **Cause:** in `src/cyd/main.cpp` `loop()`, when `phone::downloadRequested()` goes false it
+  calls `webshare::stop()` but never redraws — `g_screen` is still MENU/SCAN with nothing
+  forcing a repaint (SCR_MENU only repaints on button/touch/2 s ping; SCR_SCAN on next cycle).
+- **Likely fix:** right after `if (webshare::active()) webshare::stop();`, force a redraw of
+  the current screen — simplest is `g_screen = SCR_MENU; drawMenu();` (return to menu on exit),
+  or repaint whatever `g_screen` is. Verify the same isn't true when leaving the app-QR screen.
+
 ## Current state — working on hardware
 
 - Both boards bring up; inter-board UART link solid (framed, synchronous request/response).
-- **C5**: continuous async Wi-Fi (2.4+5 GHz) + BLE scan → mutex-guarded detection table,
-  streamed to the CYD on `StartScan`. **Phase 2**: also runs a passive promiscuous-mode
-  capture window (time-sliced with the AP scan, hops 2.4 GHz 1/6/11) for client **probe
-  requests** + **802.11 IE fingerprints** (`src/c5/promisc.*`).
-- **CYD**: polls ~2 s, scores each detection against the SD signature DB, logs first-seen
-  devices to `/scanlog.csv`, renders portrait UI with status bar + threat tiers.
-- **Signature matching (Phase 1)**: `src/cyd/sigdb.*` + `/signatures.csv` (self-seeds),
-  weighted OUI+name scoring → suspect/likely/confirmed.
-- **Phone web app** (BLE, Web Bluetooth): connect, sync time+GPS, live counts/threats +
-  **live detection list** (mirrors the device screen, DETS char `…0006`), probe-req count,
-  **BLE log download** (default), Wi-Fi SoftAP bulk download (optional), DB reload.
-- **On-device UI**: BOOT-button **main menu** (tap = next, hold = select) → Start Scan /
-  Connect to Phone (web-app QR). Boots to the menu.
+  **Link protocol is at v3** (Detection carries flags, ie_hash, companyId, svc[16]).
+- **C5** (`src/c5/main.cpp`, `promisc.*`): continuous async Wi-Fi (2.4+5 GHz) + BLE scan →
+  mutex-guarded detection table, streamed on `StartScan`. **Phase 2** promiscuous capture
+  (probe reqs + IE fingerprints, hops 2.4 GHz 1/6/11). **BLE scan is callback-only**
+  (`setMaxResults(0)`) + a 5 s watchdog — fixes BLE stalling ~10 min into a drive.
+- **CYD** (`src/cyd/main.cpp`): polls ~2 s, scores vs the SD signature DB, logs first-seen
+  devices to **per-session files** (`/logs/sess-NNNNN.csv`, renamed to
+  `/logs/YYYYMMDD-HHMMSS.csv` on time sync), portrait UI + status bar + threat tiers + a
+  **link dot** and, on the scan screen, a **STOP bar** across the top. Filters out its own +
+  the connected phone's BLE MAC.
+- **Signatures**: `sigdb.*` + `/signatures.csv` (self-seeds; DB_GEN reseed trigger). Layers:
+  OUI + name + **IE (Phase 2)** + **BLE UUID + company-ID (Phase 3)**. Flock GATT UUID seeded.
+- **On-device UI**: BOOT-button **and touchscreen** (bit-bang XPT2046, `touch.*`) menu:
+  Start Scan / Connect to Phone / **Settings** (Calibrate Touch, Brightness). Tap = next,
+  hold = select. Boots to menu.
+- **Phone web app**: connect, sync time+GPS, live counts/threats + **live detection list**
+  (source-tinted rows), **start/stop scan** toggle, **Settings modal** (brightness),
+  **Session logs** panel (list / download / **map** / delete), **BLE log download**,
+  **Wi-Fi bulk download = a browsable index of all sessions**, and a **wardriving Map**
+  (Leaflet/OSM; loads current session, a picked session, or a local .csv offline).
 - Hosted app: **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (Android/Chrome).
+- Latest commit pushed: `332a706` (Wi-Fi session index). Working tree clean.
 
 ## Build / flash / test
 
