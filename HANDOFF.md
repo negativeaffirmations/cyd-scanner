@@ -12,18 +12,6 @@ on two boards: **CYD** (ESP32-2432S028R, host/UI/SD/phone-link) + **ESP32-C5** (
 Wi-Fi + BLE scanner co-processor), one PlatformIO project, shared UART link protocol.
 **Passive only** — never add jamming/deauth/injection.
 
-## >>> FIX FIRST (known bug, 2026-09-30) <<<
-
-**Stopping Wi-Fi download mode does not return the CYD to the main menu.** After tapping
-stop-Wi-Fi in the web app (CMD `"0"`), the AP tears down but the screen stays stuck on the
-last-drawn download/QR screen.
-- **Cause:** in `src/cyd/main.cpp` `loop()`, when `phone::downloadRequested()` goes false it
-  calls `webshare::stop()` but never redraws — `g_screen` is still MENU/SCAN with nothing
-  forcing a repaint (SCR_MENU only repaints on button/touch/2 s ping; SCR_SCAN on next cycle).
-- **Likely fix:** right after `if (webshare::active()) webshare::stop();`, force a redraw of
-  the current screen — simplest is `g_screen = SCR_MENU; drawMenu();` (return to menu on exit),
-  or repaint whatever `g_screen` is. Verify the same isn't true when leaving the app-QR screen.
-
 ## Current state — working on hardware
 
 - Both boards bring up; inter-board UART link solid (framed, synchronous request/response).
@@ -48,6 +36,9 @@ last-drawn download/QR screen.
   **Wi-Fi bulk download = a browsable index of all sessions**, and a **wardriving Map**
   (Leaflet/OSM; loads current session, a picked session, or a local .csv offline).
 - Hosted app: **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (Android/Chrome).
+- Fixed (2026-09-30, hardware-confirmed): stopping Wi-Fi download mode now repaints back to
+  the main menu (was stuck on the last QR/download screen). `loop()` forces
+  `g_screen = SCR_MENU; drawMenu()` when leaving download mode.
 - Latest commit pushed: `332a706` (Wi-Fi session index). Working tree clean.
 
 ## Build / flash / test

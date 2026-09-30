@@ -878,7 +878,10 @@ void loop() {
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
   if (phone::downloadRequested()) { runDownload(); return; }
-  if (webshare::active()) webshare::stop();  // just left download mode
+  if (webshare::active()) {  // just left download mode: tear down AP and repaint
+    webshare::stop();
+    g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
+  }
 
   // Phone can start/stop the scan remotely (single toggle in the web app).
   if (phone::scanStartRequested()) g_screen = SCR_SCAN;
