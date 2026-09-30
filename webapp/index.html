@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <title>CYD Scanner Control</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -61,7 +63,6 @@
   .det { display:flex; align-items:center; gap:8px; padding:5px 6px;
          border-bottom:1px solid #161b22; font-size:.82rem; }
   .det:last-child { border-bottom:0; }
-  .det .tag { font-family:ui-monospace,monospace; color:#8b949e; min-width:2.6em; flex:none; }
   .caret { cursor:pointer; color:#8b949e; padding:0 4px; flex:none; user-select:none; }
   .detsub { padding:2px 6px 4px 28px; border-bottom:1px solid #161b22; }
   .sub1 { font-family:ui-monospace,monospace; font-size:.76rem; padding:2px 6px; margin:1px 0; }
@@ -75,6 +76,19 @@
   .src5  { border-left:3px solid #22d3ee; background:rgba(34,211,238,.12); }
   .srcble{ border-left:3px solid #e879f9; background:rgba(232,121,249,.12); }
   .srcprb{ border-left:3px solid #f59e0b; background:rgba(245,158,11,.13); }
+  /* Fixed column header for the live-detections table. */
+  .dethead { display:flex; align-items:center; gap:8px; padding:5px 6px; position:sticky; top:0;
+             z-index:2; background:#0b0e13; border-bottom:1px solid #30363d; font-size:.68rem;
+             letter-spacing:.04em; color:#8b949e; text-transform:uppercase; }
+  .tiercol { width:14px; text-align:center; flex:none; }        /* holds the threat-tier dot */
+  .sigcol  { flex:none; min-width:5.4em; display:flex; flex-wrap:wrap; align-items:center; }
+  .hnm     { flex:1; }
+  .det .rssi, .dethead .rssi { min-width:4.8em; text-align:right; }
+  /* Per-band signal pills (which sources this MAC was seen on). */
+  .sp { display:inline-block; font-family:ui-monospace,monospace; font-size:.66rem; padding:1px 4px;
+        border-radius:4px; margin:1px 3px 1px 0; line-height:1.35; }
+  .p24{background:rgba(139,148,158,.25);color:#c9d1d9;} .p5{background:rgba(34,211,238,.22);color:#7fe9fb;}
+  .pble{background:rgba(232,121,249,.22);color:#f3b6fb;} .pprb{background:rgba(245,158,11,.22);color:#fcd47a;}
 </style>
 </head>
 <body>
@@ -106,7 +120,8 @@
   </div>
 
   <h3 style="margin:.6em 0 .3em">Live detections
-    <span class="sub" style="font-weight:400">— mirrors the device screen</span></h3>
+    <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span>
+    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30b</span></h3>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
@@ -472,28 +487,33 @@ function onDets(ev){
     renderDets(detState.rows);                      // atomic full replace
   }
 }
+const srcClass  = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};  // row tint
+const pillClass = {"2.4":"p24",   "5G":"p5",  "BLE":"pble",   "PRB":"pprb"};    // band pill
+const detHead =
+  '<div class="dethead"><span class="tiercol" title="Threat tier">⚠</span>'+
+  '<span class="sigcol">Signals</span><span class="hnm">Device</span>'+
+  '<span class="rssi">RSSI</span><span class="caret"></span></div>';
 function renderDets(rows){
   const el = $("dets");
-  if (!rows.length){ expandedMacs.clear(); el.innerHTML = '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
-  const srcClass = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};
+  if (!rows.length){ expandedMacs.clear(); el.innerHTML = detHead + '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
   for (const m of [...expandedMacs]) if (!rows.some(r => r.mac === m)) expandedMacs.delete(m);  // keep the Set bounded
-  el.innerHTML = rows.map((r,ri)=>{
+  el.innerHTML = detHead + rows.map((r,ri)=>{
     const nm = esc(r.name) || "&lt;hidden&gt;";
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
     const srcs = r.sources.slice().sort((a,b)=>b.rssi-a.rssi);
-    const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });
-    const primary = tags.length ? tags.join("+") : "?";   // e.g. 2.4+PRB
-    const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint by strongest source
+    const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
+    const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
+    const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
     const open = expandedMacs.has(r.mac);
     const sub = srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("");
-    return `<div class="det ${sc}" title="${title}"><span class="badge b${r.tier}"></span>`+
-           `<span class="tag">${esc(primary)}</span>`+
+    return `<div class="det ${sc}" title="${title}"><span class="tiercol"><span class="badge b${r.tier}"></span></span>`+
+           `<span class="sigcol">${pills}</span>`+
            `<span class="nm t${r.tier}">${nm}</span>`+
            `<span class="rssi">${r.rssi} dBm</span>`+
            `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span></div>`+
            `<div class="detsub" id="dsub${ri}" style="display:${open?"block":"none"}">${sub}</div>`;
   }).join("");
-  el.querySelectorAll(".caret").forEach(c=>{
+  el.querySelectorAll(".caret[data-mac]").forEach(c=>{
     c.onclick = ()=>{
       const sub = $("dsub"+c.dataset.ri), mac = c.dataset.mac;
       const show = sub.style.display === "none";
