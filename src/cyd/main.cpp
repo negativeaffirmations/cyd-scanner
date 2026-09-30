@@ -248,6 +248,7 @@ SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
 char      g_logPath[48] = "/scanlog.csv";  // current session log; set in openSession()
 bool      g_logNamed    = false;           // true once renamed to the date-time form
+bool      g_logStarted  = false;           // true once the file is actually created (first row)
 static const char* kLogHeader =
     "epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature";
 
@@ -306,21 +307,61 @@ static void countTiers(int& susp, int& lk, int& conf) {
   }
 }
 
+// Delete leftover header-only session logs (no detections were ever written). Past boots
+// created a file up front, so a card can accumulate many ~90-byte empties; sweep them on
+// startup. A file with even one data row is larger than the header and is kept.
+static void sweepEmptySessions() {
+  const size_t emptyMax = strlen(kLogHeader) + 2;  // header + CRLF, nothing else
+  File dir = SD.open("/logs");
+  if (!dir) return;
+  char victims[16][48];
+  int nv = 0;
+  for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+    if (!e.isDirectory() && e.size() <= emptyMax && nv < 16) {
+      String nm = e.name();                       // may be a full path or a bare basename
+      int slash = nm.lastIndexOf('/');
+      String base = slash >= 0 ? nm.substring(slash + 1) : nm;
+      snprintf(victims[nv++], sizeof(victims[0]), "/logs/%s", base.c_str());
+    }
+    e.close();
+  }
+  dir.close();
+  for (int i = 0; i < nv; i++) {
+    if (SD.remove(victims[i])) Serial.printf("[CYD] removed empty session log %s\n", victims[i]);
+  }
+}
+
 // Start a fresh per-boot session log under /logs/. Named by a boot counter so it works
 // before the phone has synced wall-clock time; renamed to /logs/YYYYMMDD-HHMMSS.csv once
-// time is known (renameSessionOnSync). Rows still carry absolute epoch after sync.
+// time is known (renameSessionOnSync). The file itself is created lazily on the first
+// logged detection (ensureLogFile), so idle boots leave no empty file behind. Rows still
+// carry absolute epoch after sync.
 static void openSession() {
   SD.mkdir("/logs");
   if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file
+  sweepEmptySessions();
   Preferences p; p.begin("cydscan", false);
   uint32_t boot = p.getULong("bootcnt", 0) + 1;
   p.putULong("bootcnt", boot);
   p.end();
   snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.csv", (unsigned long)boot);
-  g_logNamed = false;
+  g_logNamed   = false;
+  g_logStarted = false;
+  Serial.printf("[CYD] session log (created on first detection): %s\n", g_logPath);
+}
+
+// Create the current session file with its header the first time a row needs writing.
+// No-op once created. Returns false if SD is unavailable or the file can't be opened.
+static bool ensureLogFile() {
+  if (g_logStarted) return true;
+  if (!g_sdOk) return false;
   File f = SD.open(g_logPath, FILE_WRITE);
-  if (f) { f.println(kLogHeader); f.close(); }
-  Serial.printf("[CYD] session log: %s\n", g_logPath);
+  if (!f) return false;
+  f.println(kLogHeader);
+  f.close();
+  g_logStarted = true;
+  Serial.printf("[CYD] session log created: %s\n", g_logPath);
+  return true;
 }
 
 // Once the phone provides wall-clock time, rename the boot-counter session file to a
@@ -334,9 +375,18 @@ static void renameSessionOnSync() {
   snprintf(nn, sizeof(nn), "/logs/%04d%02d%02d-%02d%02d%02d.csv",
            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-  if (!SD.exists(nn) && SD.rename(g_logPath, nn)) {
+  if (SD.exists(nn)) { g_logNamed = true; return; }  // name taken; keep the current one
+  if (!g_logStarted) {
+    // File not created yet (no detections logged): just adopt the date-time name so the
+    // file is born correctly named when the first row is written.
+    strncpy(g_logPath, nn, sizeof(g_logPath) - 1);
+    g_logPath[sizeof(g_logPath) - 1] = 0;
+    webshare::setLogPath(g_logPath);
+    Serial.printf("[CYD] session log will use %s\n", g_logPath);
+  } else if (SD.rename(g_logPath, nn)) {
     Serial.printf("[CYD] session log renamed %s -> %s\n", g_logPath, nn);
     strncpy(g_logPath, nn, sizeof(g_logPath) - 1);
+    g_logPath[sizeof(g_logPath) - 1] = 0;
     webshare::setLogPath(g_logPath);
   }
   g_logNamed = true;
@@ -372,8 +422,7 @@ static void initSD() {
 
 static int logNewDetections() {
   int n = 0;
-  File f;
-  if (g_sdOk) f = SD.open(g_logPath, FILE_APPEND);
+  File f;  // opened lazily on the first new detection so idle boots write no file
   uint32_t ms = millis();
   uint32_t epoch = phone::epochNow();
   bool gps = phone::hasGps();
@@ -382,6 +431,7 @@ static int logNewDetections() {
     if (seenContains(d)) continue;
     seenAdd(d);
     n++;
+    if (!f && ensureLogFile()) f = SD.open(g_logPath, FILE_APPEND);
     if (!f) continue;
     char safe[33];
     strncpy(safe, d.name, sizeof(safe) - 1);
