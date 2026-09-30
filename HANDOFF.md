@@ -74,6 +74,11 @@ two 5 V sources). See [hardware/PINOUT.md](hardware/PINOUT.md) §3.
 - **Browser limits**: web app can't auto-join Wi-Fi, can't fetch() `http://192.168.4.1`
   (mixed content), loses BLE if it navigates there → BLE is the default download path.
 - **partitions**: both envs use `huge_app.csv` (Wi-Fi+BLE overflow the default).
+- **BLE scan must be callback-only**: the C5 sets `scan->setMaxResults(0)`. Without it,
+  NimBLE buffers every advertisement (with `wantDuplicates`) and, driving past thousands
+  of BLE devices, the cache fills the heap and the scan **silently stalls** (~10 min in a
+  field test: BLE detections stopped while Wi-Fi kept logging). A 5 s watchdog in the C5
+  `loop()` also restarts the scan if `isScanning()` is ever false.
 
 ## File map
 

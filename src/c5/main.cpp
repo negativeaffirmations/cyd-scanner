@@ -284,6 +284,11 @@ void setup() {
   scan->setActiveScan(true);
   scan->setInterval(100);
   scan->setWindow(99);
+  // Callback-only: don't buffer results in NimBLE's cache. We already store everything
+  // in g_table, and an unbounded cache (with duplicates, while driving past thousands of
+  // BLE devices) fills the heap and silently stalls the scan. This was the bug that made
+  // BLE detections stop ~10 min into a drive while Wi-Fi kept going.
+  scan->setMaxResults(0);
   scan->start(0, false);  // continuous
 
   LinkSerial.setClockSource(UART_CLK_SRC_XTAL);
@@ -294,6 +299,19 @@ void setup() {
 
 void loop() {
   wifiTick();
+
+  // BLE watchdog: if the scan ever stops (stall, error, or an onScanEnd we missed),
+  // restart it. Belt-and-suspenders alongside setMaxResults(0).
+  static uint32_t lastBleChk = 0;
+  if (millis() - lastBleChk > 5000) {
+    lastBleChk = millis();
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan && !scan->isScanning()) {
+      scan->start(0, false);
+      Serial.println("[C5] BLE scan restarted by watchdog");
+    }
+  }
+
   while (LinkSerial.available())
     if (parser.feed(LinkSerial.read()))
       handleFrame(parser.type(), parser.payload(), parser.length());
