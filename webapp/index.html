@@ -328,11 +328,16 @@ function populateSessions(text){
   if(!rows.length){ sel.innerHTML="<option>— no sessions —</option>";
     $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true; return; }
   rows.sort().reverse();  // date-time names sort newest-first
+  const fi=rows.findIndex(r=>{const f=r.split("\t")[2]; return f==="current"||f==="latest";});
+  if(fi>0) rows.unshift(rows.splice(fi,1)[0]);  // float the flagged (newest) row to the top
   for(const r of rows){
-    const [path,size]=r.split("\t");
+    const [path,size,flag]=r.split("\t");
     const base=path.split("/").pop();
     const kb=(parseInt(size,10)/1024).toFixed(1);
-    const o=document.createElement("option"); o.value=path; o.textContent=base+"  ("+kb+" KB)";
+    let label=base+"  ("+kb+" KB)";
+    if(flag==="current")      label+="  (current session)";
+    else if(flag==="latest")  label+="  (latest session)";
+    const o=document.createElement("option"); o.value=path; o.textContent=label;
     sel.appendChild(o);
   }
   $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;

@@ -513,18 +513,46 @@ static void deleteSession(const char* path) {
   sendSessionList();  // refresh the phone's picker either way
 }
 
+static String logBase(const String& nm) {  // dir entry -> bare basename (core may add a path)
+  int slash = nm.lastIndexOf('/');
+  return slash >= 0 ? nm.substring(slash + 1) : nm;
+}
+
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
-// "<path>\t<size>\n" lines. The web app parses it into a picker.
+// "<path>\t<size>\t<flag>\n" lines. <flag> marks the newest file: "current" while a scan
+// is running (its file is being written), else "latest"; blank for all other rows. The web
+// app parses it into a picker and labels/floats the flagged row.
 static void sendSessionList() {
+  // The newest file is the current session when its file exists this boot; otherwise the
+  // most recently written prior file (by FS timestamp).
+  String curBase = logBase(String(g_logPath));
+  String newestBase;
+  if (g_logStarted) {
+    newestBase = curBase;
+  } else {
+    time_t newestT = -1;
+    File d = SD.open("/logs");
+    if (d) {
+      for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+        if (!e.isDirectory()) {
+          time_t t = e.getLastWrite();
+          if (t >= newestT) { newestT = t; newestBase = logBase(String(e.name())); }
+        }
+        e.close();
+      }
+      d.close();
+    }
+  }
+  const char* flagWord = (g_logStarted && g_screen == SCR_SCAN) ? "current" : "latest";
+
   String list;
   File dir = SD.open("/logs");
   if (dir) {
     for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
       if (e.isDirectory()) continue;
-      String nm = e.name();
-      int slash = nm.lastIndexOf('/');
-      String base = slash >= 0 ? nm.substring(slash + 1) : nm;
-      list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\n";
+      String base = logBase(String(e.name()));
+      const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
+      list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\n";
     }
     dir.close();
   }
