@@ -121,7 +121,7 @@
 
   <h3 style="margin:.6em 0 .3em">Live detections
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span>
-    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30b</span></h3>
+    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30c</span></h3>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
@@ -460,31 +460,43 @@ function renderMap(){
 
 // --- Live detections v2: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot,
 // one row per MAC): seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi") ---
-let detState = { expect:0, rows:[] };
+let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
 let emptyStreak = 0;
 const expandedMacs = new Set();   // carat state survives snapshot re-renders
 function esc(s){ return (s||"").replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+// If the current snapshot accumulated rows but never reached its expected count
+// (a row or the header was lost over BLE), show what we have instead of dropping it.
+function flushPendingDets(){
+  if (detState.rows.length && !detState.rendered) {
+    renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;
+  }
+}
 function onDets(ev){
   const txt = new TextDecoder().decode(ev.target.value);
   if (txt.startsWith("D:")) {                       // new snapshot header: D:<seq>:<n>
     const h = txt.slice(2).split(":");
+    flushPendingDets();                             // render prior partial before starting fresh
     curSeq = parseInt(h[0],10);
-    detState = { expect: parseInt(h[1],10) || 0, rows:[] };
-    if (detState.expect === 0 && ++emptyStreak >= 3) renderDets([]);  // tolerate brief empties
+    detState = { expect: parseInt(h[1],10) || 0, rows:[], rendered:false };
+    if (detState.expect === 0 && ++emptyStreak >= 3) { renderDets([]); detState.rendered = true; }
     return;
   }
   const p = txt.split("\t");                        // seq tier mac rssi ie name srcList
-  if (p.length < 7 || +p[0] !== curSeq) return;     // stale / malformed
-  if (detState.rows.some(r => r.mac === p[2])) return;  // dedup by MAC within the batch
+  if (p.length < 7) return;                         // malformed/truncated
+  const seq = +p[0];
+  if (seq !== curSeq) {                             // header was lost -> rows start the snapshot
+    flushPendingDets();
+    curSeq = seq; detState = { expect:0, rows:[], rendered:false };
+  }
+  if (detState.rows.some(r => r.mac === p[2])) return;  // dedup by MAC within the snapshot
   const sources = p[6].split(",").filter(Boolean).map(x=>{
     const k = x.lastIndexOf(":");
     return {tag:x.slice(0,k), rssi:+x.slice(k+1)};
   });
-  detState.rows.push({seq:+p[0], tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources});
-  if (detState.rows.length >= detState.expect) {
-    emptyStreak = 0;
-    renderDets(detState.rows);                      // atomic full replace
+  detState.rows.push({seq, tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources});
+  if (detState.expect && detState.rows.length >= detState.expect) {
+    renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
 }
 const srcClass  = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};  // row tint
