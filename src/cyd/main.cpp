@@ -448,6 +448,21 @@ static void transferFile(const char* path) {
   streamFileOverBle(path);
 }
 
+// Delete a session file the phone selected ("D:<path>"). Restricted to /logs/ (no
+// traversal) and refuses the live session being written. Pushes the refreshed list back.
+static void sendSessionList();  // fwd decl
+static void deleteSession(const char* path) {
+  if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
+    Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
+  } else if (strcmp(path, g_logPath) == 0) {
+    Serial.println("[CYD] delete refused: that's the current session");
+  } else {
+    if (SD.exists(path)) SD.remove(path);
+    Serial.printf("[CYD] deleted %s\n", path);
+  }
+  sendSessionList();  // refresh the phone's picker either way
+}
+
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
 // "<path>\t<size>\n" lines. The web app parses it into a picker.
 static void sendSessionList() {
@@ -853,7 +868,8 @@ void loop() {
   if (phone::reloadRequested()) sigdb::reload();
   if (phone::logRequested())    transferLog();
   if (phone::listRequested())   sendSessionList();
-  { char fn[48]; if (phone::fileRequested(fn, sizeof(fn))) transferFile(fn); }
+  { char fn[48]; if (phone::fileRequested(fn, sizeof(fn)))   transferFile(fn); }
+  { char fn[48]; if (phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
       g_brightness = (uint8_t)constrain(b, 10, 100);
       applyBrightness(); saveBrightness();

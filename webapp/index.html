@@ -104,6 +104,7 @@
     <button id="listBtn" class="secondary" disabled>Refresh session list</button>
     <select id="sessSel" disabled><option>— connect and refresh —</option></select>
     <button id="sessDlBtn" disabled>Download selected session</button>
+    <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
   </details>
 
   <button id="settingsBtn" class="secondary" disabled>Settings</button>
@@ -190,7 +191,7 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessSel","briSlider","settingsBtn"]
+  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessSel","briSlider","settingsBtn"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
@@ -282,7 +283,8 @@ async function refreshSessions(){
 function populateSessions(text){
   const sel=$("sessSel"); sel.innerHTML="";
   const rows=(text||"").split("\n").filter(l=>l.includes("\t"));
-  if(!rows.length){ sel.innerHTML="<option>— no sessions —</option>"; $("sessDlBtn").disabled=true; return; }
+  if(!rows.length){ sel.innerHTML="<option>— no sessions —</option>";
+    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; return; }
   rows.sort().reverse();  // date-time names sort newest-first
   for(const r of rows){
     const [path,size]=r.split("\t");
@@ -291,7 +293,7 @@ function populateSessions(text){
     const o=document.createElement("option"); o.value=path; o.textContent=base+"  ("+kb+" KB)";
     sel.appendChild(o);
   }
-  $("sessDlBtn").disabled=false;
+  $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false;
   log(rows.length+" session(s) found.");
 }
 async function downloadSession(){
@@ -300,6 +302,14 @@ async function downloadSession(){
   try{ dl={mode:null,expect:0,got:0,chunks:[],name:path.split("/").pop()};
     await chars.cmd.writeValue(enc.encode("F:"+path)); log("Requesting "+dl.name+"…"); }
   catch(e){ log("Download failed: "+e.message); }
+}
+async function deleteSession(){
+  const path=$("sessSel").value;
+  if(!path || path.startsWith("—")) return;
+  const base=path.split("/").pop();
+  if(!confirm("Delete session "+base+"?\nThis cannot be undone. (The current in-progress session can't be deleted.)")) return;
+  try{ await chars.cmd.writeValue(enc.encode("D:"+path)); log("Deleting "+base+"… (list will refresh)"); }
+  catch(e){ log("Delete failed: "+e.message); }
 }
 async function setBrightness(v){
   try{ await chars.cmd.writeValue(enc.encode("B:"+v)); }
@@ -367,6 +377,7 @@ $("dlBtn").onclick = downloadLog;
 $("wifiBtn").onclick = toggleWifi;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
+$("sessDelBtn").onclick = deleteSession;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
 $("settingsBtn").onclick = ()=> $("settingsDlg").showModal();

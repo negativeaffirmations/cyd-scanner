@@ -30,6 +30,8 @@ bool     g_scanStop   = false;
 bool     g_listReq    = false;
 bool     g_fileReq    = false;
 char     g_dlFile[48] = {0};
+bool     g_delReq     = false;
+char     g_delFile[48]= {0};
 bool     g_briReq     = false;
 int      g_briVal     = 100;
 uint8_t  g_ownMac[6]  = {0};
@@ -103,6 +105,14 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_dlFile[sizeof(g_dlFile) - 1] = 0;
           g_fileReq = true;
           Serial.printf("[phone] cmd download file %s\n", g_dlFile);
+        }
+      } else if (c0 == 'D' || c0 == 'd') {           // "D:<path>" delete a session file
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          strncpy(g_delFile, val.c_str() + colon + 1, sizeof(g_delFile) - 1);
+          g_delFile[sizeof(g_delFile) - 1] = 0;
+          g_delReq = true;
+          Serial.printf("[phone] cmd delete file %s\n", g_delFile);
         }
       } else if (c0 == 'B' || c0 == 'b') {           // "B:<0-100>" brightness
         size_t colon = val.find(':');
@@ -198,6 +208,14 @@ bool fileRequested(char* out, size_t cap) {
   if (!g_fileReq) return false;
   g_fileReq = false;
   strncpy(out, g_dlFile, cap - 1);
+  out[cap - 1] = 0;
+  return true;
+}
+
+bool deleteRequested(char* out, size_t cap) {
+  if (!g_delReq) return false;
+  g_delReq = false;
+  strncpy(out, g_delFile, cap - 1);
   out[cap - 1] = 0;
   return true;
 }

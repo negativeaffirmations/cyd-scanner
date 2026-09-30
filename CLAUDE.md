@@ -225,7 +225,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"Q"` list sessions · `"F:<path>"` download
-    a session file (restricted to `/logs/`) · `"B:<0-100>"` set brightness
+    a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
+    refuses the live session) · `"B:<0-100>"` set brightness
   - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db,scan,bri` (`prb` = probe count, `scan` = 1 while scanning, `bri` = backlight %)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
@@ -241,8 +242,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
-  the scan, downloads the current session log, **lists past sessions and downloads a chosen
-  one**, reloads the DB, and has a **Settings** panel (brightness slider; extensible).
+  the scan, downloads the current session log, **lists past sessions and downloads or deletes
+  a chosen one**, reloads the DB, and has a **Settings** modal (brightness slider; extensible).
 - **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
