@@ -251,7 +251,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
   HTTP server; the CYD screen shows a QR that is the Wi-Fi-join code until the phone joins,
-  then switches to `http://192.168.4.1` so scanning opens the download page. Pauses scanning.
+  then switches to `http://192.168.4.1`. That page is a **browsable index of ALL `/logs/`
+  sessions** (name + size), each a `/dl?f=<name>` link — so bulk Wi-Fi download can grab any
+  past session, not just the current one (the reason for Wi-Fi: BLE is slow for MB-size drive
+  logs). `/scanlog.csv` still streams the current session. Pauses scanning while active.
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is
