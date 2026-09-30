@@ -4,10 +4,22 @@
 
 static Preferences s_prefs;
 static const char* kNamespace = "touchcal";
+// Bump when the raw-reading scale changes so stale calibration is rejected and the
+// user is prompted to recalibrate. v2: readChan busy-bit fix (full-scale conversions).
+static constexpr uint16_t CAL_VERSION = 2;
 
 // XPT2046 control bytes: start=1, channel select, 12-bit, PD=00 (keep PENIRQ on).
-static constexpr uint8_t CMD_X = 0xD0;  // X position
-static constexpr uint8_t CMD_Y = 0x90;  // Y position
+static constexpr uint8_t CMD_X  = 0xD0;  // X position
+static constexpr uint8_t CMD_Y  = 0x90;  // Y position
+static constexpr uint8_t CMD_Z1 = 0xB0;  // touch-pressure Z1
+static constexpr uint8_t CMD_Z2 = 0xC0;  // touch-pressure Z2
+
+// Touch presence is detected from the Z (pressure) channels over SPI rather than the
+// PENIRQ pin: on the CYD, PENIRQ is wired to GPIO36 (input-only, no internal pull) and
+// has proven unreliable — it can stop asserting on touch, which silently kills the UI.
+// Reading Z is bus-only and needs no IRQ line. z = z1 + (4095 - z2): ~0 when untouched,
+// hundreds-to-thousands when pressed.
+static constexpr int Z_THRESHOLD = 350;
 
 void Touch::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t cs, int8_t irq) {
   sck_ = sck; miso_ = miso; mosi_ = mosi; cs_ = cs; irq_ = irq;
@@ -28,6 +40,11 @@ uint16_t Touch::readChan(uint8_t cmd) {
     digitalWrite(sck_, HIGH);
     digitalWrite(sck_, LOW);
   }
+  // The XPT2046 holds DOUT busy for ONE clock after the control byte before the
+  // result's MSB is valid. Skip that busy bit — reading it as the MSB and dropping
+  // the LSB would halve every conversion (untouched Z read ~2048 instead of ~0).
+  digitalWrite(sck_, HIGH);
+  digitalWrite(sck_, LOW);
   uint16_t v = 0;
   for (int8_t i = 11; i >= 0; i--) {
     digitalWrite(sck_, HIGH);
@@ -37,18 +54,32 @@ uint16_t Touch::readChan(uint8_t cmd) {
   return v;  // 0..4095
 }
 
+// Pressure proxy from the Z1/Z2 channels (one CS frame). ~0 untouched, rises on press.
+int16_t Touch::readZ() {
+  digitalWrite(cs_, LOW);
+  uint16_t z1 = readChan(CMD_Z1);
+  uint16_t z2 = readChan(CMD_Z2);
+  digitalWrite(cs_, HIGH);
+  int z = (int)z1 + (4095 - (int)z2);
+  lastZ_ = (int16_t)constrain(z, 0, 4095);
+  return lastZ_;
+}
+
 bool Touch::touched() {
-  if (irq_ >= 0) return digitalRead(irq_) == LOW;  // PENIRQ asserts low on press
-  return false;
+  return readZ() >= Z_THRESHOLD;  // pressure-based; PENIRQ (GPIO36) is unreliable here
 }
 
 // Average several X/Y conversions while pressed, discarding obvious outliers.
 bool Touch::readRaw(int16_t& rx, int16_t& ry) {
-  if (!touched()) return false;
   long sx = 0, sy = 0;
   int  n = 0;
   digitalWrite(cs_, LOW);
-  for (int i = 0; i < 12 && touched(); i++) {
+  // Re-check pressure inside the same CS frame so a released finger aborts cleanly.
+  uint16_t z1 = readChan(CMD_Z1);
+  uint16_t z2 = readChan(CMD_Z2);
+  lastZ_ = (int16_t)constrain((int)z1 + (4095 - (int)z2), 0, 4095);
+  if (lastZ_ < Z_THRESHOLD) { digitalWrite(cs_, HIGH); return false; }
+  for (int i = 0; i < 12; i++) {
     uint16_t x = readChan(CMD_X);
     uint16_t y = readChan(CMD_Y);
     if (x == 0 || x == 4095 || y == 0 || y == 4095) continue;  // rail = noise
@@ -63,7 +94,8 @@ bool Touch::readRaw(int16_t& rx, int16_t& ry) {
 
 bool Touch::loadCal() {
   s_prefs.begin(kNamespace, /*readOnly=*/true);
-  bool ok = s_prefs.getBool("ok", false);
+  bool ok = s_prefs.getBool("ok", false) &&
+            s_prefs.getUShort("ver", 0) == CAL_VERSION;  // reject stale-scale cal
   if (ok) {
     cal_.rawLeft   = s_prefs.getShort("L", cal_.rawLeft);
     cal_.rawRight  = s_prefs.getShort("R", cal_.rawRight);
@@ -81,6 +113,7 @@ void Touch::saveCal() {
   s_prefs.putShort("R", cal_.rawRight);
   s_prefs.putShort("T", cal_.rawTop);
   s_prefs.putShort("B", cal_.rawBottom);
+  s_prefs.putUShort("ver", CAL_VERSION);
   s_prefs.putBool("ok", true);
   s_prefs.end();
 }

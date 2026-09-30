@@ -41,7 +41,8 @@ class Touch {
   // and stores the native-frame calibration. Restores the display rotation after.
   void calibrate(TFT_eSPI& tft);
 
-  bool touched();  // true while the panel is pressed (PENIRQ low)
+  bool    touched();  // true while the panel is pressed (Z-pressure over SPI)
+  int16_t pressure() const { return lastZ_; }  // last Z proxy read (diagnostics)
 
   // If touched, fill screen coords (sx, sy) for the display's CURRENT rotation
   // plus a pressure proxy z, and return true. Uses the stored calibration.
@@ -51,9 +52,11 @@ class Touch {
 
  private:
   int8_t   sck_ = -1, miso_ = -1, mosi_ = -1, cs_ = -1, irq_ = -1;
+  int16_t  lastZ_ = 0;
   TouchCal cal_;
 
   uint16_t readChan(uint8_t cmd);                 // one 12-bit bit-bang conversion
+  int16_t  readZ();                               // touch-pressure proxy (one CS frame)
   bool     readRaw(int16_t& rx, int16_t& ry);     // averaged raw X/Y while pressed
   bool     readStableRaw(int16_t& rx, int16_t& ry, uint32_t timeoutMs = 20000);
 };
