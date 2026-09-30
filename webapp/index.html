@@ -58,17 +58,30 @@
     font-family:ui-monospace,monospace; white-space:pre; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
-  .dets { background:#0b0e13; border:1px solid #30363d; border-radius:10px; padding:4px;
+  /* Live-detections table built with CSS Grid: the sticky header and every row
+     share one column template, so columns align and the row fills full width.
+     minmax(0,1fr) on the device column lets long names ellipsis instead of
+     stretching the row past the container. */
+  .dets { background:#0b0e13; border:1px solid #30363d; border-radius:10px;
           max-height:280px; overflow:auto; }
-  .det { display:flex; align-items:center; gap:8px; padding:5px 6px;
-         border-bottom:1px solid #161b22; font-size:.82rem; }
+  .dethead, .det {
+    display:grid; grid-template-columns:16px 6.5em minmax(0,1fr) 5em 1.4rem;
+    align-items:center; column-gap:8px; padding:5px 6px;
+  }
+  .dethead { position:sticky; top:0; z-index:2; background:#0b0e13;
+             border-bottom:1px solid #30363d; font-size:.68rem; letter-spacing:.04em;
+             color:#8b949e; text-transform:uppercase; }
+  .det { border-bottom:1px solid #161b22; font-size:.82rem; }
   .det:last-child { border-bottom:0; }
-  .caret { cursor:pointer; color:#8b949e; padding:0 4px; flex:none; user-select:none; }
+  .tiercol { justify-self:center; }                  /* threat-tier dot / ⚠ header */
+  .sigcol  { display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
+  .det .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .det .rssi { font-family:ui-monospace,monospace; color:#9db4c9; text-align:right; }
+  .dethead .rssi { text-align:right; }
+  .caret { justify-self:center; cursor:pointer; color:#8b949e; user-select:none; }
   .detsub { padding:2px 6px 4px 28px; border-bottom:1px solid #161b22; }
   .sub1 { font-family:ui-monospace,monospace; font-size:.76rem; padding:2px 6px; margin:1px 0; }
-  .det .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .det .rssi { font-family:ui-monospace,monospace; color:#9db4c9; flex:none; }
-  .badge { width:9px; height:9px; border-radius:50%; flex:none; }
+  .badge { width:9px; height:9px; border-radius:50%; }
   .t0{color:#e6edf3;} .t1{color:#e3b341;} .t2{color:#db8b2a;} .t3{color:#f85149;font-weight:600;}
   .b0{background:#30363d;} .b1{background:#e3b341;} .b2{background:#db8b2a;} .b3{background:#f85149;}
   /* Row background/border tinted by source (matches the on-device colors). */
@@ -76,17 +89,9 @@
   .src5  { border-left:3px solid #22d3ee; background:rgba(34,211,238,.12); }
   .srcble{ border-left:3px solid #e879f9; background:rgba(232,121,249,.12); }
   .srcprb{ border-left:3px solid #f59e0b; background:rgba(245,158,11,.13); }
-  /* Fixed column header for the live-detections table. */
-  .dethead { display:flex; align-items:center; gap:8px; padding:5px 6px; position:sticky; top:0;
-             z-index:2; background:#0b0e13; border-bottom:1px solid #30363d; font-size:.68rem;
-             letter-spacing:.04em; color:#8b949e; text-transform:uppercase; }
-  .tiercol { width:14px; text-align:center; flex:none; }        /* holds the threat-tier dot */
-  .sigcol  { flex:none; min-width:5.4em; display:flex; flex-wrap:wrap; align-items:center; }
-  .hnm     { flex:1; }
-  .det .rssi, .dethead .rssi { min-width:4.8em; text-align:right; }
   /* Per-band signal pills (which sources this MAC was seen on). */
   .sp { display:inline-block; font-family:ui-monospace,monospace; font-size:.66rem; padding:1px 4px;
-        border-radius:4px; margin:1px 3px 1px 0; line-height:1.35; }
+        border-radius:4px; line-height:1.35; }
   .p24{background:rgba(139,148,158,.25);color:#c9d1d9;} .p5{background:rgba(34,211,238,.22);color:#7fe9fb;}
   .pble{background:rgba(232,121,249,.22);color:#f3b6fb;} .pprb{background:rgba(245,158,11,.22);color:#fcd47a;}
 </style>
@@ -121,7 +126,7 @@
 
   <h3 style="margin:.6em 0 .3em">Live detections
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span>
-    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30c</span></h3>
+    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30d</span></h3>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
