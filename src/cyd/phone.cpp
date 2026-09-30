@@ -27,6 +27,11 @@ bool     g_reload     = false;
 bool     g_logReq     = false;
 bool     g_scanStart  = false;
 bool     g_scanStop   = false;
+bool     g_listReq    = false;
+bool     g_fileReq    = false;
+char     g_dlFile[48] = {0};
+bool     g_briReq     = false;
+int      g_briVal     = 100;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -88,6 +93,24 @@ class WriteCB : public NimBLECharacteristicCallbacks {
       } else if (c0 == 'X' || c0 == 'x') {
         g_scanStop = true;
         Serial.println("[phone] cmd stop scan");
+      } else if (c0 == 'Q' || c0 == 'q') {
+        g_listReq = true;
+        Serial.println("[phone] cmd list sessions");
+      } else if (c0 == 'F' || c0 == 'f') {           // "F:<path>" download a file
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          strncpy(g_dlFile, val.c_str() + colon + 1, sizeof(g_dlFile) - 1);
+          g_dlFile[sizeof(g_dlFile) - 1] = 0;
+          g_fileReq = true;
+          Serial.printf("[phone] cmd download file %s\n", g_dlFile);
+        }
+      } else if (c0 == 'B' || c0 == 'b') {           // "B:<0-100>" brightness
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          g_briVal = atoi(val.c_str() + colon + 1);
+          g_briReq = true;
+          Serial.printf("[phone] cmd brightness %d\n", g_briVal);
+        }
       } else {
         g_download = (c0 == '1');
         Serial.printf("[phone] cmd download=%d\n", g_download);
@@ -169,6 +192,22 @@ bool     reloadRequested()  { bool r = g_reload; g_reload = false; return r; }
 bool     logRequested()       { bool r = g_logReq; g_logReq = false; return r; }
 bool     scanStartRequested() { bool r = g_scanStart; g_scanStart = false; return r; }
 bool     scanStopRequested()  { bool r = g_scanStop; g_scanStop = false; return r; }
+bool     listRequested()      { bool r = g_listReq; g_listReq = false; return r; }
+
+bool fileRequested(char* out, size_t cap) {
+  if (!g_fileReq) return false;
+  g_fileReq = false;
+  strncpy(out, g_dlFile, cap - 1);
+  out[cap - 1] = 0;
+  return true;
+}
+
+bool brightnessRequested(int* outPct) {
+  if (!g_briReq) return false;
+  g_briReq = false;
+  *outPct = g_briVal;
+  return true;
+}
 
 void logNotify(const uint8_t* data, size_t len) {
   if (!g_logData || !g_connected) return;

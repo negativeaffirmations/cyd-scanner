@@ -407,15 +407,15 @@ static int logNewDetections() {
   return n;
 }
 
-// Stream the current session log to the phone over BLE: first a "SIZE=<n>" header, then
-// the raw file in chunks. The web app reassembles and downloads it (no Wi-Fi needed).
-static void transferLog() {
-  if (!g_sdOk || !SD.exists(g_logPath)) {
+// Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
+// chunks. The web app reassembles and saves it (no Wi-Fi needed).
+static void streamFileOverBle(const char* path) {
+  if (!g_sdOk || !SD.exists(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
-    Serial.println("[CYD] BLE log: no file");
+    Serial.printf("[CYD] BLE dl: no file %s\n", path);
     return;
   }
-  File f = SD.open(g_logPath, "r");
+  File f = SD.open(path, "r");
   if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
   size_t sz = f.size();
   char hdr[24];
@@ -432,7 +432,50 @@ static void transferLog() {
     delay(15);
   }
   f.close();
-  Serial.printf("[CYD] BLE log sent %u/%u bytes\n", (unsigned)sent, (unsigned)sz);
+  Serial.printf("[CYD] BLE sent %u/%u bytes of %s\n", (unsigned)sent, (unsigned)sz, path);
+}
+
+static void transferLog() { streamFileOverBle(g_logPath); }  // current session ("L")
+
+// Download a specific session file requested by the phone ("F:<path>"). Restricted to
+// /logs/ (no path traversal) so the phone can't pull arbitrary SD files.
+static void transferFile(const char* path) {
+  if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
+    phone::logNotify((const uint8_t*)"SIZE=0", 6);
+    Serial.printf("[CYD] BLE dl: rejected path %s\n", path);
+    return;
+  }
+  streamFileOverBle(path);
+}
+
+// Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
+// "<path>\t<size>\n" lines. The web app parses it into a picker.
+static void sendSessionList() {
+  String list;
+  File dir = SD.open("/logs");
+  if (dir) {
+    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+      if (e.isDirectory()) continue;
+      String nm = e.name();
+      int slash = nm.lastIndexOf('/');
+      String base = slash >= 0 ? nm.substring(slash + 1) : nm;
+      list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\n";
+    }
+    dir.close();
+  }
+  char hdr[24];
+  int hn = snprintf(hdr, sizeof(hdr), "SESS=%u", (unsigned)list.length());
+  phone::logNotify((const uint8_t*)hdr, hn);
+  delay(30);
+  const char* p = list.c_str();
+  size_t rem = list.length();
+  while (rem) {
+    size_t n = rem > 180 ? 180 : rem;
+    phone::logNotify((const uint8_t*)p, n);
+    p += n; rem -= n;
+    delay(15);
+  }
+  Serial.printf("[CYD] session list sent (%u bytes)\n", (unsigned)list.length());
 }
 
 // This device's own BLE MAC, cached at boot so we can drop our own advertisement
@@ -482,14 +525,14 @@ static void requestScan(uint32_t timeoutMs = 5000) {
 static void pushStatus() {
   int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  char s[208];
+  char s[224];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
-           g_screen == SCR_SCAN ? 1 : 0);
+           g_screen == SCR_SCAN ? 1 : 0, g_brightness);
   phone::setStatus(String(s));
 }
 
@@ -809,6 +852,12 @@ void loop() {
   // Phone commands are honored from any screen.
   if (phone::reloadRequested()) sigdb::reload();
   if (phone::logRequested())    transferLog();
+  if (phone::listRequested())   sendSessionList();
+  { char fn[48]; if (phone::fileRequested(fn, sizeof(fn))) transferFile(fn); }
+  { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
+      g_brightness = (uint8_t)constrain(b, 10, 100);
+      applyBrightness(); saveBrightness();
+    } }
   renameSessionOnSync();  // give this session a date-time filename once time is known
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.

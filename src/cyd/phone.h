@@ -53,6 +53,15 @@ bool logRequested();
 bool scanStartRequested();
 bool scanStopRequested();
 
+// True once if the app asked for the list of session logs ("Q"), consumed on read.
+bool listRequested();
+
+// True once if the app asked to download a specific file ("F:<path>"); fills `out`.
+bool fileRequested(char* out, size_t cap);
+
+// True once if the app set a brightness ("B:<0-100>"); fills the percent value.
+bool brightnessRequested(int* outPct);
+
 // Notify a chunk of log data to the connected phone (used during BLE log download).
 void logNotify(const uint8_t* data, size_t len);
 
