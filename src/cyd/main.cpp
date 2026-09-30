@@ -145,7 +145,7 @@ enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
-static const char* kMenuItems[] = { "Start Scan", "Connect to Phone", "Settings" };
+static const char* kMenuItems[] = { "Phone Link", "Start Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
 
@@ -724,7 +724,7 @@ static void render() {
   tft.drawRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, TFT_RED);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_MAROON);
-  tft.drawString("STOP SCAN  <  MENU", W / 2, STOP_Y + STOP_H / 2, 1);
+  tft.drawString("STOP", W / 2, STOP_Y + STOP_H / 2, 1);
 
   tft.setTextDatum(TL_DATUM);
   char buf[48];
@@ -830,16 +830,19 @@ static void drawMenu() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
   int W = tft.width();
-  tft.setTextDatum(TL_DATUM);
+  tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString("MAIN MENU", 10, 32, 4);
+  tft.drawString("HOME", W / 2, 32, 4);
+  // Button text is centered in the row; font-4 (26px) in the 34px row leaves 4px
+  // of padding above and below.
   for (int i = 0; i < MENU_N; i++) {
     bool sel = (i == g_menuSel);
     int  y   = ROW_Y0 + i * ROW_STEP;
     if (sel) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
     else     tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
     tft.setTextColor(sel ? TFT_WHITE : TFT_LIGHTGREY, sel ? TFT_NAVY : TFT_BLACK);
-    tft.drawString(kMenuItems[i], 18, y, 4);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(kMenuItems[i], W / 2, y - 5 + ROW_H / 2, 4);
   }
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
@@ -917,8 +920,8 @@ static void runDownload() {
 
 // Act on the highlighted menu item (touch tap or long-press select).
 static void activateMenu() {
-  if (g_menuSel == 0)      g_screen = SCR_SCAN;                    // first cycle draws it
-  else if (g_menuSel == 1) { g_screen = SCR_APPQR;    drawAppQrScreen(); }
+  if (g_menuSel == 0)      { g_screen = SCR_APPQR;    drawAppQrScreen(); }
+  else if (g_menuSel == 1) g_screen = SCR_SCAN;                    // first cycle draws it
   else if (g_menuSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
 }
 
