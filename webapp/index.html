@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CYD Scanner Control</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -43,6 +45,15 @@
           padding:.05em .45em; margin:0; border-radius:8px; }
   .xbtn:hover { color:#e6edf3; background:#30363d; }
   input[type=range] { width:100%; accent-color:#238636; margin-top:.4em; }
+  #mapDlg { width:96vw; max-width:960px; }
+  #map { height:68vh; width:100%; border-radius:8px; background:#0b0e13; }
+  .maptools { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:.5em 0; font-size:.85rem; }
+  .maptools button { width:auto; padding:.5em .8em; margin:0; }
+  .maptools label { display:inline-flex; align-items:center; gap:4px; color:#c9d1d9; }
+  #mapMsg { color:#8b949e; font-size:.85rem; margin:.3em 0; }
+  .leaflet-popup-content { font-size:.8rem; }
+  .leaflet-popup-content .plist { max-height:200px; overflow:auto; margin-top:.3em;
+    font-family:ui-monospace,monospace; white-space:pre; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   .dets { background:#0b0e13; border:1px solid #30363d; border-radius:10px; padding:4px;
@@ -69,6 +80,7 @@
 
   <button id="connectBtn">Connect to scanner</button>
   <button id="scanBtn" disabled>&#9654; Start Scan</button>
+  <button id="mapBtn" class="secondary">&#128506; Map</button>
 
   <div class="grid">
     <div class="card"><div class="k">Wi-Fi 2.4</div><div class="v" id="w24">–</div></div>
@@ -104,6 +116,7 @@
     <button id="listBtn" class="secondary" disabled>Refresh session list</button>
     <select id="sessSel" disabled><option>— connect and refresh —</option></select>
     <button id="sessDlBtn" disabled>Download selected session</button>
+    <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
     <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
   </details>
 
@@ -116,6 +129,25 @@
     </div>
     <label class="k" for="briSlider">Brightness: <span id="briVal">–</span>%</label>
     <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
+  </dialog>
+
+  <dialog id="mapDlg">
+    <div class="modalhdr">
+      <strong>Wardriving map</strong>
+      <button id="mapClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="maptools">
+      <button id="mapCurBtn" class="secondary" disabled>Current session</button>
+      <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
+        Load .csv<input type="file" id="mapFile" accept=".csv,text/csv" hidden></label>
+      <label><input type="checkbox" id="fThreats"> Threats only</label>
+      <label><input type="checkbox" id="f24" checked> 2.4</label>
+      <label><input type="checkbox" id="f5" checked> 5G</label>
+      <label><input type="checkbox" id="fble" checked> BLE</label>
+      <label><input type="checkbox" id="fprb" checked> PRB</label>
+    </div>
+    <div id="mapMsg">Load the current session, pick one from Session logs, or open a .csv file.</div>
+    <div id="map"></div>
   </dialog>
 
   <h3 style="margin-bottom:.3em">Activity</h3>
@@ -181,7 +213,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn"]
+    ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -191,7 +223,7 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessSel","briSlider","settingsBtn"]
+  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
@@ -240,7 +272,7 @@ function gpsOnce(){
 
 // --- BLE download stream (LOGDATA): "SIZE=<n>" = a file, "SESS=<n>" = the session list.
 // A short header notification announces which, then <n> bytes of chunks follow. ---
-let dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.csv" };
+let dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.csv", sink:"save" };
 function onLogData(ev){
   const dv = ev.target.value;
   const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
@@ -248,7 +280,7 @@ function onLogData(ev){
     const txt = new TextDecoder().decode(v);
     if (txt.startsWith("SIZE=")) {
       dl.mode="file"; dl.expect=parseInt(txt.slice(5),10)||0; dl.got=0; dl.chunks=[];
-      if (dl.expect===0){ log("No log on device yet."); dl.mode=null; }
+      if (dl.expect===0){ log(dl.sink==="map"?"That session is empty.":"No log on device yet."); dl.mode=null; }
       return;
     }
     if (txt.startsWith("SESS=")) {
@@ -262,19 +294,29 @@ function onLogData(ev){
   if (dl.got >= dl.expect) {
     const blob = new Blob(dl.chunks);
     if (dl.mode==="file") {
-      const a=document.createElement("a");
-      a.href=URL.createObjectURL(blob); a.download=dl.name; a.click(); URL.revokeObjectURL(a.href);
-      log("Downloaded "+dl.name+" ("+dl.got+" bytes).");
+      if (dl.sink==="map") { blob.text().then(t=>plotCsvText(t, dl.name)); }
+      else {
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob); a.download=dl.name; a.click(); URL.revokeObjectURL(a.href);
+        log("Downloaded "+dl.name+" ("+dl.got+" bytes).");
+      }
     } else if (dl.mode==="list") {
       blob.text().then(populateSessions);
     }
-    dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.csv" };
+    dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.csv", sink:"save" };
   }
 }
 async function downloadLog(){
-  try{ dl={mode:null,expect:0,got:0,chunks:[],name:"scanlog.csv"};
+  try{ dl={mode:null,expect:0,got:0,chunks:[],name:"scanlog.csv",sink:"save"};
     await chars.cmd.writeValue(enc.encode("L")); log("Requesting current session…"); }
   catch(e){ log("Download failed: "+e.message); }
+}
+async function mapCurrent(){
+  if(!connected){ log("Connect first to map the current session."); return; }
+  try{ dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map"};
+    $("mapMsg").textContent="Loading current session…";
+    await chars.cmd.writeValue(enc.encode("L")); }
+  catch(e){ log("Map current failed: "+e.message); }
 }
 async function refreshSessions(){
   try{ await chars.cmd.writeValue(enc.encode("Q")); log("Requesting session list…"); }
@@ -284,7 +326,7 @@ function populateSessions(text){
   const sel=$("sessSel"); sel.innerHTML="";
   const rows=(text||"").split("\n").filter(l=>l.includes("\t"));
   if(!rows.length){ sel.innerHTML="<option>— no sessions —</option>";
-    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; return; }
+    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true; return; }
   rows.sort().reverse();  // date-time names sort newest-first
   for(const r of rows){
     const [path,size]=r.split("\t");
@@ -293,16 +335,19 @@ function populateSessions(text){
     const o=document.createElement("option"); o.value=path; o.textContent=base+"  ("+kb+" KB)";
     sel.appendChild(o);
   }
-  $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false;
+  $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
   log(rows.length+" session(s) found.");
 }
-async function downloadSession(){
+async function fetchSession(sink){
   const path=$("sessSel").value;
   if(!path || path.startsWith("—")) return;
-  try{ dl={mode:null,expect:0,got:0,chunks:[],name:path.split("/").pop()};
+  try{ dl={mode:null,expect:0,got:0,chunks:[],name:path.split("/").pop(),sink:sink};
+    if(sink==="map") $("mapMsg").textContent="Loading "+dl.name+"…";
     await chars.cmd.writeValue(enc.encode("F:"+path)); log("Requesting "+dl.name+"…"); }
   catch(e){ log("Download failed: "+e.message); }
 }
+function downloadSession(){ fetchSession("save"); }
+function mapSelectedSession(){ if(!$("mapDlg").open) openMap(); fetchSession("map"); }
 async function deleteSession(){
   const path=$("sessSel").value;
   if(!path || path.startsWith("—")) return;
@@ -314,6 +359,80 @@ async function deleteSession(){
 async function setBrightness(v){
   try{ await chars.cmd.writeValue(enc.encode("B:"+v)); }
   catch(e){ log("Brightness failed: "+e.message); }
+}
+
+// --- Wardriving map (Leaflet) ---
+let lmap=null, mapLayer=null, mapDets=[];
+const TIER_COL=["#3388ff","#e3b341","#db8b2a","#f85149"];  // none / suspect / likely / confirmed
+function tierNum(t){ return t==="confirmed"?3 : t==="likely"?2 : t==="suspect"?1 : 0; }
+
+function ensureMap(){
+  if(lmap) return;
+  lmap=L.map("map");
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:19, attribution:"&copy; OpenStreetMap"}).addTo(lmap);
+  mapLayer=L.layerGroup().addTo(lmap);
+  lmap.setView([0,0],2);
+}
+function openMap(){
+  $("mapDlg").showModal();
+  ensureMap();
+  setTimeout(()=>{ lmap.invalidateSize(); renderMap(); }, 80);
+  if(!mapDets.length && connected) mapCurrent();   // default view = the current scan
+}
+
+// Parse a scanlog CSV into mapDets (rows with valid GPS), then draw.
+function plotCsvText(text, label){
+  const lines=(text||"").split(/\r?\n/);
+  if(lines.length<2){ $("mapMsg").textContent="No rows in "+(label||"file")+"."; return; }
+  const h=lines[0].split(","), ix=n=>h.indexOf(n);
+  const iLat=ix("lat"),iLon=ix("lon"),iSrc=ix("source"),iMac=ix("mac"),iRssi=ix("rssi"),
+        iName=ix("name"),iTier=ix("tier"),iSig=ix("signature");
+  if(iLat<0||iLon<0){ $("mapMsg").textContent="Not a scanlog CSV (no lat/lon)."; return; }
+  mapDets=[];
+  for(let i=1;i<lines.length;i++){
+    const c=lines[i].split(","); if(c.length<=iLon) continue;
+    const lat=parseFloat(c[iLat]), lon=parseFloat(c[iLon]);
+    if(!isFinite(lat)||!isFinite(lon)||(lat===0&&lon===0)) continue;
+    mapDets.push({lat,lon,src:c[iSrc]||"",mac:c[iMac]||"",rssi:parseInt(c[iRssi],10)||0,
+      name:c[iName]||"",tier:c[iTier]||"none",sig:c[iSig]||""});
+  }
+  if(!$("mapDlg").open) openMap(); else renderMap();
+  const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
+  $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points.";
+}
+
+// Group filtered detections by GPS fix and draw one marker per location.
+function renderMap(){
+  if(!lmap) return;
+  mapLayer.clearLayers();
+  const on={"2.4":$("f24").checked,"5G":$("f5").checked,"BLE":$("fble").checked,"PRB":$("fprb").checked};
+  const threatsOnly=$("fThreats").checked;
+  const groups=new Map();
+  for(const d of mapDets){
+    if(!on[d.src]) continue;
+    if(threatsOnly && tierNum(d.tier)===0) continue;
+    const k=d.lat.toFixed(5)+","+d.lon.toFixed(5);
+    let g=groups.get(k); if(!g){ g={lat:d.lat,lon:d.lon,items:[]}; groups.set(k,g); }
+    g.items.push(d);
+  }
+  const pts=[];
+  groups.forEach(g=>{
+    let worst=0; for(const d of g.items) worst=Math.max(worst,tierNum(d.tier));
+    const col=TIER_COL[worst];
+    const m=L.circleMarker([g.lat,g.lon],{radius:Math.min(5+Math.sqrt(g.items.length),16),
+      color:col, weight:1, fillColor:col, fillOpacity:worst?0.85:0.55});
+    g.items.sort((a,b)=> tierNum(b.tier)-tierNum(a.tier) || b.rssi-a.rssi);
+    const shown=g.items.slice(0,60).map(d=>{
+      const flag=tierNum(d.tier)?" ["+d.tier+"]":"";
+      return (d.src||"?")+" "+d.rssi+"dBm "+(d.name||"<hidden>")+" "+d.mac+flag;
+    }).join("\n");
+    const more=g.items.length>60?"\n… +"+(g.items.length-60)+" more":"";
+    m.bindPopup("<b>"+g.items.length+" device(s)</b><br>"+g.lat.toFixed(5)+", "+g.lon.toFixed(5)+
+      '<div class="plist">'+esc(shown+more)+"</div>",{maxWidth:320});
+    m.addTo(mapLayer); pts.push([g.lat,g.lon]);
+  });
+  if(pts.length) lmap.fitBounds(pts,{padding:[30,30]});
 }
 
 // --- Live detections: "D:<n>" header then n tab-separated rows, per scan cycle ---
@@ -383,6 +502,18 @@ $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); })
 $("settingsBtn").onclick = ()=> $("settingsDlg").showModal();
 $("settingsClose").onclick = ()=> $("settingsDlg").close();
 $("settingsDlg").addEventListener("click", e=>{ if(e.target === $("settingsDlg")) $("settingsDlg").close(); });
+$("mapBtn").onclick = openMap;
+$("mapClose").onclick = ()=> $("mapDlg").close();
+$("mapCurBtn").onclick = mapCurrent;
+$("sessMapBtn").onclick = mapSelectedSession;
+["fThreats","f24","f5","fble","fprb"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
+$("mapFile").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>plotCsvText(rd.result, f.name);
+  rd.readAsText(f);
+  e.target.value="";   // allow re-loading the same file
+});
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");
 </script>
 </body>

@@ -242,8 +242,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
-  the scan, downloads the current session log, **lists past sessions and downloads or deletes
-  a chosen one**, reloads the DB, and has a **Settings** modal (brightness slider; extensible).
+  the scan, downloads the current session log, **lists past sessions and downloads/deletes/maps
+  a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), and a
+  **wardriving Map** (Leaflet/OSM) that plots a session's GPS'd detections — grouped by fix,
+  colored by threat tier, filterable by source/threats — from the current scan, a picked
+  session, or a locally-loaded `.csv` (works offline).
 - **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
