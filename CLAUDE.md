@@ -24,8 +24,6 @@ This is a **defensive, passive, privacy-research** tool. It observes broadcast R
 that any receiver can hear. Keep it that way:
 - **Passive detection only** — no jamming, deauth, injection, or any active
   interference with other devices' operation.
-- No capture or storage of third-party payload content beyond what's needed to
-  classify a device (identifiers, signal metadata).
 - When in doubt about whether a feature crosses from "detect" into "attack/DoS,"
   stop and ask.
 
