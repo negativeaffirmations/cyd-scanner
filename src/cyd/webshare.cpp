@@ -8,10 +8,15 @@ namespace {
 
 WebServer  g_server(80);
 bool       g_active = false;
-char       g_ssid[24] = {0};
-char       g_pw[16]   = {0};
-const char* kUrl      = "http://192.168.4.1";
-const char* kLogPath  = "/scanlog.csv";
+char       g_ssid[24]  = {0};
+char       g_pw[16]    = {0};
+const char* kUrl       = "http://192.168.4.1";
+char       g_logPath[48] = "/scanlog.csv";  // current session log (set by setLogPath)
+
+const char* logBasename() {
+  const char* s = strrchr(g_logPath, '/');
+  return s ? s + 1 : g_logPath;
+}
 
 void handleRoot() {
   String h = "<!doctype html><html><head><meta name=viewport "
@@ -19,16 +24,17 @@ void handleRoot() {
              "<style>body{font-family:sans-serif;margin:2em;background:#111;color:#eee}"
              "a{display:inline-block;margin-top:1em;padding:.8em 1.2em;background:#2a7;"
              "color:#fff;text-decoration:none;border-radius:8px}</style></head><body>"
-             "<h2>CYD Scanner</h2><p>Detection log on the microSD card.</p>"
-             "<a href='/scanlog.csv'>Download scanlog.csv</a></body></html>";
+             "<h2>CYD Scanner</h2><p>Current session log on the microSD card.</p>"
+             "<a href='/scanlog.csv'>Download " + String(logBasename()) + "</a></body></html>";
   g_server.send(200, "text/html", h);
 }
 
 void handleLog() {
-  if (!SD.exists(kLogPath)) { g_server.send(404, "text/plain", "no log yet"); return; }
-  File f = SD.open(kLogPath, "r");
+  if (!SD.exists(g_logPath)) { g_server.send(404, "text/plain", "no log yet"); return; }
+  File f = SD.open(g_logPath, "r");
   if (!f) { g_server.send(500, "text/plain", "open failed"); return; }
-  g_server.sendHeader("Content-Disposition", "attachment; filename=scanlog.csv");
+  g_server.sendHeader("Content-Disposition",
+                      String("attachment; filename=") + logBasename());
   g_server.streamFile(f, "text/csv");
   f.close();
 }
@@ -61,6 +67,10 @@ void stop() {
   Serial.println("[webshare] AP down");
 }
 
+void        setLogPath(const char* path) {
+  strncpy(g_logPath, path, sizeof(g_logPath) - 1);
+  g_logPath[sizeof(g_logPath) - 1] = 0;
+}
 bool        active()   { return g_active; }
 bool        clientConnected() { return g_active && WiFi.softAPgetStationNum() > 0; }
 void        handle()   { if (g_active) g_server.handleClient(); }

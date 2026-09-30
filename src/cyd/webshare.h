@@ -14,6 +14,8 @@ bool        active();
 bool        clientConnected();  // true if a phone has joined the SoftAP
 void        handle();      // call frequently while active
 
+void        setLogPath(const char* path);  // which SD file the download serves
+
 const char* ssid();
 const char* password();
 const char* url();         // e.g. "http://192.168.4.1"

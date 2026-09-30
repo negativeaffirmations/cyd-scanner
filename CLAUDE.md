@@ -165,15 +165,18 @@ back (5 GHz included). Things that matter, learned the hard way:
   results — both captured at runtime, so device-agnostic. The phone filter is best-effort:
   phones use rotating random BLE addresses, so their scanned advertisements may not match
   the connection address.
-- **SD logging (CYD).** First-seen devices (dedup by source+MAC for the session) are
-  appended to `/scanlog.csv`:
+- **SD logging (CYD) — per-session files.** Each boot opens a new session log under
+  `/logs/`, named by a boot counter (`/logs/sess-NNNNN.csv`) so it works before the phone
+  has synced time; once time syncs, the file is renamed to `/logs/YYYYMMDD-HHMMSS.csv`
+  (`openSession` / `renameSessionOnSync` in `main.cpp`). First-seen devices (dedup by
+  source+MAC for the session) are appended:
   `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature`.
   `source` is `2.4`/`5G`/`BLE`/`PRB` (PRB = promiscuous probe request); `ie` is the
   8-hex 802.11 IE fingerprint (Wi-Fi); `cid` is the 4-hex BLE company ID and `uuid` the
   BLE service UUID (both blank/`0000` when not applicable).
   `epoch` is LOCAL time once the phone has synced (it sends UTC + tz offset; 0 before);
   `lat`/`lon` fill once GPS is sent; `score`/`tier`/`signature` come from the signature DB.
-  A one-time wipe (bump `LOG_GEN` in `main.cpp`) forces a fresh log after a schema change.
+  Log download (BLE + Wi-Fi) serves the **current session** file (`webshare::setLogPath`).
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
   UI would need a software-SPI touch driver first. The physical BOOT button drives a
@@ -236,7 +239,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). MUST be
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
-  a **live detection list** (mirrors the device screen), downloads the log, reloads the DB.
+  a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
+  the scan, downloads the current session log, and reloads the DB.
 - **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +

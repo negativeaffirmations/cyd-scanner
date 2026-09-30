@@ -42,6 +42,11 @@
   .badge { width:9px; height:9px; border-radius:50%; flex:none; }
   .t0{color:#e6edf3;} .t1{color:#e3b341;} .t2{color:#db8b2a;} .t3{color:#f85149;font-weight:600;}
   .b0{background:#30363d;} .b1{background:#e3b341;} .b2{background:#db8b2a;} .b3{background:#f85149;}
+  /* Row background/border tinted by source (matches the on-device colors). */
+  .src24 { border-left:3px solid #8b949e; background:rgba(139,148,158,.10); }
+  .src5  { border-left:3px solid #22d3ee; background:rgba(34,211,238,.12); }
+  .srcble{ border-left:3px solid #e879f9; background:rgba(232,121,249,.12); }
+  .srcprb{ border-left:3px solid #f59e0b; background:rgba(245,158,11,.13); }
 </style>
 </head>
 <body>
@@ -247,10 +252,12 @@ function onDets(ev){
 function renderDets(rows){
   const el = $("dets");
   if (!rows.length){ el.innerHTML = '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
+  const srcClass = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};
   el.innerHTML = rows.map(r=>{
     const nm = esc(r.name) || "&lt;hidden&gt;";
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
-    return `<div class="det" title="${title}"><span class="badge b${r.tier}"></span>`+
+    const sc = srcClass[r.tag] || "";
+    return `<div class="det ${sc}" title="${title}"><span class="badge b${r.tier}"></span>`+
            `<span class="tag">${esc(r.tag)}</span>`+
            `<span class="nm t${r.tier}">${nm}</span>`+
            `<span class="rssi">${r.rssi} dBm</span></div>`;

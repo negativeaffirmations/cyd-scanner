@@ -14,6 +14,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Preferences.h>
+#include <time.h>
 #include <algorithm>
 #include <TFT_eSPI.h>
 #include <qrcode.h>
@@ -245,7 +246,10 @@ static bool stopButtonTapped() {
 
 SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
-const char* kLogPath = "/scanlog.csv";
+char      g_logPath[48] = "/scanlog.csv";  // current session log; set in openSession()
+bool      g_logNamed    = false;           // true once renamed to the date-time form
+static const char* kLogHeader =
+    "epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature";
 
 struct SeenKey { uint8_t source; uint8_t mac[6]; };
 SeenKey g_seen[MAX_SEEN];
@@ -302,20 +306,40 @@ static void countTiers(int& susp, int& lk, int& conf) {
   }
 }
 
-// Bump LOG_GEN to force a one-time wipe of the SD log on the next boot.
-static constexpr uint32_t LOG_GEN = 4;  // v4: added BLE 'cid' + 'uuid' columns
-
-static void wipeLogsIfNeeded() {
-  Preferences p;
-  p.begin("cydscan", false);
-  uint32_t gen = p.getULong("loggen", 0);
-  if (gen != LOG_GEN) {
-    if (SD.exists(kLogPath)) SD.remove(kLogPath);
-    p.putULong("loggen", LOG_GEN);
-    Serial.printf("[CYD] log wipe (gen %lu -> %lu); fresh file will be created\n",
-                  (unsigned long)gen, (unsigned long)LOG_GEN);
-  }
+// Start a fresh per-boot session log under /logs/. Named by a boot counter so it works
+// before the phone has synced wall-clock time; renamed to /logs/YYYYMMDD-HHMMSS.csv once
+// time is known (renameSessionOnSync). Rows still carry absolute epoch after sync.
+static void openSession() {
+  SD.mkdir("/logs");
+  if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file
+  Preferences p; p.begin("cydscan", false);
+  uint32_t boot = p.getULong("bootcnt", 0) + 1;
+  p.putULong("bootcnt", boot);
   p.end();
+  snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.csv", (unsigned long)boot);
+  g_logNamed = false;
+  File f = SD.open(g_logPath, FILE_WRITE);
+  if (f) { f.println(kLogHeader); f.close(); }
+  Serial.printf("[CYD] session log: %s\n", g_logPath);
+}
+
+// Once the phone provides wall-clock time, rename the boot-counter session file to a
+// date-time name. Runs once per session (even if the rename fails, it won't retry-spam).
+static void renameSessionOnSync() {
+  if (g_logNamed || !g_sdOk || !phone::hasTime()) return;
+  time_t t = (time_t)phone::epochNow();
+  struct tm tmv;
+  gmtime_r(&t, &tmv);  // epoch is stored already-localized, so gmtime gives local fields
+  char nn[48];
+  snprintf(nn, sizeof(nn), "/logs/%04d%02d%02d-%02d%02d%02d.csv",
+           tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+           tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  if (!SD.exists(nn) && SD.rename(g_logPath, nn)) {
+    Serial.printf("[CYD] session log renamed %s -> %s\n", g_logPath, nn);
+    strncpy(g_logPath, nn, sizeof(g_logPath) - 1);
+    webshare::setLogPath(g_logPath);
+  }
+  g_logNamed = true;
 }
 
 // Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
@@ -340,19 +364,16 @@ static void initSD() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   g_sdOk = SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
-  wipeLogsIfNeeded();
   reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
-  if (!SD.exists(kLogPath)) {
-    File f = SD.open(kLogPath, FILE_WRITE);
-    if (f) { f.println("epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature"); f.close(); }
-  }
-  Serial.printf("[CYD] SD ready - logging to %s\n", kLogPath);
+  openSession();       // create this boot's /logs/sess-NNNNN.csv (renamed on time sync)
+  webshare::setLogPath(g_logPath);
+  Serial.println("[CYD] SD ready");
 }
 
 static int logNewDetections() {
   int n = 0;
   File f;
-  if (g_sdOk) f = SD.open(kLogPath, FILE_APPEND);
+  if (g_sdOk) f = SD.open(g_logPath, FILE_APPEND);
   uint32_t ms = millis();
   uint32_t epoch = phone::epochNow();
   bool gps = phone::hasGps();
@@ -386,15 +407,15 @@ static int logNewDetections() {
   return n;
 }
 
-// Stream /scanlog.csv to the phone over BLE: first a "SIZE=<n>" header, then the
-// raw file in chunks. The web app reassembles and downloads it (no Wi-Fi needed).
+// Stream the current session log to the phone over BLE: first a "SIZE=<n>" header, then
+// the raw file in chunks. The web app reassembles and downloads it (no Wi-Fi needed).
 static void transferLog() {
-  if (!g_sdOk || !SD.exists(kLogPath)) {
+  if (!g_sdOk || !SD.exists(g_logPath)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.println("[CYD] BLE log: no file");
     return;
   }
-  File f = SD.open(kLogPath, "r");
+  File f = SD.open(g_logPath, "r");
   if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
   size_t sz = f.size();
   char hdr[24];
@@ -788,6 +809,7 @@ void loop() {
   // Phone commands are honored from any screen.
   if (phone::reloadRequested()) sigdb::reload();
   if (phone::logRequested())    transferLog();
+  renameSessionOnSync();  // give this session a date-time filename once time is known
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
   if (phone::downloadRequested()) { runDownload(); return; }
