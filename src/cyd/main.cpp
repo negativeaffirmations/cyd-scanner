@@ -155,6 +155,11 @@ static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
 // Scan-screen "stop" button (full-width bar under the status bar).
 static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
 
+// Scan-screen device list geometry + scrolling (rows are one MAC group each).
+static constexpr int LIST_Y0 = 84, LIST_ROW_H = 13;
+static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
+static int g_scrollOffset = 0;  // group index of the first visible row
+
 enum BtnEv { BTN_NONE, BTN_SHORT, BTN_LONG };
 static constexpr uint32_t LONG_PRESS_MS = 550;
 
@@ -293,6 +298,74 @@ static int buildSorted(int* idx) {
     return g_dets[a].rssi > g_dets[b].rssi;
   });
   return g_detCount;
+}
+
+// One device = one MAC, merged across sources (2.4 / 5G / BLE / PRB). Built from the
+// sorted detections; ordered tier-first then strongest RSSI. Shared by the on-screen
+// list and the phone DETS stream.
+struct DevGroup {
+  uint8_t  mac[6];
+  int      tier;      // max tier across members
+  int      bestRssi;  // strongest member RSSI
+  int      rep;       // g_dets index of the strongest member (colour/source hint)
+  int      nameIdx;   // g_dets index of the first member with a name, else -1
+  uint32_t ie;        // first non-zero IE fingerprint, else 0
+  char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
+  char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
+};
+static int      g_sortIdx[MAX_DET];   // detections sorted tier-first then RSSI (see buildGroups)
+static DevGroup g_groups[MAX_DET];
+static int      g_groupCount = 0;
+
+static int buildGroups() {
+  buildSorted(g_sortIdx);
+  int n = 0;
+  for (int r = 0; r < g_detCount; r++) {
+    int i = g_sortIdx[r];
+    const Detection& d = g_dets[i];
+    int gi = -1;
+    for (int k = 0; k < n; k++)
+      if (memcmp(g_groups[k].mac, d.mac, 6) == 0) { gi = k; break; }
+    if (gi < 0) {
+      gi = n++;
+      DevGroup& g = g_groups[gi];
+      memcpy(g.mac, d.mac, 6);
+      g.tier = (int)g_score[i].tier; g.bestRssi = d.rssi; g.rep = i;
+      g.nameIdx = -1; g.ie = 0;
+    }
+    DevGroup& g = g_groups[gi];
+    if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
+    if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
+    if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
+    if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
+  }
+  std::sort(g_groups, g_groups + n, [](const DevGroup& a, const DevGroup& b) {
+    if (a.tier != b.tier) return a.tier > b.tier;
+    return a.bestRssi > b.bestRssi;
+  });
+  // Per-group source strings, built once per cycle: distinct tags only (exact compare),
+  // strongest first. tag = "2.4+PRB" for the screen, srcs = "2.4:-41,PRB:-55" for the phone.
+  for (int k = 0; k < n; k++) {
+    DevGroup& g = g_groups[k];
+    g.tag[0] = 0; g.srcs[0] = 0;
+    const char* seen[4]; int ns = 0;
+    size_t tl = 0, sl = 0;
+    for (int r = 0; r < g_detCount && ns < 4; r++) {
+      const Detection& d = g_dets[g_sortIdx[r]];
+      if (memcmp(d.mac, g.mac, 6) != 0) continue;
+      const char* t = srcTag(d);
+      bool dup = false;
+      for (int s = 0; s < ns; s++) if (strcmp(seen[s], t) == 0) { dup = true; break; }
+      if (dup) continue;
+      seen[ns++] = t;
+      int w = snprintf(g.tag + tl, sizeof(g.tag) - tl, tl ? "+%s" : "%s", t);
+      if (w > 0 && (size_t)w < sizeof(g.tag) - tl) tl += w; else g.tag[tl] = 0;
+      w = snprintf(g.srcs + sl, sizeof(g.srcs) - sl, sl ? ",%s:%d" : "%s:%d", t, d.rssi);
+      if (w > 0 && (size_t)w < sizeof(g.srcs) - sl) sl += w; else g.srcs[sl] = 0;
+    }
+  }
+  g_groupCount = n;
+  return n;
 }
 
 static void countTiers(int& susp, int& lk, int& conf) {
@@ -629,31 +702,36 @@ static void pushStatus() {
   phone::setStatus(String(s));
 }
 
-// Stream the live detection list to the phone so its app mirrors the CYD screen:
-// a "D:<count>" header then one row per device (top-of-list first). Tab-separated
-// so the app can split cleanly; the name is last and stripped of tabs. Capped so
-// the burst stays small on the BLE link.
+// Stream the live detection list to the phone so its app mirrors the CYD screen.
+// DETS stream v2 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
+// row per device (one MAC, merged across sources), top-of-list first:
+//   <seq>\t<tier>\t<mac>\t<bestRssi>\t<ie>\t<name>\t<tag:rssi,tag:rssi,...>
+// The app drops rows whose seq != the current header's and swaps the list in only when
+// the snapshot is complete. Fallbacks considered and held in reserve if this proves
+// lossy: (a) a length-prefixed blob like the log download, (b) a polled READ
+// characteristic. Capped so the burst stays small on the BLE link.
 static constexpr int DETS_STREAM_MAX = 12;
 static void pushDetections() {
   if (!phone::connected()) return;
-  static int idx[MAX_DET];
-  buildSorted(idx);
-  int n = min(g_detCount, DETS_STREAM_MAX);
-  char hdr[16];
-  snprintf(hdr, sizeof(hdr), "D:%d", n);
+  static uint16_t g_detsSeq = 0;
+  int n = min(g_groupCount, DETS_STREAM_MAX);
+  g_detsSeq++;
+  char hdr[24];
+  snprintf(hdr, sizeof(hdr), "D:%u:%d", (unsigned)g_detsSeq, n);
   phone::detsNotify(String(hdr));
   for (int r = 0; r < n; r++) {
-    int i = idx[r];
-    const Detection& d = g_dets[i];
+    const DevGroup& g = g_groups[r];
     char name[24];
-    strncpy(name, d.name[0] ? d.name : "<hidden>", sizeof(name) - 1);
+    strncpy(name, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", sizeof(name) - 1);
     name[sizeof(name) - 1] = 0;
     for (char* p = name; *p; ++p) if (*p == '\t' || *p == '\n' || *p == '\r') *p = ' ';
-    char row[96];
-    snprintf(row, sizeof(row), "%d\t%s\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%08lX\t%s",
-             (int)g_score[i].tier, srcTag(d), d.rssi,
-             d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
-             (unsigned long)d.ie_hash, name);
+    char row[192];
+    int len = snprintf(row, sizeof(row), "%u\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%08lX\t%s\t",
+                       (unsigned)g_detsSeq, g.tier,
+                       g.mac[0], g.mac[1], g.mac[2], g.mac[3], g.mac[4], g.mac[5],
+                       g.bestRssi, (unsigned long)g.ie, name);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    snprintf(row + len, sizeof(row) - len, "%s", g.srcs);  // list pre-built (de-duped) in buildGroups
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }
@@ -711,6 +789,96 @@ static void drawStatusBar() {
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
 }
 
+// --- scan-list scrolling: geometry, icons, touch ---
+static int visibleRows()   { return (tft.height() - LIST_Y0) / LIST_ROW_H; }
+static int scrollUpCy()    { return LIST_Y0 + SCROLL_R + 2; }
+static int scrollDownCy()  { return tft.height() - SCROLL_R - 4; }
+
+static void drawScrollIcon(int cx, int cy, bool up, bool enabled) {
+  uint16_t c = enabled ? TFT_WHITE : TFT_DARKGREY;
+  tft.drawCircle(cx, cy, SCROLL_R, c);
+  int dy = up ? -1 : 1;  // chevron: apex toward the scroll direction
+  for (int t = 0; t < 2; t++) {  // 2 px thick
+    tft.drawLine(cx - 6, cy - dy * 3 + t, cx, cy + dy * 3 + t, c);
+    tft.drawLine(cx + 6, cy - dy * 3 + t, cx, cy + dy * 3 + t, c);
+  }
+}
+
+static bool inCircle(int x, int y, int cx, int cy) {
+  int dx = x - cx, dy = y - cy;
+  return dx * dx + dy * dy <= SCROLL_R * SCROLL_R;
+}
+
+// Repaint the device list region (below the status/count lines) + scroll icons. With
+// clear=true the region is wiped first — used by touch scrolling to avoid a full-screen
+// flicker. Uses the groups built for this cycle (buildGroups). One row per MAC, tier
+// first then strongest RSSI.
+static void drawScanList(bool clear) {
+  int W = tft.width();
+  char buf[48];
+  tft.setTextDatum(TL_DATUM);
+  if (clear) tft.fillRect(0, LIST_Y0, W, tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  int maxOff = max(0, g_groupCount - vis);
+  g_scrollOffset = constrain(g_scrollOffset, 0, maxOff);  // self-corrects when the list shrinks
+  int rows = min(g_groupCount - g_scrollOffset, vis);
+  for (int r = 0; r < rows; r++) {
+    const DevGroup& g = g_groups[g_scrollOffset + r];
+    const Detection& d = g_dets[g.rep];
+    uint16_t col;
+    switch ((sigdb::Tier)g.tier) {
+      case sigdb::Tier::Confirmed: col = TFT_RED;    break;
+      case sigdb::Tier::Likely:    col = TFT_ORANGE; break;
+      case sigdb::Tier::Suspect:   col = TFT_YELLOW; break;
+      default: col = d.source == (uint8_t)Source::BleScan ? TFT_MAGENTA
+                   : d.channel > 14 ? TFT_CYAN : TFT_WHITE;
+    }
+    tft.setTextColor(col, TFT_BLACK);
+    char name[14];
+    strncpy(name, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", 13);
+    name[13] = 0;
+    char flag = g.tier != (int)sigdb::Tier::None ? '!' : ' ';
+    snprintf(buf, sizeof(buf), "%c%-9.9s %-13s %4d", flag, g.tag, name, g.bestRssi);
+    tft.drawString(buf, 4, LIST_Y0 + r * LIST_ROW_H, 1);
+  }
+
+  // Scroll icons (circles with chevrons) on the right edge; dimmed at the limits.
+  int cx = W - SCROLL_CX_INSET;
+  drawScrollIcon(cx, scrollUpCy(),   true,  g_scrollOffset > 0);
+  drawScrollIcon(cx, scrollDownCy(), false, g_scrollOffset < maxOff);
+}
+
+
+// Touch scrolling for the scan list: tap an arrow icon to step one row, or drag the list.
+// Strictly below the STOP bar. Redraws only when the offset changes. No-op until touch is
+// calibrated. Call frequently while on SCR_SCAN.
+static void handleScanTouch() {
+  static bool prev = false, dragging = false;
+  static int  startY = 0, startOffset = 0;
+  if (!g_touchOk) { prev = false; dragging = false; return; }
+  bool now = g_touch.touched();
+  int  before = g_scrollOffset;
+  int  maxOff = max(0, g_groupCount - visibleRows());
+  int16_t sx, sy, z;
+  if (now && g_touch.getScreen(tft, sx, sy, z)) {
+    if (!prev) {  // touch-down edge
+      dragging = false;
+      if (sy > STOP_Y + STOP_H) {
+        int cx = tft.width() - SCROLL_CX_INSET;
+        if      (inCircle(sx, sy, cx, scrollUpCy()))   g_scrollOffset--;
+        else if (inCircle(sx, sy, cx, scrollDownCy())) g_scrollOffset++;
+        else if (sy >= LIST_Y0) { dragging = true; startY = sy; startOffset = g_scrollOffset; }
+      }
+    } else if (dragging) {
+      g_scrollOffset = startOffset - (sy - startY) / LIST_ROW_H;
+    }
+    g_scrollOffset = constrain(g_scrollOffset, 0, maxOff);
+  }
+  if (!now) dragging = false;
+  prev = now;
+  if (g_scrollOffset != before) drawScanList(true);
+}
+
 static void render() {
   int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
   int susp, lk, conf; countTiers(susp, lk, conf);
@@ -743,30 +911,7 @@ static void render() {
   snprintf(buf, sizeof(buf), "threats  S:%d  L:%d  C:%d", susp, lk, conf);
   tft.drawString(buf, 4, 70, 1);
 
-  // Sort by threat tier first, then RSSI, so flagged devices surface at the top.
-  static int idx[MAX_DET];
-  buildSorted(idx);
-  int maxRows = (tft.height() - 84) / 13;  // rows from y84, 13 px each
-  int rows = min(g_detCount, maxRows);
-  for (int r = 0; r < rows; r++) {
-    int i = idx[r];
-    const Detection& d = g_dets[i];
-    uint16_t col;
-    switch (g_score[i].tier) {
-      case sigdb::Tier::Confirmed: col = TFT_RED;    break;
-      case sigdb::Tier::Likely:    col = TFT_ORANGE; break;
-      case sigdb::Tier::Suspect:   col = TFT_YELLOW; break;
-      default: col = d.source == (uint8_t)Source::BleScan ? TFT_MAGENTA
-                   : d.channel > 14 ? TFT_CYAN : TFT_WHITE;
-    }
-    tft.setTextColor(col, TFT_BLACK);
-    char name[16];
-    strncpy(name, d.name[0] ? d.name : "<hidden>", 15);
-    name[15] = 0;
-    char flag = g_score[i].tier != sigdb::Tier::None ? '!' : ' ';
-    snprintf(buf, sizeof(buf), "%c%-3s %-15s %4d", flag, srcTag(d), name, d.rssi);
-    tft.drawString(buf, 4, 84 + r * 13, 1);
-  }
+  drawScanList(false);
 }
 
 // Draw a QR centered horizontally at the given top y; returns the y just below it.
@@ -894,6 +1039,7 @@ static void activateSettings(int sel) {
 static void runScanCycle() {
   requestScan();
   computeScores();
+  buildGroups();  // once per cycle; shared by render() and pushDetections()
   setLed(!g_linkOk, g_linkOk, false);
   int newCount = logNewDetections();
   int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
@@ -921,7 +1067,7 @@ static void runDownload() {
 // Act on the highlighted menu item (touch tap or long-press select).
 static void activateMenu() {
   if (g_menuSel == 0)      { g_screen = SCR_APPQR;    drawAppQrScreen(); }
-  else if (g_menuSel == 1) g_screen = SCR_SCAN;                    // first cycle draws it
+  else if (g_menuSel == 1) { g_screen = SCR_SCAN; g_scrollOffset = 0; }                  // first cycle draws it
   else if (g_menuSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
 }
 
@@ -965,7 +1111,7 @@ void loop() {
   }
 
   // Phone can start/stop the scan remotely (single toggle in the web app).
-  if (phone::scanStartRequested()) g_screen = SCR_SCAN;
+  if (phone::scanStartRequested()) { if (g_screen != SCR_SCAN) g_scrollOffset = 0; g_screen = SCR_SCAN; }
   if (phone::scanStopRequested())  { g_screen = SCR_MENU; drawMenu(); pushStatus(); }
 
   BtnEv ev = buttonEvent();
@@ -1015,6 +1161,7 @@ void loop() {
             g_screen = SCR_MENU; drawMenu(); pushStatus(); return;
           }
           if (phone::downloadRequested()) return;
+          handleScanTouch();
           delay(20);
         }
       }

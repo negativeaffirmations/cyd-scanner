@@ -61,7 +61,10 @@
   .det { display:flex; align-items:center; gap:8px; padding:5px 6px;
          border-bottom:1px solid #161b22; font-size:.82rem; }
   .det:last-child { border-bottom:0; }
-  .det .tag { font-family:ui-monospace,monospace; color:#8b949e; width:2.6em; flex:none; }
+  .det .tag { font-family:ui-monospace,monospace; color:#8b949e; min-width:2.6em; flex:none; }
+  .caret { cursor:pointer; color:#8b949e; padding:0 4px; flex:none; user-select:none; }
+  .detsub { padding:2px 6px 4px 28px; border-bottom:1px solid #161b22; }
+  .sub1 { font-family:ui-monospace,monospace; font-size:.76rem; padding:2px 6px; margin:1px 0; }
   .det .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .det .rssi { font-family:ui-monospace,monospace; color:#9db4c9; flex:none; }
   .badge { width:9px; height:9px; border-radius:50%; flex:none; }
@@ -440,34 +443,65 @@ function renderMap(){
   if(pts.length) lmap.fitBounds(pts,{padding:[30,30]});
 }
 
-// --- Live detections: "D:<n>" header then n tab-separated rows, per scan cycle ---
+// --- Live detections v2: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot,
+// one row per MAC): seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi") ---
 let detState = { expect:0, rows:[] };
+let curSeq = -1;
+let emptyStreak = 0;
+const expandedMacs = new Set();   // carat state survives snapshot re-renders
 function esc(s){ return (s||"").replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 function onDets(ev){
   const txt = new TextDecoder().decode(ev.target.value);
-  if (txt.startsWith("D:")) {                       // new snapshot header
-    detState = { expect: parseInt(txt.slice(2),10) || 0, rows:[] };
-    if (detState.expect === 0) renderDets([]);      // empty table
+  if (txt.startsWith("D:")) {                       // new snapshot header: D:<seq>:<n>
+    const h = txt.slice(2).split(":");
+    curSeq = parseInt(h[0],10);
+    detState = { expect: parseInt(h[1],10) || 0, rows:[] };
+    if (detState.expect === 0 && ++emptyStreak >= 3) renderDets([]);  // tolerate brief empties
     return;
   }
-  const p = txt.split("\t");                          // tier tag rssi mac ie name…
-  if (p.length >= 6)
-    detState.rows.push({tier:+p[0], tag:p[1], rssi:+p[2], mac:p[3], ie:p[4], name:p.slice(5).join("\t")});
-  if (detState.rows.length >= detState.expect) renderDets(detState.rows);
+  const p = txt.split("\t");                        // seq tier mac rssi ie name srcList
+  if (p.length < 7 || +p[0] !== curSeq) return;     // stale / malformed
+  if (detState.rows.some(r => r.mac === p[2])) return;  // dedup by MAC within the batch
+  const sources = p[6].split(",").filter(Boolean).map(x=>{
+    const k = x.lastIndexOf(":");
+    return {tag:x.slice(0,k), rssi:+x.slice(k+1)};
+  });
+  detState.rows.push({seq:+p[0], tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources});
+  if (detState.rows.length >= detState.expect) {
+    emptyStreak = 0;
+    renderDets(detState.rows);                      // atomic full replace
+  }
 }
 function renderDets(rows){
   const el = $("dets");
-  if (!rows.length){ el.innerHTML = '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
+  if (!rows.length){ expandedMacs.clear(); el.innerHTML = '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
   const srcClass = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};
-  el.innerHTML = rows.map(r=>{
+  for (const m of [...expandedMacs]) if (!rows.some(r => r.mac === m)) expandedMacs.delete(m);  // keep the Set bounded
+  el.innerHTML = rows.map((r,ri)=>{
     const nm = esc(r.name) || "&lt;hidden&gt;";
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
-    const sc = srcClass[r.tag] || "";
+    const srcs = r.sources.slice().sort((a,b)=>b.rssi-a.rssi);
+    const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });
+    const primary = tags.length ? tags.join("+") : "?";   // e.g. 2.4+PRB
+    const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint by strongest source
+    const open = expandedMacs.has(r.mac);
+    const sub = srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("");
     return `<div class="det ${sc}" title="${title}"><span class="badge b${r.tier}"></span>`+
-           `<span class="tag">${esc(r.tag)}</span>`+
+           `<span class="tag">${esc(primary)}</span>`+
            `<span class="nm t${r.tier}">${nm}</span>`+
-           `<span class="rssi">${r.rssi} dBm</span></div>`;
+           `<span class="rssi">${r.rssi} dBm</span>`+
+           `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span></div>`+
+           `<div class="detsub" id="dsub${ri}" style="display:${open?"block":"none"}">${sub}</div>`;
   }).join("");
+  el.querySelectorAll(".caret").forEach(c=>{
+    c.onclick = ()=>{
+      const sub = $("dsub"+c.dataset.ri), mac = c.dataset.mac;
+      const show = sub.style.display === "none";
+      sub.style.display = show ? "block" : "none";
+      c.textContent = show ? "▾" : "▸";
+      if (show) expandedMacs.add(mac); else expandedMacs.delete(mac);
+    };
+  });
 }
 
 function onStatus(ev){
