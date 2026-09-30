@@ -24,7 +24,9 @@ Wi-Fi + BLE scanner co-processor), one PlatformIO project, shared UART link prot
   devices to **per-session files** (`/logs/sess-NNNNN.csv`, renamed to
   `/logs/YYYYMMDD-HHMMSS.csv` on time sync), portrait UI + status bar + threat tiers + a
   **link dot** and, on the scan screen, a **STOP bar** across the top. Filters out its own +
-  the connected phone's BLE MAC.
+  the connected phone's BLE MAC. **Session files are created lazily** (`ensureLogFile()`, on
+  the first logged detection) so idle boots leave no empty file; `sweepEmptySessions()` deletes
+  header-only leftovers at boot (≤16/boot).
 - **Signatures**: `sigdb.*` + `/signatures.csv` (self-seeds; DB_GEN reseed trigger). Layers:
   OUI + name + **IE (Phase 2)** + **BLE UUID + company-ID (Phase 3)**. Flock GATT UUID seeded.
 - **On-device UI**: BOOT-button **and touchscreen** (bit-bang XPT2046, `touch.*`) menu:
@@ -32,14 +34,18 @@ Wi-Fi + BLE scanner co-processor), one PlatformIO project, shared UART link prot
   hold = select. Boots to menu.
 - **Phone web app**: connect, sync time+GPS, live counts/threats + **live detection list**
   (source-tinted rows), **start/stop scan** toggle, **Settings modal** (brightness),
-  **Session logs** panel (list / download / **map** / delete), **BLE log download**,
-  **Wi-Fi bulk download = a browsable index of all sessions**, and a **wardriving Map**
-  (Leaflet/OSM; loads current session, a picked session, or a local .csv offline).
+  **Session logs** panel (list / download / **map** / delete; the newest file is labeled
+  **(current session)** while scanning else **(latest session)** and floated to the top),
+  **BLE log download**, **Wi-Fi bulk download = a browsable index of all sessions**, and a
+  **wardriving Map** (Leaflet/OSM; loads current session, a picked session, or a local .csv offline).
 - Hosted app: **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (Android/Chrome).
-- Fixed (2026-09-30, hardware-confirmed): stopping Wi-Fi download mode now repaints back to
-  the main menu (was stuck on the last QR/download screen). `loop()` forces
-  `g_screen = SCR_MENU; drawMenu()` when leaving download mode.
-- Latest commit pushed: `332a706` (Wi-Fi session index). Working tree clean.
+- Recent fixes/changes (2026-09-30, all hardware-confirmed):
+  - Stopping Wi-Fi download mode now repaints back to the main menu (was stuck on the last
+    QR/download screen). `loop()` forces `g_screen = SCR_MENU; drawMenu()` on download exit.
+  - Session logs created lazily + boot-time sweep of empty header-only files (see CYD bullet).
+  - Session picker labels the newest file **(current/latest session)** (see web-app bullet);
+    adds a third tab-separated flag field to each list row — the web app renders/floats it.
+- Latest commit pushed: `971ea7f` (session picker labels). Working tree clean.
 
 ## Build / flash / test
 
