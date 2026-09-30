@@ -151,15 +151,29 @@ in sync when wiring changes.
 
 The CYD is the host/UI; the ESP32-C5 is a co-processor for 5 GHz + 802.15.4.
 The link is a dedicated UART (**not** UART0/console on either side, so USB serial
-logging stays free). Pins below are **provisional — not yet wired or tested**; they
-match the defaults in the firmware (`lib/link_protocol/`), change both together.
+logging stays free). These pins are **validated end to end** (the CYD commands the C5,
+which streams detections back); they match the firmware defaults (`lib/link_protocol/`),
+change both together.
 
 | Purpose         | CYD side                  | ESP32-C5 side          |
 |-----------------|---------------------------|------------------------|
 | UART link TX→RX | GPIO22 (P3/IO1, expansion)| GPIO4 (LP_UART_RXD)    |
 | UART link RX←TX | GPIO27 (P5/IO2, expansion)| GPIO5 (LP_UART_TXD)    |
 | Common ground   | GND (expansion)           | GND                    |
-| (optional) 5V   | VIN (P1)                  | 5V0                    |
+| 5V power feed   | VIN (P1)                  | 5V0                    |
+
+### In-car / single-cable power (confirmed working)
+
+Power the whole rig from **one USB-C into the CYD** — no separate cable to the C5:
+
+- Wire CYD **VIN** (P1 header, = USB 5 V) → C5 **5V0**, plus GND↔GND (already shared by
+  the link). Each board keeps its **own** 3.3 V regulator; only the 5 V USB input is shared.
+- Plug just the CYD's USB-C into a car charger / power bank rated **≥1 A** (both ESP32s on
+  Wi-Fi/BLE + the display can peak ~0.7–1 A at 5 V).
+- **Feed 5 V only** — never tie the two 3.3 V rails together (the CYD's AMS1117-3.3 can't
+  power a second Wi-Fi SoC → brownouts).
+- Make the VIN→5V0 link a **removable jumper**: pop it off before reflashing the C5 over
+  its own USB, so you never have two 5 V sources back-feeding each other. One source at a time.
 
 > Both CYD pins (GPIO22, GPIO27) are output-capable and free (GPIO35 is input-only,
 > so it can serve as an RX but never TX). The ESP32's UART matrix lets any UART route

@@ -52,6 +52,12 @@ CYD **GPIO22 (TX) → C5 GPIO4 (RX)**, CYD **GPIO27 (RX) ← C5 GPIO5 (TX)**, **
 115200 baud, C5 link UART pinned to XTAL clock. Solid contacts matter — flip `LINK_MONITOR`
 to 1 in both `main.cpp` for the heartbeat/loss connection tester.
 
+**Single-cable power (in-car, confirmed working):** wire CYD **VIN (P1) → C5 5V0** (+ shared
+GND) and power everything from one USB-C into the CYD (car charger/power bank ≥1 A). Each
+board keeps its own 3.3 V regulator — feed 5 V only, never bridge the 3.3 V rails. Make the
+VIN→5V0 wire a removable jumper so you can pull it before reflashing the C5 over USB (avoid
+two 5 V sources). See [hardware/PINOUT.md](hardware/PINOUT.md) §3.
+
 ## Hard-won gotchas (don't rediscover these)
 
 - **C5 flashing**: native USB port only (see above).
