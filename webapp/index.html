@@ -58,27 +58,24 @@
     font-family:ui-monospace,monospace; white-space:pre; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
-  /* Live-detections table built with CSS Grid: the sticky header and every row
-     share one column template, so columns align and the row fills full width.
-     minmax(0,1fr) on the device column lets long names ellipsis instead of
-     stretching the row past the container. */
+  /* Live-detections table with flexbox rows. The Device cell is flex:1 with
+     min-width:0 so it grows to fill the full width and ellipsizes long names;
+     the other cells are fixed-basis so the header and rows line up. */
   .dets { background:#0b0e13; border:1px solid #30363d; border-radius:10px;
-          max-height:280px; overflow:auto; }
-  .dethead, .det {
-    display:grid; grid-template-columns:16px 6.5rem minmax(0,1fr) 5rem 1.4rem;
-    align-items:center; column-gap:8px; padding:5px 6px;
-  }
+          max-height:280px; overflow-y:auto; }
+  .dethead, .det { display:flex; align-items:center; gap:8px; padding:5px 6px; width:100%; }
   .dethead { position:sticky; top:0; z-index:2; background:#0b0e13;
              border-bottom:1px solid #30363d; font-size:.68rem; letter-spacing:.04em;
              color:#8b949e; text-transform:uppercase; }
   .det { border-bottom:1px solid #161b22; font-size:.82rem; }
   .det:last-child { border-bottom:0; }
-  .tiercol { justify-self:center; }                  /* threat-tier dot / ⚠ header */
-  .sigcol  { display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
-  .det .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .det .rssi { font-family:ui-monospace,monospace; color:#9db4c9; text-align:right; }
-  .dethead .rssi { text-align:right; }
-  .caret { justify-self:center; cursor:pointer; color:#8b949e; user-select:none; }
+  .tiercol { flex:0 0 14px; display:flex; justify-content:center; }  /* threat-tier dot / ⚠ */
+  .sigcol  { flex:0 0 5.5em; display:flex; flex-wrap:wrap; gap:2px; }
+  .hnm     { flex:1 1 auto; }
+  .nm      { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rssi    { flex:0 0 4.6em; text-align:right; font-family:ui-monospace,monospace; }
+  .det .rssi { color:#9db4c9; }
+  .caret   { flex:0 0 1.2em; text-align:center; cursor:pointer; color:#8b949e; user-select:none; }
   .detsub { padding:2px 6px 4px 28px; border-bottom:1px solid #161b22; }
   .sub1 { font-family:ui-monospace,monospace; font-size:.76rem; padding:2px 6px; margin:1px 0; }
   .badge { width:9px; height:9px; border-radius:50%; }
@@ -126,7 +123,7 @@
 
   <h3 style="margin:.6em 0 .3em">Live detections
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span>
-    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30e</span></h3>
+    <span id="uiver" class="sub" style="font-weight:400; float:right">ui&nbsp;2026-09-30f</span></h3>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
@@ -495,8 +492,6 @@ function onDets(ev){
     curSeq = seq; detState = { expect:0, rows:[], rendered:false };
   }
   if (detState.rows.some(r => r.mac === p[2])) return;  // dedup by MAC within the snapshot
-  if (detState.rows.length === 0 && (window.__detsDbg = (window.__detsDbg||0)+1) <= 3)
-    log("DETS raw: " + JSON.stringify(p));   // TEMP debug: inspect field layout / name
   const sources = p[6].split(",").filter(Boolean).map(x=>{
     const k = x.lastIndexOf(":");
     return {tag:x.slice(0,k), rssi:+x.slice(k+1)};
@@ -523,14 +518,17 @@ function renderDets(rows){
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
     const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
-    const open = expandedMacs.has(r.mac);
+    const multi = srcs.length > 1;                 // only multi-source devices get an expander
+    const open = multi && expandedMacs.has(r.mac);
     const sub = srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("");
     return `<div class="det ${sc}" title="${title}"><span class="tiercol"><span class="badge b${r.tier}"></span></span>`+
            `<span class="sigcol">${pills}</span>`+
            `<span class="nm t${r.tier}">${nm}</span>`+
            `<span class="rssi">${r.rssi} dBm</span>`+
-           `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span></div>`+
-           `<div class="detsub" id="dsub${ri}" style="display:${open?"block":"none"}">${sub}</div>`;
+           (multi ? `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span>`
+                  : `<span class="caret"></span>`)+
+           `</div>`+
+           (multi ? `<div class="detsub" id="dsub${ri}" style="display:${open?"block":"none"}">${sub}</div>` : "");
   }).join("");
   el.querySelectorAll(".caret[data-mac]").forEach(c=>{
     c.onclick = ()=>{
