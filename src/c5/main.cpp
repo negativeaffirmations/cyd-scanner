@@ -77,9 +77,13 @@ static Entry              g_table[MAX_ENTRIES];
 static SemaphoreHandle_t  g_mux;
 static Detection          g_streamBuf[MAX_ENTRIES];  // copy target for streaming
 
+// Wi-Fi radio phase (declared early: the BLE callback/watchdog read it).
+enum WifiPhase { PH_SCAN, PH_PROMISC, PH_154 };
+static volatile WifiPhase g_phase = PH_SCAN;
+
 // Active scan-source mask (SourceMask bits), set by the CYD's StartScan payload.
 // Disabled sources are only skipped/dropped here - never transmitted around.
-static volatile uint8_t   g_srcMask = MASK_ALL;
+static volatile uint8_t   g_srcMask = MASK_ALL & ~MASK_154;  // 802.15.4 is opt-in
 
 // Is this table entry's source currently enabled? Wi-Fi AP-scan detections are
 // filtered per band by channel.
@@ -166,7 +170,7 @@ class ScanCB : public NimBLEScanCallbacks {
     mergeDetection(d);
   }
   void onScanEnd(const NimBLEScanResults&, int) override {
-    if (g_srcMask & MASK_BLE) NimBLEDevice::getScan()->start(0, false);  // keep scanning continuously
+    if ((g_srcMask & MASK_BLE) && g_phase != PH_154) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->start(0, false); }  // keep scanning continuously
   }
 };
 static ScanCB g_scanCB;
@@ -180,8 +184,6 @@ static ScanCB g_scanCB;
 //                (1/6/11) to catch client probe requests + IE fingerprints.
 // BLE runs continuously throughout (separate controller, coexistence-managed).
 // PH_154 — passive 802.15.4 capture, entered with the Wi-Fi PHY idle.
-enum WifiPhase { PH_SCAN, PH_PROMISC, PH_154 };
-static WifiPhase g_phase        = PH_SCAN;
 static bool      g_wifiScanning = false;
 static uint32_t  g_lastWifiDone = 0;
 
@@ -217,7 +219,8 @@ static void enter154() {
     g_lastWifiDone = millis();
     return;
   }
-  g_phase      = PH_154;
+  g_phase      = PH_154;  // publish first: once PH_154 is visible no restart path can re-arm BLE
+  if (g_srcMask & MASK_BLE) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->stop(); }  // then free the radio for 15.4 RX
   g_154Idx     = 0;
   g_154Start   = millis();
   g_154LastHop = g_154Start;
@@ -286,6 +289,10 @@ static void wifiTick() {
       ieee154::disable();             // hand the PHY back before the next AP scan
       g_phase        = PH_SCAN;
       g_lastWifiDone = t;
+      if (g_srcMask & MASK_BLE) {         // resume BLE promptly (watchdog is the backstop)
+        NimBLEScan* bs = NimBLEDevice::getScan();
+        if (bs && !bs->isScanning()) bs->start(0, false);
+      }
       return;
     }
     if (t - g_154LastHop >= IEEE154_DWELL_MS) {
@@ -349,7 +356,7 @@ static void streamTable() {
 static void applyBleMask() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (!scan) return;
-  bool want = g_srcMask & MASK_BLE;
+  bool want = (g_srcMask & MASK_BLE) && g_phase != PH_154;
   if (want && !scan->isScanning()) scan->start(0, false);
   else if (!want && scan->isScanning()) scan->stop();
 }
@@ -411,7 +418,7 @@ void loop() {
   if (millis() - lastBleChk > 5000) {
     lastBleChk = millis();
     NimBLEScan* scan = NimBLEDevice::getScan();
-    if (scan && (g_srcMask & MASK_BLE) && !scan->isScanning()) {
+    if (scan && (g_srcMask & MASK_BLE) && g_phase != PH_154 && !scan->isScanning()) {
       scan->start(0, false);
       Serial.println("[C5] BLE scan restarted by watchdog");
     }

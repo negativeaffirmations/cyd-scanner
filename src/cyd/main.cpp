@@ -261,11 +261,11 @@ static void saveBrightness() {
 
 // --- Scan-source enable mask (ScanConfig.sources), persisted in NVS. The "2.4" toggle
 // covers probe-request capture too (both are 2.4 GHz Wi-Fi). 802.15.4 has its own toggle. ---
-static uint8_t g_srcMask = MASK_ALL;
+static uint8_t g_srcMask = (MASK_ALL & ~MASK_154);
 static constexpr uint8_t SRC_24_BITS = MASK_WIFI24 | MASK_PROBE;
 static void loadSrcMask() {
   Preferences p; p.begin("cydui", true);
-  g_srcMask = p.getUChar("srcmask", MASK_ALL);
+  g_srcMask = p.getUChar("srcmask", (MASK_ALL & ~MASK_154));
   p.end();
 }
 static void saveSrcMask() {
