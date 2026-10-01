@@ -22,7 +22,8 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 4;       // v4: source mask redefined (WIFI24/WIFI5 split)
+static constexpr uint8_t  PROTOCOL_VERSION = 5;       // v5: 802.15.4 presence - Detection.panId + 15.4 flags
+                                                          // (v4: source mask redefined, WIFI24/WIFI5 split)
 static constexpr uint16_t MAX_PAYLOAD      = 256;     // sanity cap for RX buffers
 
 // --- CYD -> C5 : commands ---------------------------------------------------
@@ -63,6 +64,8 @@ enum SourceMask : uint8_t {
 // Per-detection behavioral flags (Detection.flags bitfield).
 enum DetFlags : uint8_t {
   FLAG_WILDCARD_PROBE = 1 << 0,  // probe request with a zero-length (broadcast) SSID
+  FLAG_154_EXTENDED   = 1 << 1,  // 802.15.4: mac[] holds an EUI-64 prefix (OUI in mac[0..2])
+  FLAG_154_BEACON     = 1 << 2,  // 802.15.4: frame was a beacon
 };
 
 #pragma pack(push, 1)
@@ -79,9 +82,11 @@ struct Detection {
   uint8_t  channel;    // Wi-Fi / 802.15.4 channel (0 if not applicable)
   int8_t   rssi;       // signal strength, dBm
   uint8_t  flags;      // DetFlags bitfield (0 if none)
-  uint8_t  mac[6];     // device MAC / BSSID (probe: client source address)
+  uint8_t  mac[6];     // device MAC / BSSID (probe: client source address;
+                       //  15.4: EUI-64 first 6 bytes, or short addr in [0..1])
   uint32_t ie_hash;    // 802.11 IE-order fingerprint (Wi-Fi; 0 = none)
   uint16_t companyId;  // BLE manufacturer company ID, host order (0 = none)
+  uint16_t panId;      // 802.15.4 PAN ID, host order (0 = none / not applicable)
   uint8_t  svc[16];    // BLE primary service UUID, 128-bit big-endian (all 0 = none)
   char     name[32];   // SSID or BLE name, NUL-terminated (may be empty)
 };
@@ -109,6 +114,8 @@ struct FrameHeader {
 };
 
 #pragma pack(pop)
+
+static_assert(sizeof(Detection) == 66, "Detection wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.
 inline uint8_t checksum(const uint8_t* data, uint16_t len) {

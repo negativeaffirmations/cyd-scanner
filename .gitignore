@@ -10,3 +10,13 @@ compile_commands.json
 # Claude Code personal/local settings (may hold machine-specific paths)
 .claude/settings.local.json
 scanlogs
+
+# Captured RF data — may contain bystander (human) identifiers + GPS.
+# Keep real captures in untracked folders; never commit them to the public repo.
+/logs/
+scanlog*.csv
+*.pcap
+*.pcapng
+*.kml
+*.jsonl
+sessions/

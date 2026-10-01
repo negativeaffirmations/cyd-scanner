@@ -16,6 +16,7 @@
 #include <Preferences.h>
 #include <time.h>
 #include <algorithm>
+#include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <qrcode.h>
 #include "pins.h"
@@ -67,7 +68,42 @@ static void initCommon() {
 static const char* srcTag(const Detection& d) {
   if (d.source == (uint8_t)Source::BleScan)   return "BLE";
   if (d.source == (uint8_t)Source::WifiProbe) return "PRB";  // Wi-Fi client probe
+  if (d.source == (uint8_t)Source::Ieee802154) return "154";  // Zigbee / Thread
   return d.channel > 14 ? "5G" : "2.4";
+}
+
+// Copy a device-controlled free-text field, replacing delimiter-breaking characters
+// (comma, tab, CR/LF and other control chars) with a space so plain delimiter-split
+// parsing of the tab-delimited DETS rows stays correct (the log uses jsonEscape instead).
+static void sanitizeField(char* dst, size_t cap, const char* src) {
+  size_t i = 0;
+  for (; i + 1 < cap && src[i]; i++) {
+    char c = src[i];
+    dst[i] = (c == ',' || (uint8_t)c < 0x20 || c == 0x7F) ? ' ' : c;
+  }
+  dst[i] = 0;
+}
+
+// Escape a device-controlled string for use inside a JSON string literal (no surrounding
+// quotes): " \ and control chars (<0x20, 0x7F) become escapes. Bounded and NUL-terminated;
+// stops before a whole escape sequence would overflow, so output is always valid JSON.
+static void jsonEscape(char* dst, size_t cap, const char* src) {
+  size_t o = 0;
+  for (size_t i = 0; src[i]; i++) {
+    uint8_t c = (uint8_t)src[i];
+    char esc[7];
+    size_t n;
+    if (c == '"' || c == '\\') { esc[0] = '\\'; esc[1] = (char)c; n = 2; }
+    else if (c == '\n') { memcpy(esc, "\\n", 2); n = 2; }
+    else if (c == '\r') { memcpy(esc, "\\r", 2); n = 2; }
+    else if (c == '\t') { memcpy(esc, "\\t", 2); n = 2; }
+    else if (c < 0x20 || c == 0x7F) { n = snprintf(esc, sizeof(esc), "\\u%04X", c); }
+    else { esc[0] = (char)c; n = 1; }
+    if (o + n + 1 > cap) break;
+    memcpy(dst + o, esc, n);
+    o += n;
+  }
+  if (cap) dst[o] = 0;
 }
 
 #if LINK_MONITOR
@@ -148,7 +184,7 @@ static int    g_menuSel = 0;
 static int    g_setSel  = 0;
 static int    g_scanSel = 0;
 static int    g_scanSetSel = 0;
-static constexpr int SCANSET_N = 4;  // BLE / Wi-Fi 2.4 / Wi-Fi 5G / Back
+static constexpr int SCANSET_N = 5;  // BLE / Wi-Fi 2.4 / Wi-Fi 5G / 802.15.4 / Back
 static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
@@ -224,7 +260,7 @@ static void saveBrightness() {
 }
 
 // --- Scan-source enable mask (ScanConfig.sources), persisted in NVS. The "2.4" toggle
-// covers probe-request capture too (both are 2.4 GHz Wi-Fi). 802.15.4 is not exposed. ---
+// covers probe-request capture too (both are 2.4 GHz Wi-Fi). 802.15.4 has its own toggle. ---
 static uint8_t g_srcMask = MASK_ALL;
 static constexpr uint8_t SRC_24_BITS = MASK_WIFI24 | MASK_PROBE;
 static void loadSrcMask() {
@@ -278,34 +314,44 @@ static bool topBarTapped() { return topBarSegTapped(1) == 0; }
 
 SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
-char      g_logPath[48] = "/scanlog.csv";  // current session log; set in openSession()
+char      g_logPath[48] = "/scanlog.jsonl";  // current session log (NDJSON); set in openSession()
 bool      g_logNamed    = false;           // true once renamed to the date-time form
 bool      g_logStarted  = false;           // true once the file is actually created (first row)
+// Legacy CSV header (schema v5): only used to recognize header-only old .csv files in the sweep.
 static const char* kLogHeader =
-    "epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature";
+    "epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,pan,name,score,tier,signature";
+static constexpr size_t LOG_LINE = 512;  // max log line (NDJSON lines are ~100-330 B; worst case < 512)
 
-struct SeenKey { uint8_t source; uint8_t mac[6]; };
+struct SeenKey { uint8_t source; uint8_t mac[6]; uint16_t pan; };
 SeenKey g_seen[MAX_SEEN];
 int     g_seenCount = 0;
 
+// Short-address 15.4 devices are only unique within a PAN, so key them by panId too
+// (pan = 0 for every other source, which keeps their key source+MAC).
+static uint16_t seenPan(const Detection& d) {
+  return (d.source == (uint8_t)Source::Ieee802154 && !(d.flags & FLAG_154_EXTENDED)) ? d.panId : 0;
+}
 static bool seenContains(const Detection& d) {
   for (int i = 0; i < g_seenCount; i++)
-    if (g_seen[i].source == d.source && memcmp(g_seen[i].mac, d.mac, 6) == 0) return true;
+    if (g_seen[i].source == d.source && memcmp(g_seen[i].mac, d.mac, 6) == 0 &&
+        g_seen[i].pan == seenPan(d)) return true;
   return false;
 }
 static void seenAdd(const Detection& d) {
   if (g_seenCount >= MAX_SEEN) return;
   g_seen[g_seenCount].source = d.source;
+  g_seen[g_seenCount].pan = seenPan(d);
   memcpy(g_seen[g_seenCount].mac, d.mac, 6);
   g_seenCount++;
 }
 
-static void countBands(int& n24, int& n5, int& nble, int& nprb) {
-  n24 = n5 = nble = nprb = 0;
+static void countBands(int& n24, int& n5, int& nble, int& nprb, int& n154) {
+  n24 = n5 = nble = nprb = n154 = 0;
   for (int i = 0; i < g_detCount; i++) {
     switch (g_dets[i].source) {
       case (uint8_t)Source::BleScan:   nble++; break;
       case (uint8_t)Source::WifiProbe: nprb++; break;
+      case (uint8_t)Source::Ieee802154: n154++; break;
       default: (g_dets[i].channel > 14 ? n5 : n24)++; break;
     }
   }
@@ -411,14 +457,17 @@ static void countTiers(int& susp, int& lk, int& conf) {
 // created a file up front, so a card can accumulate many ~90-byte empties; sweep them on
 // startup. A file with even one data row is larger than the header and is kept.
 static void sweepEmptySessions() {
-  const size_t emptyMax = strlen(kLogHeader) + 2;  // header + CRLF, nothing else
+  const size_t emptyMax = strlen(kLogHeader) + 2;  // legacy .csv: header + CRLF, nothing else
   File dir = SD.open("/logs");
   if (!dir) return;
   char victims[16][48];
   int nv = 0;
   for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
-    if (!e.isDirectory() && e.size() <= emptyMax && nv < 16) {
-      String nm = e.name();                       // may be a full path or a bare basename
+    // .jsonl has no header, so an empty one is 0 bytes; .csv is header-only.
+    String en = e.name();
+    bool jl = en.endsWith(".jsonl");
+    if (!e.isDirectory() && e.size() <= (jl ? 0 : emptyMax) && nv < 16) {
+      String nm = en;                             // may be a full path or a bare basename
       int slash = nm.lastIndexOf('/');
       String base = slash >= 0 ? nm.substring(slash + 1) : nm;
       snprintf(victims[nv++], sizeof(victims[0]), "/logs/%s", base.c_str());
@@ -432,32 +481,31 @@ static void sweepEmptySessions() {
 }
 
 // Start a fresh per-boot session log under /logs/. Named by a boot counter so it works
-// before the phone has synced wall-clock time; renamed to /logs/YYYYMMDD-HHMMSS.csv once
+// before the phone has synced wall-clock time; renamed to /logs/YYYYMMDD-HHMMSS.jsonl once
 // time is known (renameSessionOnSync). The file itself is created lazily on the first
 // logged detection (ensureLogFile), so idle boots leave no empty file behind. Rows still
 // carry absolute epoch after sync.
 static void openSession() {
   SD.mkdir("/logs");
-  if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file
+  if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file (CSV era)
   sweepEmptySessions();
   Preferences p; p.begin("cydscan", false);
   uint32_t boot = p.getULong("bootcnt", 0) + 1;
   p.putULong("bootcnt", boot);
   p.end();
-  snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.csv", (unsigned long)boot);
+  snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.jsonl", (unsigned long)boot);
   g_logNamed   = false;
   g_logStarted = false;
   Serial.printf("[CYD] session log (created on first detection): %s\n", g_logPath);
 }
 
-// Create the current session file with its header the first time a row needs writing.
-// No-op once created. Returns false if SD is unavailable or the file can't be opened.
+// Create the (empty) current session file the first time a row needs writing. NDJSON has
+// no header. No-op once created. Returns false if SD is unavailable or can't be opened.
 static bool ensureLogFile() {
   if (g_logStarted) return true;
   if (!g_sdOk) return false;
   File f = SD.open(g_logPath, FILE_WRITE);
   if (!f) return false;
-  f.println(kLogHeader);
   f.close();
   g_logStarted = true;
   Serial.printf("[CYD] session log created: %s\n", g_logPath);
@@ -472,7 +520,7 @@ static void renameSessionOnSync() {
   struct tm tmv;
   gmtime_r(&t, &tmv);  // epoch is stored already-localized, so gmtime gives local fields
   char nn[48];
-  snprintf(nn, sizeof(nn), "/logs/%04d%02d%02d-%02d%02d%02d.csv",
+  snprintf(nn, sizeof(nn), "/logs/%04d%02d%02d-%02d%02d%02d.jsonl",
            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
   if (SD.exists(nn)) { g_logNamed = true; return; }  // name taken; keep the current one
@@ -515,9 +563,22 @@ static void initSD() {
   g_sdOk = SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
   reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
-  openSession();       // create this boot's /logs/sess-NNNNN.csv (renamed on time sync)
+  openSession();       // create this boot's /logs/sess-NNNNN.jsonl (renamed on time sync)
   webshare::setLogPath(g_logPath);
   Serial.println("[CYD] SD ready");
+}
+
+// Append to an NDJSON line buffer. snprintf returns the would-be length, so a plain
+// "n += snprintf(ln+n, sizeof-n, ...)" chain underflows once n passes the buffer; instead
+// any truncation parks n at cap+1 (sticky), which the caller treats as "drop this line".
+static void lnAppend(char* ln, int& n, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+static void lnAppend(char* ln, int& n, const char* fmt, ...) {
+  if (n > (int)LOG_LINE) return;  // already overflowed
+  va_list ap; va_start(ap, fmt);
+  int w = vsnprintf(ln + n, LOG_LINE - n, fmt, ap);
+  va_end(ap);
+  if (w < 0 || n + w >= (int)LOG_LINE) n = (int)LOG_LINE + 1;
+  else n += w;
 }
 
 static int logNewDetections() {
@@ -533,25 +594,38 @@ static int logNewDetections() {
     n++;
     if (!f && ensureLogFile()) f = SD.open(g_logPath, FILE_APPEND);
     if (!f) continue;
-    char safe[33];
-    strncpy(safe, d.name, sizeof(safe) - 1);
-    safe[sizeof(safe) - 1] = 0;
-    for (char* p = safe; *p; ++p) if (*p == ',' || *p == '\n' || *p == '\r') *p = ' ';
+    char safe[97];  // escaped name (32 B name, worst case \uXXXX per byte truncates safely)
+    jsonEscape(safe, sizeof(safe), d.name);
     const sigdb::ScoreResult& sc = g_score[i];
-    char sig[24];
-    strncpy(sig, sigdb::labelFor(sc), sizeof(sig) - 1);
-    sig[sizeof(sig) - 1] = 0;
-    for (char* p = sig; *p; ++p) if (*p == ',' || *p == '\n' || *p == '\r') *p = ' ';
+    char sig[49];
+    jsonEscape(sig, sizeof(sig), sigdb::labelFor(sc));
+    char panStr[5]; panStr[0] = 0;  // hex PAN, 802.15.4 only
+    if (d.source == (uint8_t)Source::Ieee802154 && d.panId) snprintf(panStr, sizeof(panStr), "%04X", d.panId);
     char uuidStr[33]; uuidStr[0] = 0;
     for (int k = 0; k < 16; k++)
       if (d.svc[k]) { for (int j = 0; j < 16; j++) sprintf(uuidStr + j * 2, "%02X", d.svc[j]); break; }
-    f.printf("%lu,%lu,", (unsigned long)epoch, (unsigned long)ms);
-    if (gps) f.printf("%.6f,%.6f,", phone::lat(), phone::lon());
-    else     f.print(",,");
-    f.printf("%s,%02X:%02X:%02X:%02X:%02X:%02X,%d,%d,%08lX,%04X,%s,%s,%d,%s,%s\n", srcTag(d),
-             d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
-             d.rssi, d.channel, (unsigned long)d.ie_hash, d.companyId, uuidStr, safe,
-             sc.score, sigdb::tierName(sc.tier), sig);
+    // One NDJSON object per line; optional keys are omitted when blank. Worst case (every
+    // optional key + a fully escaped name): ~60 B fixed/numeric + 96 name + 48 sig + 32 uuid
+    // + key text ~ 440-480 B, inside the 512 B buffer. lnAppend() is overflow-proof anyway.
+    char ln[LOG_LINE];
+    int n2 = 0;
+    lnAppend(ln, n2, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epoch, (unsigned long)ms);
+    if (gps && isfinite(phone::lat()) && isfinite(phone::lon()))
+      lnAppend(ln, n2, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+    lnAppend(ln, n2,
+             ",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"rssi\":%d,\"ch\":%d",
+             srcTag(d), d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
+             d.rssi, d.channel);
+    if (d.ie_hash)   lnAppend(ln, n2, ",\"ie\":\"%08lX\"", (unsigned long)d.ie_hash);
+    if (d.companyId) lnAppend(ln, n2, ",\"cid\":\"%04X\"", d.companyId);
+    if (uuidStr[0])  lnAppend(ln, n2, ",\"uuid\":\"%s\"", uuidStr);
+    if (panStr[0])   lnAppend(ln, n2, ",\"pan\":\"%s\"", panStr);
+    if (safe[0])     lnAppend(ln, n2, ",\"name\":\"%s\"", safe);
+    lnAppend(ln, n2, ",\"score\":%d,\"tier\":\"%s\"", sc.score, sigdb::tierName(sc.tier));
+    if (sig[0])      lnAppend(ln, n2, ",\"sig\":\"%s\"", sig);
+    if (n2 > (int)LOG_LINE - 2) continue;  // can't close the object in-buffer: drop the row, never write truncated JSON
+    ln[n2++] = '}'; ln[n2++] = '\n';
+    f.write((const uint8_t*)ln, n2);
   }
   if (f) f.close();
   return n;
@@ -719,13 +793,13 @@ static void requestScan(uint32_t timeoutMs = 5000) {
 }
 
 static void pushStatus() {
-  int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
+  int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  char s[240];
+  char s[256];
   snprintf(s, sizeof(s),
-           "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
+           "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d",
-           g_linkOk ? 1 : 0, n24, n5, nble, nprb, g_seenCount,
+           g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask);
@@ -752,9 +826,7 @@ static void pushDetections() {
   for (int r = 0; r < n; r++) {
     const DevGroup& g = g_groups[r];
     char name[24];
-    strncpy(name, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", sizeof(name) - 1);
-    name[sizeof(name) - 1] = 0;
-    for (char* p = name; *p; ++p) if (*p == '\t' || *p == '\n' || *p == '\r') *p = ' ';
+    sanitizeField(name, sizeof(name), g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>");
     char row[192];
     int len = snprintf(row, sizeof(row), "%u\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%08lX\t%s\t",
                        (unsigned)g_detsSeq, g.tier,
@@ -877,6 +949,7 @@ static uint16_t tierColor(int tier, uint8_t source, int channel) {
     case sigdb::Tier::Likely:    return TFT_ORANGE;
     case sigdb::Tier::Suspect:   return TFT_YELLOW;
     default: return source == (uint8_t)Source::BleScan ? TFT_MAGENTA
+                  : source == (uint8_t)Source::Ieee802154 ? TFT_GREEN  // distinct from 5G cyan
                   : channel > 14 ? TFT_CYAN : TFT_WHITE;
   }
 }
@@ -972,7 +1045,7 @@ static void drawTopBar(const char* label, uint16_t fill, uint16_t edge) {
 }
 
 static void render() {
-  int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
+  int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
@@ -990,7 +1063,7 @@ static void render() {
   tft.drawString(buf, 4, 46, 1);
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d U:%d", n24, n5, nble, nprb, g_seenCount);
+  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d Z:%d U:%d", n24, n5, nble, nprb, n154, g_seenCount);
   tft.drawString(buf, 4, 58, 1);
 
   uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
@@ -1195,11 +1268,12 @@ static void drawScanMenu() {
 
 // Scan Settings: per-source enable toggles (labels rebuilt each draw to show state).
 static void drawScanSettings() {
-  char b[20], w24[24], w5[24];
+  char b[20], w24[24], w5[24], z[24];
   snprintf(b,   sizeof(b),   "BLE: %s",       (g_srcMask & MASK_BLE)    ? "On" : "Off");
   snprintf(w24, sizeof(w24), "Wi-Fi 2.4: %s", (g_srcMask & MASK_WIFI24) ? "On" : "Off");
   snprintf(w5,  sizeof(w5),  "Wi-Fi 5G: %s",  (g_srcMask & MASK_WIFI5)  ? "On" : "Off");
-  const char* items[SCANSET_N] = { b, w24, w5, "Back" };
+  snprintf(z,   sizeof(z),   "802.15.4: %s",  (g_srcMask & MASK_154)    ? "On" : "Off");
+  const char* items[SCANSET_N] = { b, w24, w5, z, "Back" };
   drawListMenu("SCAN SETTINGS", items, SCANSET_N, g_scanSetSel);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
@@ -1218,14 +1292,14 @@ static constexpr int PICK_VIS     = FILE_LIST_VIS;  // picker rows on screen (RO
 static constexpr int DET_MAX_LINES = 28;
 
 struct LogIdx { uint32_t offset; uint32_t epoch; int16_t rssi; uint8_t srcType; uint8_t tier; };  // 12 B
-struct SessEnt { char name[20]; uint32_t wr; uint32_t size; };  // basename w/o ".csv"; FS write time; bytes
+struct SessEnt { char name[20]; uint32_t wr; uint32_t size; bool jl; };  // basename w/o ext; FS write time; bytes; .jsonl (else legacy .csv)
 struct ExploreMem { LogIdx idx[MAX_LOG_ROWS]; SessEnt sess[MAX_SESS]; uint16_t view[MAX_LOG_ROWS]; };
 static ExploreMem* g_ex = nullptr;
 static int   g_sessN = 0, g_pickSel = 0, g_pickOff = 0;
 static int   g_idxN = 0;   // rows indexed from the file (M)
 static int   g_viewN = 0;  // rows shown after filter + sort (N); g_ex->view[] indexes into idx[]
 // Viewer filter / sort (CYD subset), applied to the in-memory index only. Reset per session.
-static uint8_t g_fType = 0x0F;  // bit per srcType: 2.4, 5G, BLE, PRB
+static uint8_t g_fType = 0x1F;  // bit per srcType: 2.4, 5G, BLE, PRB, 154
 static bool    g_fThreat = false;
 static uint8_t g_fDist = 0;     // 0 All, 1 Far, 2 Mid, 3 Near
 static uint8_t g_sortMode = 0;
@@ -1233,13 +1307,14 @@ static const int8_t kDistRssi[4] = { -100, -80, -60, -40 };  // keep rssi >= thr
 static bool  g_idxTrunc = false;
 static File  g_viewFile;
 static char  g_viewName[20];
+static bool  g_viewJl = true;  // open session is .jsonl (else legacy .csv)
 static int   g_viewOffset = 0, g_detOff = 0, g_detN = 0;
 
 // One parsed CSV data row (schema in kLogHeader).
 struct LogRow {
   uint32_t epoch, ms;
   int      rssi, channel, score, tier;
-  char     lat[16], lon[16], src[4], mac[18], ie[9], cid[5], uuid[33], name[33], sig[24];
+  char     lat[16], lon[16], src[4], mac[18], ie[9], cid[5], uuid[33], pan[5], name[33], sig[24];
 };
 
 struct DetLine { char label[15]; char val[25]; uint16_t col; };
@@ -1266,15 +1341,52 @@ static bool readLogLine(File& f, char* buf, size_t cap, uint32_t* pos = nullptr)
   return any;
 }
 
-// Split a CSV data line in place (the header line fails: it doesn't start with a digit).
-static bool parseLogLine(char* line, LogRow& r) {
+// Parse one NDJSON line (ArduinoJson, transient stack doc; strings copied out immediately).
+// Omitted keys read as empty/zero. lat/lon are re-formatted to the fixed text LogRow uses.
+static bool parseJsonLine(char* line, LogRow& r) {
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, line) != DeserializationError::Ok) return false;
+  JsonObjectConst o = doc.as<JsonObjectConst>();
+  if (o.isNull() || !o.containsKey("mac")) return false;
+  r.epoch   = o["epoch"] | 0UL;
+  r.ms      = o["ms"] | 0UL;
+  r.lat[0] = r.lon[0] = 0;
+  if (o.containsKey("lat") && o.containsKey("lon")) {
+    snprintf(r.lat, sizeof(r.lat), "%.6f", o["lat"].as<double>());
+    snprintf(r.lon, sizeof(r.lon), "%.6f", o["lon"].as<double>());
+  }
+  cpyField(r.src,  sizeof(r.src),  o["src"]  | "");
+  cpyField(r.mac,  sizeof(r.mac),  o["mac"]  | "");
+  r.rssi    = o["rssi"] | 0;
+  r.channel = o["ch"] | 0;
+  cpyField(r.ie,   sizeof(r.ie),   o["ie"]   | "");
+  cpyField(r.cid,  sizeof(r.cid),  o["cid"]  | "");
+  cpyField(r.uuid, sizeof(r.uuid), o["uuid"] | "");
+  cpyField(r.pan,  sizeof(r.pan),  o["pan"]  | "");
+  cpyField(r.name, sizeof(r.name), o["name"] | "");
+  r.score   = o["score"] | 0;
+  const char* t = o["tier"] | "";
+  r.tier    = t[0] == 's' ? 1 : t[0] == 'l' ? 2 : t[0] == 'c' ? 3 : 0;
+  cpyField(r.sig,  sizeof(r.sig),  o["sig"]  | "");
+  return true;
+}
+
+// Split a legacy CSV data line in place (the header line fails: it doesn't start with a digit).
+static bool parseCsvLine(char* line, LogRow& r) {
   if (line[0] < '0' || line[0] > '9') return false;
-  char* f[15];
+  char* f[16];
   int n = 0;
   f[n++] = line;
   for (char* p = line; *p; ++p)
-    if (*p == ',') { *p = 0; if (n < 15) f[n++] = p + 1; }
+    if (*p == ',') { *p = 0; if (n < 16) f[n++] = p + 1; }
   if (n < 14) return false;
+  // Schema v5 inserts `pan` after `uuid` (16 columns); v4 rows have 15. Normalize to v5.
+  if (n < 16) {
+    static char empty[] = "";
+    for (int i = n; i > 11; i--) f[i] = f[i - 1];
+    f[11] = empty;
+    n++;
+  }
   r.epoch   = strtoul(f[0], nullptr, 10);
   r.ms      = strtoul(f[1], nullptr, 10);
   cpyField(r.lat, sizeof(r.lat), f[2]);
@@ -1286,24 +1398,31 @@ static bool parseLogLine(char* line, LogRow& r) {
   cpyField(r.ie,   sizeof(r.ie),   f[8]);
   cpyField(r.cid,  sizeof(r.cid),  f[9]);
   cpyField(r.uuid, sizeof(r.uuid), f[10]);
-  cpyField(r.name, sizeof(r.name), f[11]);
-  r.score   = atoi(f[12]);
-  char t = f[13][0];
+  cpyField(r.pan,  sizeof(r.pan),  f[11]);
+  cpyField(r.name, sizeof(r.name), f[12]);
+  r.score   = atoi(f[13]);
+  char t = f[14][0];
   r.tier    = t == 's' ? 1 : t == 'l' ? 2 : t == 'c' ? 3 : 0;
-  cpyField(r.sig, sizeof(r.sig), n > 14 ? f[14] : "");
+  cpyField(r.sig, sizeof(r.sig), n > 15 ? f[15] : "");
   return true;
 }
 
-// 0=2.4, 1=5G, 2=BLE, 3=PRB (stored in LogIdx).
+// Sniff the format: a line starting with '{' is NDJSON, else old CSV.
+static bool parseLogLine(char* line, LogRow& r) {
+  return line[0] == '{' ? parseJsonLine(line, r) : parseCsvLine(line, r);
+}
+
+// 0=2.4, 1=5G, 2=BLE, 3=PRB, 4=154 (stored in LogIdx).
 static uint8_t srcTypeOf(const char* tag) {
   if (!strcmp(tag, "BLE")) return 2;
   if (!strcmp(tag, "PRB")) return 3;
+  if (!strcmp(tag, "154")) return 4;
   if (!strcmp(tag, "5G"))  return 1;
   return 0;
 }
 static uint8_t linkSourceOf(uint8_t st) {  // -> link_protocol::Source for tierColor()
   return st == 2 ? (uint8_t)Source::BleScan : st == 3 ? (uint8_t)Source::WifiProbe
-                                                      : (uint8_t)Source::WifiScan;
+       : st == 4 ? (uint8_t)Source::Ieee802154 : (uint8_t)Source::WifiScan;
 }
 
 // epoch (already local) -> HH:MM:SS, or "+Ns" since boot when the phone hadn't synced.
@@ -1327,7 +1446,7 @@ static bool readRowAt(uint32_t offset, char* line, size_t cap, LogRow& r) {
 static bool exploreHolds(const char* path) {
   if (!g_viewFile) return false;
   char open[48];
-  snprintf(open, sizeof(open), "/logs/%s.csv", g_viewName);
+  snprintf(open, sizeof(open), "/logs/%s.%s", g_viewName, g_viewJl ? "jsonl" : "csv");
   return strcmp(path, open) == 0;
 }
 
@@ -1351,10 +1470,13 @@ static void sessEnumerate() {
       const char* sl = strrchr(nm, '/');
       const char* base = sl ? sl + 1 : nm;
       size_t len = strlen(base);
-      if (len > 4 && len - 4 < sizeof(SessEnt::name) && !strcasecmp(base + len - 4, ".csv")) {
+      bool jl = len > 6 && !strcasecmp(base + len - 6, ".jsonl");
+      size_t el = jl ? 6 : 4;  // extension length
+      if (len > el && len - el < sizeof(SessEnt::name) && (jl || !strcasecmp(base + len - 4, ".csv"))) {
         SessEnt& s = g_ex->sess[g_sessN++];
-        memcpy(s.name, base, len - 4);
-        s.name[len - 4] = 0;
+        memcpy(s.name, base, len - el);
+        s.name[len - el] = 0;
+        s.jl = jl;
         s.wr = (uint32_t)e.getLastWrite();
         s.size = (uint32_t)e.size();
       }
@@ -1422,7 +1544,7 @@ static void applyView() {
     default: break;
   }
 }
-static void viewResetFilter() { g_fType = 0x0F; g_fThreat = false; g_fDist = 0; g_sortMode = 0; }
+static void viewResetFilter() { g_fType = 0x1F; g_fThreat = false; g_fDist = 0; g_sortMode = 0; }
 static void drawViewerList(bool clear) {
   if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
@@ -1432,7 +1554,7 @@ static void drawViewerList(bool clear) {
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
     tft.drawString(g_idxN ? "No rows match the filter" : "No detections logged", 4, LIST_Y0, 1);
   }
-  char line[256];
+  char line[LOG_LINE];
   int rows = min(g_viewN - g_viewOffset, vis);
   for (int r = 0; r < rows; r++) {
     const LogIdx& e = g_ex->idx[g_ex->view[g_viewOffset + r]];
@@ -1466,12 +1588,12 @@ static void drawViewer() {
 // One streaming pass over the file -> compact per-row index (first MAX_LOG_ROWS rows).
 static bool buildIndex(const char* name) {
   char path[48];
-  snprintf(path, sizeof(path), "/logs/%s.csv", name);
+  snprintf(path, sizeof(path), "/logs/%s.%s", name, g_viewJl ? "jsonl" : "csv");
   if (g_viewFile) g_viewFile.close();
   g_viewFile = SD.open(path, "r");
   if (!g_viewFile) return false;
   g_idxN = 0; g_idxTrunc = false;
-  char line[256];
+  char line[LOG_LINE];
   uint32_t pos;
   while (readLogLine(g_viewFile, line, sizeof(line), &pos)) {
     LogRow r;
@@ -1492,6 +1614,7 @@ static void activatePick(int sel) {
     return;
   }
   cpyField(g_viewName, sizeof(g_viewName), g_ex->sess[sel].name);
+  g_viewJl = g_ex->sess[sel].jl;
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
@@ -1516,7 +1639,7 @@ static void viewerBack() {
 
 // ---- viewer Sort / Filter menus: drawListMenu windows (5 rows) + shared scroll ----
 static int g_sortSel = 0, g_sortOff = 0, g_fltSel = 0, g_fltOff = 0;
-static constexpr int SORT_N = 7, FILTER_N = 7;  // incl. the trailing Back row
+static constexpr int SORT_N = 7, FILTER_N = 8;  // incl. the trailing Back row
 static const char* const kSortItems[SORT_N] = { "Oldest first", "Newest first", "Type newest",
     "Type oldest", "Closest", "Farthest", "Back" };
 static const char* const kDistName[4] = { "All", "Far", "Mid", "Near" };
@@ -1545,12 +1668,12 @@ static void drawSort() { drawScrollMenu("SORT", kSortItems, SORT_N, g_sortSel, g
 
 static void drawFilter() {
   char l[FILTER_N - 1][24];
-  static const char* const kTypes[4] = { "2.4", "5G", "BLE", "PRB" };
-  for (int i = 0; i < 4; i++)
+  static const char* const kTypes[5] = { "2.4", "5G", "BLE", "PRB", "154" };
+  for (int i = 0; i < 5; i++)
     snprintf(l[i], sizeof(l[i]), "%s: %s", kTypes[i], (g_fType & (1 << i)) ? "On" : "Off");
-  snprintf(l[4], sizeof(l[4]), "Threats: %s", g_fThreat ? "On" : "Off");
-  snprintf(l[5], sizeof(l[5]), "Dist: %s", kDistName[g_fDist]);
-  const char* items[FILTER_N] = { l[0], l[1], l[2], l[3], l[4], l[5], "Back" };
+  snprintf(l[5], sizeof(l[5]), "Threats: %s", g_fThreat ? "On" : "Off");
+  snprintf(l[6], sizeof(l[6]), "Dist: %s", kDistName[g_fDist]);
+  const char* items[FILTER_N] = { l[0], l[1], l[2], l[3], l[4], l[5], l[6], "Back" };
   drawScrollMenu("FILTER", items, FILTER_N, g_fltSel, g_fltOff);
 }
 
@@ -1567,9 +1690,9 @@ static void activateSort(int sel) {
 }
 
 static void activateFilter(int sel) {
-  if (sel < 4)       g_fType ^= (1 << sel);
-  else if (sel == 4) g_fThreat = !g_fThreat;
-  else if (sel == 5) g_fDist = (g_fDist + 1) & 3;
+  if (sel < 5)       g_fType ^= (1 << sel);
+  else if (sel == 5) g_fThreat = !g_fThreat;
+  else if (sel == 6) g_fDist = (g_fDist + 1) & 3;
   else { applyView(); returnToViewer(); return; }  // Back: apply + return
   drawFilter();
 }
@@ -1623,7 +1746,7 @@ static void drawDetailList(bool clear) {
 
 static void openDetail(int viewPos) {  // position within the filtered+sorted view
   int row = (viewPos >= 0 && viewPos < g_viewN) ? g_ex->view[viewPos] : -1;  // index into idx[]
-  char line[256];
+  char line[LOG_LINE];
   LogRow r;
   if (row < 0 || row >= g_idxN || !readRowAt(g_ex->idx[row].offset, line, sizeof(line), r)) return;
   g_detN = 0; g_detOff = 0;
@@ -1631,7 +1754,9 @@ static void openDetail(int viewPos) {  // position within the filtered+sorted vi
   addField("Name", r.name[0] ? r.name : "<hidden>");
   addField("MAC", r.mac);
   addField("Source", !strcmp(r.src, "BLE") ? "BLE" : !strcmp(r.src, "PRB") ? "Probe request"
+                   : !strcmp(r.src, "154") ? "802.15.4 (Zigbee/Thread)"
                    : !strcmp(r.src, "5G") ? "Wi-Fi 5 GHz" : "Wi-Fi 2.4 GHz");
+  if (r.pan[0]) addField("PAN ID", r.pan);
   snprintf(b, sizeof(b), "%d dBm", r.rssi);
   addField("RSSI", b);
   if (r.channel) { snprintf(b, sizeof(b), "%d", r.channel); addField("Channel", b); }
@@ -1684,6 +1809,7 @@ static void activateScanSettings(int sel) {
   if (sel == 0)      g_srcMask ^= MASK_BLE;
   else if (sel == 1) g_srcMask ^= SRC_24_BITS;
   else if (sel == 2) g_srcMask ^= MASK_WIFI5;
+  else if (sel == 3) g_srcMask ^= MASK_154;
   else { g_screen = SCR_SCANMENU; drawScanMenu(); return; }  // Back
   saveSrcMask();
   drawScanSettings();
@@ -1712,10 +1838,10 @@ static void runScanCycle() {
   buildGroups();  // once per cycle; shared by render() and pushDetections()
   setLed(!g_linkOk, g_linkOk, false);
   int newCount = logNewDetections();
-  int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
+  int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
-                g_detCount, n24, n5, nble, nprb, newCount, g_seenCount,
+  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
+                g_detCount, n24, n5, nble, nprb, n154, newCount, g_seenCount,
                 susp, lk, conf, sigdb::loaded());
   render();
   pushStatus();

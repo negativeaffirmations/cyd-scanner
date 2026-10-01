@@ -1,7 +1,7 @@
 // webshare.h — on-demand Wi-Fi SoftAP + HTTP server to download the SD log.
 //
 // Brought up when the phone requests download mode. The CYD screen shows a QR code
-// that joins the phone to this AP; the phone then opens the URL to grab scanlog.csv.
+// that joins the phone to this AP; the phone then opens the URL to grab scanlog.jsonl.
 #pragma once
 
 #include <Arduino.h>

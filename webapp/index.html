@@ -88,11 +88,13 @@
   .src5  { border-left:3px solid #22d3ee; background:rgba(34,211,238,.12); }
   .srcble{ border-left:3px solid #e879f9; background:rgba(232,121,249,.12); }
   .srcprb{ border-left:3px solid #f59e0b; background:rgba(245,158,11,.13); }
+  .src154{ border-left:3px solid #4ade80; background:rgba(74,222,128,.12); }
   /* Per-band signal pills (which sources this MAC was seen on). */
   .sp { display:inline-block; font-family:ui-monospace,monospace; font-size:.66rem; padding:1px 4px;
         border-radius:4px; line-height:1.35; }
   .p24{background:rgba(139,148,158,.25);color:#c9d1d9;} .p5{background:rgba(34,211,238,.22);color:#7fe9fb;}
   .pble{background:rgba(232,121,249,.22);color:#f3b6fb;} .pprb{background:rgba(245,158,11,.22);color:#fcd47a;}
+  .p154{background:rgba(74,222,128,.22);color:#9af0b8;}
   .tcol    { flex:0 0 4.4em; text-align:right; font-family:ui-monospace,monospace; color:#8b949e; }
   .det.clk { cursor:pointer; } .det.clk:active { filter:brightness(1.3); }
   .chn     { color:#8b949e; font-size:.7rem; margin-left:.4em; }
@@ -132,6 +134,7 @@
         <label><input type="checkbox" id="ef5" checked> 5G</label>
         <label><input type="checkbox" id="efble" checked> BLE</label>
         <label><input type="checkbox" id="efprb" checked> PRB</label>
+        <label><input type="checkbox" id="ef154" checked> 15.4</label>
         <label><input type="checkbox" id="efThreats"> Threats only</label>
       </div>
       <label class="k" for="efDist">Max distance: <span id="efDistVal"></span></label>
@@ -150,6 +153,7 @@
     <div class="card"><div class="k">Wi-Fi 5 GHz</div><div class="v" id="w5">–</div></div>
     <div class="card"><div class="k">BLE</div><div class="v" id="ble">–</div></div>
     <div class="card"><div class="k">Probe reqs</div><div class="v" id="prb">–</div></div>
+    <div class="card"><div class="k">15.4 / Zigbee</div><div class="v" id="z154">–</div></div>
     <div class="card"><div class="k">Unique logged</div><div class="v" id="uniq">–</div></div>
   </div>
 
@@ -203,6 +207,7 @@
       <label><input type="checkbox" id="sBle" checked> BLE</label>
       <label><input type="checkbox" id="s24" checked> Wi-Fi 2.4G (incl. probe requests)</label>
       <label><input type="checkbox" id="s5" checked> Wi-Fi 5G</label>
+      <label><input type="checkbox" id="s154" checked> 802.15.4 (Zigbee/Thread)</label>
     </div>
   </dialog>
 
@@ -224,21 +229,22 @@
     <div class="maptools">
       <button id="mapCurBtn" class="secondary" disabled>Current session</button>
       <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
-        Load .csv<input type="file" id="mapFile" accept=".csv,text/csv" hidden></label>
+        Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
       <label><input type="checkbox" id="fThreats"> Threats only</label>
       <label><input type="checkbox" id="f24" checked> 2.4</label>
       <label><input type="checkbox" id="f5" checked> 5G</label>
       <label><input type="checkbox" id="fble" checked> BLE</label>
       <label><input type="checkbox" id="fprb" checked> PRB</label>
+      <label><input type="checkbox" id="f154" checked> 15.4</label>
     </div>
-    <div id="mapMsg">Load the current session, pick one from Session logs, or open a .csv file.</div>
+    <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
     <div id="map"></div>
   </dialog>
 
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30j</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-01b</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -300,7 +306,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
+    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -310,7 +316,7 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
+  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
@@ -362,7 +368,7 @@ function gpsOnce(){
 
 // --- BLE download stream (LOGDATA): "SIZE=<n>" = a file, "SESS=<n>" = the session list.
 // A short header notification announces which, then <n> bytes of chunks follow. ---
-let dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.csv", sink:"save" };
+let dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" };
 function onLogData(ev){
   const dv = ev.target.value;
   const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
@@ -386,7 +392,7 @@ function onLogData(ev){
     const blob = new Blob(dl.chunks);
     if (dl.mode==="file") {
       if (dl.sink==="map") { blob.text().then(t=>plotCsvText(t, dl.name)); }
-      else if (dl.sink==="explore") { const nm=dl.name; blob.text().then(t=>loadedExplore(parseScanCsv(t), nm)); }
+      else if (dl.sink==="explore") { const nm=dl.name; blob.text().then(t=>loadedExplore(parseScanLog(t), nm)); }
       else {
         const a=document.createElement("a");
         a.href=URL.createObjectURL(blob); a.download=dl.name; a.click(); URL.revokeObjectURL(a.href);
@@ -395,11 +401,11 @@ function onLogData(ev){
     } else if (dl.mode==="list") {
       blob.text().then(populateSessions);
     }
-    dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.csv", sink:"save" };
+    dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" };
   }
 }
 async function downloadLog(){
-  try{ dl={mode:null,expect:0,got:0,chunks:[],name:"scanlog.csv",sink:"save"};
+  try{ dl={mode:null,expect:0,got:0,chunks:[],name:"scanlog.jsonl",sink:"save"};
     await chars.cmd.writeValue(enc.encode("L")); log("Requesting current session…"); }
   catch(e){ log("Download failed: "+e.message); }
 }
@@ -456,9 +462,9 @@ async function deleteSession(){
   try{ await chars.cmd.writeValue(enc.encode("D:"+path)); log("Deleting "+base+"… (list will refresh)"); }
   catch(e){ log("Delete failed: "+e.message); }
 }
-// Scan-source mask: BLE=2, Wi-Fi 2.4G = WIFI24(1)+PROBE(8), Wi-Fi 5G=16 (154 bit 4 kept on).
+// Scan-source mask: BLE=2, Wi-Fi 2.4G = WIFI24(1)+PROBE(8), Wi-Fi 5G=16, 802.15.4=4.
 async function sendSrcMask(){
-  const m = ($("sBle").checked?2:0) | ($("s24").checked?9:0) | ($("s5").checked?16:0) | 4;
+  const m = ($("sBle").checked?2:0) | ($("s24").checked?9:0) | ($("s5").checked?16:0) | ($("s154").checked?4:0);
   try{ await chars.cmd.writeValue(enc.encode("S:"+m)); }
   catch(e){ log("Scan settings failed: "+e.message); }
 }
@@ -492,9 +498,10 @@ function openMap(){
   if(!mapDets.length && connected) mapCurrent();   // default view = the current scan
 }
 
-// Parse a scanlog CSV into row objects with all 15 columns (shared by the map and Scan Viewer).
+// Parse a scanlog CSV into row objects with all 16 columns (shared by the map and Scan Viewer).
 // Columns are located by header name, so extra/reordered columns still parse.
-const CSV_COLS=["epoch","ms_since_boot","lat","lon","source","mac","rssi","channel","ie","cid","uuid","name","score","tier","signature"];
+// v5 added `pan` after `uuid`; older (v4) logs lack the header name, so pan reads as "".
+const CSV_COLS=["epoch","ms_since_boot","lat","lon","source","mac","rssi","channel","ie","cid","uuid","pan","name","score","tier","signature"];
 function parseScanCsv(text){
   const lines=(text||"").split(/\r?\n/);
   if(lines.length<2) return [];
@@ -507,16 +514,39 @@ function parseScanCsv(text){
     const g=n=>ix[n]>=0?(c[ix[n]]||""):"";
     rows.push({epoch:parseInt(g("epoch"),10)||0, ms:parseInt(g("ms_since_boot"),10)||0,
       lat:parseFloat(g("lat")), lon:parseFloat(g("lon")), source:g("source"), mac:g("mac"),
-      rssi:parseInt(g("rssi"),10)||0, channel:g("channel"), ie:g("ie"), cid:g("cid"), uuid:g("uuid"),
+      rssi:parseInt(g("rssi"),10)||0, channel:g("channel"), ie:g("ie"), cid:g("cid"), uuid:g("uuid"), pan:g("pan"),
       name:g("name"), score:parseInt(g("score"),10)||0, tier:g("tier")||"none", signature:g("signature")});
   }
   return rows;
 }
+// NDJSON log (one JSON object per line, schema keys: epoch ms lat lon src mac rssi ch ie cid
+// uuid pan name score tier sig; blank/inapplicable keys are omitted). Normalized to the SAME
+// row shape parseScanCsv returns. Bad lines are skipped.
+function parseScanNdjson(text){
+  const rows=[];
+  for(const ln of (text||"").split(/\r?\n/)){
+    if(!ln.trim()) continue;
+    let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
+    if(!o || typeof o!=="object" || !o.mac) continue;
+    const s=v=>v==null?"":String(v);
+    rows.push({epoch:parseInt(o.epoch,10)||0, ms:parseInt(o.ms,10)||0,
+      lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon),
+      source:s(o.src), mac:s(o.mac), rssi:parseInt(o.rssi,10)||0, channel:s(o.ch),
+      ie:s(o.ie), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
+      score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig)});
+  }
+  return rows;
+}
+// Detect the log format: first non-empty char "{" = NDJSON, else legacy CSV.
+function parseScanLog(text){
+  const t=(text||"").trimStart();
+  return t[0]==="{" ? parseScanNdjson(t) : parseScanCsv(t);
+}
 const hasGps=r=>isFinite(r.lat)&&isFinite(r.lon)&&!(r.lat===0&&r.lon===0);
 
-// Plot a scanlog CSV's geolocated rows on the wardriving map.
+// Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
 function plotCsvText(text, label){
-  const all=parseScanCsv(text);
+  const all=parseScanLog(text);
   if(!all.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
   mapDets=all.filter(hasGps);
   if(!$("mapDlg").open) openMap(); else renderMap();
@@ -528,7 +558,7 @@ function plotCsvText(text, label){
 function renderMap(){
   if(!lmap) return;
   mapLayer.clearLayers();
-  const on={"2.4":$("f24").checked,"5G":$("f5").checked,"BLE":$("fble").checked,"PRB":$("fprb").checked};
+  const on={"2.4":$("f24").checked,"5G":$("f5").checked,"BLE":$("fble").checked,"PRB":$("fprb").checked,"154":$("f154").checked};
   const threatsOnly=$("fThreats").checked;
   const groups=new Map();
   for(const d of mapDets){
@@ -547,7 +577,7 @@ function renderMap(){
     g.items.sort((a,b)=> tierNum(b.tier)-tierNum(a.tier) || b.rssi-a.rssi);
     const shown=g.items.slice(0,60).map(d=>{
       const flag=tierNum(d.tier)?" ["+d.tier+"]":"";
-      return (d.source||"?")+" "+d.rssi+"dBm "+(d.name||"<hidden>")+" "+d.mac+flag;
+      return (d.source||"?")+" "+d.rssi+"dBm "+(d.name||"<hidden>")+" "+d.mac+(d.pan?" PAN "+d.pan:"")+flag;
     }).join("\n");
     const more=g.items.length>60?"\n… +"+(g.items.length-60)+" more":"";
     m.bindPopup("<b>"+g.items.length+" device(s)</b><br>"+g.lat.toFixed(5)+", "+g.lon.toFixed(5)+
@@ -598,8 +628,8 @@ function onDets(ev){
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
 }
-const srcClass  = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};  // row tint
-const pillClass = {"2.4":"p24",   "5G":"p5",  "BLE":"pble",   "PRB":"pprb"};    // band pill
+const srcClass  = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb", "154":"src154"};  // row tint
+const pillClass = {"2.4":"p24",   "5G":"p5",  "BLE":"pble",   "PRB":"pprb",   "154":"p154"};    // band pill
 const detHeadLive =
   '<div class="dethead"><span class="tiercol" title="Threat tier">⚠</span>'+
   '<span class="sigcol">Signals</span><span class="hnm">Device</span>'+
@@ -673,7 +703,7 @@ function openExplore(){
   refreshSessions();
 }
 let expAll=[], expName="";             // raw parsed rows of the loaded session (never mutated)
-const TYPE_ORDER={"2.4":0,"5G":1,"BLE":2,"PRB":3};
+const TYPE_ORDER={"2.4":0,"5G":1,"BLE":2,"PRB":3,"154":4};
 function loadedExplore(rows, name){
   expAll = rows.map((r,i)=>(r.idx=i, r)); expName = name;   // idx = file order (chronological)
   // New session: reset only the time window to its own extent; other filters stay as the user set them.
@@ -688,7 +718,7 @@ function distLabel(v){
   return (v<=-100 ? "All" : v<=-80 ? "Far" : v<=-60 ? "Mid" : "Near")+" (\u2265 "+v+" dBm)";
 }
 function applyExplore(){   // filter -> sort -> render (no re-download)
-  const on={"2.4":$("ef24").checked,"5G":$("ef5").checked,"BLE":$("efble").checked,"PRB":$("efprb").checked};
+  const on={"2.4":$("ef24").checked,"5G":$("ef5").checked,"BLE":$("efble").checked,"PRB":$("efprb").checked,"154":$("ef154").checked};
   const thr=$("efThreats").checked, minR=+$("efDist").value;
   const t0=+$("efT0").value, t1=+$("efT1").value;
   const full = t0===+$("efT0").min && t1===+$("efT0").max;   // unsynced (epoch 0) rows pass only at full extent
@@ -714,13 +744,14 @@ function applyExplore(){   // filter -> sort -> render (no re-download)
 
 // --- Detection detail modal (info + GPS mini-map) ---
 let detMap=null, detLayer=null;
-const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"Probe request"};
+const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"Probe request","154":"802.15.4 (Zigbee/Thread)"};
 function openDetail(r){
   const tn=tierNum(r.tier);
   const tierTxt=(tn?r.tier.charAt(0).toUpperCase()+r.tier.slice(1):"None")+(r.score?" (score "+r.score+")":"")+
     (r.signature?" — "+r.signature:"");
   const rowsKv=[["Name",r.name||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
     ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
+  if(r.pan) rowsKv.push(["PAN ID",r.pan]);
   if(r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint",r.ie]);
   if(r.cid && !/^0+$/.test(r.cid)) rowsKv.push(["BLE company ID",r.cid]);
   if(r.uuid && !/^0+$/.test(r.uuid)) rowsKv.push(["Service UUID",r.uuid]);
@@ -749,6 +780,7 @@ function onStatus(ev){
   if("w5"  in kv) $("w5").textContent  = kv.w5;
   if("ble" in kv) $("ble").textContent = kv.ble;
   if("prb" in kv) $("prb").textContent = kv.prb;
+  if("z"   in kv) $("z154").textContent = kv.z;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   if("time"in kv) $("timeState").textContent = kv.time==="1"?"yes":"no";
   if("gps" in kv) $("gpsState").textContent  = kv.gps==="1"?"yes":"no";
@@ -762,7 +794,7 @@ function onStatus(ev){
   if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
-    $("sBle").checked=!!(m&2); $("s24").checked=!!(m&1); $("s5").checked=!!(m&16); }
+    $("sBle").checked=!!(m&2); $("s24").checked=!!(m&1); $("s5").checked=!!(m&16); $("s154").checked=!!(m&4); }
   if("bri" in kv){ $("briVal").textContent = kv.bri;
     if(document.activeElement !== $("briSlider")) $("briSlider").value = kv.bri; }
 }
@@ -772,7 +804,7 @@ $("scanBtn").onclick = toggleScan;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
 $("exploreBtn").onclick = openExplore;
 $("expSel").addEventListener("change", ()=>fetchSession("explore"));
-["expSort","ef24","ef5","efble","efprb","efThreats","efDist","efText"].forEach(id=>
+["expSort","ef24","ef5","efble","efprb","ef154","efThreats","efDist","efText"].forEach(id=>
   $(id).addEventListener(id==="efText"?"input":"change", applyExplore));
 $("efDist").addEventListener("input", applyExplore);
 // Dual-handle time window: two ranges, clamped so start <= end.
@@ -783,7 +815,7 @@ $("detDlg").addEventListener("click", e=>{ if(e.target === $("detDlg")) $("detDl
 $("scanSetBtn").onclick = ()=> $("scanSetDlg").showModal();
 $("scanSetClose").onclick = ()=> $("scanSetDlg").close();
 $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) $("scanSetDlg").close(); });
-["sBle","s24","s5"].forEach(id=>$(id).addEventListener("change", sendSrcMask));
+["sBle","s24","s5","s154"].forEach(id=>$(id).addEventListener("change", sendSrcMask));
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
@@ -800,7 +832,7 @@ $("mapBtn").onclick = openMap;
 $("mapClose").onclick = ()=> $("mapDlg").close();
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;
-["fThreats","f24","f5","fble","fprb"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
+["fThreats","f24","f5","fble","fprb","f154"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
 $("mapFile").addEventListener("change", e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();

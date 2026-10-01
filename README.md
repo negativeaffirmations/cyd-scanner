@@ -11,6 +11,15 @@ an **ESP32-C5 DevKit** radio co-processor.
 > deauthenticate, inject, or otherwise interfere with any device. Use it lawfully
 > and responsibly.
 
+> **On privacy.** This tool exists to expose *surveillance devices* — machines that
+> collect data on everyone without consent. Those devices have no privacy interest this
+> project is obligated to respect; revealing their uniqueness is the point, and no lawful
+> device-fingerprinting capability here is limited for a machine's sake. The project's
+> privacy concern is **human**, and one-directional: captured data can incidentally include
+> identifiers of bystanders' devices (phone, wearable, etc.) alongside GPS and timestamps.
+> **Such data must never be committed to this public repository.** Keep real captures on your
+> own storage; the repo ships only code, device signatures, and synthetic examples.
+
 ## How it works
 
 The scanner passively monitors the RF environment and matches observed devices

@@ -1,6 +1,7 @@
 // phone.cpp — see phone.h.
 #include "phone.h"
 #include <NimBLEDevice.h>
+#include <math.h>
 
 namespace {
 
@@ -79,7 +80,9 @@ class WriteCB : public NimBLECharacteristicCallbacks {
       }
     } else if (uuid == GPS_UUID) {
       float la, lo;
-      if (sscanf(val.c_str(), "%f,%f", &la, &lo) == 2) {
+      // Reject nan/inf/out-of-range so the NDJSON log never gets a non-JSON lat/lon.
+      if (sscanf(val.c_str(), "%f,%f", &la, &lo) == 2 && isfinite(la) && isfinite(lo) &&
+          la >= -90.0f && la <= 90.0f && lo >= -180.0f && lo <= 180.0f) {
         g_lat = la; g_lon = lo; g_haveGps = true;
         Serial.printf("[phone] gps: %.5f,%.5f\n", la, lo);
       }

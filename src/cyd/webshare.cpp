@@ -11,7 +11,7 @@ bool       g_active = false;
 char       g_ssid[24]  = {0};
 char       g_pw[16]    = {0};
 const char* kUrl       = "http://192.168.4.1";
-char       g_logPath[48] = "/scanlog.csv";  // current session log (set by setLogPath)
+char       g_logPath[48] = "/scanlog.jsonl";  // current session log (set by setLogPath)
 
 const char* logBasename() {
   const char* s = strrchr(g_logPath, '/');
@@ -59,20 +59,20 @@ void handleDl() {
   File file = SD.open(path, "r");
   if (!file) { g_server.send(500, "text/plain", "open failed"); return; }
   g_server.sendHeader("Content-Disposition", "attachment; filename=" + f);
-  size_t n = g_server.streamFile(file, "text/csv");
+  size_t n = g_server.streamFile(file, f.endsWith(".jsonl") ? "application/x-ndjson" : "text/csv");
   file.close();
   Serial.printf("[webshare] streamed %u bytes of %s\n", (unsigned)n, path.c_str());
 }
 
-// Backward-compat: /scanlog.csv streams the current session directly.
+// /scanlog.jsonl streams the current session directly (/scanlog.csv kept as an alias).
 void handleLog() {
-  Serial.printf("[webshare] GET /scanlog.csv -> %s exists=%d\n", g_logPath, SD.exists(g_logPath));
+  Serial.printf("[webshare] GET /scanlog -> %s exists=%d\n", g_logPath, SD.exists(g_logPath));
   if (!SD.exists(g_logPath)) { g_server.send(404, "text/plain", "no log yet"); return; }
   File f = SD.open(g_logPath, "r");
   if (!f) { g_server.send(500, "text/plain", "open failed"); return; }
   g_server.sendHeader("Content-Disposition",
                       String("attachment; filename=") + logBasename());
-  size_t n = g_server.streamFile(f, "text/csv");
+  size_t n = g_server.streamFile(f, "application/x-ndjson");
   f.close();
   Serial.printf("[webshare] streamed %u bytes\n", (unsigned)n);
 }
@@ -93,6 +93,7 @@ void start() {
   IPAddress ip = WiFi.softAPIP();
   g_server.on("/", handleRoot);
   g_server.on("/dl", handleDl);
+  g_server.on("/scanlog.jsonl", handleLog);
   g_server.on("/scanlog.csv", handleLog);
   g_server.onNotFound([]() {       // reveal whatever the phone actually requests
     Serial.printf("[webshare] 404 %s\n", g_server.uri().c_str());

@@ -46,6 +46,8 @@ const char* kSeedCsv =
     "# scanlog.csv). No Flock IE hashes are seeded yet — capture them in the field.\n"
     "# 'bleuuid,<uuid>,...' matches a BLE service UUID (16-bit or full 128-bit);\n"
     "# 'blecid,<hex>,...' matches a BLE manufacturer company ID (see the uuid/cid cols).\n"
+    "# 802.15.4 devices: the EUI-64 OUI is matched like a MAC OUI; use srcmask 4 (or A):\n"
+    "#   oui,<AA:BB:CC>,<weight>,4,<label>\n"
     "thresholds,40,70,100\n"
     "oui,B4:1E:52,70,A,Flock IEEE\n"
     "oui,70:C9:4E,40,W,Flock (community)\n"
@@ -285,7 +287,9 @@ void score(const Detection& d, ScoreResult& out) {
   if (d.source == (uint8_t)Source::WifiProbe) srcBit |= MASK_WIFI24;
 
   int ouiW = 0;
-  for (int i = 0; i < g_ouiN; i++) {
+  // A short 802.15.4 address is 2 bytes, not an OUI: skip the OUI layer for it.
+  const bool skipOui = d.source == (uint8_t)Source::Ieee802154 && !(d.flags & FLAG_154_EXTENDED);
+  for (int i = 0; i < g_ouiN && !skipOui; i++) {
     if (!(g_oui[i].srcMask & srcBit)) continue;
     if (memcmp(d.mac, g_oui[i].prefix, 3) == 0 && g_oui[i].weight > ouiW) {
       ouiW = g_oui[i].weight; out.bestOui = (int8_t)i;

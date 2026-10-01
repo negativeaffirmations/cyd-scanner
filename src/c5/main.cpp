@@ -15,6 +15,7 @@
 #include "pins.h"
 #include "link_protocol.h"
 #include "promisc.h"
+#include "ieee154.h"
 
 using namespace link_protocol;
 
@@ -93,7 +94,11 @@ static bool sourceEnabled(const Detection& d) {
 }
 
 static bool sameDev(const Detection& a, const Detection& b) {
-  return a.source == b.source && memcmp(a.mac, b.mac, 6) == 0;
+  if (a.source != b.source || memcmp(a.mac, b.mac, 6) != 0) return false;
+  // Short 15.4 addresses are unique only within a PAN (e.g. every coordinator is 0x0000).
+  if (a.source == (uint8_t)Source::Ieee802154 && !(a.flags & FLAG_154_EXTENDED))
+    return a.panId == b.panId;
+  return true;
 }
 
 // Insert or refresh a detection (dedup by source+MAC). Thread-safe.
@@ -109,6 +114,7 @@ static void mergeDetection(const Detection& d) {
       uint32_t keepIe  = d.ie_hash ? d.ie_hash : g_table[i].d.ie_hash;
       uint8_t  keepFl  = d.flags | g_table[i].d.flags;                  // flags are sticky
       uint16_t keepCid = d.companyId ? d.companyId : g_table[i].d.companyId;
+      uint16_t keepPan = d.panId ? d.panId : g_table[i].d.panId;
       bool     haveSvc = false;
       for (int k = 0; k < 16; k++) if (d.svc[k]) { haveSvc = true; break; }
       Detection prev = g_table[i].d;
@@ -116,6 +122,7 @@ static void mergeDetection(const Detection& d) {
       g_table[i].d.ie_hash   = keepIe;
       g_table[i].d.flags     = keepFl;
       g_table[i].d.companyId = keepCid;
+      g_table[i].d.panId     = keepPan;
       if (!haveSvc) memcpy(g_table[i].d.svc, prev.svc, 16);  // keep prior UUID
       g_table[i].lastSeen = millis();
       xSemaphoreGive(g_mux);
@@ -172,7 +179,8 @@ static ScanCB g_scanCB;
 //   PH_PROMISC — passive promiscuous capture, hopping the 2.4 GHz probe hotspots
 //                (1/6/11) to catch client probe requests + IE fingerprints.
 // BLE runs continuously throughout (separate controller, coexistence-managed).
-enum WifiPhase { PH_SCAN, PH_PROMISC };
+// PH_154 — passive 802.15.4 capture, entered with the Wi-Fi PHY idle.
+enum WifiPhase { PH_SCAN, PH_PROMISC, PH_154 };
 static WifiPhase g_phase        = PH_SCAN;
 static bool      g_wifiScanning = false;
 static uint32_t  g_lastWifiDone = 0;
@@ -188,6 +196,39 @@ static int      g_hopIdx    = 0;
 // Promiscuous sink (Wi-Fi task context): just fold each frame into the table.
 static void onPromisc(const Detection& d) { mergeDetection(d); }
 
+static void on154(const Detection& d) { mergeDetection(d); }
+
+static const uint8_t      k154Chans[]     = {11, 15, 20, 25, 26};
+static constexpr int      NUM_154_CHANS    = sizeof(k154Chans) / sizeof(k154Chans[0]);
+static constexpr uint32_t IEEE154_MS       = 3000;  // length of a capture window
+static constexpr uint32_t IEEE154_DWELL_MS = 150;   // per-channel dwell while capturing
+static uint32_t g_154Start = 0, g_154LastHop = 0;
+static int      g_154Idx    = 0;
+static bool     g_154Logged = false;
+
+static void enter154() {
+  esp_err_t e = ieee154::enable();
+  if (!g_154Logged) {
+    g_154Logged = true;
+    Serial.printf("[C5] 802.15.4 enable() -> 0x%x (%s)\n", (unsigned)e, esp_err_to_name(e));
+  }
+  if (e != ESP_OK) {            // PHY unavailable: skip this window
+    ieee154::disable();
+    g_lastWifiDone = millis();
+    return;
+  }
+  g_phase      = PH_154;
+  g_154Idx     = 0;
+  g_154Start   = millis();
+  g_154LastHop = g_154Start;
+  ieee154::setChannel(k154Chans[0]);
+}
+// Radio hand-off after the Wi-Fi phases: 802.15.4 window if enabled, else the gap.
+static void after154Slot() {
+  if (g_srcMask & MASK_154) enter154();
+  else g_lastWifiDone = millis();
+}
+
 static void enterPromisc() {
   g_phase     = PH_PROMISC;
   g_hopIdx    = 0;
@@ -200,7 +241,7 @@ static void enterPromisc() {
 // After the AP-scan phase: capture probes if enabled, else just wait out the gap.
 static void afterScanPhase() {
   if (g_srcMask & MASK_PROBE) enterPromisc();
-  else g_lastWifiDone = millis();
+  else after154Slot();
 }
 
 static void wifiTick() {
@@ -239,12 +280,29 @@ static void wifiTick() {
     return;
   }
 
+  if (g_phase == PH_154) {
+    uint32_t t = millis();
+    if (t - g_154Start >= IEEE154_MS) {
+      ieee154::disable();             // hand the PHY back before the next AP scan
+      g_phase        = PH_SCAN;
+      g_lastWifiDone = t;
+      return;
+    }
+    if (t - g_154LastHop >= IEEE154_DWELL_MS) {
+      g_154LastHop = t;
+      g_154Idx     = (g_154Idx + 1) % NUM_154_CHANS;
+      ieee154::setChannel(k154Chans[g_154Idx]);
+    }
+    return;
+  }
+
   // PH_PROMISC: hop channels for the capture window, then return to scanning.
   uint32_t now = millis();
   if (now - g_promStart >= PROMISC_MS) {
     promisc::disable();
     g_phase        = PH_SCAN;
     g_lastWifiDone = now;             // honor WIFI_GAP_MS before the next scan
+    after154Slot();
     return;
   }
   if (now - g_lastHop >= HOP_DWELL_MS) {
@@ -322,6 +380,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   promisc::begin(&onPromisc);  // promiscuous capture feeds the same table
+  ieee154::begin(&on154);      // 802.15.4 presence feeds the same table
 
   NimBLEDevice::init("");
   NimBLEScan* scan = NimBLEDevice::getScan();
@@ -344,6 +403,7 @@ void setup() {
 
 void loop() {
   wifiTick();
+  ieee154::tick();
 
   // BLE watchdog: if the scan ever stops (stall, error, or an onScanEnd we missed),
   // restart it. Belt-and-suspenders alongside setMaxResults(0).
