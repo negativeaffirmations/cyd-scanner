@@ -141,13 +141,18 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 // touchscreen (once calibrated). A short tap of BOOT moves through the menu; a long
 // hold selects, and a long hold from any screen returns to the menu. With touch, tap
 // an item to select it directly. ---
-enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS };
+enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_STUB };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
-static const char* kMenuItems[] = { "Phone Link", "Start Scan", "Settings" };
+static int    g_scanSel = 0;
+static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
+static const char* kScanItems[] = { "Start Scan", "Explore Scan", "Scan Settings", "Back" };
+static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
+static bool g_stubArmed = false;      // true once the finger has lifted after entering the stub
+static const char* g_stubTitle = "";  // title shown by the generic SCR_STUB screen
 
 // Shared menu-row geometry (used for drawing AND touch hit-testing).
 static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
@@ -970,53 +975,85 @@ static void drawAppQrScreen() {
   tft.drawString("Press button: back to menu", W / 2, ty + 20, 2);
 }
 
-// Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
-static void drawMenu() {
+// Shared list-menu screen: status bar, centered title, and a highlighted row list on the
+// ROW_Y0/ROW_STEP/ROW_H geometry (the same geometry tappedRow() hit-tests). Every list
+// screen (home, settings, scan menu) draws through this. Hint text is drawn by the caller.
+static void drawListMenu(const char* title, const char* const* items, int n, int sel) {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
   int W = tft.width();
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString("HOME", W / 2, 32, 4);
+  tft.drawString(title, W / 2, 32, 4);
   // Button text is centered in the row; font-4 (26px) in the 34px row leaves 4px
   // of padding above and below.
-  for (int i = 0; i < MENU_N; i++) {
-    bool sel = (i == g_menuSel);
-    int  y   = ROW_Y0 + i * ROW_STEP;
-    if (sel) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
-    else     tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
-    tft.setTextColor(sel ? TFT_WHITE : TFT_LIGHTGREY, sel ? TFT_NAVY : TFT_BLACK);
+  for (int i = 0; i < n; i++) {
+    bool s = (i == sel);
+    int  y = ROW_Y0 + i * ROW_STEP;
+    if (s) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
+    else   tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
+    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? TFT_NAVY : TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString(kMenuItems[i], W / 2, y - 5 + ROW_H / 2, 4);
+    tft.drawString(items[i], W / 2, y - 5 + ROW_H / 2, 4);
   }
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
+}
+
+// Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
+static void drawMenu() {
+  drawListMenu("HOME", kMenuItems, MENU_N, g_menuSel);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
 }
 
 // Settings screen: Calibrate Touch / Brightness / Back.
 static void drawSettings() {
-  tft.fillScreen(TFT_BLACK);
-  drawStatusBar();
-  int W = tft.width();
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString("SETTINGS", 10, 32, 4);
   char bright[24];
   snprintf(bright, sizeof(bright), "Brightness: %d%%", g_brightness);
   const char* items[SET_N] = { "Calibrate Touch", bright, "Back" };
-  for (int i = 0; i < SET_N; i++) {
-    bool sel = (i == g_setSel);
-    int  y   = ROW_Y0 + i * ROW_STEP;
-    if (sel) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
-    else     tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
-    tft.setTextColor(sel ? TFT_WHITE : TFT_LIGHTGREY, sel ? TFT_NAVY : TFT_BLACK);
-    tft.drawString(items[i], 18, y, 4);
-  }
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  drawListMenu("SETTINGS", items, SET_N, g_setSel);
   tft.drawString(g_touchOk ? "Touch OK - tap an item" : "Touch not calibrated yet",
                  10, tft.height() - 18, 1);
+}
+
+// Scan sub-menu: Start Scan / Explore Scan / Scan Settings / Back.
+static void drawScanMenu() {
+  drawListMenu("SCAN", kScanItems, SCAN_N, g_scanSel);
+  tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
+                           : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+}
+
+// Generic placeholder screen for not-yet-built features (title set via g_stubTitle).
+static void drawStub() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  int W = tft.width();
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString(g_stubTitle, W / 2, 32, 4);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Coming soon", W / 2, 120, 4);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Press button or tap: back", W / 2, tft.height() - 18, 2);
+}
+
+// Fresh touch-down edge anywhere (stub screen "tap to go back"). No-op until calibrated.
+static bool anyTouchTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return false; }
+  bool now = g_touch.touched();
+  bool hit = now && !prev;
+  prev = now;
+  return hit;
+}
+
+// Act on a scan-menu row (touch tap or long-press select).
+static void activateScanMenu(int sel) {
+  if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; }               // first cycle draws it
+  else if (sel == 1) { g_stubTitle = "EXPLORE SCAN"; g_stubArmed = false; g_screen = SCR_STUB; drawStub(); }
+  else if (sel == 2) { g_stubTitle = "SCAN SETTINGS"; g_stubArmed = false; g_screen = SCR_STUB; drawStub(); }
+  else               { g_screen = SCR_MENU; drawMenu(); }                       // Back
 }
 
 // Act on a settings row (touch tap or long-press select).
@@ -1067,7 +1104,7 @@ static void runDownload() {
 // Act on the highlighted menu item (touch tap or long-press select).
 static void activateMenu() {
   if (g_menuSel == 0)      { g_screen = SCR_APPQR;    drawAppQrScreen(); }
-  else if (g_menuSel == 1) { g_screen = SCR_SCAN; g_scrollOffset = 0; }                  // first cycle draws it
+  else if (g_menuSel == 1) { g_screen = SCR_SCANMENU; g_scanSel = 0; drawScanMenu(); }   // opens sub-menu; no scan yet
   else if (g_menuSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
 }
 
@@ -1112,7 +1149,7 @@ void loop() {
 
   // Phone can start/stop the scan remotely (single toggle in the web app).
   if (phone::scanStartRequested()) { if (g_screen != SCR_SCAN) g_scrollOffset = 0; g_screen = SCR_SCAN; }
-  if (phone::scanStopRequested())  { g_screen = SCR_MENU; drawMenu(); pushStatus(); }
+  if (phone::scanStopRequested())  { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
 
   BtnEv ev = buttonEvent();
 
@@ -1144,6 +1181,26 @@ void loop() {
       return;
     }
 
+    case SCR_SCANMENU: {
+      int t = tappedRow(SCAN_N);
+      if (t >= 0)               { g_scanSel = t; activateScanMenu(t); return; }  // touch select
+      if      (ev == BTN_SHORT) { g_scanSel = (g_scanSel + 1) % SCAN_N; drawScanMenu(); }
+      else if (ev == BTN_LONG)  { activateScanMenu(g_scanSel); }  // "Back" row returns to HOME
+      delay(20);
+      return;
+    }
+
+    case SCR_STUB:
+      {
+        // Release-gate: the touch that selected the stub is still down on entry, so only
+        // accept a back-tap once the finger has lifted at least once.
+        if (!g_stubArmed && (!g_touchOk || !g_touch.touched())) g_stubArmed = true;
+        bool tapped = anyTouchTapped();  // always called so its edge state stays current
+        if (ev != BTN_NONE || (g_stubArmed && tapped)) { g_screen = SCR_SCANMENU; drawScanMenu(); }  // any press: back
+      }
+      delay(20);
+      return;
+
     case SCR_APPQR:
       if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }  // any press: back
       delay(20);
@@ -1151,14 +1208,14 @@ void loop() {
 
     case SCR_SCAN:
       // Stop via the on-screen button (touch), a long BOOT hold, or the phone.
-      if (ev == BTN_LONG || stopButtonTapped()) { g_screen = SCR_MENU; drawMenu(); pushStatus(); return; }
+      if (ev == BTN_LONG || stopButtonTapped()) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return; }
       runScanCycle();
       // Responsive ~2 s wait that also honors stop requests and pending downloads.
       {
         uint32_t t0 = millis();
         while (millis() - t0 < 2000) {
           if (buttonEvent() == BTN_LONG || stopButtonTapped() || phone::scanStopRequested()) {
-            g_screen = SCR_MENU; drawMenu(); pushStatus(); return;
+            g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return;
           }
           if (phone::downloadRequested()) return;
           handleScanTouch();

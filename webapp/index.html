@@ -98,7 +98,13 @@
   <div class="sub">Counter-surveillance scanner &middot; phone control over Bluetooth</div>
 
   <button id="connectBtn">Connect to scanner</button>
-  <button id="scanBtn" disabled>&#9654; Start Scan</button>
+  <button id="scanNavBtn" disabled>&#128225; Scan</button>
+  <div id="scanPanel" style="display:none">
+    <button id="scanBtn" disabled>&#9654; Start Scan</button>
+    <button id="exploreBtn" class="secondary">Explore Scan</button>
+    <button id="scanSetBtn" class="secondary">Scan Settings</button>
+    <div id="scanSoon" class="note" style="display:none">Coming soon.</div>
+  </div>
   <button id="mapBtn" class="secondary">&#128506; Map</button>
 
   <div class="grid">
@@ -234,7 +240,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
+    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -244,11 +250,12 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
+  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
   scanning=false; updateScanBtn();
+  $("scanPanel").style.display="none";
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
@@ -567,6 +574,8 @@ function onStatus(ev){
 
 $("connectBtn").onclick = connect;
 $("scanBtn").onclick = toggleScan;
+$("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
+$("exploreBtn").onclick = $("scanSetBtn").onclick = ()=>{ $("scanSoon").style.display="block"; };
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
