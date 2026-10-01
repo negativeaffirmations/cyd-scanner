@@ -69,6 +69,10 @@ PYTHONIOENCODING=utf-8 ~/.platformio/penv/Scripts/pio.exe run -e cyd -t upload -
 ```
 - **Boards by USB VID:PID** (COM numbers are NOT stable): CYD = CH340 `1A86:7523` (was COM14);
   C5 native USB = `303A:1001` (was COM18, **flash the C5 here**; its UART bridge `2E3C:5740` won't flash).
+- **`[env:c5test]` = 802.15.4 TEST SOURCE** (`src/c5test/`): bench transmitter for a SECOND C5 (never
+  the scanner's), cycling short/extended/beacon frames to exercise PH_154. Build:
+  `PYTHONIOENCODING=utf-8 ~/.platformio/penv/Scripts/pio.exe run -e c5test`; flash via native USB
+  (`303A:1001`) with `-t upload --upload-port <COM>`. Only transmitting firmware in the project.
 - **The VIN→5V0 single-cable-power jumper is NOT connected**, so the C5 can be flashed over USB
   any time without pulling a jumper.
 - **Protocol-version changes require flashing BOTH boards together** (FrameParser rejects a mismatch).
