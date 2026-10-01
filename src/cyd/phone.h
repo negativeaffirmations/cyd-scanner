@@ -53,6 +53,9 @@ bool logRequested();
 bool scanStartRequested();
 bool scanStopRequested();
 
+// True once if the app asked for a fresh log session ("N"), consumed on read.
+bool newSessionRequested();
+
 // True once if the app asked for the list of session logs ("Q"), consumed on read.
 bool listRequested();
 

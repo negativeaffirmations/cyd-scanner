@@ -111,6 +111,7 @@
   <button id="scanNavBtn" disabled>&#128225; Scan</button>
   <div id="scanPanel" style="display:none">
     <button id="scanBtn" disabled>&#9654; Start Scan</button>
+    <button id="newSessBtn" class="secondary" disabled>New Session</button>
     <button id="exploreBtn" class="secondary">Explore Scan</button>
     <button id="scanSetBtn" class="secondary">Scan Settings</button>
   </div>
@@ -244,7 +245,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-01b</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-01c</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -268,6 +269,10 @@ async function toggleScan(){
   try { await chars.cmd.writeValue(enc.encode(want ? "G" : "X"));
     log(want ? "Start scan requested." : "Stop scan requested."); }
   catch(e){ log("Scan command failed: " + e.message); }
+}
+async function newSession(){
+  try { await chars.cmd.writeValue(enc.encode("N")); log("New session started."); }
+  catch(e){ log("New session failed: " + e.message); }
 }
 
 const $ = id => document.getElementById(id);
@@ -306,7 +311,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -316,7 +321,7 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
@@ -801,6 +806,7 @@ function onStatus(ev){
 
 $("connectBtn").onclick = connect;
 $("scanBtn").onclick = toggleScan;
+$("newSessBtn").onclick = newSession;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
 $("exploreBtn").onclick = openExplore;
 $("expSel").addEventListener("change", ()=>fetchSession("explore"));

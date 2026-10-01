@@ -222,7 +222,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
-    current session · `"G"/"X"` start/stop scan · `"Q"` list sessions · `"F:<path>"` download
+    current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
     a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
     refuses the live session) · `"B:<0-100>"` set brightness
   - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db,scan,bri` (`prb` = probe count, `scan` = 1 while scanning, `bri` = backlight %)

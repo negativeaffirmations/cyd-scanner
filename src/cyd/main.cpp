@@ -188,7 +188,7 @@ static constexpr int SCANSET_N = 5;  // BLE / Wi-Fi 2.4 / Wi-Fi 5G / 802.15.4 / 
 static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
-static const char* kScanItems[] = { "Start Scan", "Explore Scan", "Scan Settings", "Back" };
+static const char* kScanItems[] = { "Start Scan", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
 
 // Shared menu-row geometry (used for drawing AND touch hit-testing).
@@ -485,18 +485,35 @@ static void sweepEmptySessions() {
 // time is known (renameSessionOnSync). The file itself is created lazily on the first
 // logged detection (ensureLogFile), so idle boots leave no empty file behind. Rows still
 // carry absolute epoch after sync.
+// Shared by boot + "New Session": bump the persistent counter (monotonic across boots and
+// new sessions, so sess-NNNNN names never repeat), adopt the counter name, reset the
+// per-session dedup, and re-arm the time-sync rename (g_logNamed=false) so the next
+// renameSessionOnSync() gives this session a date-time name if time is known.
+static void beginSessionNamed() {
+  Preferences p; p.begin("cydscan", false);
+  uint32_t n = p.getULong("bootcnt", 0) + 1;
+  p.putULong("bootcnt", n);
+  p.end();
+  snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.jsonl", (unsigned long)n);
+  g_logNamed   = false;   // re-arm rename-on-sync
+  g_logStarted = false;   // file is created lazily on the first row (ensureLogFile)
+  g_seenCount  = 0;       // fresh per-session dedup
+  Serial.printf("[CYD] session log (created on first detection): %s\n", g_logPath);
+}
+
 static void openSession() {
   SD.mkdir("/logs");
   if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file (CSV era)
   sweepEmptySessions();
-  Preferences p; p.begin("cydscan", false);
-  uint32_t boot = p.getULong("bootcnt", 0) + 1;
-  p.putULong("bootcnt", boot);
-  p.end();
-  snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.jsonl", (unsigned long)boot);
-  g_logNamed   = false;
-  g_logStarted = false;
-  Serial.printf("[CYD] session log (created on first detection): %s\n", g_logPath);
+  beginSessionNamed();
+}
+
+// Start a fresh session without rebooting (Scan menu / phone CMD "N"). The writer opens
+// with FILE_APPEND and closes every cycle, so there is no handle to flush. An unused
+// previous session left no file (lazy create), so nothing is orphaned.
+static void startNewSession() {
+  beginSessionNamed();
+  webshare::setLogPath(g_logPath);
 }
 
 // Create the (empty) current session file the first time a row needs writing. NDJSON has
@@ -1259,7 +1276,7 @@ static void drawSettings() {
                  10, tft.height() - 18, 1);
 }
 
-// Scan sub-menu: Start Scan / Explore Scan / Scan Settings / Back.
+// Scan sub-menu: Start Scan / New Session / Explore Scan / Scan Settings / Back.
 static void drawScanMenu() {
   drawListMenu("SCAN", kScanItems, SCAN_N, g_scanSel);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
@@ -1799,8 +1816,18 @@ static void openDetail(int viewPos) {  // position within the filtered+sorted vi
 // Act on a scan-menu row (touch tap or long-press select).
 static void activateScanMenu(int sel) {
   if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; }               // first cycle draws it
-  else if (sel == 1) { exploreEnter(); }                                     // Explore Scan
-  else if (sel == 2) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 0; drawScanSettings(); }
+  else if (sel == 1) {                                                       // New Session
+    startNewSession();
+    drawScanMenu();
+    const char* nm = strrchr(g_logPath, '/');
+    char msg[40];
+    snprintf(msg, sizeof(msg), "New session: %s", nm ? nm + 1 : g_logPath);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.drawString(msg, 10, tft.height() - 32, 1);
+    pushStatus();
+  }
+  else if (sel == 2) { exploreEnter(); }                                     // Explore Scan
+  else if (sel == 3) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 0; drawScanSettings(); }
   else               { g_screen = SCR_MENU; drawMenu(); }                       // Back
 }
 
@@ -1903,6 +1930,7 @@ void loop() {
       if (g_screen == SCR_SCANSETTINGS) drawScanSettings();
       pushStatus();
     } }
+  if (phone::newSessionRequested()) { startNewSession(); pushStatus(); }  // web-app "New Session"
   renameSessionOnSync();  // give this session a date-time filename once time is known
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.

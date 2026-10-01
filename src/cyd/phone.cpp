@@ -28,6 +28,7 @@ bool     g_reload     = false;
 bool     g_logReq     = false;
 bool     g_scanStart  = false;
 bool     g_scanStop   = false;
+bool     g_newSess    = false;
 bool     g_listReq    = false;
 bool     g_fileReq    = false;
 char     g_dlFile[48] = {0};
@@ -100,6 +101,9 @@ class WriteCB : public NimBLECharacteristicCallbacks {
       } else if (c0 == 'X' || c0 == 'x') {
         g_scanStop = true;
         Serial.println("[phone] cmd stop scan");
+      } else if (c0 == 'N' || c0 == 'n') {
+        g_newSess = true;
+        Serial.println("[phone] cmd new session");
       } else if (c0 == 'Q' || c0 == 'q') {
         g_listReq = true;
         Serial.println("[phone] cmd list sessions");
@@ -214,6 +218,7 @@ bool     reloadRequested()  { bool r = g_reload; g_reload = false; return r; }
 bool     logRequested()       { bool r = g_logReq; g_logReq = false; return r; }
 bool     scanStartRequested() { bool r = g_scanStart; g_scanStart = false; return r; }
 bool     scanStopRequested()  { bool r = g_scanStop; g_scanStop = false; return r; }
+bool     newSessionRequested(){ bool r = g_newSess; g_newSess = false; return r; }
 bool     listRequested()      { bool r = g_listReq; g_listReq = false; return r; }
 
 bool fileRequested(char* out, size_t cap) {
