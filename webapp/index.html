@@ -91,6 +91,12 @@
         border-radius:4px; line-height:1.35; }
   .p24{background:rgba(139,148,158,.25);color:#c9d1d9;} .p5{background:rgba(34,211,238,.22);color:#7fe9fb;}
   .pble{background:rgba(232,121,249,.22);color:#f3b6fb;} .pprb{background:rgba(245,158,11,.22);color:#fcd47a;}
+  .tcol    { flex:0 0 4.4em; text-align:right; font-family:ui-monospace,monospace; color:#8b949e; }
+  .det.clk { cursor:pointer; } .det.clk:active { filter:brightness(1.3); }
+  .chn     { color:#8b949e; font-size:.7rem; margin-left:.4em; }
+  .kv { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #21262d; font-size:.88rem; }
+  .kv .k { flex:0 0 7em; } .kv .vv { flex:1 1 auto; min-width:0; word-break:break-word; }
+  #detMap { height:220px; width:100%; border-radius:8px; background:#0b0e13; margin-top:.7em; }
 </style>
 </head>
 <body>
@@ -103,7 +109,12 @@
     <button id="scanBtn" disabled>&#9654; Start Scan</button>
     <button id="exploreBtn" class="secondary">Explore Scan</button>
     <button id="scanSetBtn" class="secondary">Scan Settings</button>
-    <div id="scanSoon" class="note" style="display:none">Coming soon.</div>
+  </div>
+  <div id="exploreView" style="display:none">
+    <h3 style="margin:.6em 0 .2em">Scan Viewer</h3>
+    <select id="expSel" disabled><option>— loading sessions… —</option></select>
+    <div id="expMsg" class="sub"></div>
+    <div id="scanViewer" class="dets" style="max-height:60vh"></div>
   </div>
   <button id="mapBtn" class="secondary">&#128506; Map</button>
 
@@ -168,6 +179,16 @@
     </div>
   </dialog>
 
+  <dialog id="detDlg">
+    <div class="modalhdr">
+      <strong>Detection details</strong>
+      <button id="detClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div id="detInfo"></div>
+    <div id="detMapMsg" class="sub" style="display:none;margin-top:.7em"></div>
+    <div id="detMap"></div>
+  </dialog>
+
   <dialog id="mapDlg">
     <div class="modalhdr">
       <strong>Wardriving map</strong>
@@ -190,7 +211,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30h</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30i</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -252,7 +273,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
+    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -262,13 +283,14 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
+  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
   scanning=false; updateScanBtn();
-  $("scanPanel").style.display="none";
+  $("scanPanel").style.display="none"; $("exploreView").style.display="none";
+  if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
@@ -321,7 +343,8 @@ function onLogData(ev){
     const txt = new TextDecoder().decode(v);
     if (txt.startsWith("SIZE=")) {
       dl.mode="file"; dl.expect=parseInt(txt.slice(5),10)||0; dl.got=0; dl.chunks=[];
-      if (dl.expect===0){ log(dl.sink==="map"?"That session is empty.":"No log on device yet."); dl.mode=null; }
+      if (dl.expect===0){ log(dl.sink==="map"||dl.sink==="explore"?"That session is empty.":"No log on device yet.");
+        if(dl.sink==="explore") loadedExplore([], dl.name); dl.mode=null; }
       return;
     }
     if (txt.startsWith("SESS=")) {
@@ -336,6 +359,7 @@ function onLogData(ev){
     const blob = new Blob(dl.chunks);
     if (dl.mode==="file") {
       if (dl.sink==="map") { blob.text().then(t=>plotCsvText(t, dl.name)); }
+      else if (dl.sink==="explore") { const nm=dl.name; blob.text().then(t=>loadedExplore(parseScanCsv(t), nm)); }
       else {
         const a=document.createElement("a");
         a.href=URL.createObjectURL(blob); a.download=dl.name; a.click(); URL.revokeObjectURL(a.href);
@@ -364,10 +388,12 @@ async function refreshSessions(){
   catch(e){ log("List failed: "+e.message); }
 }
 function populateSessions(text){
-  const sel=$("sessSel"); sel.innerHTML="";
+  const sels=[$("sessSel"),$("expSel")]; sels.forEach(s=>s.innerHTML="");  // one list feeds both pickers
   const rows=(text||"").split("\n").filter(l=>l.includes("\t"));
-  if(!rows.length){ sel.innerHTML="<option>— no sessions —</option>";
-    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true; return; }
+  if(!rows.length){ sels.forEach(s=>s.innerHTML="<option>— no sessions —</option>");
+    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true;
+    if(exploreWant){ exploreWant=false; $("expMsg").textContent="No sessions on the device."; $("scanViewer").innerHTML=""; }
+    return; }
   rows.sort().reverse();  // date-time names sort newest-first
   const fi=rows.findIndex(r=>{const f=r.split("\t")[2]; return f==="current"||f==="latest";});
   if(fi>0) rows.unshift(rows.splice(fi,1)[0]);  // float the flagged (newest) row to the top
@@ -378,17 +404,18 @@ function populateSessions(text){
     let label=base+"  ("+kb+" KB)";
     if(flag==="current")      label+="  (current session)";
     else if(flag==="latest")  label+="  (latest session)";
-    const o=document.createElement("option"); o.value=path; o.textContent=label;
-    sel.appendChild(o);
+    sels.forEach(s=>{ const o=document.createElement("option"); o.value=path; o.textContent=label; s.appendChild(o); });
   }
   $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
   log(rows.length+" session(s) found.");
+  if(exploreWant){ exploreWant=false; fetchSession("explore"); }   // newest is first -> default pick
 }
 async function fetchSession(sink){
-  const path=$("sessSel").value;
+  const path=$(sink==="explore"?"expSel":"sessSel").value;
   if(!path || path.startsWith("—")) return;
   try{ dl={mode:null,expect:0,got:0,chunks:[],name:path.split("/").pop(),sink:sink};
     if(sink==="map") $("mapMsg").textContent="Loading "+dl.name+"…";
+    if(sink==="explore") $("expMsg").textContent="Loading "+dl.name+"…";
     await chars.cmd.writeValue(enc.encode("F:"+path)); log("Requesting "+dl.name+"…"); }
   catch(e){ log("Download failed: "+e.message); }
 }
@@ -419,13 +446,17 @@ let lmap=null, mapLayer=null, mapDets=[];
 const TIER_COL=["#3388ff","#e3b341","#db8b2a","#f85149"];  // none / suspect / likely / confirmed
 function tierNum(t){ return t==="confirmed"?3 : t==="likely"?2 : t==="suspect"?1 : 0; }
 
+function newMap(id){   // shared Leaflet setup (wardriving map + detail mini-map)
+  const m=L.map(id);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom:19, attribution:"&copy; OpenStreetMap"}).addTo(m);
+  m.setView([0,0],2);
+  return m;
+}
 function ensureMap(){
   if(lmap) return;
-  lmap=L.map("map");
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {maxZoom:19, attribution:"&copy; OpenStreetMap"}).addTo(lmap);
+  lmap=newMap("map");
   mapLayer=L.layerGroup().addTo(lmap);
-  lmap.setView([0,0],2);
 }
 function openMap(){
   $("mapDlg").showModal();
@@ -434,22 +465,33 @@ function openMap(){
   if(!mapDets.length && connected) mapCurrent();   // default view = the current scan
 }
 
-// Parse a scanlog CSV into mapDets (rows with valid GPS), then draw.
-function plotCsvText(text, label){
+// Parse a scanlog CSV into row objects with all 15 columns (shared by the map and Scan Viewer).
+// Columns are located by header name, so extra/reordered columns still parse.
+const CSV_COLS=["epoch","ms_since_boot","lat","lon","source","mac","rssi","channel","ie","cid","uuid","name","score","tier","signature"];
+function parseScanCsv(text){
   const lines=(text||"").split(/\r?\n/);
-  if(lines.length<2){ $("mapMsg").textContent="No rows in "+(label||"file")+"."; return; }
-  const h=lines[0].split(","), ix=n=>h.indexOf(n);
-  const iLat=ix("lat"),iLon=ix("lon"),iSrc=ix("source"),iMac=ix("mac"),iRssi=ix("rssi"),
-        iName=ix("name"),iTier=ix("tier"),iSig=ix("signature");
-  if(iLat<0||iLon<0){ $("mapMsg").textContent="Not a scanlog CSV (no lat/lon)."; return; }
-  mapDets=[];
+  if(lines.length<2) return [];
+  const h=lines[0].split(","), ix={}; CSV_COLS.forEach(n=>ix[n]=h.indexOf(n));
+  if(ix.lat<0||ix.lon<0) return [];
+  const rows=[];
   for(let i=1;i<lines.length;i++){
-    const c=lines[i].split(","); if(c.length<=iLon) continue;
-    const lat=parseFloat(c[iLat]), lon=parseFloat(c[iLon]);
-    if(!isFinite(lat)||!isFinite(lon)||(lat===0&&lon===0)) continue;
-    mapDets.push({lat,lon,src:c[iSrc]||"",mac:c[iMac]||"",rssi:parseInt(c[iRssi],10)||0,
-      name:c[iName]||"",tier:c[iTier]||"none",sig:c[iSig]||""});
+    if(!lines[i]) continue;
+    const c=lines[i].split(","); if(c.length<=ix.lon) continue;
+    const g=n=>ix[n]>=0?(c[ix[n]]||""):"";
+    rows.push({epoch:parseInt(g("epoch"),10)||0, ms:parseInt(g("ms_since_boot"),10)||0,
+      lat:parseFloat(g("lat")), lon:parseFloat(g("lon")), source:g("source"), mac:g("mac"),
+      rssi:parseInt(g("rssi"),10)||0, channel:g("channel"), ie:g("ie"), cid:g("cid"), uuid:g("uuid"),
+      name:g("name"), score:parseInt(g("score"),10)||0, tier:g("tier")||"none", signature:g("signature")});
   }
+  return rows;
+}
+const hasGps=r=>isFinite(r.lat)&&isFinite(r.lon)&&!(r.lat===0&&r.lon===0);
+
+// Plot a scanlog CSV's geolocated rows on the wardriving map.
+function plotCsvText(text, label){
+  const all=parseScanCsv(text);
+  if(!all.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
+  mapDets=all.filter(hasGps);
   if(!$("mapDlg").open) openMap(); else renderMap();
   const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
   $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points.";
@@ -463,7 +505,7 @@ function renderMap(){
   const threatsOnly=$("fThreats").checked;
   const groups=new Map();
   for(const d of mapDets){
-    if(!on[d.src]) continue;
+    if(!on[d.source]) continue;
     if(threatsOnly && tierNum(d.tier)===0) continue;
     const k=d.lat.toFixed(5)+","+d.lon.toFixed(5);
     let g=groups.get(k); if(!g){ g={lat:d.lat,lon:d.lon,items:[]}; groups.set(k,g); }
@@ -478,7 +520,7 @@ function renderMap(){
     g.items.sort((a,b)=> tierNum(b.tier)-tierNum(a.tier) || b.rssi-a.rssi);
     const shown=g.items.slice(0,60).map(d=>{
       const flag=tierNum(d.tier)?" ["+d.tier+"]":"";
-      return (d.src||"?")+" "+d.rssi+"dBm "+(d.name||"<hidden>")+" "+d.mac+flag;
+      return (d.source||"?")+" "+d.rssi+"dBm "+(d.name||"<hidden>")+" "+d.mac+flag;
     }).join("\n");
     const more=g.items.length>60?"\n… +"+(g.items.length-60)+" more":"";
     m.bindPopup("<b>"+g.items.length+" device(s)</b><br>"+g.lat.toFixed(5)+", "+g.lon.toFixed(5)+
@@ -531,33 +573,50 @@ function onDets(ev){
 }
 const srcClass  = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb"};  // row tint
 const pillClass = {"2.4":"p24",   "5G":"p5",  "BLE":"pble",   "PRB":"pprb"};    // band pill
-const detHead =
+const detHeadLive =
   '<div class="dethead"><span class="tiercol" title="Threat tier">⚠</span>'+
   '<span class="sigcol">Signals</span><span class="hnm">Device</span>'+
   '<span class="rssi">RSSI</span><span class="caret"></span></div>';
-function renderDets(rows){
-  const el = $("dets");
-  if (!rows.length){ expandedMacs.clear(); el.innerHTML = detHead + '<div class="sub" style="padding:6px">No devices in range yet…</div>'; return; }
-  for (const m of [...expandedMacs]) if (!rows.some(r => r.mac === m)) expandedMacs.delete(m);  // keep the Set bounded
-  el.innerHTML = detHead + rows.map((r,ri)=>{
+const detHeadViewer =
+  '<div class="dethead"><span class="tiercol" title="Threat tier">⚠</span>'+
+  '<span class="sigcol">Source</span><span class="hnm">Device</span>'+
+  '<span class="rssi">RSSI</span><span class="tcol">Time</span></div>';
+// Shared detection-row renderer. opts.mode "live": rows = {tier,mac,rssi,ie,name,sources[]},
+// multi-source pills + expand caret. "viewer": rows = parseScanCsv rows, single source pill +
+// timecode, whole-row click -> opts.onRowClick(row). Same .det/.sp/.badge/.srcN styling for both.
+function renderDetList(el, rows, opts){
+  const viewer = opts.mode === "viewer";
+  const head = viewer ? detHeadViewer : detHeadLive;
+  if (!rows.length){
+    if (!viewer) expandedMacs.clear();
+    el.innerHTML = head + '<div class="sub" style="padding:6px">'+opts.empty+'</div>'; return; }
+  if (!viewer) for (const m of [...expandedMacs]) if (!rows.some(r => r.mac === m)) expandedMacs.delete(m);  // keep the Set bounded
+  el.innerHTML = head + rows.map((r,ri)=>{
+    const tn = typeof r.tier === "number" ? r.tier : tierNum(r.tier);
     const nm = esc(r.name) || "&lt;hidden&gt;";
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
-    const srcs = r.sources.slice().sort((a,b)=>b.rssi-a.rssi);
+    const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : r.sources).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
     const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
-    const multi = srcs.length > 1;                 // only multi-source devices get an expander
+    const multi = !viewer && srcs.length > 1;      // only multi-source live devices get an expander
     const open = multi && expandedMacs.has(r.mac);
-    const sub = srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("");
-    return `<div class="det ${sc}" title="${title}"><span class="tiercol"><span class="badge b${r.tier}"></span></span>`+
+    const sub = multi ? srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("") : "";
+    const ch = viewer && r.channel ? `<span class="chn">ch${esc(r.channel)}</span>` : "";
+    return `<div class="det ${sc}${viewer?" clk":""}" title="${title}"${viewer?` data-ri="${ri}"`:""}><span class="tiercol"><span class="badge b${tn}"></span></span>`+
            `<span class="sigcol">${pills}</span>`+
-           `<span class="nm t${r.tier}">${nm}</span>`+
+           `<span class="nm t${tn}">${nm}${ch}</span>`+
            `<span class="rssi">${r.rssi} dBm</span>`+
-           (multi ? `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span>`
-                  : `<span class="caret"></span>`)+
+           (viewer ? `<span class="tcol">${fmtTimecode(r)}</span>`
+                   : multi ? `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span>`
+                           : `<span class="caret"></span>`)+
            `</div>`+
            (multi ? `<div class="detsub" id="dsub${ri}" style="display:${open?"block":"none"}">${sub}</div>` : "");
   }).join("");
+  if (viewer) {
+    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick(rows[+d.dataset.ri]); });
+    return;
+  }
   el.querySelectorAll(".caret[data-mac]").forEach(c=>{
     c.onclick = ()=>{
       const sub = $("dsub"+c.dataset.ri), mac = c.dataset.mac;
@@ -567,6 +626,58 @@ function renderDets(rows){
       if (show) expandedMacs.add(mac); else expandedMacs.delete(mac);
     };
   });
+}
+function renderDets(rows){   // live view
+  renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…"});
+}
+
+// --- Explore Scan: pick a past session, browse it in the Scan Viewer, tap a row for details ---
+let exploreWant = false;
+// epoch is LOCAL time encoded as seconds, so read it with UTC getters (no tz shift).
+function fmtEpoch(e){ return new Date(e*1000).toISOString().slice(0,19).replace("T"," "); }
+function fmtTimecode(r){
+  return r.epoch>0 ? fmtEpoch(r.epoch).slice(11) : "+"+Math.round(r.ms/1000)+"s";
+}
+function openExplore(){
+  $("exploreView").style.display="";
+  if(!connected){ $("expMsg").textContent="Connect to the scanner first."; return; }
+  exploreWant = true;                       // populateSessions will auto-load the newest
+  $("expMsg").textContent="Loading session list…";
+  refreshSessions();
+}
+function loadedExplore(rows, name){
+  $("expMsg").textContent = name+": "+rows.length+" detection(s). Tap a row for details.";
+  renderDetList($("scanViewer"), rows, {mode:"viewer", empty:"No detections in this session.", onRowClick:openDetail});
+}
+
+// --- Detection detail modal (info + GPS mini-map) ---
+let detMap=null, detLayer=null;
+const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"Probe request"};
+function openDetail(r){
+  const tn=tierNum(r.tier);
+  const tierTxt=(tn?r.tier.charAt(0).toUpperCase()+r.tier.slice(1):"None")+(r.score?" (score "+r.score+")":"")+
+    (r.signature?" — "+r.signature:"");
+  const rowsKv=[["Name",r.name||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
+    ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
+  if(r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint",r.ie]);
+  if(r.cid && !/^0+$/.test(r.cid)) rowsKv.push(["BLE company ID",r.cid]);
+  if(r.uuid && !/^0+$/.test(r.uuid)) rowsKv.push(["Service UUID",r.uuid]);
+  rowsKv.push(["Time", r.epoch>0 ? fmtEpoch(r.epoch) : "unsynced (+"+Math.round(r.ms/1000)+"s since boot)"]);
+  rowsKv.push(["GPS", hasGps(r) ? r.lat.toFixed(6)+", "+r.lon.toFixed(6) : "none"]);
+  $("detInfo").innerHTML=rowsKv.map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  const gps=hasGps(r);
+  $("detMap").style.display=gps?"":"none";
+  $("detMapMsg").style.display=gps?"none":"";
+  $("detMapMsg").textContent="No GPS fix for this detection.";
+  $("detDlg").showModal();
+  if(!gps) return;
+  if(!detMap){ detMap=newMap("detMap"); detLayer=L.layerGroup().addTo(detMap); }
+  setTimeout(()=>{
+    detMap.invalidateSize(); detLayer.clearLayers();
+    const col=TIER_COL[tn];
+    L.circleMarker([r.lat,r.lon],{radius:9,color:col,weight:2,fillColor:col,fillOpacity:.7}).addTo(detLayer);
+    detMap.setView([r.lat,r.lon],17);
+  }, 80);
 }
 
 function onStatus(ev){
@@ -597,7 +708,10 @@ function onStatus(ev){
 $("connectBtn").onclick = connect;
 $("scanBtn").onclick = toggleScan;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
-$("exploreBtn").onclick = ()=>{ $("scanSoon").style.display="block"; };
+$("exploreBtn").onclick = openExplore;
+$("expSel").addEventListener("change", ()=>fetchSession("explore"));
+$("detClose").onclick = ()=> $("detDlg").close();
+$("detDlg").addEventListener("click", e=>{ if(e.target === $("detDlg")) $("detDlg").close(); });
 $("scanSetBtn").onclick = ()=> $("scanSetDlg").showModal();
 $("scanSetClose").onclick = ()=> $("scanSetDlg").close();
 $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) $("scanSetDlg").close(); });
