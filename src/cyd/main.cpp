@@ -142,7 +142,7 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 // hold selects, and a long hold from any screen returns to the menu. With touch, tap
 // an item to select it directly. ---
 enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCANSETTINGS,
-              SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL };
+              SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL, SCR_SORT, SCR_FILTER };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -258,20 +258,23 @@ static int tappedRow(int count) {
 }
 
 // True on a fresh tap inside the top-bar button (STOP / BACK).
-static bool topBarTapped() {
+// The bar can be split into `nseg` equal segments (see drawTopBarSeg); returns the tapped
+// segment index (0..nseg-1) on a fresh tap, else -1.
+static int topBarSegTapped(int nseg) {
   static bool prev = false;
-  if (!g_touchOk) { prev = false; return false; }
+  if (!g_touchOk) { prev = false; return -1; }
   bool now = g_touch.touched();
-  bool hit = false;
+  int  hit = -1;
   if (now && !prev) {
     int16_t sx, sy, z;
-    if (g_touch.getScreen(tft, sx, sy, z))
-      hit = (sx >= STOP_X && sx <= tft.width() - STOP_X &&
-             sy >= STOP_Y && sy <= STOP_Y + STOP_H);
+    if (g_touch.getScreen(tft, sx, sy, z) && sx >= STOP_X && sx <= tft.width() - STOP_X &&
+        sy >= STOP_Y && sy <= STOP_Y + STOP_H)
+      hit = min(nseg - 1, (sx - STOP_X) * nseg / (tft.width() - 2 * STOP_X));
   }
   prev = now;
   return hit;
 }
+static bool topBarTapped() { return topBarSegTapped(1) == 0; }
 
 SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
@@ -953,13 +956,19 @@ static void handleScanTouch() {
 }
 
 // Full-width top-bar button (hit-tested by topBarTapped()).
-static void drawTopBar(const char* label, uint16_t fill, uint16_t edge) {
-  int W = tft.width();
-  tft.fillRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, fill);
-  tft.drawRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, edge);
+// Segment `seg` of `nseg` equal parts of the bar (hit-tested by topBarSegTapped(nseg)).
+static void drawTopBarSeg(const char* label, int seg, int nseg, uint16_t fill, uint16_t edge) {
+  int total = tft.width() - 2 * STOP_X;
+  int x0 = STOP_X + seg * total / nseg, x1 = STOP_X + (seg + 1) * total / nseg;
+  int w = x1 - x0 - (nseg > 1 ? 2 : 0);
+  tft.fillRoundRect(x0, STOP_Y, w, STOP_H, 4, fill);
+  tft.drawRoundRect(x0, STOP_Y, w, STOP_H, 4, edge);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, fill);
-  tft.drawString(label, W / 2, STOP_Y + STOP_H / 2, 1);
+  tft.drawString(label, x0 + w / 2, STOP_Y + STOP_H / 2, 1);
+}
+static void drawTopBar(const char* label, uint16_t fill, uint16_t edge) {
+  drawTopBarSeg(label, 0, 1, fill, edge);
 }
 
 static void render() {
@@ -1210,10 +1219,17 @@ static constexpr int DET_MAX_LINES = 28;
 
 struct LogIdx { uint32_t offset; uint32_t epoch; int16_t rssi; uint8_t srcType; uint8_t tier; };  // 12 B
 struct SessEnt { char name[20]; uint32_t wr; uint32_t size; };  // basename w/o ".csv"; FS write time; bytes
-struct ExploreMem { LogIdx idx[MAX_LOG_ROWS]; SessEnt sess[MAX_SESS]; };
+struct ExploreMem { LogIdx idx[MAX_LOG_ROWS]; SessEnt sess[MAX_SESS]; uint16_t view[MAX_LOG_ROWS]; };
 static ExploreMem* g_ex = nullptr;
 static int   g_sessN = 0, g_pickSel = 0, g_pickOff = 0;
-static int   g_idxN = 0;
+static int   g_idxN = 0;   // rows indexed from the file (M)
+static int   g_viewN = 0;  // rows shown after filter + sort (N); g_ex->view[] indexes into idx[]
+// Viewer filter / sort (CYD subset), applied to the in-memory index only. Reset per session.
+static uint8_t g_fType = 0x0F;  // bit per srcType: 2.4, 5G, BLE, PRB
+static bool    g_fThreat = false;
+static uint8_t g_fDist = 0;     // 0 All, 1 Far, 2 Mid, 3 Near
+static uint8_t g_sortMode = 0;
+static const int8_t kDistRssi[4] = { -100, -80, -60, -40 };  // keep rssi >= threshold
 static bool  g_idxTrunc = false;
 static File  g_viewFile;
 static char  g_viewName[20];
@@ -1376,19 +1392,50 @@ static void exploreEnter() {
 }
 
 // ---- scan viewer ----
+// Rebuild g_ex->view[] from the index: filter, then sort (modes: 0 oldest, 1 newest,
+// 2 type+newest, 3 type+oldest, 4 closest, 5 farthest). Index order == file == time order.
+static void applyView() {
+  g_viewN = 0;
+  for (int i = 0; i < g_idxN; i++) {
+    const LogIdx& e = g_ex->idx[i];
+    if (!(g_fType & (1 << e.srcType))) continue;
+    if (g_fThreat && e.tier == 0) continue;
+    if (e.rssi < kDistRssi[g_fDist]) continue;
+    g_ex->view[g_viewN++] = (uint16_t)i;
+  }
+  const LogIdx* ix = g_ex->idx;
+  uint16_t* v = g_ex->view;
+  switch (g_sortMode) {
+    case 1: std::reverse(v, v + g_viewN); break;
+    case 2: std::sort(v, v + g_viewN, [ix](uint16_t a, uint16_t b) {
+              if (ix[a].srcType != ix[b].srcType) return ix[a].srcType < ix[b].srcType;
+              return a > b; }); break;
+    case 3: std::sort(v, v + g_viewN, [ix](uint16_t a, uint16_t b) {
+              if (ix[a].srcType != ix[b].srcType) return ix[a].srcType < ix[b].srcType;
+              return a < b; }); break;
+    case 4: std::sort(v, v + g_viewN, [ix](uint16_t a, uint16_t b) {
+              if (ix[a].rssi != ix[b].rssi) return ix[a].rssi > ix[b].rssi;
+              return a < b; }); break;
+    case 5: std::sort(v, v + g_viewN, [ix](uint16_t a, uint16_t b) {
+              if (ix[a].rssi != ix[b].rssi) return ix[a].rssi < ix[b].rssi;
+              return a < b; }); break;
+    default: break;
+  }
+}
+static void viewResetFilter() { g_fType = 0x0F; g_fThreat = false; g_fDist = 0; g_sortMode = 0; }
 static void drawViewerList(bool clear) {
   if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
-  g_viewOffset = constrain(g_viewOffset, 0, max(0, g_idxN - vis));
-  if (g_idxN == 0) {
+  g_viewOffset = constrain(g_viewOffset, 0, max(0, g_viewN - vis));
+  if (g_viewN == 0) {
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString("No detections logged", 4, LIST_Y0, 1);
+    tft.drawString(g_idxN ? "No rows match the filter" : "No detections logged", 4, LIST_Y0, 1);
   }
   char line[256];
-  int rows = min(g_idxN - g_viewOffset, vis);
+  int rows = min(g_viewN - g_viewOffset, vis);
   for (int r = 0; r < rows; r++) {
-    const LogIdx& e = g_ex->idx[g_viewOffset + r];
+    const LogIdx& e = g_ex->idx[g_ex->view[g_viewOffset + r]];
     LogRow lr;
     if (!readRowAt(e.offset, line, sizeof(line), lr)) continue;
     char tc[12];
@@ -1396,18 +1443,21 @@ static void drawViewerList(bool clear) {
     drawDetRow(LIST_Y0 + r * LIST_ROW_H, tierColor(lr.tier, linkSourceOf(e.srcType), lr.channel),
                lr.src, lr.name[0] ? lr.name : "<hidden>", lr.rssi, tc, lr.tier > 0, 3);
   }
-  drawScrollIcons(g_viewOffset, g_idxN, vis);
+  drawScrollIcons(g_viewOffset, g_viewN, vis);
 }
 
 static void drawViewer() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBarSeg("< Back", 0, 3, TFT_NAVY, TFT_CYAN);
+  drawTopBarSeg("Filter", 1, 3, TFT_NAVY, TFT_CYAN);
+  drawTopBarSeg("Sort",   2, 3, TFT_NAVY, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString(g_viewName, 4, 46, 1);
-  char b[32];
-  snprintf(b, sizeof(b), g_idxTrunc ? "%d rows (first %d)" : "%d rows", g_idxN, MAX_LOG_ROWS);
+  char b[48];
+  snprintf(b, sizeof(b), g_idxTrunc ? "showing %d of %d (first %d)" : "showing %d of %d",
+           g_viewN, g_idxN, MAX_LOG_ROWS);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(b, 4, 58, 1);
   drawViewerList(false);
@@ -1450,6 +1500,8 @@ static void activatePick(int sel) {
   Serial.printf("[CYD] explore: %s indexed %d rows%s (heap free %u)\n", g_viewName, g_idxN,
                 g_idxTrunc ? " (truncated)" : "", (unsigned)ESP.getFreeHeap());
   g_viewOffset = 0;
+  viewResetFilter();
+  applyView();
   g_screen = SCR_SCANVIEWER;
   listTouchReset();
   drawViewer();
@@ -1460,6 +1512,75 @@ static void viewerBack() {
   g_screen = SCR_PICKLOG;
   listTouchReset();
   drawPickLog();
+}
+
+// ---- viewer Sort / Filter menus: drawListMenu windows (5 rows) + shared scroll ----
+static int g_sortSel = 0, g_sortOff = 0, g_fltSel = 0, g_fltOff = 0;
+static constexpr int SORT_N = 7, FILTER_N = 7;  // incl. the trailing Back row
+static const char* const kSortItems[SORT_N] = { "Oldest first", "Newest first", "Type newest",
+    "Type oldest", "Closest", "Farthest", "Back" };
+static const char* const kDistName[4] = { "All", "Far", "Mid", "Near" };
+
+static void drawScrollMenu(const char* title, const char* const* items, int n, int sel, int off) {
+  drawListMenu(title, items + off, min(n - off, FILE_LIST_VIS), sel - off);
+  if (n > FILE_LIST_VIS) drawScrollIcons(off, n, FILE_LIST_VIS);
+  tft.drawString("BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+}
+
+// Shared nav for those menus: touch tap selects, BOOT tap = next, BOOT hold = select.
+// Returns the activated row, else -1.
+static int menuNav(int n, int* sel, int* off, BtnEv ev, void (*redraw)()) {
+  int t = listTouch(n, off, FILE_LIST_VIS, ROW_Y0 - 5, ROW_STEP, redraw);
+  if (t >= 0) { *sel = t; return t; }
+  if (ev == BTN_SHORT) {
+    *sel = (*sel + 1) % n;
+    if (*sel < *off) *off = *sel;
+    if (*sel >= *off + FILE_LIST_VIS) *off = *sel - FILE_LIST_VIS + 1;
+    redraw();
+  } else if (ev == BTN_LONG) return *sel;
+  return -1;
+}
+
+static void drawSort() { drawScrollMenu("SORT", kSortItems, SORT_N, g_sortSel, g_sortOff); }
+
+static void drawFilter() {
+  char l[FILTER_N - 1][24];
+  static const char* const kTypes[4] = { "2.4", "5G", "BLE", "PRB" };
+  for (int i = 0; i < 4; i++)
+    snprintf(l[i], sizeof(l[i]), "%s: %s", kTypes[i], (g_fType & (1 << i)) ? "On" : "Off");
+  snprintf(l[4], sizeof(l[4]), "Threats: %s", g_fThreat ? "On" : "Off");
+  snprintf(l[5], sizeof(l[5]), "Dist: %s", kDistName[g_fDist]);
+  const char* items[FILTER_N] = { l[0], l[1], l[2], l[3], l[4], l[5], "Back" };
+  drawScrollMenu("FILTER", items, FILTER_N, g_fltSel, g_fltOff);
+}
+
+static void returnToViewer() {
+  g_viewOffset = 0;
+  g_screen = SCR_SCANVIEWER;
+  listTouchReset();
+  drawViewer();
+}
+
+static void activateSort(int sel) {
+  if (sel < SORT_N - 1) { g_sortMode = (uint8_t)sel; applyView(); }  // Back leaves it unchanged
+  returnToViewer();
+}
+
+static void activateFilter(int sel) {
+  if (sel < 4)       g_fType ^= (1 << sel);
+  else if (sel == 4) g_fThreat = !g_fThreat;
+  else if (sel == 5) g_fDist = (g_fDist + 1) & 3;
+  else { applyView(); returnToViewer(); return; }  // Back: apply + return
+  drawFilter();
+}
+
+static void viewerOpenSort() {
+  g_sortSel = g_sortMode; g_sortOff = max(0, g_sortSel - FILE_LIST_VIS + 1);
+  g_screen = SCR_SORT; listTouchReset(); drawSort();
+}
+static void viewerOpenFilter() {
+  g_fltSel = 0; g_fltOff = 0;
+  g_screen = SCR_FILTER; listTouchReset(); drawFilter();
 }
 
 // ---- detail (mirrors the web app's openDetail(), minus the map) ----
@@ -1500,7 +1621,8 @@ static void drawDetailList(bool clear) {
   drawScrollIcons(g_detOff, g_detN, vis);
 }
 
-static void openDetail(int row) {
+static void openDetail(int viewPos) {  // position within the filtered+sorted view
+  int row = (viewPos >= 0 && viewPos < g_viewN) ? g_ex->view[viewPos] : -1;  // index into idx[]
   char line[256];
   LogRow r;
   if (row < 0 || row >= g_idxN || !readRowAt(g_ex->idx[row].offset, line, sizeof(line), r)) return;
@@ -1543,7 +1665,7 @@ static void openDetail(int row) {
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString("DETAIL", 4, 46, 1);
-  snprintf(b, sizeof(b), "row %d of %d", row + 1, g_idxN);
+  snprintf(b, sizeof(b), "row %d of %d", viewPos + 1, g_viewN);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(b, 4, 58, 1);
   drawDetailList(false);
@@ -1671,7 +1793,8 @@ void loop() {
   if (phone::scanStopRequested() && g_screen == SCR_SCAN) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
 
   // Explore and live scan are mutually exclusive: drop the index block as soon as we're out.
-  if (g_ex && g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL)
+  if (g_ex && g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
+      g_screen != SCR_SORT && g_screen != SCR_FILTER)
     exploreFree();
 
   BtnEv ev = buttonEvent();
@@ -1736,16 +1859,32 @@ void loop() {
     }
 
     case SCR_SCANVIEWER: {
-      bool back = topBarTapped();  // always called so its edge state stays current
-      if (back || ev == BTN_LONG) { viewerBack(); return; }
-      int t = listTouch(g_idxN, &g_viewOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
+      int seg = topBarSegTapped(3);  // always called so its edge state stays current
+      if (seg == 0 || ev == BTN_LONG) { viewerBack(); return; }
+      if (seg == 1) { viewerOpenFilter(); return; }
+      if (seg == 2) { viewerOpenSort();   return; }
+      int t = listTouch(g_viewN, &g_viewOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
                         []() { drawViewerList(true); });
       if (t >= 0) { openDetail(t); return; }
       if (ev == BTN_SHORT) {  // BOOT tap: page down (wraps to the top)
-        int maxOff = max(0, g_idxN - visibleRows());
+        int maxOff = max(0, g_viewN - visibleRows());
         g_viewOffset = (g_viewOffset >= maxOff) ? 0 : min(g_viewOffset + visibleRows(), maxOff);
         drawViewerList(true);
       }
+      delay(20);
+      return;
+    }
+
+    case SCR_SORT: {
+      int t = menuNav(SORT_N, &g_sortSel, &g_sortOff, ev, drawSort);
+      if (t >= 0) activateSort(t);
+      delay(20);
+      return;
+    }
+
+    case SCR_FILTER: {
+      int t = menuNav(FILTER_N, &g_fltSel, &g_fltOff, ev, drawFilter);
+      if (t >= 0) activateFilter(t);
       delay(20);
       return;
     }
