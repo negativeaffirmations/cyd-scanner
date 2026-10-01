@@ -809,17 +809,27 @@ static void requestScan(uint32_t timeoutMs = 5000) {
   g_linkOk = done || sawStart || g_detCount > 0;
 }
 
+// Current session basename: g_logPath without the "/logs/" dir and ".jsonl" extension.
+static void sessBase(char* out, size_t cap) {
+  const char* b = strrchr(g_logPath, '/');
+  b = b ? b + 1 : g_logPath;
+  strncpy(out, b, cap - 1); out[cap - 1] = 0;
+  char* dot = strrchr(out, '.');
+  if (dot) *dot = 0;
+}
+
 static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
+  char sb[32]; sessBase(sb, sizeof(sb));
   char s[256];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;sess=%s",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
-           g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask);
+           g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask, sb);
   phone::setStatus(String(s));
 }
 
@@ -1279,6 +1289,11 @@ static void drawSettings() {
 // Scan sub-menu: Start Scan / New Session / Explore Scan / Scan Settings / Back.
 static void drawScanMenu() {
   drawListMenu("SCAN", kScanItems, SCAN_N, g_scanSel);
+  char sb[32], line[48]; sessBase(sb, sizeof(sb));
+  snprintf(line, sizeof(line), "Session: %s", sb);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString(line, tft.width() / 2, 60, 1);  // between the title (ends ~58) and first button (75)
+  tft.setTextDatum(TL_DATUM);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
 }
@@ -1932,6 +1947,13 @@ void loop() {
     } }
   if (phone::newSessionRequested()) { startNewSession(); pushStatus(); }  // web-app "New Session"
   renameSessionOnSync();  // give this session a date-time filename once time is known
+  {  // keep the Scan-menu session label live (phone "N", or the time-sync rename)
+    static char lastSess[48] = "";
+    if (strcmp(lastSess, g_logPath) != 0) {
+      strncpy(lastSess, g_logPath, sizeof(lastSess) - 1);
+      if (g_screen == SCR_SCANMENU) drawScanMenu();
+    }
+  }
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
   if (phone::downloadRequested()) { exploreFree(); runDownload(); return; }
