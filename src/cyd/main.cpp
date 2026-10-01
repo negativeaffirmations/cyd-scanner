@@ -1149,7 +1149,9 @@ void loop() {
 
   // Phone can start/stop the scan remotely (single toggle in the web app).
   if (phone::scanStartRequested()) { if (g_screen != SCR_SCAN) g_scrollOffset = 0; g_screen = SCR_SCAN; }
-  if (phone::scanStopRequested())  { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
+  // Consume the stop flag unconditionally, but only act on it while actually scanning
+  // (so a stray stop sent from another screen is discarded, not buffered to fire later).
+  if (phone::scanStopRequested() && g_screen == SCR_SCAN) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
 
   BtnEv ev = buttonEvent();
 
