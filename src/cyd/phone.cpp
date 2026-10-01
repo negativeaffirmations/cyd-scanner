@@ -34,6 +34,8 @@ bool     g_delReq     = false;
 char     g_delFile[48]= {0};
 bool     g_briReq     = false;
 int      g_briVal     = 100;
+bool     g_srcReq     = false;
+uint8_t  g_srcVal     = 0;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -120,6 +122,13 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_briVal = atoi(val.c_str() + colon + 1);
           g_briReq = true;
           Serial.printf("[phone] cmd brightness %d\n", g_briVal);
+        }
+      } else if (c0 == 'S' || c0 == 's') {           // "S:<n>" scan-source mask
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          g_srcVal = (uint8_t)atoi(val.c_str() + colon + 1);
+          g_srcReq = true;
+          Serial.printf("[phone] cmd src mask %u\n", g_srcVal);
         }
       } else {
         g_download = (c0 == '1');
@@ -217,6 +226,13 @@ bool deleteRequested(char* out, size_t cap) {
   g_delReq = false;
   strncpy(out, g_delFile, cap - 1);
   out[cap - 1] = 0;
+  return true;
+}
+
+bool srcMaskRequested(uint8_t* out) {
+  if (!g_srcReq) return false;
+  g_srcReq = false;
+  *out = g_srcVal;
   return true;
 }
 

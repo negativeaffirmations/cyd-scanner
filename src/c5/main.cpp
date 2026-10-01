@@ -76,6 +76,22 @@ static Entry              g_table[MAX_ENTRIES];
 static SemaphoreHandle_t  g_mux;
 static Detection          g_streamBuf[MAX_ENTRIES];  // copy target for streaming
 
+// Active scan-source mask (SourceMask bits), set by the CYD's StartScan payload.
+// Disabled sources are only skipped/dropped here - never transmitted around.
+static volatile uint8_t   g_srcMask = MASK_ALL;
+
+// Is this table entry's source currently enabled? Wi-Fi AP-scan detections are
+// filtered per band by channel.
+static bool sourceEnabled(const Detection& d) {
+  uint8_t m = g_srcMask;
+  switch ((Source)d.source) {
+    case Source::BleScan:    return m & MASK_BLE;
+    case Source::Ieee802154: return m & MASK_154;
+    case Source::WifiProbe:  return m & MASK_PROBE;
+    default: return d.channel > 14 ? (m & MASK_WIFI5) : (m & MASK_WIFI24);
+  }
+}
+
 static bool sameDev(const Detection& a, const Detection& b) {
   return a.source == b.source && memcmp(a.mac, b.mac, 6) == 0;
 }
@@ -143,7 +159,7 @@ class ScanCB : public NimBLEScanCallbacks {
     mergeDetection(d);
   }
   void onScanEnd(const NimBLEScanResults&, int) override {
-    NimBLEDevice::getScan()->start(0, false);  // keep scanning continuously
+    if (g_srcMask & MASK_BLE) NimBLEDevice::getScan()->start(0, false);  // keep scanning continuously
   }
 };
 static ScanCB g_scanCB;
@@ -181,10 +197,20 @@ static void enterPromisc() {
   promisc::setChannel(kHopChans[0]);
 }
 
+// After the AP-scan phase: capture probes if enabled, else just wait out the gap.
+static void afterScanPhase() {
+  if (g_srcMask & MASK_PROBE) enterPromisc();
+  else g_lastWifiDone = millis();
+}
+
 static void wifiTick() {
   if (g_phase == PH_SCAN) {
     if (!g_wifiScanning) {
       if (millis() - g_lastWifiDone < WIFI_GAP_MS) return;
+      if (!(g_srcMask & (MASK_WIFI24 | MASK_WIFI5))) {  // AP scan fully disabled
+        afterScanPhase();
+        return;
+      }
       WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);  // 2.4 + 5 GHz
       g_wifiScanning = true;
       return;
@@ -192,6 +218,9 @@ static void wifiTick() {
     int n = WiFi.scanComplete();
     if (n >= 0) {
       for (int i = 0; i < n; i++) {
+        uint8_t ch = (uint8_t)WiFi.channel(i);
+        if (ch > 14 && !(g_srcMask & MASK_WIFI5)) continue;    // 5 GHz disabled
+        if (ch <= 14 && !(g_srcMask & MASK_WIFI24)) continue;  // 2.4 GHz disabled
         Detection d{};
         d.source  = (uint8_t)Source::WifiScan;
         d.channel = (uint8_t)WiFi.channel(i);
@@ -202,10 +231,10 @@ static void wifiTick() {
       }
       WiFi.scanDelete();
       g_wifiScanning = false;
-      enterPromisc();                 // hand the radio to promiscuous capture
+      afterScanPhase();               // hand the radio to promiscuous capture
     } else if (n == WIFI_SCAN_FAILED) {
       g_wifiScanning = false;
-      enterPromisc();
+      afterScanPhase();
     }
     return;
   }
@@ -228,7 +257,7 @@ static void wifiTick() {
 static void sendStatus(uint8_t scanning, uint16_t total) {
   Status st{};
   st.scanning       = scanning;
-  st.active_sources = MASK_WIFI | MASK_BLE | MASK_PROBE;
+  st.active_sources = g_srcMask;
   st.seen_total     = total;
   st.uptime_ms      = millis();
   sendFrame((uint8_t)Reply::Status, &st, sizeof(st));
@@ -242,6 +271,7 @@ static void streamTable() {
   for (int i = 0; i < MAX_ENTRIES; i++) {
     if (!g_table[i].used) continue;
     if (now - g_table[i].lastSeen > ENTRY_TTL_MS) { g_table[i].used = false; continue; }
+    if (!sourceEnabled(g_table[i].d)) continue;  // just-disabled source in a stale table
     g_streamBuf[cnt++] = g_table[i].d;
   }
   xSemaphoreGive(g_mux);
@@ -257,11 +287,26 @@ static void streamTable() {
   parser.reset();
 }
 
-static void handleFrame(uint8_t type, const uint8_t*, uint16_t) {
+// Start/stop the continuous BLE scan to match MASK_BLE (watchdog also honors it).
+static void applyBleMask() {
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  if (!scan) return;
+  bool want = g_srcMask & MASK_BLE;
+  if (want && !scan->isScanning()) scan->start(0, false);
+  else if (!want && scan->isScanning()) scan->stop();
+}
+
+static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
   switch ((Command)type) {
     case Command::Ping:      sendFrame((uint8_t)Reply::Pong, nullptr, 0); break;
     case Command::GetStatus: sendStatus(0, 0); break;
-    case Command::StartScan: streamTable(); break;
+    case Command::StartScan:
+      if (len >= sizeof(ScanConfig)) {
+        g_srcMask = ((const ScanConfig*)payload)->sources;
+        applyBleMask();
+      }
+      streamTable();
+      break;
     case Command::StopScan:  break;
     default: break;
   }
@@ -306,7 +351,7 @@ void loop() {
   if (millis() - lastBleChk > 5000) {
     lastBleChk = millis();
     NimBLEScan* scan = NimBLEDevice::getScan();
-    if (scan && !scan->isScanning()) {
+    if (scan && (g_srcMask & MASK_BLE) && !scan->isScanning()) {
       scan->start(0, false);
       Serial.println("[C5] BLE scan restarted by watchdog");
     }

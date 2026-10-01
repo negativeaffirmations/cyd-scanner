@@ -110,7 +110,7 @@ void trim(char* s) {
 
 uint8_t srcMaskFromChar(char c) {
   switch (c) {
-    case 'W': case 'w': return MASK_WIFI;
+    case 'W': case 'w': return MASK_WIFI24;
     case 'B': case 'b': return MASK_BLE;
     case '4':           return MASK_154;
     default:            return MASK_ALL;  // 'A'/'a'/anything else
@@ -282,7 +282,7 @@ void score(const Detection& d, ScoreResult& out) {
   // A promiscuous probe request is still a Wi-Fi frame: let W/A OUI, name and IE
   // rules match its client MAC and fingerprint (its own MASK_PROBE bit lets a rule
   // target probes specifically if it ever wants to).
-  if (d.source == (uint8_t)Source::WifiProbe) srcBit |= MASK_WIFI;
+  if (d.source == (uint8_t)Source::WifiProbe) srcBit |= MASK_WIFI24;
 
   int ouiW = 0;
   for (int i = 0; i < g_ouiN; i++) {

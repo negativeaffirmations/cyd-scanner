@@ -156,6 +156,18 @@
     <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
   </dialog>
 
+  <dialog id="scanSetDlg">
+    <div class="modalhdr">
+      <strong>Scan Settings</strong>
+      <button id="scanSetClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="maptools" style="flex-direction:column;align-items:flex-start">
+      <label><input type="checkbox" id="sBle" checked> BLE</label>
+      <label><input type="checkbox" id="s24" checked> Wi-Fi 2.4G (incl. probe requests)</label>
+      <label><input type="checkbox" id="s5" checked> Wi-Fi 5G</label>
+    </div>
+  </dialog>
+
   <dialog id="mapDlg">
     <div class="modalhdr">
       <strong>Wardriving map</strong>
@@ -178,7 +190,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30g</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30h</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -240,7 +252,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
+    ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
       .forEach(id=>$(id).disabled=false);
     log("Connected.");
     await syncTime();
@@ -250,9 +262,10 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","briSlider","settingsBtn","mapCurBtn"]
+  ["scanNavBtn","scanBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
+  if($("scanSetDlg").open) $("scanSetDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
   scanning=false; updateScanBtn();
   $("scanPanel").style.display="none";
@@ -389,6 +402,13 @@ async function deleteSession(){
   try{ await chars.cmd.writeValue(enc.encode("D:"+path)); log("Deleting "+base+"… (list will refresh)"); }
   catch(e){ log("Delete failed: "+e.message); }
 }
+// Scan-source mask: BLE=2, Wi-Fi 2.4G = WIFI24(1)+PROBE(8), Wi-Fi 5G=16 (154 bit 4 kept on).
+async function sendSrcMask(){
+  const m = ($("sBle").checked?2:0) | ($("s24").checked?9:0) | ($("s5").checked?16:0) | 4;
+  try{ await chars.cmd.writeValue(enc.encode("S:"+m)); }
+  catch(e){ log("Scan settings failed: "+e.message); }
+}
+
 async function setBrightness(v){
   try{ await chars.cmd.writeValue(enc.encode("B:"+v)); }
   catch(e){ log("Brightness failed: "+e.message); }
@@ -568,6 +588,8 @@ function onStatus(ev){
     $("conf").style.color = (+kv.conf>0) ? "#f85149" : ""; }
   if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
+  if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
+    $("sBle").checked=!!(m&2); $("s24").checked=!!(m&1); $("s5").checked=!!(m&16); }
   if("bri" in kv){ $("briVal").textContent = kv.bri;
     if(document.activeElement !== $("briSlider")) $("briSlider").value = kv.bri; }
 }
@@ -575,7 +597,11 @@ function onStatus(ev){
 $("connectBtn").onclick = connect;
 $("scanBtn").onclick = toggleScan;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
-$("exploreBtn").onclick = $("scanSetBtn").onclick = ()=>{ $("scanSoon").style.display="block"; };
+$("exploreBtn").onclick = ()=>{ $("scanSoon").style.display="block"; };
+$("scanSetBtn").onclick = ()=> $("scanSetDlg").showModal();
+$("scanSetClose").onclick = ()=> $("scanSetDlg").close();
+$("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) $("scanSetDlg").close(); });
+["sBle","s24","s5"].forEach(id=>$(id).addEventListener("change", sendSrcMask));
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;

@@ -22,7 +22,7 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 3;       // v3: Detection gains BLE companyId + svc UUID
+static constexpr uint8_t  PROTOCOL_VERSION = 4;       // v4: source mask redefined (WIFI24/WIFI5 split)
 static constexpr uint16_t MAX_PAYLOAD      = 256;     // sanity cap for RX buffers
 
 // --- CYD -> C5 : commands ---------------------------------------------------
@@ -52,11 +52,12 @@ enum class Source : uint8_t {
 
 // Bitmask values for ScanConfig.sources (1 << Source).
 enum SourceMask : uint8_t {
-  MASK_WIFI     = 1 << 0,
+  MASK_WIFI24   = 1 << 0,  // bit0 = 2.4 GHz Wi-Fi AP scan
   MASK_BLE      = 1 << 1,
   MASK_154      = 1 << 2,
-  MASK_PROBE    = 1 << 3,  // promiscuous Wi-Fi probe-request capture
-  MASK_ALL      = MASK_WIFI | MASK_BLE | MASK_154,
+  MASK_PROBE    = 1 << 3,  // promiscuous Wi-Fi probe-request capture (2.4 GHz)
+  MASK_WIFI5    = 1 << 4,  // 5 GHz Wi-Fi AP scan
+  MASK_ALL      = MASK_WIFI24 | MASK_WIFI5 | MASK_BLE | MASK_154 | MASK_PROBE,
 };
 
 // Per-detection behavioral flags (Detection.flags bitfield).

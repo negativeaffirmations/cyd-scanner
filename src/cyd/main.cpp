@@ -141,11 +141,13 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 // touchscreen (once calibrated). A short tap of BOOT moves through the menu; a long
 // hold selects, and a long hold from any screen returns to the menu. With touch, tap
 // an item to select it directly. ---
-enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_STUB };
+enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_STUB, SCR_SCANSETTINGS };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
 static int    g_scanSel = 0;
+static int    g_scanSetSel = 0;
+static constexpr int SCANSET_N = 4;  // BLE / Wi-Fi 2.4 / Wi-Fi 5G / Back
 static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
@@ -216,6 +218,21 @@ static void loadBrightness() {
 static void saveBrightness() {
   Preferences p; p.begin("cydui", false);
   p.putUChar("bright", g_brightness);
+  p.end();
+}
+
+// --- Scan-source enable mask (ScanConfig.sources), persisted in NVS. The "2.4" toggle
+// covers probe-request capture too (both are 2.4 GHz Wi-Fi). 802.15.4 is not exposed. ---
+static uint8_t g_srcMask = MASK_ALL;
+static constexpr uint8_t SRC_24_BITS = MASK_WIFI24 | MASK_PROBE;
+static void loadSrcMask() {
+  Preferences p; p.begin("cydui", true);
+  g_srcMask = p.getUChar("srcmask", MASK_ALL);
+  p.end();
+}
+static void saveSrcMask() {
+  Preferences p; p.begin("cydui", false);
+  p.putUChar("srcmask", g_srcMask);
   p.end();
 }
 
@@ -667,7 +684,7 @@ static void requestScan(uint32_t timeoutMs = 5000) {
   while (LinkSerial.available()) LinkSerial.read();
   parser.reset();
   ScanConfig cfg{};
-  cfg.sources  = MASK_WIFI | MASK_BLE | MASK_PROBE;
+  cfg.sources  = g_srcMask;
   cfg.dwell_ms = 0;
   sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
   uint32_t t0 = millis();
@@ -696,14 +713,14 @@ static void requestScan(uint32_t timeoutMs = 5000) {
 static void pushStatus() {
   int n24, n5, nble, nprb; countBands(n24, n5, nble, nprb);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  char s[224];
+  char s[240];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
-           g_screen == SCR_SCAN ? 1 : 0, g_brightness);
+           g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask);
   phone::setStatus(String(s));
 }
 
@@ -1024,6 +1041,18 @@ static void drawScanMenu() {
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
 }
 
+// Scan Settings: per-source enable toggles (labels rebuilt each draw to show state).
+static void drawScanSettings() {
+  char b[20], w24[24], w5[24];
+  snprintf(b,   sizeof(b),   "BLE: %s",       (g_srcMask & MASK_BLE)    ? "On" : "Off");
+  snprintf(w24, sizeof(w24), "Wi-Fi 2.4: %s", (g_srcMask & MASK_WIFI24) ? "On" : "Off");
+  snprintf(w5,  sizeof(w5),  "Wi-Fi 5G: %s",  (g_srcMask & MASK_WIFI5)  ? "On" : "Off");
+  const char* items[SCANSET_N] = { b, w24, w5, "Back" };
+  drawListMenu("SCAN SETTINGS", items, SCANSET_N, g_scanSetSel);
+  tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
+                           : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+}
+
 // Generic placeholder screen for not-yet-built features (title set via g_stubTitle).
 static void drawStub() {
   tft.fillScreen(TFT_BLACK);
@@ -1052,8 +1081,18 @@ static bool anyTouchTapped() {
 static void activateScanMenu(int sel) {
   if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; }               // first cycle draws it
   else if (sel == 1) { g_stubTitle = "EXPLORE SCAN"; g_stubArmed = false; g_screen = SCR_STUB; drawStub(); }
-  else if (sel == 2) { g_stubTitle = "SCAN SETTINGS"; g_stubArmed = false; g_screen = SCR_STUB; drawStub(); }
+  else if (sel == 2) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 0; drawScanSettings(); }
   else               { g_screen = SCR_MENU; drawMenu(); }                       // Back
+}
+
+// Act on a scan-settings row (touch tap or long-press select).
+static void activateScanSettings(int sel) {
+  if (sel == 0)      g_srcMask ^= MASK_BLE;
+  else if (sel == 1) g_srcMask ^= SRC_24_BITS;
+  else if (sel == 2) g_srcMask ^= MASK_WIFI5;
+  else { g_screen = SCR_SCANMENU; drawScanMenu(); return; }  // Back
+  saveSrcMask();
+  drawScanSettings();
 }
 
 // Act on a settings row (touch tap or long-press select).
@@ -1114,6 +1153,7 @@ void setup() {
   Serial.println("[CYD] boot: scanner + phone link + SD");
   initCommon();
   loadBrightness();
+  loadSrcMask();
   applyBrightness();
   initSD();
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
@@ -1137,6 +1177,11 @@ void loop() {
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
       g_brightness = (uint8_t)constrain(b, 10, 100);
       applyBrightness(); saveBrightness();
+    } }
+  { uint8_t m; if (phone::srcMaskRequested(&m) && m != 0) {  // web-app source toggles (ignore all-off)
+      g_srcMask = m; saveSrcMask();
+      if (g_screen == SCR_SCANSETTINGS) drawScanSettings();
+      pushStatus();
     } }
   renameSessionOnSync();  // give this session a date-time filename once time is known
 
@@ -1188,6 +1233,15 @@ void loop() {
       if (t >= 0)               { g_scanSel = t; activateScanMenu(t); return; }  // touch select
       if      (ev == BTN_SHORT) { g_scanSel = (g_scanSel + 1) % SCAN_N; drawScanMenu(); }
       else if (ev == BTN_LONG)  { activateScanMenu(g_scanSel); }  // "Back" row returns to HOME
+      delay(20);
+      return;
+    }
+
+    case SCR_SCANSETTINGS: {
+      int t = tappedRow(SCANSET_N);
+      if (t >= 0)               { g_scanSetSel = t; activateScanSettings(t); return; }  // touch select
+      if      (ev == BTN_SHORT) { g_scanSetSel = (g_scanSetSel + 1) % SCANSET_N; drawScanSettings(); }
+      else if (ev == BTN_LONG)  { activateScanSettings(g_scanSetSel); }
       delay(20);
       return;
     }
