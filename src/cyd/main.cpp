@@ -141,7 +141,8 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 // touchscreen (once calibrated). A short tap of BOOT moves through the menu; a long
 // hold selects, and a long hold from any screen returns to the menu. With touch, tap
 // an item to select it directly. ---
-enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_STUB, SCR_SCANSETTINGS };
+enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCANSETTINGS,
+              SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -153,18 +154,19 @@ static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
 static const char* kScanItems[] = { "Start Scan", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
-static bool g_stubArmed = false;      // true once the finger has lifted after entering the stub
-static const char* g_stubTitle = "";  // title shown by the generic SCR_STUB screen
 
 // Shared menu-row geometry (used for drawing AND touch hit-testing).
 static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
 
-// Scan-screen "stop" button (full-width bar under the status bar).
+// Top-bar button (full-width bar under the status bar): STOP on the live scan, BACK in the
+// scan viewer / detail screens.
 static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
 
 // Scan-screen device list geometry + scrolling (rows are one MAC group each).
 static constexpr int LIST_Y0 = 84, LIST_ROW_H = 13;
 static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
+// Rows must keep their content left of this x so they never run under the scroll icons.
+static constexpr int ICON_GUTTER_X = 240 - SCROLL_CX_INSET - SCROLL_R - 2;
 static int g_scrollOffset = 0;  // group index of the first visible row
 
 enum BtnEv { BTN_NONE, BTN_SHORT, BTN_LONG };
@@ -255,8 +257,8 @@ static int tappedRow(int count) {
   return hit;
 }
 
-// True on a fresh tap inside the scan screen's top "stop" button.
-static bool stopButtonTapped() {
+// True on a fresh tap inside the top-bar button (STOP / BACK).
+static bool topBarTapped() {
   static bool prev = false;
   if (!g_touchOk) { prev = false; return false; }
   bool now = g_touch.touched();
@@ -596,11 +598,14 @@ static void transferFile(const char* path) {
 // Delete a session file the phone selected ("D:<path>"). Restricted to /logs/ (no
 // traversal) and refuses the live session being written. Pushes the refreshed list back.
 static void sendSessionList();  // fwd decl
+static bool exploreHolds(const char* path);  // true if the Scan Viewer has this file open
 static void deleteSession(const char* path) {
   if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
     Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
   } else if (strcmp(path, g_logPath) == 0) {
     Serial.println("[CYD] delete refused: that's the current session");
+  } else if (exploreHolds(path)) {
+    Serial.println("[CYD] delete refused: open in the scan viewer");
   } else {
     if (SD.exists(path)) SD.remove(path);
     Serial.printf("[CYD] deleted %s\n", path);
@@ -811,8 +816,10 @@ static void drawStatusBar() {
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
 }
 
-// --- scan-list scrolling: geometry, icons, touch ---
+// --- shared scrolling list: geometry, icons, touch (live scan, scan viewer, detail,
+// session picker all use these) ---
 static int visibleRows()   { return (tft.height() - LIST_Y0) / LIST_ROW_H; }
+static int scrollCx()      { return tft.width() - SCROLL_CX_INSET; }
 static int scrollUpCy()    { return LIST_Y0 + SCROLL_R + 2; }
 static int scrollDownCy()  { return tft.height() - SCROLL_R - 4; }
 
@@ -826,9 +833,96 @@ static void drawScrollIcon(int cx, int cy, bool up, bool enabled) {
   }
 }
 
+// Up/down arrows (dimmed at the limits) for a list of `count` rows, `vis` visible.
+static void drawScrollIcons(int offset, int count, int vis) {
+  int maxOff = max(0, count - vis);
+  drawScrollIcon(scrollCx(), scrollUpCy(),   true,  offset > 0);
+  drawScrollIcon(scrollCx(), scrollDownCy(), false, offset < maxOff);
+}
+
 static bool inCircle(int x, int y, int cx, int cy) {
   int dx = x - cx, dy = y - cy;
   return dx * dx + dy * dy <= SCROLL_R * SCROLL_R;
+}
+
+// Shared row painter: "<flag><tag:tagW> <name:13> <rssi:4>" at row y, plus an optional
+// trailing field (the scan viewer's timecode) ellipsised to fit left of the scroll-icon
+// gutter. The live scan uses tagW=9 and trailing=""; the viewer uses a 3-wide tag.
+static void drawDetRow(int y, uint16_t color, const char* tag, const char* name, int rssi,
+                       const char* trailing, bool flag = false, int tagW = 9) {
+  char buf[56];
+  int n = snprintf(buf, sizeof(buf), "%c%-*.*s %-13.13s %4d", flag ? '!' : ' ', tagW, tagW, tag,
+                   name, rssi);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(color, TFT_BLACK);
+  tft.drawString(buf, 4, y, 1);
+  if (trailing && trailing[0]) {
+    int x0   = 4 + (n + 1) * 6;
+    int room = (ICON_GUTTER_X - x0) / 6;  // chars that fit before the icons
+    char t[16];
+    int  len = strlen(trailing);
+    if (len <= room || room < 3) snprintf(t, sizeof(t), "%.*s", room < 15 ? room : 15, trailing);
+    else snprintf(t, sizeof(t), "..%s", trailing + len - (room - 2));  // ellipsis + tail
+    tft.drawString(t, x0, y, 1);
+  }
+}
+
+// Row colour: threat tier first, else by source/band.
+static uint16_t tierColor(int tier, uint8_t source, int channel) {
+  switch ((sigdb::Tier)tier) {
+    case sigdb::Tier::Confirmed: return TFT_RED;
+    case sigdb::Tier::Likely:    return TFT_ORANGE;
+    case sigdb::Tier::Suspect:   return TFT_YELLOW;
+    default: return source == (uint8_t)Source::BleScan ? TFT_MAGENTA
+                  : channel > 14 ? TFT_CYAN : TFT_WHITE;
+  }
+}
+
+// Shared touch handling for any scrolling list: tap an arrow to step one row, drag the
+// list to scroll, tap a row (touch-down + release without moving). `redraw` is called
+// when the offset changes. Returns the tapped ABSOLUTE row index on a tap, else -1.
+// Rows are `rowH` tall starting at y0; `vis` rows are visible. Arrows/drag live strictly
+// below the top bar. Armed only after the finger has been up once, so the touch that
+// opened the screen can't leak in (call listTouchReset() on screen entry). No-op until
+// touch is calibrated.
+static bool g_ltArmed = false;
+static void listTouchReset() { g_ltArmed = false; }
+static int listTouch(int count, int* offset, int vis, int y0, int rowH, void (*redraw)()) {
+  static bool prev = false, dragging = false, moved = false;
+  static int  startY = 0, startOffset = 0;
+  if (!g_touchOk) { prev = false; dragging = false; return -1; }
+  bool now = g_touch.touched();
+  if (!g_ltArmed) {
+    if (!now) g_ltArmed = true;
+    prev = now; dragging = false;
+    return -1;
+  }
+  int before = *offset, tap = -1;
+  int maxOff = max(0, count - vis);
+  int16_t sx, sy, z;
+  if (now && g_touch.getScreen(tft, sx, sy, z)) {
+    if (!prev) {  // touch-down edge
+      dragging = false; moved = false;
+      if (sy > STOP_Y + STOP_H) {
+        if      (inCircle(sx, sy, scrollCx(), scrollUpCy()))   (*offset)--;
+        else if (inCircle(sx, sy, scrollCx(), scrollDownCy())) (*offset)++;
+        else if (sy >= y0) { dragging = true; startY = sy; startOffset = *offset; }
+      }
+    } else if (dragging) {
+      int d = sy - startY;
+      if (d > 8 || d < -8) moved = true;
+      *offset = startOffset - d / rowH;
+    }
+    *offset = constrain(*offset, 0, maxOff);
+  }
+  if (!now && prev && dragging && !moved) {  // released without dragging: a row tap
+    int r = (startY - y0) / rowH;
+    if (r >= 0 && r < vis && startOffset + r < count) tap = startOffset + r;
+  }
+  if (!now) dragging = false;
+  prev = now;
+  if (*offset != before) redraw();
+  return tap;
 }
 
 // Repaint the device list region (below the status/count lines) + scroll icons. With
@@ -837,8 +931,6 @@ static bool inCircle(int x, int y, int cx, int cy) {
 // first then strongest RSSI.
 static void drawScanList(bool clear) {
   int W = tft.width();
-  char buf[48];
-  tft.setTextDatum(TL_DATUM);
   if (clear) tft.fillRect(0, LIST_Y0, W, tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
   int maxOff = max(0, g_groupCount - vis);
@@ -847,58 +939,27 @@ static void drawScanList(bool clear) {
   for (int r = 0; r < rows; r++) {
     const DevGroup& g = g_groups[g_scrollOffset + r];
     const Detection& d = g_dets[g.rep];
-    uint16_t col;
-    switch ((sigdb::Tier)g.tier) {
-      case sigdb::Tier::Confirmed: col = TFT_RED;    break;
-      case sigdb::Tier::Likely:    col = TFT_ORANGE; break;
-      case sigdb::Tier::Suspect:   col = TFT_YELLOW; break;
-      default: col = d.source == (uint8_t)Source::BleScan ? TFT_MAGENTA
-                   : d.channel > 14 ? TFT_CYAN : TFT_WHITE;
-    }
-    tft.setTextColor(col, TFT_BLACK);
-    char name[14];
-    strncpy(name, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", 13);
-    name[13] = 0;
-    char flag = g.tier != (int)sigdb::Tier::None ? '!' : ' ';
-    snprintf(buf, sizeof(buf), "%c%-9.9s %-13s %4d", flag, g.tag, name, g.bestRssi);
-    tft.drawString(buf, 4, LIST_Y0 + r * LIST_ROW_H, 1);
+    drawDetRow(LIST_Y0 + r * LIST_ROW_H, tierColor(g.tier, d.source, d.channel), g.tag,
+               g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", g.bestRssi, "",
+               g.tier != (int)sigdb::Tier::None);
   }
-
-  // Scroll icons (circles with chevrons) on the right edge; dimmed at the limits.
-  int cx = W - SCROLL_CX_INSET;
-  drawScrollIcon(cx, scrollUpCy(),   true,  g_scrollOffset > 0);
-  drawScrollIcon(cx, scrollDownCy(), false, g_scrollOffset < maxOff);
+  drawScrollIcons(g_scrollOffset, g_groupCount, vis);
 }
 
-
-// Touch scrolling for the scan list: tap an arrow icon to step one row, or drag the list.
-// Strictly below the STOP bar. Redraws only when the offset changes. No-op until touch is
-// calibrated. Call frequently while on SCR_SCAN.
+// Touch scrolling for the live scan list. Call frequently while on SCR_SCAN.
 static void handleScanTouch() {
-  static bool prev = false, dragging = false;
-  static int  startY = 0, startOffset = 0;
-  if (!g_touchOk) { prev = false; dragging = false; return; }
-  bool now = g_touch.touched();
-  int  before = g_scrollOffset;
-  int  maxOff = max(0, g_groupCount - visibleRows());
-  int16_t sx, sy, z;
-  if (now && g_touch.getScreen(tft, sx, sy, z)) {
-    if (!prev) {  // touch-down edge
-      dragging = false;
-      if (sy > STOP_Y + STOP_H) {
-        int cx = tft.width() - SCROLL_CX_INSET;
-        if      (inCircle(sx, sy, cx, scrollUpCy()))   g_scrollOffset--;
-        else if (inCircle(sx, sy, cx, scrollDownCy())) g_scrollOffset++;
-        else if (sy >= LIST_Y0) { dragging = true; startY = sy; startOffset = g_scrollOffset; }
-      }
-    } else if (dragging) {
-      g_scrollOffset = startOffset - (sy - startY) / LIST_ROW_H;
-    }
-    g_scrollOffset = constrain(g_scrollOffset, 0, maxOff);
-  }
-  if (!now) dragging = false;
-  prev = now;
-  if (g_scrollOffset != before) drawScanList(true);
+  listTouch(g_groupCount, &g_scrollOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
+            []() { drawScanList(true); });
+}
+
+// Full-width top-bar button (hit-tested by topBarTapped()).
+static void drawTopBar(const char* label, uint16_t fill, uint16_t edge) {
+  int W = tft.width();
+  tft.fillRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, fill);
+  tft.drawRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, edge);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, fill);
+  tft.drawString(label, W / 2, STOP_Y + STOP_H / 2, 1);
 }
 
 static void render() {
@@ -909,12 +970,7 @@ static void render() {
 
   // Full-width stop button across the top: tap to end the scan and return to the
   // menu (a long BOOT hold does the same).
-  int W = tft.width();
-  tft.fillRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, TFT_MAROON);
-  tft.drawRoundRect(STOP_X, STOP_Y, W - 2 * STOP_X, STOP_H, 4, TFT_RED);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_MAROON);
-  tft.drawString("STOP", W / 2, STOP_Y + STOP_H / 2, 1);
+  drawTopBar("STOP", TFT_MAROON, TFT_RED);
 
   tft.setTextDatum(TL_DATUM);
   char buf[48];
@@ -1053,34 +1109,362 @@ static void drawScanSettings() {
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
 }
 
-// Generic placeholder screen for not-yet-built features (title set via g_stubTitle).
-static void drawStub() {
-  tft.fillScreen(TFT_BLACK);
-  drawStatusBar();
-  int W = tft.width();
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString(g_stubTitle, W / 2, 32, 4);
-  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  tft.drawString("Coming soon", W / 2, 120, 4);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Press button or tap: back", W / 2, tft.height() - 18, 2);
+// ---------------------------------------------------------------- Explore Scan
+// On-device session browser: SCR_PICKLOG (choose a /logs/ session, newest first) ->
+// SCR_SCANVIEWER (rows oldest -> newest, shared row painter + scroll) -> SCR_DETAIL
+// (label/value list mirroring the web app's detail modal). The session file is STREAMED:
+// one index pass stores a 12-byte record per data row; only the visible rows are re-read
+// and parsed per frame. The index + session list live in one heap block that exists only
+// while in Explore (live scan and Explore are mutually exclusive) — see exploreFree().
+static constexpr int MAX_LOG_ROWS = 512;  // 6 KB index; later rows are not indexed (truncated)
+static constexpr int MAX_SESS     = 48;
+static constexpr int PICK_VIS     = 5;    // picker rows on screen (ROW_STEP geometry)
+static constexpr int DET_MAX_LINES = 28;
+
+struct LogIdx { uint32_t offset; uint32_t epoch; int16_t rssi; uint8_t srcType; uint8_t tier; };  // 12 B
+struct SessEnt { char name[20]; uint32_t wr; };  // basename without ".csv"; FS write time
+struct ExploreMem { LogIdx idx[MAX_LOG_ROWS]; SessEnt sess[MAX_SESS]; };
+static ExploreMem* g_ex = nullptr;
+static int   g_sessN = 0, g_pickSel = 0, g_pickOff = 0;
+static int   g_idxN = 0;
+static bool  g_idxTrunc = false;
+static File  g_viewFile;
+static char  g_viewName[20];
+static int   g_viewOffset = 0, g_detOff = 0, g_detN = 0;
+
+// One parsed CSV data row (schema in kLogHeader).
+struct LogRow {
+  uint32_t epoch, ms;
+  int      rssi, channel, score, tier;
+  char     lat[16], lon[16], src[4], mac[18], ie[9], cid[5], uuid[33], name[33], sig[24];
+};
+
+struct DetLine { char label[15]; char val[25]; uint16_t col; };
+static DetLine g_detL[DET_MAX_LINES];
+
+static void cpyField(char* dst, size_t cap, const char* s) {
+  strncpy(dst, s, cap - 1);
+  dst[cap - 1] = 0;
 }
 
-// Fresh touch-down edge anywhere (stub screen "tap to go back"). No-op until calibrated.
-static bool anyTouchTapped() {
-  static bool prev = false;
-  if (!g_touchOk) { prev = false; return false; }
-  bool now = g_touch.touched();
-  bool hit = now && !prev;
-  prev = now;
-  return hit;
+// Read one line (CR/LF stripped, over-long lines truncated to cap-1). *pos = line start.
+static bool readLogLine(File& f, char* buf, size_t cap, uint32_t* pos = nullptr) {
+  if (pos) *pos = f.position();
+  size_t n = 0;
+  bool any = false;
+  while (f.available()) {
+    int c = f.read();
+    any = true;
+    if (c == '\n') break;
+    if (c == '\r') continue;
+    if (n < cap - 1) buf[n++] = (char)c;
+  }
+  buf[n] = 0;
+  return any;
+}
+
+// Split a CSV data line in place (the header line fails: it doesn't start with a digit).
+static bool parseLogLine(char* line, LogRow& r) {
+  if (line[0] < '0' || line[0] > '9') return false;
+  char* f[15];
+  int n = 0;
+  f[n++] = line;
+  for (char* p = line; *p; ++p)
+    if (*p == ',') { *p = 0; if (n < 15) f[n++] = p + 1; }
+  if (n < 14) return false;
+  r.epoch   = strtoul(f[0], nullptr, 10);
+  r.ms      = strtoul(f[1], nullptr, 10);
+  cpyField(r.lat, sizeof(r.lat), f[2]);
+  cpyField(r.lon, sizeof(r.lon), f[3]);
+  cpyField(r.src, sizeof(r.src), f[4]);
+  cpyField(r.mac, sizeof(r.mac), f[5]);
+  r.rssi    = atoi(f[6]);
+  r.channel = atoi(f[7]);
+  cpyField(r.ie,   sizeof(r.ie),   f[8]);
+  cpyField(r.cid,  sizeof(r.cid),  f[9]);
+  cpyField(r.uuid, sizeof(r.uuid), f[10]);
+  cpyField(r.name, sizeof(r.name), f[11]);
+  r.score   = atoi(f[12]);
+  char t = f[13][0];
+  r.tier    = t == 's' ? 1 : t == 'l' ? 2 : t == 'c' ? 3 : 0;
+  cpyField(r.sig, sizeof(r.sig), n > 14 ? f[14] : "");
+  return true;
+}
+
+// 0=2.4, 1=5G, 2=BLE, 3=PRB (stored in LogIdx).
+static uint8_t srcTypeOf(const char* tag) {
+  if (!strcmp(tag, "BLE")) return 2;
+  if (!strcmp(tag, "PRB")) return 3;
+  if (!strcmp(tag, "5G"))  return 1;
+  return 0;
+}
+static uint8_t linkSourceOf(uint8_t st) {  // -> link_protocol::Source for tierColor()
+  return st == 2 ? (uint8_t)Source::BleScan : st == 3 ? (uint8_t)Source::WifiProbe
+                                                      : (uint8_t)Source::WifiScan;
+}
+
+// epoch (already local) -> HH:MM:SS, or "+Ns" since boot when the phone hadn't synced.
+static void fmtTimecode(uint32_t epoch, uint32_t ms, char* out, size_t cap) {
+  if (epoch > 0) {
+    time_t t = (time_t)epoch;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    snprintf(out, cap, "%02d:%02d:%02d", tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  } else {
+    snprintf(out, cap, "+%lus", (unsigned long)(ms / 1000));
+  }
+}
+
+static bool readRowAt(uint32_t offset, char* line, size_t cap, LogRow& r) {
+  if (!g_viewFile || !g_viewFile.seek(offset)) return false;
+  readLogLine(g_viewFile, line, cap);
+  return parseLogLine(line, r);
+}
+
+static bool exploreHolds(const char* path) {
+  if (!g_viewFile) return false;
+  char open[48];
+  snprintf(open, sizeof(open), "/logs/%s.csv", g_viewName);
+  return strcmp(path, open) == 0;
+}
+
+static void exploreFree() {
+  if (g_viewFile) g_viewFile.close();
+  if (g_ex) {
+    free(g_ex);
+    g_ex = nullptr;
+    Serial.printf("[CYD] explore freed (heap free %u)\n", (unsigned)ESP.getFreeHeap());
+  }
+}
+
+// ---- session picker ----
+static void sessEnumerate() {
+  g_sessN = 0;
+  File dir = SD.open("/logs");
+  if (!dir) return;
+  for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+    if (!e.isDirectory() && g_sessN < MAX_SESS) {
+      const char* nm = e.name();
+      const char* sl = strrchr(nm, '/');
+      const char* base = sl ? sl + 1 : nm;
+      size_t len = strlen(base);
+      if (len > 4 && len - 4 < sizeof(SessEnt::name) && !strcasecmp(base + len - 4, ".csv")) {
+        SessEnt& s = g_ex->sess[g_sessN++];
+        memcpy(s.name, base, len - 4);
+        s.name[len - 4] = 0;
+        s.wr = (uint32_t)e.getLastWrite();
+      }
+    }
+    e.close();
+  }
+  dir.close();
+  std::sort(g_ex->sess, g_ex->sess + g_sessN, [](const SessEnt& a, const SessEnt& b) {
+    if (a.wr != b.wr) return a.wr > b.wr;      // newest first
+    return strcmp(a.name, b.name) > 0;         // tie-break: name descending
+  });
+}
+
+static void drawPickLog() {
+  const char* items[MAX_SESS + 1];
+  int n = g_sessN + 1;  // sessions + Back
+  for (int i = 0; i < g_sessN; i++) items[i] = g_ex->sess[i].name;
+  items[g_sessN] = "Back";
+  g_pickOff = constrain(g_pickOff, 0, max(0, n - PICK_VIS));
+  drawListMenu("SESSIONS", items + g_pickOff, min(n - g_pickOff, PICK_VIS), g_pickSel - g_pickOff);
+  if (n > PICK_VIS) drawScrollIcons(g_pickOff, n, PICK_VIS);
+  tft.drawString("BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);  // short: clears the icons
+}
+
+static void exploreEnter() {
+  if (!g_ex) g_ex = (ExploreMem*)malloc(sizeof(ExploreMem));
+  g_sessN = 0;
+  if (g_ex && g_sdOk) sessEnumerate();
+  else if (!g_ex) Serial.println("[CYD] explore: out of memory");
+  Serial.printf("[CYD] explore: %d sessions (heap free %u)\n", g_sessN, (unsigned)ESP.getFreeHeap());
+  g_pickSel = 0; g_pickOff = 0;  // newest session highlighted
+  g_screen = SCR_PICKLOG;
+  listTouchReset();
+  drawPickLog();
+}
+
+// ---- scan viewer ----
+static void drawViewerList(bool clear) {
+  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  g_viewOffset = constrain(g_viewOffset, 0, max(0, g_idxN - vis));
+  if (g_idxN == 0) {
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("No detections logged", 4, LIST_Y0, 1);
+  }
+  char line[256];
+  int rows = min(g_idxN - g_viewOffset, vis);
+  for (int r = 0; r < rows; r++) {
+    const LogIdx& e = g_ex->idx[g_viewOffset + r];
+    LogRow lr;
+    if (!readRowAt(e.offset, line, sizeof(line), lr)) continue;
+    char tc[12];
+    fmtTimecode(lr.epoch, lr.ms, tc, sizeof(tc));
+    drawDetRow(LIST_Y0 + r * LIST_ROW_H, tierColor(lr.tier, linkSourceOf(e.srcType), lr.channel),
+               lr.src, lr.name[0] ? lr.name : "<hidden>", lr.rssi, tc, lr.tier > 0, 3);
+  }
+  drawScrollIcons(g_viewOffset, g_idxN, vis);
+}
+
+static void drawViewer() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString(g_viewName, 4, 46, 1);
+  char b[32];
+  snprintf(b, sizeof(b), g_idxTrunc ? "%d rows (first %d)" : "%d rows", g_idxN, MAX_LOG_ROWS);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(b, 4, 58, 1);
+  drawViewerList(false);
+}
+
+// One streaming pass over the file -> compact per-row index (first MAX_LOG_ROWS rows).
+static bool buildIndex(const char* name) {
+  char path[48];
+  snprintf(path, sizeof(path), "/logs/%s.csv", name);
+  if (g_viewFile) g_viewFile.close();
+  g_viewFile = SD.open(path, "r");
+  if (!g_viewFile) return false;
+  g_idxN = 0; g_idxTrunc = false;
+  char line[256];
+  uint32_t pos;
+  while (readLogLine(g_viewFile, line, sizeof(line), &pos)) {
+    LogRow r;
+    if (!parseLogLine(line, r)) continue;
+    if (g_idxN >= MAX_LOG_ROWS) { g_idxTrunc = true; break; }
+    LogIdx& e = g_ex->idx[g_idxN++];
+    e.offset = pos; e.epoch = r.epoch; e.rssi = (int16_t)r.rssi;
+    e.srcType = srcTypeOf(r.src); e.tier = (uint8_t)r.tier;
+  }
+  return true;
+}
+
+static void activatePick(int sel) {
+  if (sel >= g_sessN || !g_ex) {  // Back: leave Explore, free the index block
+    exploreFree();
+    g_screen = SCR_SCANMENU;
+    drawScanMenu();
+    return;
+  }
+  cpyField(g_viewName, sizeof(g_viewName), g_ex->sess[sel].name);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Indexing...", tft.width() / 2, tft.height() / 2, 4);
+  if (!buildIndex(g_viewName)) { drawPickLog(); return; }
+  Serial.printf("[CYD] explore: %s indexed %d rows%s (heap free %u)\n", g_viewName, g_idxN,
+                g_idxTrunc ? " (truncated)" : "", (unsigned)ESP.getFreeHeap());
+  g_viewOffset = 0;
+  g_screen = SCR_SCANVIEWER;
+  listTouchReset();
+  drawViewer();
+}
+
+static void viewerBack() {
+  if (g_viewFile) g_viewFile.close();
+  g_screen = SCR_PICKLOG;
+  listTouchReset();
+  drawPickLog();
+}
+
+// ---- detail (mirrors the web app's openDetail(), minus the map) ----
+// Append a label/value line; long values wrap onto continuation lines (blank label).
+static void addField(const char* label, const char* val, uint16_t col = TFT_WHITE) {
+  size_t len = strlen(val), pos = 0;
+  bool first = true;
+  do {
+    if (g_detN >= DET_MAX_LINES) return;
+    DetLine& d = g_detL[g_detN++];
+    cpyField(d.label, sizeof(d.label), first ? label : "");
+    snprintf(d.val, sizeof(d.val), "%.19s", val + pos);
+    d.col = col;
+    pos += 19;  // 19 chars keeps values left of the scroll icons
+    first = false;
+  } while (pos < len);
+}
+
+static bool allZero(const char* s) {
+  for (; *s; ++s) if (*s != '0') return false;
+  return true;
+}
+
+static void drawDetailList(bool clear) {
+  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  g_detOff = constrain(g_detOff, 0, max(0, g_detN - vis));
+  tft.setTextDatum(TL_DATUM);
+  int rows = min(g_detN - g_detOff, vis);
+  for (int r = 0; r < rows; r++) {
+    const DetLine& d = g_detL[g_detOff + r];
+    int y = LIST_Y0 + r * LIST_ROW_H;
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // dim label
+    tft.drawString(d.label, 4, y, 1);
+    tft.setTextColor(d.col, TFT_BLACK);         // bright value
+    tft.drawString(d.val, 92, y, 1);
+  }
+  drawScrollIcons(g_detOff, g_detN, vis);
+}
+
+static void openDetail(int row) {
+  char line[256];
+  LogRow r;
+  if (row < 0 || row >= g_idxN || !readRowAt(g_ex->idx[row].offset, line, sizeof(line), r)) return;
+  g_detN = 0; g_detOff = 0;
+  char b[64];
+  addField("Name", r.name[0] ? r.name : "<hidden>");
+  addField("MAC", r.mac);
+  addField("Source", !strcmp(r.src, "BLE") ? "BLE" : !strcmp(r.src, "PRB") ? "Probe request"
+                   : !strcmp(r.src, "5G") ? "Wi-Fi 5 GHz" : "Wi-Fi 2.4 GHz");
+  snprintf(b, sizeof(b), "%d dBm", r.rssi);
+  addField("RSSI", b);
+  if (r.channel) { snprintf(b, sizeof(b), "%d", r.channel); addField("Channel", b); }
+  else addField("Channel", "-");
+  static const char* const kTierName[] = { "None", "Suspect", "Likely", "Confirmed" };
+  int n = snprintf(b, sizeof(b), "%s", kTierName[r.tier]);
+  if (r.score) n += snprintf(b + n, sizeof(b) - n, " (score %d)", r.score);
+  if (r.sig[0] && n < (int)sizeof(b)) snprintf(b + n, sizeof(b) - n, " - %s", r.sig);
+  addField("Threat tier", b, tierColor(r.tier, (uint8_t)Source::WifiScan, 0));
+  if (r.ie[0]   && !allZero(r.ie))   addField("IE fingerprint", r.ie);
+  if (r.cid[0]  && !allZero(r.cid))  addField("BLE company ID", r.cid);
+  if (r.uuid[0] && !allZero(r.uuid)) addField("Service UUID", r.uuid);
+  if (r.epoch > 0) {
+    time_t t = (time_t)r.epoch;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    snprintf(b, sizeof(b), "%04d-%02d-%02d %02d:%02d:%02d", tmv.tm_year + 1900, tmv.tm_mon + 1,
+             tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  } else {
+    snprintf(b, sizeof(b), "unsynced (+%lus)", (unsigned long)(r.ms / 1000));
+  }
+  addField("Time", b);
+  if (r.lat[0] && r.lon[0]) { snprintf(b, sizeof(b), "%s, %s", r.lat, r.lon); addField("GPS", b); }
+  else addField("GPS", "none");
+
+  g_screen = SCR_DETAIL;
+  listTouchReset();
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString("DETAIL", 4, 46, 1);
+  snprintf(b, sizeof(b), "row %d of %d", row + 1, g_idxN);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(b, 4, 58, 1);
+  drawDetailList(false);
 }
 
 // Act on a scan-menu row (touch tap or long-press select).
 static void activateScanMenu(int sel) {
   if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; }               // first cycle draws it
-  else if (sel == 1) { g_stubTitle = "EXPLORE SCAN"; g_stubArmed = false; g_screen = SCR_STUB; drawStub(); }
+  else if (sel == 1) { exploreEnter(); }                                     // Explore Scan
   else if (sel == 2) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 0; drawScanSettings(); }
   else               { g_screen = SCR_MENU; drawMenu(); }                       // Back
 }
@@ -1186,7 +1570,7 @@ void loop() {
   renameSessionOnSync();  // give this session a date-time filename once time is known
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
-  if (phone::downloadRequested()) { runDownload(); return; }
+  if (phone::downloadRequested()) { exploreFree(); runDownload(); return; }
   if (webshare::active()) {  // just left download mode: tear down AP and repaint
     webshare::stop();
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
@@ -1197,6 +1581,10 @@ void loop() {
   // Consume the stop flag unconditionally, but only act on it while actually scanning
   // (so a stray stop sent from another screen is discarded, not buffered to fire later).
   if (phone::scanStopRequested() && g_screen == SCR_SCAN) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
+
+  // Explore and live scan are mutually exclusive: drop the index block as soon as we're out.
+  if (g_ex && g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL)
+    exploreFree();
 
   BtnEv ev = buttonEvent();
 
@@ -1246,16 +1634,45 @@ void loop() {
       return;
     }
 
-    case SCR_STUB:
-      {
-        // Release-gate: the touch that selected the stub is still down on entry, so only
-        // accept a back-tap once the finger has lifted at least once.
-        if (!g_stubArmed && (!g_touchOk || !g_touch.touched())) g_stubArmed = true;
-        bool tapped = anyTouchTapped();  // always called so its edge state stays current
-        if (ev != BTN_NONE || (g_stubArmed && tapped)) { g_screen = SCR_SCANMENU; drawScanMenu(); }  // any press: back
+    case SCR_PICKLOG: {
+      int t = listTouch(g_sessN + 1, &g_pickOff, PICK_VIS, ROW_Y0 - 5, ROW_STEP, drawPickLog);
+      if (t >= 0)               { g_pickSel = t; activatePick(t); return; }  // touch select
+      if (ev == BTN_SHORT) {
+        g_pickSel = (g_pickSel + 1) % (g_sessN + 1);
+        if (g_pickSel < g_pickOff) g_pickOff = g_pickSel;
+        if (g_pickSel >= g_pickOff + PICK_VIS) g_pickOff = g_pickSel - PICK_VIS + 1;
+        drawPickLog();
+      } else if (ev == BTN_LONG) { activatePick(g_pickSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_SCANVIEWER: {
+      bool back = topBarTapped();  // always called so its edge state stays current
+      if (back || ev == BTN_LONG) { viewerBack(); return; }
+      int t = listTouch(g_idxN, &g_viewOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
+                        []() { drawViewerList(true); });
+      if (t >= 0) { openDetail(t); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: page down (wraps to the top)
+        int maxOff = max(0, g_idxN - visibleRows());
+        g_viewOffset = (g_viewOffset >= maxOff) ? 0 : min(g_viewOffset + visibleRows(), maxOff);
+        drawViewerList(true);
       }
       delay(20);
       return;
+    }
+
+    case SCR_DETAIL: {
+      bool back = topBarTapped();
+      if (back || ev != BTN_NONE) {
+        g_screen = SCR_SCANVIEWER; listTouchReset(); drawViewer();
+        return;
+      }
+      listTouch(g_detN, &g_detOff, visibleRows(), LIST_Y0, LIST_ROW_H,
+                []() { drawDetailList(true); });
+      delay(20);
+      return;
+    }
 
     case SCR_APPQR:
       if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }  // any press: back
@@ -1264,13 +1681,13 @@ void loop() {
 
     case SCR_SCAN:
       // Stop via the on-screen button (touch), a long BOOT hold, or the phone.
-      if (ev == BTN_LONG || stopButtonTapped()) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return; }
+      if (ev == BTN_LONG || topBarTapped()) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return; }
       runScanCycle();
       // Responsive ~2 s wait that also honors stop requests and pending downloads.
       {
         uint32_t t0 = millis();
         while (millis() - t0 < 2000) {
-          if (buttonEvent() == BTN_LONG || stopButtonTapped() || phone::scanStopRequested()) {
+          if (buttonEvent() == BTN_LONG || topBarTapped() || phone::scanStopRequested()) {
             g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return;
           }
           if (phone::downloadRequested()) return;
