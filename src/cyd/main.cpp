@@ -1073,6 +1073,93 @@ static void drawListMenu(const char* title, const char* const* items, int n, int
   tft.setTextDatum(TL_DATUM);
 }
 
+// ---- Shared FILE-SELECTION list style (use this for any "pick a file" screen) ----
+// Same button geometry as drawListMenu (ROW_Y0/ROW_STEP/ROW_H, so tappedRow()/listTouch()
+// hit-testing is identical) but a smaller font (2) and up to two text lines per row inside
+// the FIXED-height button (one line is vertically centred). The size (size<0 = none, e.g. a
+// Back row) is right-aligned and dim on the row's last line. A name too long for two lines
+// is left-truncated: ".." + the tail, so the distinguishing timestamp/sequence survives.
+// Draws the window items[off .. off+FILE_LIST_VIS); sel/off are absolute indices.
+struct FileItem { const char* name; int32_t size; };
+static constexpr int FILE_LIST_VIS = 5;
+
+static int fileTextW(const char* s, int n) {  // pixel width of the first n chars (font 2)
+  char t[32];
+  n = min(n, (int)sizeof(t) - 1);
+  memcpy(t, s, n);
+  t[n] = 0;
+  return tft.textWidth(t, 2);
+}
+static int filePrefixFit(const char* s, int maxW) {  // most leading chars that fit in maxW px
+  int len = strlen(s), k = 0;
+  while (k < len && fileTextW(s, k + 1) <= maxW) k++;
+  return k;
+}
+
+static void drawFileList(const char* title, const FileItem* items, int n, int sel, int off) {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  int W = tft.width();
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString(title, W / 2, 32, 4);
+  const int xL = 12, xR = W - 12, fullW = xR - xL, gap = 8, lineH = 16;
+  int rows = min(n - off, FILE_LIST_VIS);
+  for (int i = 0; i < rows; i++) {
+    const FileItem& it = items[off + i];
+    bool s = (off + i == sel);
+    int  rt = ROW_Y0 + i * ROW_STEP - 5;  // button top (height ROW_H, fixed)
+    if (s) tft.fillRoundRect(6, rt, W - 12, ROW_H, 6, TFT_NAVY);
+    else   tft.drawRoundRect(6, rt, W - 12, ROW_H, 6, TFT_DARKGREY);
+    uint16_t bg = s ? TFT_NAVY : TFT_BLACK;
+
+    char sz[12] = "";
+    if (it.size >= 0) {
+      if (it.size < 1024)         snprintf(sz, sizeof(sz), "%u B", (unsigned)it.size);
+      else if (it.size < 1048576) snprintf(sz, sizeof(sz), "%.1f KB", it.size / 1024.0f);
+      else                        snprintf(sz, sizeof(sz), "%.1f MB", it.size / 1048576.0f);
+    }
+    int lastW = fullW - (sz[0] ? tft.textWidth(sz, 2) + gap : 0);  // room beside the size
+
+    // Fit the name: 1 line if it fits beside the size, else 2 lines (line 1 full width,
+    // line 2 beside the size), else ".." + tail until the two lines hold it.
+    char name[24];
+    snprintf(name, sizeof(name), "%.23s", it.name);
+    const char* w = name;
+    char trunc[26];
+    bool one = tft.textWidth(w, 2) <= lastW;
+    int  p = 0;
+    if (!one) {
+      for (int skip = 0;; skip++) {
+        if (skip == 0) w = name;
+        else { snprintf(trunc, sizeof(trunc), "..%s", name + skip); w = trunc; }
+        p = filePrefixFit(w, fullW);
+        if (fileTextW(w + p, strlen(w + p)) <= lastW || !w[1]) break;
+      }
+    }
+    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, bg);
+    tft.setTextDatum(TL_DATUM);
+    int lastY;
+    if (one) {
+      lastY = rt + (ROW_H - lineH) / 2;
+      tft.drawString(w, xL, lastY, 2);
+    } else {
+      char l1[26];
+      snprintf(l1, sizeof(l1), "%.*s", p, w);
+      tft.drawString(l1, xL, rt + 1, 2);
+      lastY = rt + 1 + lineH;
+      tft.drawString(w + p, xL, lastY, 2);
+    }
+    if (sz[0]) {
+      tft.setTextDatum(TR_DATUM);
+      tft.setTextColor(s ? TFT_LIGHTGREY : TFT_DARKGREY, bg);
+      tft.drawString(sz, xR, lastY, 2);
+    }
+  }
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+}
+
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
 static void drawMenu() {
   drawListMenu("HOME", kMenuItems, MENU_N, g_menuSel);
@@ -1118,11 +1205,11 @@ static void drawScanSettings() {
 // while in Explore (live scan and Explore are mutually exclusive) — see exploreFree().
 static constexpr int MAX_LOG_ROWS = 512;  // 6 KB index; later rows are not indexed (truncated)
 static constexpr int MAX_SESS     = 48;
-static constexpr int PICK_VIS     = 5;    // picker rows on screen (ROW_STEP geometry)
+static constexpr int PICK_VIS     = FILE_LIST_VIS;  // picker rows on screen (ROW_STEP geometry)
 static constexpr int DET_MAX_LINES = 28;
 
 struct LogIdx { uint32_t offset; uint32_t epoch; int16_t rssi; uint8_t srcType; uint8_t tier; };  // 12 B
-struct SessEnt { char name[20]; uint32_t wr; };  // basename without ".csv"; FS write time
+struct SessEnt { char name[20]; uint32_t wr; uint32_t size; };  // basename w/o ".csv"; FS write time; bytes
 struct ExploreMem { LogIdx idx[MAX_LOG_ROWS]; SessEnt sess[MAX_SESS]; };
 static ExploreMem* g_ex = nullptr;
 static int   g_sessN = 0, g_pickSel = 0, g_pickOff = 0;
@@ -1253,6 +1340,7 @@ static void sessEnumerate() {
         memcpy(s.name, base, len - 4);
         s.name[len - 4] = 0;
         s.wr = (uint32_t)e.getLastWrite();
+        s.size = (uint32_t)e.size();
       }
     }
     e.close();
@@ -1265,12 +1353,12 @@ static void sessEnumerate() {
 }
 
 static void drawPickLog() {
-  const char* items[MAX_SESS + 1];
+  FileItem items[MAX_SESS + 1];
   int n = g_sessN + 1;  // sessions + Back
-  for (int i = 0; i < g_sessN; i++) items[i] = g_ex->sess[i].name;
-  items[g_sessN] = "Back";
+  for (int i = 0; i < g_sessN; i++) items[i] = { g_ex->sess[i].name, (int32_t)g_ex->sess[i].size };
+  items[g_sessN] = { "Back", -1 };
   g_pickOff = constrain(g_pickOff, 0, max(0, n - PICK_VIS));
-  drawListMenu("SESSIONS", items + g_pickOff, min(n - g_pickOff, PICK_VIS), g_pickSel - g_pickOff);
+  drawFileList("SESSIONS", items, n, g_pickSel, g_pickOff);
   if (n > PICK_VIS) drawScrollIcons(g_pickOff, n, PICK_VIS);
   tft.drawString("BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);  // short: clears the icons
 }
