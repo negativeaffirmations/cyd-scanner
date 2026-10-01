@@ -56,6 +56,8 @@
   .leaflet-popup-content { font-size:.8rem; }
   .leaflet-popup-content .plist { max-height:200px; overflow:auto; margin-top:.3em;
     font-family:ui-monospace,monospace; white-space:pre; }
+  input[type=text] { width:100%; font-size:.9rem; padding:.5em; border-radius:8px;
+           background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   /* Live-detections table with flexbox rows. The Device cell is flex:1 with
@@ -114,6 +116,31 @@
     <h3 style="margin:.6em 0 .2em">Scan Viewer</h3>
     <select id="expSel" disabled><option>— loading sessions… —</option></select>
     <div id="expMsg" class="sub"></div>
+    <div id="expCtl" class="maptools" style="display:block">
+      <select id="expSort" style="margin:0 0 .4em">
+        <option value="old">Sort: Oldest first</option>
+        <option value="new">Sort: Newest first</option>
+        <option value="typeNew">Sort: Type, newest</option>
+        <option value="typeOld">Sort: Type, oldest</option>
+        <option value="close">Sort: Closest</option>
+        <option value="far">Sort: Farthest</option>
+        <option value="az">Sort: Name A-Z</option>
+        <option value="za">Sort: Name Z-A</option>
+      </select>
+      <div class="maptools" style="margin:.2em 0">
+        <label><input type="checkbox" id="ef24" checked> 2.4</label>
+        <label><input type="checkbox" id="ef5" checked> 5G</label>
+        <label><input type="checkbox" id="efble" checked> BLE</label>
+        <label><input type="checkbox" id="efprb" checked> PRB</label>
+        <label><input type="checkbox" id="efThreats"> Threats only</label>
+      </div>
+      <label class="k" for="efDist">Max distance: <span id="efDistVal"></span></label>
+      <input type="range" id="efDist" min="-100" max="-30" step="1" value="-100">
+      <label class="k" for="efT0">Time: <span id="efTVal">–</span></label>
+      <input type="range" id="efT0" min="0" max="0" step="1" value="0" disabled>
+      <input type="range" id="efT1" min="0" max="0" step="1" value="0" disabled>
+      <input type="text" id="efText" placeholder="Name or MAC contains…" autocomplete="off" style="margin-top:.5em">
+    </div>
     <div id="scanViewer" class="dets" style="max-height:60vh"></div>
   </div>
   <button id="mapBtn" class="secondary">&#128506; Map</button>
@@ -211,7 +238,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30i</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-09-30j</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -645,9 +672,44 @@ function openExplore(){
   $("expMsg").textContent="Loading session list…";
   refreshSessions();
 }
+let expAll=[], expName="";             // raw parsed rows of the loaded session (never mutated)
+const TYPE_ORDER={"2.4":0,"5G":1,"BLE":2,"PRB":3};
 function loadedExplore(rows, name){
-  $("expMsg").textContent = name+": "+rows.length+" detection(s). Tap a row for details.";
-  renderDetList($("scanViewer"), rows, {mode:"viewer", empty:"No detections in this session.", onRowClick:openDetail});
+  expAll = rows.map((r,i)=>(r.idx=i, r)); expName = name;   // idx = file order (chronological)
+  // New session: reset only the time window to its own extent; other filters stay as the user set them.
+  const ep = rows.map(r=>r.epoch).filter(e=>e>0);
+  const t0=$("efT0"), t1=$("efT1");
+  const lo = ep.length ? Math.min(...ep) : 0, hi = ep.length ? Math.max(...ep) : 0;
+  [t0,t1].forEach(t=>{ t.min=lo; t.max=hi; t.disabled=!ep.length; });
+  t0.value=lo; t1.value=hi;
+  applyExplore();
+}
+function distLabel(v){
+  return (v<=-100 ? "All" : v<=-80 ? "Far" : v<=-60 ? "Mid" : "Near")+" (\u2265 "+v+" dBm)";
+}
+function applyExplore(){   // filter -> sort -> render (no re-download)
+  const on={"2.4":$("ef24").checked,"5G":$("ef5").checked,"BLE":$("efble").checked,"PRB":$("efprb").checked};
+  const thr=$("efThreats").checked, minR=+$("efDist").value;
+  const t0=+$("efT0").value, t1=+$("efT1").value;
+  const full = t0===+$("efT0").min && t1===+$("efT0").max;   // unsynced (epoch 0) rows pass only at full extent
+  const q=$("efText").value.trim().toLowerCase();
+  $("efDistVal").textContent=distLabel(minR);
+  $("efTVal").textContent = $("efT0").disabled ? "no synced timestamps" : fmtEpoch(t0).slice(11)+" \u2013 "+fmtEpoch(t1).slice(11);
+  let rows=expAll.filter(r=>
+    on[r.source]!==false && (!thr || tierNum(r.tier)>0) && r.rssi>=minR &&
+    (r.epoch>0 ? (r.epoch>=t0 && r.epoch<=t1) : full) &&
+    (!q || (r.name||"").toLowerCase().includes(q) || (r.mac||"").toLowerCase().includes(q)));
+  const ty=r=>TYPE_ORDER[r.source]??9, byIdx=(a,b)=>a.idx-b.idx;
+  const cmp={
+    old:byIdx, new:(a,b)=>b.idx-a.idx,
+    typeNew:(a,b)=>ty(a)-ty(b)||b.idx-a.idx, typeOld:(a,b)=>ty(a)-ty(b)||a.idx-b.idx,
+    close:(a,b)=>b.rssi-a.rssi||a.idx-b.idx, far:(a,b)=>a.rssi-b.rssi||a.idx-b.idx,
+    az:(a,b)=>(a.name||"").localeCompare(b.name||"")||a.idx-b.idx,
+    za:(a,b)=>(b.name||"").localeCompare(a.name||"")||a.idx-b.idx
+  }[$("expSort").value]||byIdx;
+  rows=rows.slice().sort(cmp);
+  $("expMsg").textContent = expName ? expName+": "+rows.length+" of "+expAll.length+" detections. Tap a row for details." : "";
+  renderDetList($("scanViewer"), rows, {mode:"viewer", empty:"No detections match.", onRowClick:openDetail});
 }
 
 // --- Detection detail modal (info + GPS mini-map) ---
@@ -710,6 +772,12 @@ $("scanBtn").onclick = toggleScan;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
 $("exploreBtn").onclick = openExplore;
 $("expSel").addEventListener("change", ()=>fetchSession("explore"));
+["expSort","ef24","ef5","efble","efprb","efThreats","efDist","efText"].forEach(id=>
+  $(id).addEventListener(id==="efText"?"input":"change", applyExplore));
+$("efDist").addEventListener("input", applyExplore);
+// Dual-handle time window: two ranges, clamped so start <= end.
+$("efT0").addEventListener("input", ()=>{ if(+$("efT0").value>+$("efT1").value) $("efT1").value=$("efT0").value; applyExplore(); });
+$("efT1").addEventListener("input", ()=>{ if(+$("efT1").value<+$("efT0").value) $("efT0").value=$("efT1").value; applyExplore(); });
 $("detClose").onclick = ()=> $("detDlg").close();
 $("detDlg").addEventListener("click", e=>{ if(e.target === $("detDlg")) $("detDlg").close(); });
 $("scanSetBtn").onclick = ()=> $("scanSetDlg").showModal();
