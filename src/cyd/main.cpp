@@ -234,9 +234,10 @@ static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
 static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
 
 // Scan-screen device list geometry + scrolling (rows are one MAC group each).
-static constexpr int LIST_Y0 = 84, LIST_ROW_H = 13;
+static constexpr int LIST_Y0 = 94, LIST_ROW_H = 13;
 // Follow alert banner (scan screen, just above the list); tappable when devices are flagged.
-static constexpr int BANNER_Y = 73, BANNER_H = 10;
+// Kept tall (and the list pushed down to match) so the alert is an easy finger target.
+static constexpr int BANNER_Y = 73, BANNER_H = 18;
 static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
 // Rows must keep their content left of this x so they never run under the scroll icons.
 static constexpr int ICON_GUTTER_X = 240 - SCROLL_CX_INSET - SCROLL_R - 2;
@@ -2407,9 +2408,10 @@ static void activateFollowAction(int sel) {
 }
 
 // ---- On-device whitelist manager (Scan Settings -> Whitelist) ----
-// SCR_WHITELIST lists the rules (row 0 = "+ Add seen device", last row = "< Back" so BOOT-only
-// users can exit); SCR_WLADD picks a seen device from a snapshot of g_groups and composes a
-// rule with whitelistLineForMac(); SCR_WLRULE is the per-rule action menu (Remove / Back).
+// SCR_WHITELIST lists the rules; the top bar carries "< BACK" and a "+ ADD" button (single
+// back, tall add target). SCR_WLADD picks a seen device from a snapshot of g_groups and
+// composes a rule with whitelistLineForMac() (top-bar "< BACK" exits). SCR_WLRULE is the
+// per-rule action menu (Remove / Back).
 // Add/remove mirror the phone's GATT handlers: whitelist op -> sendWhitelist -> pushStatus.
 static int g_wlSel = 0, g_wlOff = 0;        // whitelist list cursor/scroll
 static int g_wlRuleSel = 0;                 // rule index the action screen targets
@@ -2457,35 +2459,34 @@ static void drawWlTextRow(int y, const char* text, uint16_t color) {
 static void drawWhitelistRows(bool clear) {
   if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
-  int total = whitelist::count() + 2;  // + Add row, rules, Back row
-  g_wlOff = constrain(g_wlOff, 0, max(0, total - vis));
-  int rows = min(total - g_wlOff, vis);
+  int n = whitelist::count();  // body rows are the rules themselves (Add is the top-bar button)
+  g_wlOff = constrain(g_wlOff, 0, max(0, n - vis));
+  int rows = min(n - g_wlOff, vis);
   for (int r = 0; r < rows; r++) {
-    int i = g_wlOff + r;
+    int i = g_wlOff + r;  // rule index
     int y = LIST_Y0 + r * LIST_ROW_H;
-    if (i == 0) drawWlTextRow(y, "+ Add seen device", TFT_CYAN);
-    else if (i == total - 1) drawWlTextRow(y, "< Back", TFT_LIGHTGREY);
-    else {
-      char t[96];
-      wlRuleText(i - 1, t, sizeof(t));
-      drawWlTextRow(y, t, TFT_WHITE);
-    }
+    char t[96];
+    wlRuleText(i, t, sizeof(t));
+    drawWlTextRow(y, t, TFT_WHITE);
     if (i == g_wlSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
   }
-  drawScrollIcons(g_wlOff, total, vis);
+  if (n == 0) drawWlTextRow(LIST_Y0, "(no rules - use +ADD above)", TFT_DARKGREY);
+  drawScrollIcons(g_wlOff, n, vis);
 }
 
 static void drawWhitelist() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  // Two-segment top bar: "< BACK" and a tall "+ ADD" action button (reaches the add-picker).
+  drawTopBarSeg("< BACK", 0, 2, TFT_NAVY, TFT_CYAN);
+  drawTopBarSeg("+ ADD",  1, 2, TFT_DARKGREEN, TFT_WHITE);
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(b, sizeof(b), "WHITELIST: %d rules", whitelist::count());
   tft.drawString(b, 4, 46, 1);
   if (g_wlMsg) tft.setTextColor(g_wlMsgCol, TFT_BLACK); else tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(g_wlMsg ? g_wlMsg : "tap a rule to remove it", 4, 58, 1);
+  tft.drawString(g_wlMsg ? g_wlMsg : "+ADD (top) to add; tap a rule to remove", 4, 58, 1);
   drawWhitelistRows(false);
 }
 
@@ -2502,39 +2503,32 @@ static void wlBackToList() {
   drawWhitelist();
 }
 
-// Row activation on the list: Add / rule action / Back to Scan Settings.
+// A tapped/selected body row is a rule index -> open its Remove/Back action menu.
 static void wlActivateRow(int sel) {
-  if (sel == 0) { wlAddEnter(); return; }
-  if (sel == whitelist::count() + 1) {  // Back row -> Scan Settings (focus on Whitelist)
-    g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings();
-    return;
-  }
-  g_wlRuleSel = sel - 1;
+  if (sel < 0 || sel >= whitelist::count()) return;
+  g_wlRuleSel = sel;
   openWlRule();
 }
 
 static void drawWlAddRows(bool clear) {
   if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
-  int total = g_wlPickN + 1;  // devices + Back row
+  int total = g_wlPickN;  // devices only (top-bar "< BACK" exits)
   g_wlPickOff = constrain(g_wlPickOff, 0, max(0, total - vis));
   int rows = min(total - g_wlPickOff, vis);
   for (int r = 0; r < rows; r++) {
     int i = g_wlPickOff + r;
     int y = LIST_Y0 + r * LIST_ROW_H;
-    if (i == g_wlPickN) drawWlTextRow(y, "< Back", TFT_LIGHTGREY);
-    else {
-      const uint8_t* m = g_wlPickMac[i];
-      const DevGroup* g = groupByMac(m);
-      if (g) {
-        const Detection& d = g_dets[g->rep];
-        drawDetRow(y, tierColor(g->tier, d.source, d.channel), g->tag, groupName(g), g->bestRssi,
-                   "", g->tier != (int)sigdb::Tier::None, 9, false, g->whitelisted);
-      } else {
-        char mb[16];
-        snprintf(mb, sizeof(mb), "%02X:%02X:%02X:%02X", m[2], m[3], m[4], m[5]);
-        drawDetRow(y, TFT_DARKGREY, "?", mb, 0, "", false, 9, false, false);
-      }
+    const uint8_t* m = g_wlPickMac[i];
+    const DevGroup* g = groupByMac(m);
+    if (g) {
+      const Detection& d = g_dets[g->rep];
+      drawDetRow(y, tierColor(g->tier, d.source, d.channel), g->tag, groupName(g), g->bestRssi,
+                 "", g->tier != (int)sigdb::Tier::None, 9, false, g->whitelisted);
+    } else {
+      char mb[16];
+      snprintf(mb, sizeof(mb), "%02X:%02X:%02X:%02X", m[2], m[3], m[4], m[5]);
+      drawDetRow(y, TFT_DARKGREY, "?", mb, 0, "", false, 9, false, false);
     }
     if (i == g_wlPickSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
   }
@@ -2609,7 +2603,7 @@ static void activateWlRule(int sel) {
     sendWhitelist(); pushStatus();
     g_wlMsg = ok ? "Rule removed" : "Remove FAILED";
     g_wlMsgCol = ok ? TFT_GREEN : TFT_RED;
-    g_wlSel = constrain(g_wlSel, 0, whitelist::count() + 1);
+    g_wlSel = constrain(g_wlSel, 0, max(0, whitelist::count() - 1));
   } else {
     g_wlMsg = nullptr;
   }
@@ -2926,31 +2920,33 @@ void loop() {
     }
 
     case SCR_WHITELIST: {
-      int total = whitelist::count() + 2;  // + Add row, rules, Back row
-      if (topBarTapped()) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }
-      int t = listTouch(total, &g_wlOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWhitelistRows(true); });
+      int n = whitelist::count();                 // body rows are the rules
+      int seg = topBarSegTapped(2);
+      if (seg == 0) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }  // < BACK
+      if (seg == 1) { wlAddEnter(); return; }                                                        // + ADD
+      int t = listTouch(n, &g_wlOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWhitelistRows(true); });
       if (t >= 0) { g_wlSel = t; wlActivateRow(t); return; }
-      if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
-        g_wlSel = (g_wlSel + 1) % total;
+      if (n > 0 && ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
+        g_wlSel = (g_wlSel + 1) % n;
         if (g_wlSel < g_wlOff) g_wlOff = g_wlSel;
         if (g_wlSel >= g_wlOff + visibleRows()) g_wlOff = g_wlSel - visibleRows() + 1;
         drawWhitelistRows(true);
-      } else if (ev == BTN_LONG) { wlActivateRow(g_wlSel); }
+      } else if (n > 0 && ev == BTN_LONG) { wlActivateRow(g_wlSel); }
       delay(20);
       return;
     }
 
     case SCR_WLADD: {
-      int total = g_wlPickN + 1;  // devices + Back row
+      int total = g_wlPickN;  // devices only (top-bar "< BACK" exits)
       if (topBarTapped()) { wlBackToList(); return; }
       int t = listTouch(total, &g_wlPickOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWlAddRows(true); });
       if (t >= 0) { g_wlPickSel = t; wlAddSelected(t); return; }
-      if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
+      if (total > 0 && ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
         g_wlPickSel = (g_wlPickSel + 1) % total;
         if (g_wlPickSel < g_wlPickOff) g_wlPickOff = g_wlPickSel;
         if (g_wlPickSel >= g_wlPickOff + visibleRows()) g_wlPickOff = g_wlPickSel - visibleRows() + 1;
         drawWlAddRows(true);
-      } else if (ev == BTN_LONG) { wlAddSelected(g_wlPickSel); }
+      } else if (total > 0 && ev == BTN_LONG) { wlAddSelected(g_wlPickSel); }
       delay(20);
       return;
     }
