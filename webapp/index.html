@@ -189,7 +189,30 @@
     <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
   </details>
 
+  <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
   <button id="settingsBtn" class="secondary" disabled>Settings</button>
+
+  <dialog id="wlDlg">
+    <div class="modalhdr">
+      <strong>Whitelist &mdash; <span id="wlHdr">–</span> rule(s), <span id="wlMuted">–</span> muted now</strong>
+      <button id="wlClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub">Known devices are shown muted and excluded from threat counts.</div>
+    <div id="wlList" class="dets"><div class="sub" style="padding:6px">Loading…</div></div>
+    <button id="wlReloadBtn" class="secondary">Reload from SD</button>
+    <div style="margin-top:.6em"><strong>Add rule</strong></div>
+    <select id="wlKind" style="margin:.2em 0">
+      <option>mac</option><option>macpfx</option><option>nexact</option>
+      <option selected>ncontains</option><option>blecid</option><option>bleuuid</option>
+    </select>
+    <input type="text" id="wlPat" placeholder="pattern (e.g. AA:BB:CC:DD:EE:FF, name, 004C)" maxlength="40">
+    <select id="wlMask" style="margin:.2em 0">
+      <option value="A" selected>A &mdash; any source</option><option value="W">W &mdash; Wi-Fi</option>
+      <option value="B">B &mdash; BLE</option><option value="4">4 &mdash; 802.15.4</option>
+    </select>
+    <input type="text" id="wlLabel" placeholder="label (max 15 chars)" maxlength="15">
+    <button id="wlAddBtn">Add</button>
+  </dialog>
 
   <dialog id="settingsDlg">
     <div class="modalhdr">
@@ -246,7 +269,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-01d</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-01g</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -314,6 +337,7 @@ async function connect(){
     $("connectBtn").style.display = "none";
     ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
       .forEach(id=>$(id).disabled=false);
+    $("wlBtn").disabled=false;
     log("Connected.");
     await syncTime();
     startGps();
@@ -325,6 +349,7 @@ function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connecte
   ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
+  $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
   wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
   scanning=false; updateScanBtn();
@@ -361,10 +386,28 @@ async function sendGps(pos){
     await chars.gps.writeValue(enc.encode(s)); log("GPS sent "+s); }
   catch(e){ log("GPS send failed: "+e.message); }
 }
+// Continuous GPS for the device's "following me" detector: push a fix at most every ~5 s,
+// and only if we moved >= ~10 m (or 30 s passed as a keep-alive). Same GPS characteristic.
+let lastGps = { t:0, lat:0, lon:0 }, gpsBusy = false;
+function gpsMovedM(a,b,c,d){  // equirectangular distance, metres
+  const k=111320, dx=(d-b)*k*Math.cos(a*Math.PI/180), dy=(c-a)*k; return Math.hypot(dx,dy);
+}
+async function onGpsWatch(pos){
+  const now=Date.now(), la=pos.coords.latitude, lo=pos.coords.longitude;
+  if(gpsBusy || now-lastGps.t < 5000) return;
+  if(lastGps.t && now-lastGps.t < 30000 && gpsMovedM(lastGps.lat,lastGps.lon,la,lo) < 10) return;
+  gpsBusy=true; lastGps={t:now,lat:la,lon:lo};
+  try{ await sendGps(pos); } finally{ gpsBusy=false; }
+}
 function startGps(){
   if(!navigator.geolocation){ log("No geolocation on this device."); return; }
-  gpsWatch = navigator.geolocation.watchPosition(sendGps,
-    e=>log("GPS error: "+e.message), {enableHighAccuracy:true, maximumAge:5000});
+  if(gpsWatch!==null) return;
+  lastGps={t:0,lat:0,lon:0};
+  gpsWatch = navigator.geolocation.watchPosition(onGpsWatch, e=>{
+    log("GPS watch error: "+e.message+" - falling back to one-shot");
+    if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; }
+    gpsOnce();
+  }, {enableHighAccuracy:true, maximumAge:5000});
 }
 function gpsOnce(){
   if(!navigator.geolocation){ log("No geolocation."); return; }
@@ -391,6 +434,11 @@ function onLogData(ev){
       if (dl.expect===0){ populateSessions(""); dl.mode=null; }
       return;
     }
+    if (txt.startsWith("WL=")) {
+      dl.mode="wl"; dl.expect=parseInt(txt.slice(3),10)||0; dl.got=0; dl.chunks=[];
+      if (dl.expect===0){ populateWhitelist(""); dl.mode=null; }
+      return;
+    }
     return;                                  // ignore stray data
   }
   dl.chunks.push(new Uint8Array(v)); dl.got += v.length;
@@ -406,6 +454,8 @@ function onLogData(ev){
       }
     } else if (dl.mode==="list") {
       blob.text().then(populateSessions);
+    } else if (dl.mode==="wl") {
+      blob.text().then(populateWhitelist);
     }
     dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" };
   }
@@ -449,6 +499,49 @@ function populateSessions(text){
   log(rows.length+" session(s) found.");
   if(exploreWant){ exploreWant=false; fetchSession("explore"); }   // newest is first -> default pick
 }
+// --- Whitelist editor: "Y" lists (WL=<n> + lines), "A:<rule>" adds, "E:<i>" removes, "W" reloads ---
+async function wlCmd(c, msg){
+  try{ await chars.cmd.writeValue(enc.encode(c)); if(msg) log(msg); }
+  catch(e){ log("Whitelist command failed: "+e.message); }
+}
+function refreshWhitelist(){ dl={mode:null,expect:0,got:0,chunks:[],name:"",sink:"save"}; return wlCmd("Y"); }
+function populateWhitelist(text){
+  const rows=(text||"").split("\n").filter(l=>l.trim());
+  $("wlHdr").textContent=rows.length;
+  const box=$("wlList"); box.innerHTML="";
+  if(!rows.length){ box.innerHTML='<div class="sub" style="padding:6px">No rules.</div>'; return; }
+  rows.forEach((r,i)=>{
+    const f=r.split(","), kind=f[0], pat=f[1], mask=f[2], label=f.slice(3).join(",");
+    const d=document.createElement("div"); d.className="det";
+    d.innerHTML='<span style="flex:1;min-width:0;overflow-wrap:anywhere"><b>'+esc(kind)+'</b> '+esc(pat)+
+      ' <span class="sub">['+esc(mask)+'] '+esc(label)+'</span></span>';
+    const b=document.createElement("button"); b.className="danger"; b.textContent="Remove";
+    b.style.cssText="width:auto;padding:.3em .7em;margin:0 0 0 .5em";
+    b.onclick=async()=>{ await wlCmd("E:"+i, "Removing rule "+(i+1)+"…"); setTimeout(refreshWhitelist,300); };
+    d.appendChild(b); box.appendChild(d);
+  });
+}
+async function addWhitelistRule(){
+  const kind=$("wlKind").value, pat=$("wlPat").value.trim(), mask=$("wlMask").value;
+  const label=$("wlLabel").value.trim().replace(/[\x00-\x1f]/g," ");
+  if(!pat || /[,\x00-\x1f]/.test(pat)){ log("Whitelist: pattern is required and can't contain commas."); return; }
+  if(/^(mac|macpfx)$/.test(kind) && !/^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){2,5}$/.test(pat)){
+    log("Whitelist: MAC must look like AA:BB:CC:DD:EE:FF (OUI prefix: 3-5 bytes)."); return; }
+  if(kind==="mac" && pat.split(":").length!==6){ log("Whitelist: 'mac' needs all 6 bytes (use macpfx for a prefix)."); return; }
+  if(kind==="blecid" && !/^[0-9a-fA-F]{1,4}$/.test(pat)){ log("Whitelist: company ID is up to 4 hex digits."); return; }
+  const line=[kind,pat,mask,label].join(",");
+  await wlCmd("A:"+line, "Adding rule: "+line);
+  $("wlPat").value=""; $("wlLabel").value="";
+  setTimeout(refreshWhitelist,300);
+}
+function wlKindChanged(){   // name rules match only the first 23 chars on the device
+  const nm=/^n(exact|contains)$/.test($("wlKind").value);
+  $("wlPat").maxLength = nm ? 23 : 40;
+  if(nm && $("wlPat").value.length>23) $("wlPat").value=$("wlPat").value.slice(0,23);
+}
+$("wlKind").addEventListener("change", wlKindChanged);
+wlKindChanged();
+function openWhitelist(){ $("wlDlg").showModal(); refreshWhitelist(); }
 async function fetchSession(sink){
   const path=$(sink==="explore"?"expSel":"sessSel").value;
   if(!path || path.startsWith("—")) return;
@@ -798,6 +891,8 @@ function onStatus(ev){
   if("conf"in kv){ $("conf").textContent = kv.conf;
     $("conf").style.color = (+kv.conf>0) ? "#f85149" : ""; }
   if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
+  if("wl"  in kv){ $("wlCnt").textContent = kv.wl; $("wlHdr").textContent = kv.wl; }
+  if("muted"in kv) $("wlMuted").textContent = kv.muted;
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
@@ -834,6 +929,11 @@ $("sessDelBtn").onclick = deleteSession;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
 $("settingsBtn").onclick = ()=> $("settingsDlg").showModal();
+$("wlBtn").onclick = openWhitelist;
+$("wlClose").onclick = ()=> $("wlDlg").close();
+$("wlDlg").addEventListener("click", e=>{ if(e.target === $("wlDlg")) $("wlDlg").close(); });
+$("wlReloadBtn").onclick = async()=>{ await wlCmd("W","Reloading whitelist…"); setTimeout(refreshWhitelist,300); };
+$("wlAddBtn").onclick = addWhitelistRule;
 $("settingsClose").onclick = ()=> $("settingsDlg").close();
 $("settingsDlg").addEventListener("click", e=>{ if(e.target === $("settingsDlg")) $("settingsDlg").close(); });
 $("mapBtn").onclick = openMap;
