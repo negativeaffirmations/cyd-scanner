@@ -1929,6 +1929,40 @@ static void applyView() {
   }
 }
 static void viewResetFilter() { g_fType = 0x1F; g_fThreat = false; g_fDist = 0; g_sortMode = 0; }
+
+// ---- Body action buttons: tall buttons in the band just above the list (LIST_Y0) ----
+// App screens put their primary actions here instead of in the top bar (full-width "< BACK").
+// One button (whitelist +ADD) or several side by side (viewer Filter/Sort), split into n equal
+// slots across [6 .. width-6]. The hit-test shares listTouch's arm state so the tap that
+// opened the screen can't leak in; one call per loop iteration (like topBarSegTapped).
+static constexpr int BODY_BTN_Y = 64, BODY_BTN_H = 26;
+static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool sel) {
+  int W = tft.width(), span = W - 12, pad = (n > 1) ? 3 : 0;
+  int x = 6 + span * i / n + (i > 0 ? pad : 0);
+  int w = (6 + span * (i + 1) / n) - x - (i < n - 1 ? pad : 0);
+  tft.fillRoundRect(x, BODY_BTN_Y, w, BODY_BTN_H, 6, fill);
+  tft.drawRoundRect(x, BODY_BTN_Y, w, BODY_BTN_H, 6, sel ? TFT_CYAN : fill);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, fill);
+  tft.drawString(label, x + w / 2, BODY_BTN_Y + BODY_BTN_H / 2, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+// Freshly-tapped slot (0..n-1) in the n-button body band, else -1.
+static int bodyButtonTapped(int n) {
+  static bool prev = false;
+  if (!g_touchOk || !g_ltArmed) { prev = false; return -1; }
+  bool now = g_touch.touched();
+  int hit = -1;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z) && sy >= BODY_BTN_Y && sy <= BODY_BTN_Y + BODY_BTN_H &&
+        sx >= 6 && sx <= tft.width() - 6)
+      hit = min(n - 1, (sx - 6) * n / (tft.width() - 12));
+  }
+  prev = now;
+  return hit;
+}
+
 static void drawViewerList(bool clear) {
   if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
@@ -1955,17 +1989,17 @@ static void drawViewerList(bool clear) {
 static void drawViewer() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBarSeg("< Back", 0, 3, TFT_NAVY, TFT_CYAN);
-  drawTopBarSeg("Filter", 1, 3, TFT_NAVY, TFT_CYAN);
-  drawTopBarSeg("Sort",   2, 3, TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);  // full-width back (app convention)
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString(g_viewName, 4, 46, 1);
+  tft.drawString(g_viewName, 4, 44, 1);
   char b[48];
   snprintf(b, sizeof(b), g_idxTrunc ? "showing %d of %d (first %d)" : "showing %d of %d",
            g_viewN, g_idxN, MAX_LOG_ROWS);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(b, 4, 58, 1);
+  tft.drawString(b, 4, 54, 1);
+  drawBodyButtonN(0, 2, "Filter", TFT_NAVY, false);   // two body actions, right above the list
+  drawBodyButtonN(1, 2, "Sort",   TFT_NAVY, false);
   drawViewerList(false);
 }
 
@@ -2456,38 +2490,10 @@ static void drawWlTextRow(int y, const char* text, uint16_t color) {
   tft.drawString(t, 4, y, 1);
 }
 
-// Tall in-body "+ ADD" button, sitting right above the rule list. `sel` = BOOT-nav highlight.
-// BOOT cursor model: g_wlSel 0 = this button, 1..count = rules.
-static constexpr int WL_ADD_BTN_Y = 64, WL_ADD_BTN_H = 26;  // just above LIST_Y0 (94)
-static void drawWlAddButton(bool sel) {
-  int W = tft.width();
-  tft.fillRoundRect(6, WL_ADD_BTN_Y, W - 12, WL_ADD_BTN_H, 6, TFT_DARKGREEN);
-  tft.drawRoundRect(6, WL_ADD_BTN_Y, W - 12, WL_ADD_BTN_H, 6, sel ? TFT_CYAN : TFT_DARKGREEN);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
-  tft.drawString("+ ADD seen device", W / 2, WL_ADD_BTN_Y + WL_ADD_BTN_H / 2, 2);
-  tft.setTextDatum(TL_DATUM);
-}
-
-// Fresh tap inside the ADD button. Shares listTouch's arm state so the tap that opened
-// the screen can't leak into it.
-static bool wlAddButtonTapped() {
-  static bool prev = false;
-  if (!g_touchOk || !g_ltArmed) { prev = false; return false; }
-  bool now = g_touch.touched();
-  bool hit = false;
-  if (now && !prev) {
-    int16_t sx, sy, z;
-    if (g_touch.getScreen(tft, sx, sy, z) && sx >= 6 && sx <= tft.width() - 6 &&
-        sy >= WL_ADD_BTN_Y && sy <= WL_ADD_BTN_Y + WL_ADD_BTN_H) hit = true;
-  }
-  prev = now;
-  return hit;
-}
-
+// The whitelist "+ ADD" uses the shared single body button (g_wlSel 0 = ADD, 1..count = rules).
 static void drawWhitelistRows(bool clear) {
-  if (clear) tft.fillRect(0, WL_ADD_BTN_Y, tft.width(), tft.height() - WL_ADD_BTN_Y, TFT_BLACK);
-  drawWlAddButton(g_wlSel == 0);
+  if (clear) tft.fillRect(0, BODY_BTN_Y, tft.width(), tft.height() - BODY_BTN_Y, TFT_BLACK);
+  drawBodyButtonN(0, 1, "+ ADD seen device", TFT_DARKGREEN, g_wlSel == 0);
   int vis = visibleRows();
   int n = whitelist::count();  // body list rows are the rules; g_wlSel 1..n map to them
   g_wlOff = constrain(g_wlOff, 0, max(0, n - vis));
@@ -2870,10 +2876,10 @@ void loop() {
     }
 
     case SCR_SCANVIEWER: {
-      int seg = topBarSegTapped(3);  // always called so its edge state stays current
-      if (seg == 0 || ev == BTN_LONG) { viewerBack(); return; }
-      if (seg == 1) { viewerOpenFilter(); return; }
-      if (seg == 2) { viewerOpenSort();   return; }
+      if (topBarTapped() || ev == BTN_LONG) { viewerBack(); return; }  // full-width back
+      int bb = bodyButtonTapped(2);               // in-body Filter / Sort buttons
+      if (bb == 0) { viewerOpenFilter(); return; }
+      if (bb == 1) { viewerOpenSort();   return; }
       int t = listTouch(g_viewN, &g_viewOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
                         []() { drawViewerList(true); });
       if (t >= 0) { openDetail(t); return; }
@@ -2951,7 +2957,7 @@ void loop() {
       int n = whitelist::count();           // body rows are the rules; g_wlSel 0 = ADD button
       int total = n + 1;                     // ADD + rules (BOOT cursor span)
       if (topBarTapped()) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }  // < BACK
-      if (wlAddButtonTapped()) { wlAddEnter(); return; }                                                   // + ADD
+      if (bodyButtonTapped(1) == 0) { wlAddEnter(); return; }                                              // + ADD
       int t = listTouch(n, &g_wlOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWhitelistRows(true); });
       if (t >= 0) { g_wlSel = t + 1; wlActivateRow(t); return; }  // tapped rule index -> cursor 1..n
       if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (ADD=0, rules=1..n; wraps)
