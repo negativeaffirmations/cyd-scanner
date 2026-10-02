@@ -443,6 +443,9 @@ struct DevGroup {
   bool     whitelisted;  // matches a /whitelist.csv rule (muted; excluded from threat counts)
   char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
   char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
+  uint8_t  srcMask;   // union of srcType bits (2.4/5G/BLE/PRB/154) across members; computed at
+                      // build time so the live-view/snapshot filter never depends on the transient
+                      // g_dets table (which requestScan() zeroes, and an aborted scan leaves empty)
 };
 static int      g_sortIdx[MAX_DET];   // detections sorted tier-first then RSSI (see buildGroups)
 static DevGroup g_groups[MAX_DET];
@@ -468,6 +471,8 @@ static int      g_scanRowSel = 0, g_sfSel = 0, g_sfOff = 0, g_confirmSel = 0;
 static uint32_t g_lastCycleMs = 0;
 static const char* g_scanMsg = nullptr; static uint16_t g_scanMsgCol = TFT_GREEN;  // state-line feedback
 
+static uint8_t srcTypeOf(const char* tag);  // fwd decl (defined below with the view helpers)
+
 static int buildGroups() {
   buildSorted(g_sortIdx);
   int n = 0;
@@ -482,13 +487,14 @@ static int buildGroups() {
       DevGroup& g = g_groups[gi];
       memcpy(g.mac, d.mac, 6);
       g.tier = (int)g_score[i].tier; g.bestRssi = d.rssi; g.rep = i;
-      g.nameIdx = -1; g.ie = 0; g.whitelisted = false;
+      g.nameIdx = -1; g.ie = 0; g.whitelisted = false; g.srcMask = 0;
     }
     DevGroup& g = g_groups[gi];
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
     if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
     if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
+    g.srcMask |= (uint8_t)(1u << srcTypeOf(srcTag(d)));
   }
   // Whitelist check per device (before the sort, which uses it): union of member sources,
   // first company ID / service UUID.
@@ -1912,14 +1918,6 @@ static uint8_t linkSourceOf(uint8_t st) {  // -> link_protocol::Source for tierC
 }
 
 // ---- Scanner view (SCR_SCAN): filtered index list over the live groups or the frozen snapshot ----
-// srcType bitmask (bit per srcTypeOf value: 2.4, 5G, BLE, PRB, 154) of every live detection of a MAC.
-static uint8_t groupSrcMask(const uint8_t* mac) {
-  uint8_t m = 0;
-  for (int i = 0; i < g_detCount; i++)
-    if (memcmp(g_dets[i].mac, mac, 6) == 0) m |= (uint8_t)(1u << srcTypeOf(srcTag(g_dets[i])));
-  return m;
-}
-
 // Rebuild g_scanView from the live g_groups (or g_frozenRows while paused) through the live
 // source/threat filter (g_lvType / g_lvThreat). Whitelisted devices never satisfy "Threats".
 static void buildScanView() {
@@ -1933,7 +1931,7 @@ static void buildScanView() {
   } else {
     for (int k = 0; k < g_groupCount && g_scanViewN < MAX_DET; k++) {
       const DevGroup& g = g_groups[k];
-      if ((g_lvType & groupSrcMask(g.mac)) && (!g_lvThreat || (g.tier && !g.whitelisted)))
+      if ((g_lvType & g.srcMask) && (!g_lvThreat || (g.tier && !g.whitelisted)))
         g_scanView[g_scanViewN++] = (uint8_t)k;
     }
   }
@@ -2597,7 +2595,7 @@ static void snapshotFrozen() {
     s.whitelisted = g.whitelisted;
     s.source = g_dets[g.rep].source;
     s.channel = g_dets[g.rep].channel;
-    s.srcMask = groupSrcMask(g.mac);
+    s.srcMask = g.srcMask;
   }
   g_frozenCount = n;
 }
