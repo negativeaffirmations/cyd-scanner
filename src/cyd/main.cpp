@@ -2408,10 +2408,10 @@ static void activateFollowAction(int sel) {
 }
 
 // ---- On-device whitelist manager (Scan Settings -> Whitelist) ----
-// SCR_WHITELIST lists the rules; the top bar carries "< BACK" and a "+ ADD" button (single
-// back, tall add target). SCR_WLADD picks a seen device from a snapshot of g_groups and
-// composes a rule with whitelistLineForMac() (top-bar "< BACK" exits). SCR_WLRULE is the
-// per-rule action menu (Remove / Back).
+// SCR_WHITELIST: full-width "< BACK" top bar, a tall in-body "+ ADD" button right above the
+// rule list, then the rules. BOOT cursor: g_wlSel 0 = ADD, 1..count = rules. SCR_WLADD picks
+// a seen device from a snapshot of g_groups and composes a rule with whitelistLineForMac()
+// (full-width "< BACK" exits). SCR_WLRULE is the per-rule action menu (Remove / Back).
 // Add/remove mirror the phone's GATT handlers: whitelist op -> sendWhitelist -> pushStatus.
 static int g_wlSel = 0, g_wlOff = 0;        // whitelist list cursor/scroll
 static int g_wlRuleSel = 0;                 // rule index the action screen targets
@@ -2456,10 +2456,40 @@ static void drawWlTextRow(int y, const char* text, uint16_t color) {
   tft.drawString(t, 4, y, 1);
 }
 
+// Tall in-body "+ ADD" button, sitting right above the rule list. `sel` = BOOT-nav highlight.
+// BOOT cursor model: g_wlSel 0 = this button, 1..count = rules.
+static constexpr int WL_ADD_BTN_Y = 64, WL_ADD_BTN_H = 26;  // just above LIST_Y0 (94)
+static void drawWlAddButton(bool sel) {
+  int W = tft.width();
+  tft.fillRoundRect(6, WL_ADD_BTN_Y, W - 12, WL_ADD_BTN_H, 6, TFT_DARKGREEN);
+  tft.drawRoundRect(6, WL_ADD_BTN_Y, W - 12, WL_ADD_BTN_H, 6, sel ? TFT_CYAN : TFT_DARKGREEN);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+  tft.drawString("+ ADD seen device", W / 2, WL_ADD_BTN_Y + WL_ADD_BTN_H / 2, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// Fresh tap inside the ADD button. Shares listTouch's arm state so the tap that opened
+// the screen can't leak into it.
+static bool wlAddButtonTapped() {
+  static bool prev = false;
+  if (!g_touchOk || !g_ltArmed) { prev = false; return false; }
+  bool now = g_touch.touched();
+  bool hit = false;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z) && sx >= 6 && sx <= tft.width() - 6 &&
+        sy >= WL_ADD_BTN_Y && sy <= WL_ADD_BTN_Y + WL_ADD_BTN_H) hit = true;
+  }
+  prev = now;
+  return hit;
+}
+
 static void drawWhitelistRows(bool clear) {
-  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  if (clear) tft.fillRect(0, WL_ADD_BTN_Y, tft.width(), tft.height() - WL_ADD_BTN_Y, TFT_BLACK);
+  drawWlAddButton(g_wlSel == 0);
   int vis = visibleRows();
-  int n = whitelist::count();  // body rows are the rules themselves (Add is the top-bar button)
+  int n = whitelist::count();  // body list rows are the rules; g_wlSel 1..n map to them
   g_wlOff = constrain(g_wlOff, 0, max(0, n - vis));
   int rows = min(n - g_wlOff, vis);
   for (int r = 0; r < rows; r++) {
@@ -2468,25 +2498,23 @@ static void drawWhitelistRows(bool clear) {
     char t[96];
     wlRuleText(i, t, sizeof(t));
     drawWlTextRow(y, t, TFT_WHITE);
-    if (i == g_wlSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
+    if (g_wlSel == i + 1) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
   }
-  if (n == 0) drawWlTextRow(LIST_Y0, "(no rules - use +ADD above)", TFT_DARKGREY);
+  if (n == 0) drawWlTextRow(LIST_Y0, "(no rules yet)", TFT_DARKGREY);
   drawScrollIcons(g_wlOff, n, vis);
 }
 
 static void drawWhitelist() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  // Two-segment top bar: "< BACK" and a tall "+ ADD" action button (reaches the add-picker).
-  drawTopBarSeg("< BACK", 0, 2, TFT_NAVY, TFT_CYAN);
-  drawTopBarSeg("+ ADD",  1, 2, TFT_DARKGREEN, TFT_WHITE);
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);  // full-width back (app convention)
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(b, sizeof(b), "WHITELIST: %d rules", whitelist::count());
-  tft.drawString(b, 4, 46, 1);
+  tft.drawString(b, 4, 44, 1);
   if (g_wlMsg) tft.setTextColor(g_wlMsgCol, TFT_BLACK); else tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString(g_wlMsg ? g_wlMsg : "+ADD (top) to add; tap a rule to remove", 4, 58, 1);
+  tft.drawString(g_wlMsg ? g_wlMsg : "tap a rule to remove it", 4, 54, 1);
   drawWhitelistRows(false);
 }
 
@@ -2603,7 +2631,7 @@ static void activateWlRule(int sel) {
     sendWhitelist(); pushStatus();
     g_wlMsg = ok ? "Rule removed" : "Remove FAILED";
     g_wlMsgCol = ok ? TFT_GREEN : TFT_RED;
-    g_wlSel = constrain(g_wlSel, 0, max(0, whitelist::count() - 1));
+    g_wlSel = constrain(g_wlSel, 0, whitelist::count());  // 0 = ADD button, 1..count = rules
   } else {
     g_wlMsg = nullptr;
   }
@@ -2920,18 +2948,24 @@ void loop() {
     }
 
     case SCR_WHITELIST: {
-      int n = whitelist::count();                 // body rows are the rules
-      int seg = topBarSegTapped(2);
-      if (seg == 0) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }  // < BACK
-      if (seg == 1) { wlAddEnter(); return; }                                                        // + ADD
+      int n = whitelist::count();           // body rows are the rules; g_wlSel 0 = ADD button
+      int total = n + 1;                     // ADD + rules (BOOT cursor span)
+      if (topBarTapped()) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }  // < BACK
+      if (wlAddButtonTapped()) { wlAddEnter(); return; }                                                   // + ADD
       int t = listTouch(n, &g_wlOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWhitelistRows(true); });
-      if (t >= 0) { g_wlSel = t; wlActivateRow(t); return; }
-      if (n > 0 && ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
-        g_wlSel = (g_wlSel + 1) % n;
-        if (g_wlSel < g_wlOff) g_wlOff = g_wlSel;
-        if (g_wlSel >= g_wlOff + visibleRows()) g_wlOff = g_wlSel - visibleRows() + 1;
+      if (t >= 0) { g_wlSel = t + 1; wlActivateRow(t); return; }  // tapped rule index -> cursor 1..n
+      if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (ADD=0, rules=1..n; wraps)
+        g_wlSel = (g_wlSel + 1) % total;
+        int rule = g_wlSel - 1;  // <0 while on the ADD button
+        if (rule >= 0) {
+          if (rule < g_wlOff) g_wlOff = rule;
+          if (rule >= g_wlOff + visibleRows()) g_wlOff = rule - visibleRows() + 1;
+        }
         drawWhitelistRows(true);
-      } else if (n > 0 && ev == BTN_LONG) { wlActivateRow(g_wlSel); }
+      } else if (ev == BTN_LONG) {
+        if (g_wlSel == 0) wlAddEnter();
+        else              wlActivateRow(g_wlSel - 1);
+      }
       delay(20);
       return;
     }
