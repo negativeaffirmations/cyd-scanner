@@ -235,10 +235,13 @@ static constexpr int ROW_Y0 = 80, ROW_STEP = 40, ROW_H = 34;
 static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
 
 // Scan-screen device list geometry + scrolling (rows are one MAC group each).
-static constexpr int LIST_Y0 = 94, LIST_ROW_H = 13;
-// Scan-screen state band (y52..63, just above the body-button band at y64): shows the scan state,
-// or the tappable follow alert when devices are flagged.
-static constexpr int BANNER_Y = 52, BANNER_H = 11;
+static constexpr int LIST_Y0 = 106, LIST_ROW_H = 13;
+// Scan-screen state band (y64..75, just above the body-button band at y76): shows the scan state
+// + tier counts, or the tappable follow alert when devices are flagged.
+static constexpr int BANNER_Y = 64, BANNER_H = 11;
+// Body action buttons (tall, in the band just above the list); declared early so requestScan()'s
+// input peek can use the control-region bounds.
+static constexpr int BODY_BTN_Y = 76, BODY_BTN_H = 26;
 static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
 // Rows must keep their content left of this x so they never run under the scroll icons.
 static constexpr int ICON_GUTTER_X = 240 - SCROLL_CX_INSET - SCROLL_R - 2;
@@ -1069,7 +1072,19 @@ static bool isSelfDet(const Detection& d) {
          memcmp(d.mac, g_ownMac, 6) == 0;
 }
 
-static void requestScan(uint32_t timeoutMs = 5000) {
+// Raw peek at the scan-screen control region (BOOT or a touch on top bar / banner / body buttons).
+// Deliberately does NOT call the edge-detecting tap helpers (they hold statics) so their edge
+// state is untouched; the real tap is handled on the next loop iteration.
+static bool scanInputPending() {
+  if (digitalRead(0) == LOW) return true;                 // BOOT pressed/held
+  if (!g_touchOk || !g_touch.touched()) return false;
+  int16_t sx, sy, z; if (!g_touch.getScreen(tft, sx, sy, z)) return false;
+  return sy >= STOP_Y && sy <= BODY_BTN_Y + BODY_BTN_H;   // top bar + banner + body buttons (not the list)
+}
+
+// Returns true if aborted by user input (abort only stops reading; leftover burst bytes are
+// drained by the next call's preamble, so the synchronous link protocol stays safe).
+static bool requestScan(uint32_t timeoutMs = 2000) {
   g_detCount = 0;
   bool sawStart = false, done = false;
   uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
@@ -1080,8 +1095,14 @@ static void requestScan(uint32_t timeoutMs = 5000) {
   cfg.dwell_ms = 0;
   sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
   uint32_t t0 = millis();
+  uint32_t lastByte = millis();
   while (!done && millis() - t0 < timeoutMs) {
+    // User input: abort the read WITHOUT touching g_linkOk (an abort is not a link failure) so
+    // the caller can bail before the downstream pipeline runs on the zeroed table.
+    if (scanInputPending()) return true;
+    bool got = false;
     while (LinkSerial.available()) {
+      got = true; lastByte = millis();
       if (!parser.feed(LinkSerial.read())) continue;
       uint8_t t = parser.type();
       if (t == (uint8_t)Reply::Detection && parser.length() >= sizeof(Detection)) {
@@ -1098,8 +1119,12 @@ static void requestScan(uint32_t timeoutMs = 5000) {
         else                   done     = true;
       }
     }
+    // Idle-gap backstop: burst started but the closing Status was lost -> don't wait the full timeout.
+    if ((sawStart || g_detCount > 0) && millis() - lastByte > 250) done = true;
+    if (!got) delay(1);  // yield instead of a tight spin
   }
   g_linkOk = done || sawStart || g_detCount > 0;
+  return false;
 }
 
 // Current session basename: g_logPath without the "/logs/" dir and ".jsonl" extension.
@@ -1385,34 +1410,41 @@ static void drawTopBar(const char* label, uint16_t fill, uint16_t edge) {
 
 static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool sel);  // fwd decl
 
-static void render() {
+// Body buttons (y76..101): START/STOP the scan · PAUSE/RESUME the list view · list FILTER · NEW session.
+static void drawScanButtons() {
+  drawBodyButtonN(0, 4, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
+  drawBodyButtonN(1, 4, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : TFT_NAVY, false);
+  drawBodyButtonN(2, 4, "FILTER", TFT_NAVY, g_lvType != 0x1F || g_lvThreat);
+  drawBodyButtonN(3, 4, "NEW SES", TFT_NAVY, false);
+}
+
+// Info band (y44..BANNER_Y+BANNER_H): session + unique, per-band counts, scan state + tier counts.
+// Clears only its own band so it can be refreshed every cycle without a full-screen repaint.
+static void drawScanInfo() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  tft.fillScreen(TFT_BLACK);
-  drawStatusBar();
-
-  // Full-width back button across the top: tap to leave the scanner (asks first while a scan
-  // is running; a long BOOT hold does the same).
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.fillRect(0, 44, tft.width(), (BANNER_Y + BANNER_H) - 44, TFT_BLACK);
 
   tft.setTextDatum(TL_DATUM);
   char buf[48];
-  // Line 1 (y44): active session name (left) + a threat/unique summary (right).
+  // Line 1 (y44): active session name (left) + unique-device count (right).
   char sb[32]; sessBase(sb, sizeof(sb));
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(buf, sizeof(buf), "Sess: %s", sb);
   tft.drawString(buf, 4, 44, 1);
-  int threats = susp + lk + conf;
-  uint16_t rcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
-  if (threats > 0) snprintf(buf, sizeof(buf), "!%d  U:%d", threats, g_seenCount);
-  else             snprintf(buf, sizeof(buf), "U:%d", g_seenCount);
+  snprintf(buf, sizeof(buf), "U:%d", g_seenCount);
   tft.setTextDatum(TR_DATUM);
-  tft.setTextColor(threats > 0 ? rcol : TFT_DARKGREY, TFT_BLACK);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(buf, tft.width() - 4, 44, 1);
   tft.setTextDatum(TL_DATUM);
 
-  // State band (y52..63, BANNER_Y/H): a tappable magenta follow alert when devices are flagged
-  // (opens the drill-down), else one-shot feedback, else the scan state + per-band counts. The
+  // Line 2 (y54): per-band counts.
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d Z:%d", n24, n5, nble, nprb, n154);
+  tft.drawString(buf, 4, 54, 1);
+
+  // State band (y64..75, BANNER_Y/H): a tappable magenta follow alert when devices are flagged
+  // (opens the drill-down), else one-shot feedback, else the scan state + tier counts. The
   // scan/pause state is also shown by the buttons. Plain '!' (the TFT font has no warning glyph).
   if (g_followN > 0) {
     tft.fillRect(0, BANNER_Y, tft.width(), BANNER_H, TFT_MAGENTA);
@@ -1429,17 +1461,39 @@ static void render() {
   } else {
     const char* st = g_viewFrozen ? "VIEW PAUSED" : g_scanActive ? "SCANNING" : "STOPPED";
     uint16_t scol = g_viewFrozen ? TFT_CYAN : g_scanActive ? TFT_WHITE : TFT_DARKGREY;
+    int x = 4;
     tft.setTextColor(scol, TFT_BLACK);
-    snprintf(buf, sizeof(buf), "%s  2.4:%d 5G:%d BLE:%d PRB:%d Z:%d", st, n24, n5, nble, nprb, n154);
-    tft.drawString(buf, 4, BANNER_Y + 1, 1);
+    tft.drawString(st, x, BANNER_Y + 1, 1);
+    x += 6 * (int)strlen(st) + 6;  // font 1 is fixed-width (6 px/char)
+    const int     tc[3] = { susp, lk, conf };
+    const char    tp[3] = { 'S', 'L', 'C' };
+    const uint16_t tcol[3] = { TFT_YELLOW, TFT_ORANGE, TFT_RED };
+    for (int i = 0; i < 3; i++) {
+      snprintf(buf, sizeof(buf), "%c:%d", tp[i], tc[i]);
+      tft.setTextColor(tc[i] > 0 ? tcol[i] : TFT_DARKGREY, TFT_BLACK);
+      tft.drawString(buf, x, BANNER_Y + 1, 1);
+      x += 6 * (int)strlen(buf) + 4;
+    }
   }
+}
 
-  // Body buttons (y64..90): START/STOP the scan · PAUSE/RESUME the list view · list FILTER · NEW session.
-  drawBodyButtonN(0, 4, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
-  drawBodyButtonN(1, 4, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : TFT_NAVY, false);
-  drawBodyButtonN(2, 4, "FILTER", TFT_NAVY, g_lvType != 0x1F || g_lvThreat);
-  drawBodyButtonN(3, 4, "NEW SES", TFT_NAVY, false);
+// Per-cycle refresh: no fillScreen, no top-bar/button repaint.
+static void updateScan() {
+  drawStatusBar();
+  drawScanInfo();
+  drawScanList(true);
+}
 
+// Full redraw for screen entry / state changes.
+static void render() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+
+  // Full-width back button across the top: tap to leave the scanner (asks first while a scan
+  // is running; a long BOOT hold does the same).
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawScanButtons();
+  drawScanInfo();
   drawScanList(false);
 }
 
@@ -2012,7 +2066,7 @@ static void viewResetFilter() { g_fType = 0x1F; g_fThreat = false; g_fDist = 0; 
 // One button (whitelist +ADD) or several side by side (viewer Filter/Sort), split into n equal
 // slots across [6 .. width-6]. The hit-test shares listTouch's arm state so the tap that
 // opened the screen can't leak in; one call per loop iteration (like topBarSegTapped).
-static constexpr int BODY_BTN_Y = 64, BODY_BTN_H = 26;
+// (BODY_BTN_Y / BODY_BTN_H are declared up with the other layout constants.)
 static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool sel) {
   int W = tft.width(), span = W - 12, pad = (n > 1) ? 3 : 0;
   int x = 6 + span * i / n + (i > 0 ? pad : 0);
@@ -2961,7 +3015,7 @@ static void activateSettings(int sel) {
 
 // One scan → score → log → render cycle, also mirrored to the phone app.
 static void runScanCycle() {
-  requestScan();
+  if (requestScan()) return;  // aborted by user input: skip the pipeline, keep the current table/view
   computeScores();
   buildGroups();  // once per cycle; shared by render() and pushDetections()
   updateFollowState();
@@ -2976,7 +3030,7 @@ static void runScanCycle() {
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
                 g_detCount, n24, n5, nble, nprb, n154, newCount, g_seenCount,
                 susp, lk, conf, sigdb::loaded());
-  render();
+  updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
   pushStatus();
   pushDetections();
 }
