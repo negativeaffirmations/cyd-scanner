@@ -187,6 +187,7 @@
     <button id="sessDlBtn" disabled>Download selected session</button>
     <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
     <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
+    <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
   </details>
 
   <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
@@ -229,10 +230,13 @@
       <button id="scanSetClose" class="xbtn" aria-label="Close">&times;</button>
     </div>
     <div class="maptools" style="flex-direction:column;align-items:flex-start">
+      <strong>Sources</strong>
       <label><input type="checkbox" id="sBle" checked> BLE</label>
       <label><input type="checkbox" id="s24" checked> Wi-Fi 2.4G (incl. probe requests)</label>
       <label><input type="checkbox" id="s5" checked> Wi-Fi 5G</label>
       <label><input type="checkbox" id="s154"> 802.15.4 (Zigbee/Thread)</label>
+      <strong>Whitelist</strong>
+      <button id="scanSetWlBtn" class="secondary">Whitelist (<span id="wlCnt2">–</span>)</button>
     </div>
   </dialog>
 
@@ -269,7 +273,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-01g</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-02c</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -335,7 +339,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
       .forEach(id=>$(id).disabled=false);
     $("wlBtn").disabled=false;
     log("Connected.");
@@ -346,7 +350,7 @@ async function connect(){
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
@@ -561,6 +565,13 @@ async function deleteSession(){
   try{ await chars.cmd.writeValue(enc.encode("D:"+path)); log("Deleting "+base+"… (list will refresh)"); }
   catch(e){ log("Delete failed: "+e.message); }
 }
+// Wipe every session log (CMD "D:*"); the device keeps the live in-progress session.
+async function wipeAllLogs(){
+  if(!chars.cmd) return;
+  if(!confirm("Wipe ALL session logs on the SD card?\nThis cannot be undone. The current in-progress session is kept.")) return;
+  try{ await chars.cmd.writeValue(enc.encode("D:*")); log("Wiping all logs… (list will refresh)"); }
+  catch(e){ log("Wipe failed: "+e.message); }
+}
 // Scan-source mask: BLE=2, Wi-Fi 2.4G = WIFI24(1)+PROBE(8), Wi-Fi 5G=16, 802.15.4=4.
 async function sendSrcMask(){
   const m = ($("sBle").checked?2:0) | ($("s24").checked?9:0) | ($("s5").checked?16:0) | ($("s154").checked?4:0);
@@ -614,12 +625,12 @@ function parseScanCsv(text){
     rows.push({epoch:parseInt(g("epoch"),10)||0, ms:parseInt(g("ms_since_boot"),10)||0,
       lat:parseFloat(g("lat")), lon:parseFloat(g("lon")), source:g("source"), mac:g("mac"),
       rssi:parseInt(g("rssi"),10)||0, channel:g("channel"), ie:g("ie"), cid:g("cid"), uuid:g("uuid"), pan:g("pan"),
-      name:g("name"), score:parseInt(g("score"),10)||0, tier:g("tier")||"none", signature:g("signature")});
+      name:g("name"), score:parseInt(g("score"),10)||0, tier:g("tier")||"none", signature:g("signature"), wl:false});
   }
   return rows;
 }
 // NDJSON log (one JSON object per line, schema keys: epoch ms lat lon src mac rssi ch ie cid
-// uuid pan name score tier sig; blank/inapplicable keys are omitted). Normalized to the SAME
+// uuid pan name score tier sig wl; blank/inapplicable keys are omitted). Normalized to the SAME
 // row shape parseScanCsv returns. Bad lines are skipped.
 function parseScanNdjson(text){
   const rows=[];
@@ -632,7 +643,8 @@ function parseScanNdjson(text){
       lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon),
       source:s(o.src), mac:s(o.mac), rssi:parseInt(o.rssi,10)||0, channel:s(o.ch),
       ie:s(o.ie), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
-      score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig)});
+      score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig),
+      wl:(o.wl==1||o.wl===true)});
   }
   return rows;
 }
@@ -850,6 +862,7 @@ function openDetail(r){
     (r.signature?" — "+r.signature:"");
   const rowsKv=[["Name",r.name||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
     ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
+  if(r.wl) rowsKv.push(["Whitelisted","yes (muted)"]);
   if(r.pan) rowsKv.push(["PAN ID",r.pan]);
   if(r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint",r.ie]);
   if(r.cid && !/^0+$/.test(r.cid)) rowsKv.push(["BLE company ID",r.cid]);
@@ -891,7 +904,7 @@ function onStatus(ev){
   if("conf"in kv){ $("conf").textContent = kv.conf;
     $("conf").style.color = (+kv.conf>0) ? "#f85149" : ""; }
   if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
-  if("wl"  in kv){ $("wlCnt").textContent = kv.wl; $("wlHdr").textContent = kv.wl; }
+  if("wl"  in kv){ $("wlCnt").textContent = kv.wl; $("wlCnt2").textContent = kv.wl; $("wlHdr").textContent = kv.wl; }
   if("muted"in kv) $("wlMuted").textContent = kv.muted;
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
@@ -926,10 +939,12 @@ $("wifiBtn").onclick = toggleWifi;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
 $("sessDelBtn").onclick = deleteSession;
+$("sessWipeBtn").onclick = wipeAllLogs;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
 $("settingsBtn").onclick = ()=> $("settingsDlg").showModal();
 $("wlBtn").onclick = openWhitelist;
+$("scanSetWlBtn").onclick = openWhitelist;
 $("wlClose").onclick = ()=> $("wlDlg").close();
 $("wlDlg").addEventListener("click", e=>{ if(e.target === $("wlDlg")) $("wlDlg").close(); });
 $("wlReloadBtn").onclick = async()=>{ await wlCmd("W","Reloading whitelist…"); setTimeout(refreshWhitelist,300); };
