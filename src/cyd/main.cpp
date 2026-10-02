@@ -209,7 +209,8 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCANSETTINGS,
               SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL, SCR_SORT, SCR_FILTER,
               SCR_FOLLOWLIST, SCR_FOLLOWACTION, SCR_FOLLOWDETAIL,
-              SCR_WHITELIST, SCR_WLADD, SCR_WLRULE };
+              SCR_WHITELIST, SCR_WLADD, SCR_WLRULE,
+              SCR_SCANROW, SCR_SCANDETAIL, SCR_SCANCONFIRM, SCR_SCANFILTER };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -223,7 +224,7 @@ static constexpr int SS_ROW_Y0 = 130, SS_ROW_STEP = 40, SS_ROW_H = 34;
 static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
-static const char* kScanItems[] = { "Start Scan", "New Session", "Explore Scan", "Scan Settings", "Back" };
+static const char* kScanItems[] = { "Scanner", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
 
 // Shared menu-row geometry (used for drawing AND touch hit-testing).
@@ -235,9 +236,9 @@ static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
 
 // Scan-screen device list geometry + scrolling (rows are one MAC group each).
 static constexpr int LIST_Y0 = 94, LIST_ROW_H = 13;
-// Follow alert banner (scan screen, just above the list); tappable when devices are flagged.
-// Kept tall (and the list pushed down to match) so the alert is an easy finger target.
-static constexpr int BANNER_Y = 73, BANNER_H = 18;
+// Scan-screen state band (y52..63, just above the body-button band at y64): shows the scan state,
+// or the tappable follow alert when devices are flagged.
+static constexpr int BANNER_Y = 52, BANNER_H = 11;
 static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
 // Rows must keep their content left of this x so they never run under the scroll icons.
 static constexpr int ICON_GUTTER_X = 240 - SCROLL_CX_INSET - SCROLL_R - 2;
@@ -359,7 +360,7 @@ static bool bannerTapped() {
   bool hit = false;
   if (now && !prev) {
     int16_t sx, sy, z;
-    if (g_touch.getScreen(tft, sx, sy, z) && sy >= BANNER_Y - 3 && sy < LIST_Y0) hit = true;
+    if (g_touch.getScreen(tft, sx, sy, z) && sy >= BANNER_Y && sy <= BANNER_Y + BANNER_H) hit = true;
   }
   prev = now;
   return hit;
@@ -443,6 +444,26 @@ struct DevGroup {
 static int      g_sortIdx[MAX_DET];   // detections sorted tier-first then RSSI (see buildGroups)
 static DevGroup g_groups[MAX_DET];
 static int      g_groupCount = 0;
+
+// --- Scanner screen (SCR_SCAN) state. The visible list is a filtered view (g_scanView) of either
+// the live g_groups or, while the view is frozen (PAUSE), a snapshot (g_frozenRows). Bounded static
+// buffers sized MAX_DET (no heap). ---
+struct ScanRow {
+  uint8_t mac[6]; char name[20]; char tag[12]; int16_t rssi;
+  uint8_t tier, source, channel, srcMask; bool whitelisted;
+};
+static bool     g_scanActive = false;   // C5 polling on (START/STOP); independent of the screen
+static bool     g_viewFrozen = false;   // list frozen on a snapshot while scanning continues
+static uint8_t  g_lvType   = 0x1F;      // live filter srcType bits 2.4/5G/BLE/PRB/154
+static bool     g_lvThreat = false;
+static ScanRow  g_frozenRows[MAX_DET];
+static int      g_frozenCount = 0;
+static uint8_t  g_scanView[MAX_DET];    // filtered index into g_groups (live) OR g_frozenRows (frozen)
+static int      g_scanViewN = 0;
+static uint8_t  g_scanRowMac[6];        // device the row-action / detail screens target
+static int      g_scanRowSel = 0, g_sfSel = 0, g_sfOff = 0, g_confirmSel = 0;
+static uint32_t g_lastCycleMs = 0;
+static const char* g_scanMsg = nullptr; static uint16_t g_scanMsgCol = TFT_GREEN;  // state-line feedback
 
 static int buildGroups() {
   buildSorted(g_sortIdx);
@@ -1101,7 +1122,7 @@ static void pushStatus() {
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
-           g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask,
+           g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), sb);
   phone::setStatus(String(s));
 }
@@ -1117,6 +1138,7 @@ static void pushStatus() {
 static constexpr int DETS_STREAM_MAX = 12;
 static void pushDetections() {
   if (!phone::connected()) return;
+  if (!g_scanActive) return;  // only stream while scanning
   static uint16_t g_detsSeq = 0;
   int n = min(g_groupCount, DETS_STREAM_MAX);
   g_detsSeq++;
@@ -1308,30 +1330,41 @@ static int listTouch(int count, int* offset, int vis, int y0, int rowH, void (*r
 
 // Repaint the device list region (below the status/count lines) + scroll icons. With
 // clear=true the region is wiped first — used by touch scrolling to avoid a full-screen
-// flicker. Uses the groups built for this cycle (buildGroups). One row per MAC, tier
-// first then strongest RSSI.
+// flicker. Rows come from the filtered view g_scanView (built by buildScanView): indices into
+// the live g_groups, or into the frozen snapshot g_frozenRows while the view is paused. One row
+// per MAC, tier first then strongest RSSI.
 static void drawScanList(bool clear) {
   int W = tft.width();
   if (clear) tft.fillRect(0, LIST_Y0, W, tft.height() - LIST_Y0, TFT_BLACK);
   int vis = visibleRows();
-  int maxOff = max(0, g_groupCount - vis);
+  int maxOff = max(0, g_scanViewN - vis);
   g_scrollOffset = constrain(g_scrollOffset, 0, maxOff);  // self-corrects when the list shrinks
-  int rows = min(g_groupCount - g_scrollOffset, vis);
+  int rows = min(g_scanViewN - g_scrollOffset, vis);
   for (int r = 0; r < rows; r++) {
-    const DevGroup& g = g_groups[g_scrollOffset + r];
-    const Detection& d = g_dets[g.rep];
-    const FollowState* fs = findFollow(g.mac);
-    drawDetRow(LIST_Y0 + r * LIST_ROW_H, tierColor(g.tier, d.source, d.channel), g.tag,
-               g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", g.bestRssi, "",
-               g.tier != (int)sigdb::Tier::None, 9, fs && fs->ftier == 2, g.whitelisted);
+    int idx = g_scanView[g_scrollOffset + r];
+    int y = LIST_Y0 + r * LIST_ROW_H;
+    if (g_viewFrozen) {
+      const ScanRow& s = g_frozenRows[idx];
+      const FollowState* fs = findFollow(s.mac);
+      drawDetRow(y, tierColor(s.tier, s.source, s.channel), s.tag, s.name, s.rssi, "",
+                 s.tier != (int)sigdb::Tier::None, 9, fs && fs->ftier == 2, s.whitelisted);
+    } else {
+      const DevGroup& g = g_groups[idx];
+      const Detection& d = g_dets[g.rep];
+      const FollowState* fs = findFollow(g.mac);
+      drawDetRow(y, tierColor(g.tier, d.source, d.channel), g.tag,
+                 g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", g.bestRssi, "",
+                 g.tier != (int)sigdb::Tier::None, 9, fs && fs->ftier == 2, g.whitelisted);
+    }
   }
-  drawScrollIcons(g_scrollOffset, g_groupCount, vis);
+  drawScrollIcons(g_scrollOffset, g_scanViewN, vis);
 }
 
-// Touch scrolling for the live scan list. Call frequently while on SCR_SCAN.
-static void handleScanTouch() {
-  listTouch(g_groupCount, &g_scrollOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
-            []() { drawScanList(true); });
+// Touch scrolling + row tap for the scan list. Returns the tapped view position, else -1.
+// Call frequently while on SCR_SCAN.
+static int handleScanTouch() {
+  return listTouch(g_scanViewN, &g_scrollOffset, visibleRows(), LIST_Y0, LIST_ROW_H,
+                   []() { drawScanList(true); });
 }
 
 // Full-width top-bar button (hit-tested by topBarTapped()).
@@ -1350,36 +1383,27 @@ static void drawTopBar(const char* label, uint16_t fill, uint16_t edge) {
   drawTopBarSeg(label, 0, 1, fill, edge);
 }
 
+static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool sel);  // fwd decl
+
 static void render() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
 
-  // Full-width stop button across the top: tap to end the scan and return to the
-  // menu (a long BOOT hold does the same).
-  drawTopBar("STOP", TFT_MAROON, TFT_RED);
+  // Full-width back button across the top: tap to leave the scanner (asks first while a scan
+  // is running; a long BOOT hold does the same).
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
 
   tft.setTextDatum(TL_DATUM);
   char buf[48];
-  // Link status lives in the status-bar dot; this line covers SD + DB.
-  tft.setTextColor(g_sdOk ? TFT_WHITE : TFT_RED, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "SD:%s  db:%s",
-           g_sdOk ? "on" : "off", sigdb::loaded() ? "on" : "fb");
-  tft.drawString(buf, 4, 46, 1);
-
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d Z:%d U:%d", n24, n5, nble, nprb, n154, g_seenCount);
-  tft.drawString(buf, 4, 55, 1);
+  tft.drawString(buf, 4, 44, 1);
 
-  uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
-  tft.setTextColor(tcol, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "threats  S:%d  L:%d  C:%d  F:%d", susp, lk, conf, g_followN);
-  tft.drawString(buf, 4, 64, 1);
-
-  // Follow alert banner (y=73..83, just above the list): a tappable bar when devices are
-  // flagged (opens the drill-down), else a dim non-button status line. Plain '!' as the TFT
-  // font has no warning glyph.
+  // State band (y52..63, BANNER_Y/H): a tappable magenta follow alert when devices are flagged
+  // (opens the drill-down), else the scan state + tier counts. Plain '!' as the TFT font has no
+  // warning glyph.
   if (g_followN > 0) {
     tft.fillRect(0, BANNER_Y, tft.width(), BANNER_H, TFT_MAGENTA);
     tft.setTextDatum(MC_DATUM);
@@ -1387,10 +1411,24 @@ static void render() {
     snprintf(buf, sizeof(buf), "! FOLLOWING: %d  (tap)", g_followN);
     tft.drawString(buf, tft.width() / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
     tft.setTextDatum(TL_DATUM);
+    g_scanMsg = nullptr;  // discard any pending one-shot while a follow alert is up
+  } else if (g_scanMsg) {  // one-shot feedback (e.g. whitelist add), replaces the state text once
+    tft.setTextColor(g_scanMsgCol, TFT_BLACK);
+    tft.drawString(g_scanMsg, 4, BANNER_Y + 1, 1);
+    g_scanMsg = nullptr;
   } else {
-    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString("follow: none", 4, BANNER_Y + 1, 1);
+    uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
+    uint16_t scol = g_viewFrozen ? TFT_CYAN : g_scanActive ? tcol : TFT_DARKGREY;
+    tft.setTextColor(scol, TFT_BLACK);
+    snprintf(buf, sizeof(buf), "%s  S:%d L:%d C:%d",
+             g_viewFrozen ? "VIEW PAUSED" : g_scanActive ? "SCANNING" : "STOPPED", susp, lk, conf);
+    tft.drawString(buf, 4, BANNER_Y + 1, 1);
   }
+
+  // Body buttons (y64..90): START/STOP the scan, PAUSE/RESUME the list view, list FILTER.
+  drawBodyButtonN(0, 3, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
+  drawBodyButtonN(1, 3, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : TFT_NAVY, false);
+  drawBodyButtonN(2, 3, "FILTER", TFT_NAVY, g_lvType != 0x1F || g_lvThreat);
 
   drawScanList(false);
 }
@@ -1807,6 +1845,35 @@ static uint8_t srcTypeOf(const char* tag) {
 static uint8_t linkSourceOf(uint8_t st) {  // -> link_protocol::Source for tierColor()
   return st == 2 ? (uint8_t)Source::BleScan : st == 3 ? (uint8_t)Source::WifiProbe
        : st == 4 ? (uint8_t)Source::Ieee802154 : (uint8_t)Source::WifiScan;
+}
+
+// ---- Scanner view (SCR_SCAN): filtered index list over the live groups or the frozen snapshot ----
+// srcType bitmask (bit per srcTypeOf value: 2.4, 5G, BLE, PRB, 154) of every live detection of a MAC.
+static uint8_t groupSrcMask(const uint8_t* mac) {
+  uint8_t m = 0;
+  for (int i = 0; i < g_detCount; i++)
+    if (memcmp(g_dets[i].mac, mac, 6) == 0) m |= (uint8_t)(1u << srcTypeOf(srcTag(g_dets[i])));
+  return m;
+}
+
+// Rebuild g_scanView from the live g_groups (or g_frozenRows while paused) through the live
+// source/threat filter (g_lvType / g_lvThreat). Whitelisted devices never satisfy "Threats".
+static void buildScanView() {
+  g_scanViewN = 0;
+  if (g_viewFrozen) {
+    for (int k = 0; k < g_frozenCount && g_scanViewN < MAX_DET; k++) {
+      const ScanRow& s = g_frozenRows[k];
+      if ((g_lvType & s.srcMask) && (!g_lvThreat || (s.tier && !s.whitelisted)))
+        g_scanView[g_scanViewN++] = (uint8_t)k;
+    }
+  } else {
+    for (int k = 0; k < g_groupCount && g_scanViewN < MAX_DET; k++) {
+      const DevGroup& g = g_groups[k];
+      if ((g_lvType & groupSrcMask(g.mac)) && (!g_lvThreat || (g.tier && !g.whitelisted)))
+        g_scanView[g_scanViewN++] = (uint8_t)k;
+    }
+  }
+  g_scrollOffset = constrain(g_scrollOffset, 0, max(0, g_scanViewN - visibleRows()));
 }
 
 // epoch (already local) -> HH:MM:SS, or "+Ns" since boot when the phone hadn't synced.
@@ -2293,9 +2360,9 @@ static void followBackToList() {
   drawFollowList();
 }
 
+static void showScan();  // fwd decl (defined after the follow drill-down)
 static void followBackToScan() {
-  g_screen = SCR_SCAN;   // the SCAN case runs a cycle and repaints immediately
-  listTouchReset();
+  showScan();   // the SCAN case no longer repaints on entry, so showScan() does it
 }
 
 static void drawFollowAction() {
@@ -2439,6 +2506,197 @@ static void activateFollowAction(int sel) {
   g_flMsg = ok ? "Added to whitelist" : "Whitelist add FAILED";
   g_flMsgCol = ok ? TFT_GREEN : TFT_RED;
   followBackToList();
+}
+
+// ---- Scanner screen actions (SCR_SCAN + SCR_SCANROW / SCANDETAIL / SCANCONFIRM / SCANFILTER) ----
+// SCR_SCAN is a stateful screen: g_scanActive (C5 polling, START/STOP) and g_viewFrozen (PAUSE: the
+// list shows a snapshot while scanning continues) are independent of which screen is up. Leaving
+// while a scan runs asks first (SCR_SCANCONFIRM). A row tap opens a per-device action menu.
+static void showScan() {
+  g_screen = SCR_SCAN;
+  listTouchReset();
+  buildScanView();
+  render();
+}
+
+// Copy the current groups into the frozen snapshot (bounded, MAX_DET rows).
+static void snapshotFrozen() {
+  int n = min(g_groupCount, MAX_DET);
+  for (int k = 0; k < n; k++) {
+    const DevGroup& g = g_groups[k];
+    ScanRow& s = g_frozenRows[k];
+    memcpy(s.mac, g.mac, 6);
+    snprintf(s.name, sizeof(s.name), "%.19s", g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>");
+    snprintf(s.tag, sizeof(s.tag), "%s", g.tag);
+    s.rssi = (int16_t)g.bestRssi;
+    s.tier = (uint8_t)g.tier;
+    s.whitelisted = g.whitelisted;
+    s.source = g_dets[g.rep].source;
+    s.channel = g_dets[g.rep].channel;
+    s.srcMask = groupSrcMask(g.mac);
+  }
+  g_frozenCount = n;
+}
+
+static void toggleViewFrozen() {
+  if (!g_viewFrozen) { snapshotFrozen(); g_viewFrozen = true; }
+  else               g_viewFrozen = false;
+  g_scrollOffset = 0;
+  buildScanView();
+  render();
+}
+
+// -- stop-scan confirmation (leaving the scanner while it is running) --
+static const char* const kConfirmItems[] = { "Stop scan", "Cancel" };
+static constexpr int CONFIRM_N = 2;
+
+static void drawScanConfirm() {
+  drawListMenu("STOP SCAN?", kConfirmItems, CONFIRM_N, g_confirmSel);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Leaving ends the scan", tft.width() / 2, 60, 1);  // between the title and first button
+  tft.setTextDatum(TL_DATUM);
+}
+
+static void openScanConfirm() {
+  g_confirmSel = 0;
+  g_screen = SCR_SCANCONFIRM;
+  listTouchReset();
+  drawScanConfirm();
+}
+
+static void backFromScan() {
+  if (g_scanActive) { openScanConfirm(); return; }
+  setLed(!g_linkOk, g_linkOk, false);
+  g_screen = SCR_SCANMENU;
+  drawScanMenu();
+  pushStatus();
+}
+
+static void activateScanConfirm(int sel) {
+  if (sel == 0) {  // Stop scan -> Scan menu
+    g_scanActive = false;
+    g_viewFrozen = false;
+    setLed(!g_linkOk, g_linkOk, false);
+    g_screen = SCR_SCANMENU;
+    drawScanMenu();
+    pushStatus();
+  } else {         // Cancel -> back to the running scanner
+    showScan();
+  }
+}
+
+// -- per-row action menu (See details / Add to whitelist / Back), keyed off a captured MAC --
+static void drawScanRow() {
+  const DevGroup* g = groupByMac(g_scanRowMac);
+  char title[16];
+  snprintf(title, sizeof(title), "%.14s", g ? groupName(g) : "<gone>");
+  drawListMenu(title, kFollowActItems, FOLLOWACT_N, g_scanRowSel);
+}
+
+static void openScanRow(int viewPos) {
+  if (viewPos < 0 || viewPos >= g_scanViewN) return;
+  int idx = g_scanView[viewPos];
+  memcpy(g_scanRowMac, g_viewFrozen ? g_frozenRows[idx].mac : g_groups[idx].mac, 6);
+  g_scanRowSel = 0;
+  g_screen = SCR_SCANROW;
+  listTouchReset();
+  drawScanRow();
+}
+
+// Live device detail (mirrors openFollowDetail minus the follow-only fields); Back returns to
+// the row menu. Built from the live groups/detections by MAC.
+static void openScanDetail(const uint8_t* mac) {
+  const DevGroup* g = groupByMac(mac);
+  g_detN = 0; g_detOff = 0;
+  char b[64];
+  addField("Name", g ? groupName(g) : "<gone>");
+  snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  addField("MAC", b);
+  if (g) {
+    addField("Source", g->tag);
+    snprintf(b, sizeof(b), "%d dBm", g->bestRssi);
+    addField("RSSI", b);
+    if (g_dets[g->rep].channel) { snprintf(b, sizeof(b), "%d", g_dets[g->rep].channel); addField("Channel", b); }
+    else addField("Channel", "-");
+    // sigdb: strongest-scoring member detection of this MAC.
+    int best = -1;
+    for (int i = 0; i < g_detCount; i++)
+      if (memcmp(g_dets[i].mac, mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
+    if (best >= 0) {
+      snprintf(b, sizeof(b), "%s (%d)", sigdb::tierName(g_score[best].tier), g_score[best].score);
+      addField("Threat tier", b, tierColor((int)g_score[best].tier, (uint8_t)Source::WifiScan, 0));
+      const char* lbl = sigdb::labelFor(g_score[best]);
+      if (lbl && lbl[0]) addField("Signature", lbl);
+    } else addField("Threat tier", "none");
+    if (g->whitelisted) addField("Whitelisted", "yes (muted)", TFT_DARKGREY);
+    uint16_t cid = 0; const uint8_t* svc = nullptr;
+    for (int i = 0; i < g_detCount; i++) {
+      const Detection& d = g_dets[i];
+      if (memcmp(d.mac, mac, 6) != 0) continue;
+      if (!cid) cid = d.companyId;
+      if (!svc) for (int j = 0; j < 16; j++) if (d.svc[j]) { svc = d.svc; break; }
+    }
+    if (g->ie) { snprintf(b, sizeof(b), "%08lX", (unsigned long)g->ie); addField("IE fingerprint", b); }
+    if (cid)   { snprintf(b, sizeof(b), "%04X", cid); addField("BLE company ID", b); }
+    if (svc) {
+      char u[33];
+      for (int j = 0; j < 16; j++) sprintf(u + j * 2, "%02X", svc[j]);
+      addField("Service UUID", u);
+    }
+  }
+
+  g_screen = SCR_SCANDETAIL;
+  listTouchReset();
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString("DETAIL", 4, 46, 1);
+  drawDetailList(false);
+}
+
+static void activateScanRow(int sel) {
+  if (sel == 0) { openScanDetail(g_scanRowMac); return; }
+  if (sel == 2) { showScan(); return; }
+  char line[96];
+  whitelistLineForMac(g_scanRowMac, line, sizeof(line));
+  bool ok = whitelist::add(line);
+  Serial.printf("[CYD] scan whitelist add %s: %s\n", ok ? "ok" : "FAILED", line);
+  sendWhitelist(); pushStatus();  // same as the whitelist manager's add: refresh the phone
+  if (ok)  // a paused view keeps its snapshot; mute the row now (live rows mute on the next cycle)
+    for (int k = 0; k < g_frozenCount; k++)
+      if (memcmp(g_frozenRows[k].mac, g_scanRowMac, 6) == 0) g_frozenRows[k].whitelisted = true;
+  g_scanMsg = ok ? "Added to whitelist" : "Whitelist add FAILED";
+  g_scanMsgCol = ok ? TFT_GREEN : TFT_RED;
+  showScan();
+}
+
+// -- live on-screen source / threat filter (separate from the Scan Viewer's g_fType/g_fThreat) --
+static constexpr int SCANFILTER_N = 7;  // 5 source toggles, Threats, Back
+static void drawScanFilter() {
+  char l[SCANFILTER_N - 1][24];
+  static const char* const kTypes[5] = { "2.4", "5G", "BLE", "PRB", "154" };
+  for (int i = 0; i < 5; i++)
+    snprintf(l[i], sizeof(l[i]), "%s: %s", kTypes[i], (g_lvType & (1 << i)) ? "On" : "Off");
+  snprintf(l[5], sizeof(l[5]), "Threats: %s", g_lvThreat ? "On" : "Off");
+  const char* items[SCANFILTER_N] = { l[0], l[1], l[2], l[3], l[4], l[5], "Back" };
+  drawScrollMenu("FILTER", items, SCANFILTER_N, g_sfSel, g_sfOff);
+}
+
+static void activateScanFilter(int sel) {
+  if (sel < 5)       g_lvType ^= (uint8_t)(1 << sel);
+  else if (sel == 5) g_lvThreat = !g_lvThreat;
+  else { g_scrollOffset = 0; buildScanView(); showScan(); return; }  // Back: apply + return
+  drawScanFilter();
+}
+
+static void openScanFilter() {
+  g_sfSel = 0; g_sfOff = 0;
+  g_screen = SCR_SCANFILTER;
+  listTouchReset();
+  drawScanFilter();
 }
 
 // ---- On-device whitelist manager (Scan Settings -> Whitelist) ----
@@ -2646,7 +2904,8 @@ static void activateWlRule(int sel) {
 
 // Act on a scan-menu row (touch tap or long-press select).
 static void activateScanMenu(int sel) {
-  if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; resetFollow(); }             // first cycle draws it
+  if (sel == 0)      { g_scrollOffset = 0; resetFollow(); g_scanActive = false; g_viewFrozen = false;
+                       g_frozenCount = 0; showScan(); }                                       // Scanner (idle until START)
   else if (sel == 1) {                                                       // New Session
     startNewSession();
     drawScanMenu();
@@ -2697,6 +2956,7 @@ static void runScanCycle() {
   buildGroups();  // once per cycle; shared by render() and pushDetections()
   updateFollowState();
   computeFollowScores();
+  if (!g_viewFrozen) buildScanView();  // a paused view keeps its snapshot while scanning continues
   // Follow alert wins the LED (solid magenta, works headless); else link green/red.
   if (g_followN > 0) setLed(true, false, true);
   else               setLed(!g_linkOk, g_linkOk, false);
@@ -2795,6 +3055,7 @@ void loop() {
   if (phone::downloadRequested()) { exploreFree(); runDownload(); return; }
   if (webshare::active()) {  // just left download mode: tear down AP and repaint
     webshare::stop();
+    g_scanActive = false; g_viewFrozen = false;  // the download interrupted any running scan
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
   }
 
@@ -2803,11 +3064,24 @@ void loop() {
   // abandon the snapshot mid-view; scanStartRequested() is consume-on-read, so short-circuiting
   // leaves it pending until we return to SCR_SCAN.
   bool inDrill = (g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL ||
-                  g_screen == SCR_WHITELIST  || g_screen == SCR_WLADD       || g_screen == SCR_WLRULE);
-  if (!inDrill && phone::scanStartRequested()) { if (g_screen != SCR_SCAN) { g_scrollOffset = 0; resetFollow(); } g_screen = SCR_SCAN; }
-  // Consume the stop flag unconditionally, but only act on it while actually scanning
-  // (so a stray stop sent from another screen is discarded, not buffered to fire later).
-  if (phone::scanStopRequested() && g_screen == SCR_SCAN) { setLed(!g_linkOk, g_linkOk, false); g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
+                  g_screen == SCR_WHITELIST  || g_screen == SCR_WLADD       || g_screen == SCR_WLRULE ||
+                  g_screen == SCR_SCANROW    || g_screen == SCR_SCANDETAIL  || g_screen == SCR_SCANCONFIRM ||
+                  g_screen == SCR_SCANFILTER);
+  if (!inDrill && phone::scanStartRequested()) {
+    g_scanActive = true;
+    g_lastCycleMs = 0;  // run the first cycle immediately
+    if (g_screen != SCR_SCAN) { g_scrollOffset = 0; resetFollow(); g_viewFrozen = false; showScan(); }
+    else render();      // already on the scanner: repaint the START->STOP state
+    pushStatus();
+  }
+  // Consume the stop flag unconditionally. Stop ends the scan but stays on the scanner screen
+  // (it just goes idle), so the user can review the list or restart.
+  if (phone::scanStopRequested()) {
+    g_scanActive = false;
+    setLed(!g_linkOk, g_linkOk, false);
+    if (g_screen == SCR_SCAN) render();
+    pushStatus();
+  }
 
   // Explore and live scan are mutually exclusive: drop the index block as soon as we're out.
   if (g_ex && g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
@@ -3005,29 +3279,69 @@ void loop() {
       delay(20);
       return;
 
-    case SCR_SCAN:
-      // Stop via the on-screen button (touch), a long BOOT hold, or the phone.
+    case SCR_SCANROW: {
+      int t = tappedRow(FOLLOWACT_N);
+      if (t >= 0)               { g_scanRowSel = t; activateScanRow(t); return; }
+      if      (ev == BTN_SHORT) { g_scanRowSel = (g_scanRowSel + 1) % FOLLOWACT_N; drawScanRow(); }
+      else if (ev == BTN_LONG)  { activateScanRow(g_scanRowSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_SCANDETAIL: {
+      if (topBarTapped() || ev == BTN_LONG) { g_screen = SCR_SCANROW; listTouchReset(); drawScanRow(); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: page down (wraps to the top)
+        int maxOff = max(0, g_detN - visibleRows());
+        g_detOff = (g_detOff >= maxOff) ? 0 : min(g_detOff + visibleRows(), maxOff);
+        drawDetailList(true);
+      }
+      listTouch(g_detN, &g_detOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawDetailList(true); });
+      delay(20);
+      return;
+    }
+
+    case SCR_SCANCONFIRM: {
+      int t = tappedRow(CONFIRM_N);
+      if (t >= 0)               { g_confirmSel = t; activateScanConfirm(t); return; }
+      if      (ev == BTN_SHORT) { g_confirmSel = (g_confirmSel + 1) % CONFIRM_N; drawScanConfirm(); }
+      else if (ev == BTN_LONG)  { activateScanConfirm(g_confirmSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_SCANFILTER: {
+      int t = menuNav(SCANFILTER_N, &g_sfSel, &g_sfOff, ev, drawScanFilter);
+      if (t >= 0) activateScanFilter(t);
+      delay(20);
+      return;
+    }
+
+    case SCR_SCAN: {
+      // Single pass per loop iteration (timestamp-paced scan cycle) so touch/BOOT stay responsive.
+      // Pending downloads and phone start/stop are handled at the top of loop().
+      int bb = bodyButtonTapped(3);  // START/STOP | PAUSE/RESUME | FILTER
+      if (bb == 0) {
+        g_scanActive = !g_scanActive;
+        if (g_scanActive) g_lastCycleMs = 0;  // first cycle runs right away
+        else              setLed(!g_linkOk, g_linkOk, false);
+        render(); pushStatus();
+        delay(20);
+        return;
+      }
+      if (bb == 1) { toggleViewFrozen(); delay(20); return; }
+      if (bb == 2) { openScanFilter(); return; }
       { bool bn = bannerTapped();  // always called so its edge state stays current
         if (bn && g_followN > 0 && ev != BTN_LONG) { openFollowList(); return; } }
       // BOOT short-press opens the follow drill-down (so it's reachable without touch).
       if (ev == BTN_SHORT && g_followN > 0) { openFollowList(); return; }
-      if (ev == BTN_LONG || topBarTapped()) { setLed(!g_linkOk, g_linkOk, false); g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return; }
-      runScanCycle();
-      // Responsive ~2 s wait that also honors stop requests and pending downloads.
-      {
-        uint32_t t0 = millis();
-        while (millis() - t0 < 2000) {
-          if (buttonEvent() == BTN_LONG || topBarTapped() || phone::scanStopRequested()) {
-            setLed(!g_linkOk, g_linkOk, false);
-            g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return;
-          }
-          if (phone::downloadRequested()) return;
-          if (bannerTapped() && g_followN > 0) { openFollowList(); return; }
-          handleScanTouch();
-          delay(20);
-        }
-      }
+      // Back via the on-screen button (touch) or a long BOOT hold; asks first while scanning.
+      if (ev == BTN_LONG || topBarTapped()) { backFromScan(); return; }
+      int rt = handleScanTouch();  // scroll / row tap
+      if (rt >= 0) { openScanRow(rt); return; }
+      if (g_scanActive && millis() - g_lastCycleMs >= 2000) { g_lastCycleMs = millis(); runScanCycle(); }
+      delay(20);
       return;
+    }
   }
 }
 #endif
