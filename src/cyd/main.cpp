@@ -1397,13 +1397,23 @@ static void render() {
 
   tft.setTextDatum(TL_DATUM);
   char buf[48];
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d Z:%d U:%d", n24, n5, nble, nprb, n154, g_seenCount);
+  // Line 1 (y44): active session name (left) + a threat/unique summary (right).
+  char sb[32]; sessBase(sb, sizeof(sb));
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  snprintf(buf, sizeof(buf), "Sess: %s", sb);
   tft.drawString(buf, 4, 44, 1);
+  int threats = susp + lk + conf;
+  uint16_t rcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
+  if (threats > 0) snprintf(buf, sizeof(buf), "!%d  U:%d", threats, g_seenCount);
+  else             snprintf(buf, sizeof(buf), "U:%d", g_seenCount);
+  tft.setTextDatum(TR_DATUM);
+  tft.setTextColor(threats > 0 ? rcol : TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(buf, tft.width() - 4, 44, 1);
+  tft.setTextDatum(TL_DATUM);
 
   // State band (y52..63, BANNER_Y/H): a tappable magenta follow alert when devices are flagged
-  // (opens the drill-down), else the scan state + tier counts. Plain '!' as the TFT font has no
-  // warning glyph.
+  // (opens the drill-down), else one-shot feedback, else the scan state + per-band counts. The
+  // scan/pause state is also shown by the buttons. Plain '!' (the TFT font has no warning glyph).
   if (g_followN > 0) {
     tft.fillRect(0, BANNER_Y, tft.width(), BANNER_H, TFT_MAGENTA);
     tft.setTextDatum(MC_DATUM);
@@ -1412,23 +1422,23 @@ static void render() {
     tft.drawString(buf, tft.width() / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
     tft.setTextDatum(TL_DATUM);
     g_scanMsg = nullptr;  // discard any pending one-shot while a follow alert is up
-  } else if (g_scanMsg) {  // one-shot feedback (e.g. whitelist add), replaces the state text once
+  } else if (g_scanMsg) {  // one-shot feedback (e.g. whitelist add / new session), once
     tft.setTextColor(g_scanMsgCol, TFT_BLACK);
     tft.drawString(g_scanMsg, 4, BANNER_Y + 1, 1);
     g_scanMsg = nullptr;
   } else {
-    uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
-    uint16_t scol = g_viewFrozen ? TFT_CYAN : g_scanActive ? tcol : TFT_DARKGREY;
+    const char* st = g_viewFrozen ? "VIEW PAUSED" : g_scanActive ? "SCANNING" : "STOPPED";
+    uint16_t scol = g_viewFrozen ? TFT_CYAN : g_scanActive ? TFT_WHITE : TFT_DARKGREY;
     tft.setTextColor(scol, TFT_BLACK);
-    snprintf(buf, sizeof(buf), "%s  S:%d L:%d C:%d",
-             g_viewFrozen ? "VIEW PAUSED" : g_scanActive ? "SCANNING" : "STOPPED", susp, lk, conf);
+    snprintf(buf, sizeof(buf), "%s  2.4:%d 5G:%d BLE:%d PRB:%d Z:%d", st, n24, n5, nble, nprb, n154);
     tft.drawString(buf, 4, BANNER_Y + 1, 1);
   }
 
-  // Body buttons (y64..90): START/STOP the scan, PAUSE/RESUME the list view, list FILTER.
-  drawBodyButtonN(0, 3, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
-  drawBodyButtonN(1, 3, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : TFT_NAVY, false);
-  drawBodyButtonN(2, 3, "FILTER", TFT_NAVY, g_lvType != 0x1F || g_lvThreat);
+  // Body buttons (y64..90): START/STOP the scan · PAUSE/RESUME the list view · list FILTER · NEW session.
+  drawBodyButtonN(0, 4, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
+  drawBodyButtonN(1, 4, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : TFT_NAVY, false);
+  drawBodyButtonN(2, 4, "FILTER", TFT_NAVY, g_lvType != 0x1F || g_lvThreat);
+  drawBodyButtonN(3, 4, "NEW SES", TFT_NAVY, false);
 
   drawScanList(false);
 }
@@ -2011,7 +2021,7 @@ static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool
   tft.drawRoundRect(x, BODY_BTN_Y, w, BODY_BTN_H, 6, sel ? TFT_CYAN : fill);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, fill);
-  tft.drawString(label, x + w / 2, BODY_BTN_Y + BODY_BTN_H / 2, 2);
+  tft.drawString(label, x + w / 2, BODY_BTN_Y + BODY_BTN_H / 2, w >= 64 ? 2 : 1);  // font 1 for narrow (4+) buttons
   tft.setTextDatum(TL_DATUM);
 }
 // Freshly-tapped slot (0..n-1) in the n-button body band, else -1.
@@ -3319,7 +3329,7 @@ void loop() {
     case SCR_SCAN: {
       // Single pass per loop iteration (timestamp-paced scan cycle) so touch/BOOT stay responsive.
       // Pending downloads and phone start/stop are handled at the top of loop().
-      int bb = bodyButtonTapped(3);  // START/STOP | PAUSE/RESUME | FILTER
+      int bb = bodyButtonTapped(4);  // START/STOP | PAUSE/RESUME | FILTER | NEW SESSION
       if (bb == 0) {
         g_scanActive = !g_scanActive;
         if (g_scanActive) g_lastCycleMs = 0;  // first cycle runs right away
@@ -3330,6 +3340,13 @@ void loop() {
       }
       if (bb == 1) { toggleViewFrozen(); delay(20); return; }
       if (bb == 2) { openScanFilter(); return; }
+      if (bb == 3) {  // NEW SESSION: fresh log file + reset dedup, without leaving the scanner
+        startNewSession();
+        g_scanMsg = "New session started"; g_scanMsgCol = TFT_GREEN;
+        render(); pushStatus();
+        delay(20);
+        return;
+      }
       { bool bn = bannerTapped();  // always called so its edge state stays current
         if (bn && g_followN > 0 && ev != BTN_LONG) { openFollowList(); return; } }
       // BOOT short-press opens the follow drill-down (so it's reachable without touch).
