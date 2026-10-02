@@ -469,6 +469,15 @@ static int      g_scanViewN = 0;
 static uint8_t  g_scanRowMac[6];        // device the row-action / detail screens target
 static int      g_scanRowSel = 0, g_sfSel = 0, g_sfOff = 0, g_confirmSel = 0;
 static uint32_t g_lastCycleMs = 0;
+// Scan-poll cadence + link stickiness. The C5 is a continuous scanner that cannot service the link
+// while its Wi-Fi scan phase runs (a multi-second busy window), so a poll landing in that window
+// gets no reply. That is a BUSY MISS, not a link failure: we keep the last table/view, don't flash
+// the link dot, and retry soon instead of after the full cadence. The link only counts as DOWN once
+// no successful exchange has happened for LINK_STICKY_MS (covers the longest observed busy window).
+static constexpr uint32_t SCAN_CYCLE_MS  = 2000;   // normal poll spacing
+static constexpr uint32_t SCAN_RETRY_MS  = 400;    // quick re-poll after a busy miss (catch the C5 free)
+static constexpr uint32_t LINK_STICKY_MS = 8000;   // treat the link as up this long after the last reply
+static uint32_t g_lastLinkOkMs = 0;                // millis() of the last successful scan exchange / ping
 static const char* g_scanMsg = nullptr; static uint16_t g_scanMsgCol = TFT_GREEN;  // state-line feedback
 
 static uint8_t srcTypeOf(const char* tag);  // fwd decl (defined below with the view helpers)
@@ -1083,10 +1092,17 @@ static bool isSelfDet(const Detection& d) {
 // before the next cycle can send anything, or the C5 drops the next command (it flushes its RX after
 // streaming) and the boards desync. So this does NOT abort mid-transaction on user input -- the C5 is
 // a fast non-blocking dumper (~hundreds of ms), so a tap is serviced on the next loop iteration with
-// no perceptible lag. timeoutMs must comfortably exceed a worst-case dense-table dump.
-static void requestScan(uint32_t timeoutMs = 5000) {
+// no perceptible lag.
+//
+// Returns true if a response was received (full burst or at least a Status), false on a MISS. A miss
+// is detected fast: the C5 answers within ~12 ms when free, so if NOTHING has arrived by noRespMs we
+// bail (the C5 is in its Wi-Fi-scan busy window) instead of burning the whole timeoutMs. Once bytes
+// start, we read the full burst up to timeoutMs (which must exceed a worst-case dense-table dump).
+// On a miss nothing is transmitted during the window (verified on-wire), so there is no late burst to
+// desync the next poll. This does NOT touch g_linkOk -- the caller owns link state (sticky).
+static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
   g_detCount = 0;
-  bool sawStart = false, done = false;
+  bool sawStart = false, done = false, anyByte = false;
   uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
   while (LinkSerial.available()) LinkSerial.read();
   parser.reset();
@@ -1097,9 +1113,10 @@ static void requestScan(uint32_t timeoutMs = 5000) {
   uint32_t t0 = millis();
   uint32_t lastByte = millis();
   while (!done && millis() - t0 < timeoutMs) {
+    if (!anyByte && millis() - t0 > noRespMs) break;  // no reply at all -> busy miss, bail fast
     bool got = false;
     while (LinkSerial.available()) {
-      got = true; lastByte = millis();
+      got = true; anyByte = true; lastByte = millis();
       if (!parser.feed(LinkSerial.read())) continue;
       uint8_t t = parser.type();
       if (t == (uint8_t)Reply::Detection && parser.length() >= sizeof(Detection)) {
@@ -1120,7 +1137,7 @@ static void requestScan(uint32_t timeoutMs = 5000) {
     if ((sawStart || g_detCount > 0) && millis() - lastByte > 250) done = true;
     if (!got) delay(1);  // yield instead of a tight spin
   }
-  g_linkOk = done || sawStart || g_detCount > 0;
+  return done || sawStart || g_detCount > 0;
 }
 
 // Current session basename: g_logPath without the "/logs/" dir and ".jsonl" extension.
@@ -3003,7 +3020,20 @@ static void activateSettings(int sel) {
 
 // One scan → score → log → render cycle, also mirrored to the phone app.
 static void runScanCycle() {
-  requestScan();
+  if (!requestScan()) {
+    // BUSY MISS: the C5 didn't answer (it's in its Wi-Fi-scan busy window). This is not a link
+    // failure. Keep the last table/view (requestScan zeroed g_detCount but we skip the pipeline, so
+    // g_groups/g_scanView and the on-screen list stay as they were), don't push the empty table to
+    // the phone, and keep the link dot/LED green until LINK_STICKY_MS of total silence. Re-poll soon
+    // so we catch the C5 the moment it frees up, instead of waiting the full cadence.
+    g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+    if (g_followN > 0) setLed(true, false, true);
+    else               setLed(!g_linkOk, g_linkOk, false);
+    drawStatusBar();  // refresh the link dot + clock only (never touches the list region)
+    g_lastCycleMs = millis() - (SCAN_CYCLE_MS - SCAN_RETRY_MS);  // fire the next poll in ~SCAN_RETRY_MS
+    return;
+  }
+  g_linkOk = true; g_lastLinkOkMs = millis();
   computeScores();
   buildGroups();  // once per cycle; shared by render() and pushDetections()
   updateFollowState();
@@ -3058,6 +3088,7 @@ void setup() {
   phone::begin(DEVICE_NAME);
   g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering
   g_linkOk = pingC5();  // check the C5 link so the menu dot is correct before any scan
+  if (g_linkOk) g_lastLinkOkMs = millis();  // seed link stickiness for the first scan
   Serial.printf("[CYD] ready (link=%s, touch=%s, bright=%d%%)\n",
                 g_linkOk ? "up" : "down", g_touchOk ? "cal" : "uncal", g_brightness);
   drawMenu();      // start on the home menu
@@ -3153,6 +3184,7 @@ void loop() {
         if (millis() - lastPing > 2000) {
           lastPing = millis();
           g_linkOk = pingC5();
+          if (g_linkOk) g_lastLinkOkMs = millis();  // keep link stickiness fresh from the menu
           drawStatusBar();  // just the top bar — no full-screen flicker
           pushStatus();     // keep the phone informed (incl. scan=0) while idle
         }
@@ -3397,7 +3429,7 @@ void loop() {
       if (ev == BTN_LONG || topBarTapped()) { backFromScan(); return; }
       int rt = handleScanTouch();  // scroll / row tap
       if (rt >= 0) { openScanRow(rt); return; }
-      if (g_scanActive && millis() - g_lastCycleMs >= 2000) { g_lastCycleMs = millis(); runScanCycle(); }
+      if (g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) { g_lastCycleMs = millis(); runScanCycle(); }
       delay(20);
       return;
     }
