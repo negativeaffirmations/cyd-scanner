@@ -71,6 +71,13 @@ bool brightnessRequested(int* outPct);
 // True once if the app set the scan-source mask ("S:<decimal SourceMask>"); fills `out`.
 bool srcMaskRequested(uint8_t* out);
 
+// Whitelist commands, each true once (consumed on read): "W" reload, "Y" list,
+// "A:<csv rule line>" add (fills `out`), "E:<index>" remove the Nth active rule.
+bool wlReloadRequested();
+bool wlListRequested();
+bool wlAddRequested(char* out, size_t cap);
+bool wlRemoveRequested(int* outIdx);
+
 // Notify a chunk of log data to the connected phone (used during BLE log download).
 void logNotify(const uint8_t* data, size_t len);
 

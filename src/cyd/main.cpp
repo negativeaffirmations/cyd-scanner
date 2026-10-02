@@ -24,6 +24,7 @@
 #include "phone.h"
 #include "webshare.h"
 #include "sigdb.h"
+#include "whitelist.h"
 #include "touch.h"
 
 using namespace link_protocol;
@@ -161,6 +162,34 @@ void loop() {
 static constexpr int MAX_DET  = 96;
 static constexpr int MAX_SEEN = 400;
 
+// --- "Following me" detector (Phase 5, device-only). Tunables; these become NVS-settable in a
+// later increment. A device is FOLLOWING when it keeps showing up (persistence) while the
+// phone's GPS says we moved far from where it was first seen (span) across several distinct
+// places (fixes). Without GPS movement a device can only reach PERSISTENT. ---
+#define FOLLOW_WINDOW_MS     15000UL   // presence-history bucket (32-bit mask -> ~8 min)
+#define FOLLOW_TTL_MS        300000UL  // drop a device unseen this long (> the C5's 30 s TTL)
+#define FOLLOW_SPAN_M        50.0f     // *** TEST BUILD: was 400.0f (easy short-loop trigger) ***
+#define FOLLOW_FIXES         2         // *** TEST BUILD: was 3 (easy short-loop trigger) ***
+#define FOLLOW_PERSIST_FOLLOW 4        // ...and >= this many present windows (popcount)
+#define FOLLOW_PERSIST_ONLY  6         // PERSISTENT (time only, no GPS needed): present windows
+#define FOLLOW_PERSIST_B1    3         // persistence buckets (windows present)
+#define FOLLOW_PERSIST_B2    6
+#define FOLLOW_PERSIST_B3    12
+#define FOLLOW_SPAN_B1       150.0f    // span buckets (metres)
+#define FOLLOW_SPAN_B2       400.0f
+#define FOLLOW_SPAN_B3       1000.0f
+#define FOLLOW_FIXES_B1      2         // distinct-fix buckets
+#define FOLLOW_FIXES_B2      4
+#define FOLLOW_FIXES_B3      8
+#define FOLLOW_RSSI_SPREAD   12        // max-min RSSI (dB) counted as "stable" ...
+#define FOLLOW_SPAN_MIN      40.0f     // *** TEST BUILD: was 150.0f (stability bonus on short loop) ***
+#define FOLLOW_W_PERSIST     10        // score weight per persistence bucket (max 30)
+#define FOLLOW_W_SPAN        12        // per span bucket (max 36)
+#define FOLLOW_W_FIXES       6         // per fixes bucket (max 18)
+#define FOLLOW_W_STABLE      16        // RSSI-stability bonus
+#define FOLLOW_W_THREAT      10        // bonus when the sigdb tier is above None
+#define FOLLOW_QUANT         1e4f      // fix quantum: 1e-4 deg (~11 m)
+
 Detection          g_dets[MAX_DET];
 sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 int                g_detCount = 0;
@@ -178,7 +207,8 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 // hold selects, and a long hold from any screen returns to the menu. With touch, tap
 // an item to select it directly. ---
 enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCANSETTINGS,
-              SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL, SCR_SORT, SCR_FILTER };
+              SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL, SCR_SORT, SCR_FILTER,
+              SCR_FOLLOWLIST, SCR_FOLLOWACTION, SCR_FOLLOWDETAIL };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -200,6 +230,8 @@ static constexpr int STOP_X = 4, STOP_Y = 24, STOP_H = 18;
 
 // Scan-screen device list geometry + scrolling (rows are one MAC group each).
 static constexpr int LIST_Y0 = 84, LIST_ROW_H = 13;
+// Follow alert banner (scan screen, just above the list); tappable when devices are flagged.
+static constexpr int BANNER_Y = 73, BANNER_H = 10;
 static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
 // Rows must keep their content left of this x so they never run under the scroll icons.
 static constexpr int ICON_GUTTER_X = 240 - SCROLL_CX_INSET - SCROLL_R - 2;
@@ -312,6 +344,21 @@ static int topBarSegTapped(int nseg) {
 }
 static bool topBarTapped() { return topBarSegTapped(1) == 0; }
 
+// True on a fresh tap on the scan screen's follow banner (full width, just above the list).
+// Call every loop iteration so its edge state stays current; the caller checks g_followN.
+static bool bannerTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return false; }
+  bool now = g_touch.touched();
+  bool hit = false;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z) && sy >= BANNER_Y - 3 && sy < LIST_Y0) hit = true;
+  }
+  prev = now;
+  return hit;
+}
+
 SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
 char      g_logPath[48] = "/scanlog.jsonl";  // current session log (NDJSON); set in openSession()
@@ -383,6 +430,7 @@ struct DevGroup {
   int      rep;       // g_dets index of the strongest member (colour/source hint)
   int      nameIdx;   // g_dets index of the first member with a name, else -1
   uint32_t ie;        // first non-zero IE fingerprint, else 0
+  bool     whitelisted;  // matches a /whitelist.csv rule (muted; excluded from threat counts)
   char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
   char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
 };
@@ -404,7 +452,7 @@ static int buildGroups() {
       DevGroup& g = g_groups[gi];
       memcpy(g.mac, d.mac, 6);
       g.tier = (int)g_score[i].tier; g.bestRssi = d.rssi; g.rep = i;
-      g.nameIdx = -1; g.ie = 0;
+      g.nameIdx = -1; g.ie = 0; g.whitelisted = false;
     }
     DevGroup& g = g_groups[gi];
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
@@ -412,7 +460,24 @@ static int buildGroups() {
     if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
   }
+  // Whitelist check per device (before the sort, which uses it): union of member sources,
+  // first company ID / service UUID.
+  static const uint8_t zeroSvc[16] = {0};
+  for (int k = 0; k < n; k++) {
+    DevGroup& g = g_groups[k];
+    uint8_t bits = 0; uint16_t cid = 0; const uint8_t* svc = zeroSvc;
+    for (int r = 0; r < g_detCount; r++) {
+      const Detection& d = g_dets[g_sortIdx[r]];
+      if (memcmp(d.mac, g.mac, 6) != 0) continue;
+      bits |= (uint8_t)(1u << d.source);
+      if (!cid) cid = d.companyId;
+      if (svc == zeroSvc) for (int j = 0; j < 16; j++) if (d.svc[j]) { svc = d.svc; break; }
+    }
+    g.whitelisted = whitelist::match(g.mac, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : nullptr,
+                                     cid, svc, bits);
+  }
   std::sort(g_groups, g_groups + n, [](const DevGroup& a, const DevGroup& b) {
+    if (a.whitelisted != b.whitelisted) return !a.whitelisted;  // muted devices sink
     if (a.tier != b.tier) return a.tier > b.tier;
     return a.bestRssi > b.bestRssi;
   });
@@ -441,9 +506,148 @@ static int buildGroups() {
   return n;
 }
 
+static int countMuted() {
+  int m = 0;
+  for (int k = 0; k < g_groupCount; k++) if (g_groups[k].whitelisted) m++;
+  return m;
+}
+
+// ---- Following-me state (one entry per MAC, bounded, static; CYD loop is single-threaded) ----
+struct FollowState {
+  uint8_t  mac[6];
+  uint16_t sightings;
+  uint32_t firstMs, lastMs;
+  uint32_t windowMask;      // 1 bit per FOLLOW_WINDOW_MS, bit0 = window baseWin (newest)
+  uint8_t  baseWin;         // window index (mod 256) of bit0
+  int8_t   rssiMin, rssiMax;
+  float    anchorLat, anchorLon;  // first GPS fix seen at (NAN until a fix)
+  float    maxSpanM;        // farthest anchor->current distance seen
+  int32_t  lastQLat, lastQLon;    // last counted quantized fix
+  uint8_t  distinctFixes;
+  uint8_t  score;           // 0..100
+  uint8_t  ftier;           // 0 none / 1 PERSISTENT / 2 FOLLOWING
+  uint8_t  flags;           // FF_ACTIVE | FF_HADGPS
+};
+static constexpr uint8_t FF_ACTIVE = 1, FF_HADGPS = 2;
+static FollowState g_follow[MAX_DET];
+static int         g_followCount = 0;
+static int         g_followN     = 0;   // devices currently FOLLOWING
+
+static void resetFollow() {
+  memset(g_follow, 0, sizeof(g_follow));
+  g_followCount = 0; g_followN = 0;
+}
+
+static const FollowState* findFollow(const uint8_t* mac) {
+  for (int i = 0; i < g_followCount; i++)
+    if (memcmp(g_follow[i].mac, mac, 6) == 0) return &g_follow[i];
+  return nullptr;
+}
+
+static void updateFollowState() {
+  uint32_t now = millis();  // millis() wrap (~49 d) ignored, as elsewhere for a handheld session
+  // Expire stale entries (compact in place).
+  int w = 0;
+  for (int i = 0; i < g_followCount; i++)
+    if (now - g_follow[i].lastMs <= FOLLOW_TTL_MS) { if (w != i) g_follow[w] = g_follow[i]; w++; }
+  g_followCount = w;
+
+  uint32_t nowWin = now / FOLLOW_WINDOW_MS;
+  bool  gps = phone::hasGps();
+  float lat = 0, lon = 0, cosLat = 1.0f;
+  int32_t qLat = 0, qLon = 0;
+  if (gps) {
+    lat = phone::lat(); lon = phone::lon();
+    cosLat = cosf(lat * (float)M_PI / 180.0f);  // once per cycle; lat barely changes
+    qLat = (int32_t)lroundf(lat * FOLLOW_QUANT);
+    qLon = (int32_t)lroundf(lon * FOLLOW_QUANT);
+  }
+
+  for (int k = 0; k < g_groupCount; k++) {
+    const DevGroup& g = g_groups[k];
+    FollowState* f = nullptr;
+    for (int i = 0; i < g_followCount; i++)
+      if (memcmp(g_follow[i].mac, g.mac, 6) == 0) { f = &g_follow[i]; break; }
+    if (!f) {
+      if (g_followCount >= MAX_DET) {  // full: evict oldest. Routine in busy RF (5 min TTL vs a ~2 s rebuild), so tracking caps at MAX_DET devices
+        int o = 0;
+        for (int i = 1; i < g_followCount; i++)
+          if (now - g_follow[i].lastMs > now - g_follow[o].lastMs) o = i;
+        f = &g_follow[o];
+      } else f = &g_follow[g_followCount++];
+      memset(f, 0, sizeof(*f));
+      memcpy(f->mac, g.mac, 6);
+      f->firstMs = now; f->baseWin = (uint8_t)nowWin;
+      f->rssiMin = 127; f->rssiMax = -128;
+      f->anchorLat = f->anchorLon = NAN;
+      f->flags = FF_ACTIVE;
+    }
+    if (f->sightings < 0xFFFF) f->sightings++;
+    f->lastMs = now;
+    // Roll the presence mask forward so bit0 = the current window.
+    uint8_t delta = (uint8_t)((uint8_t)nowWin - f->baseWin);
+    if (delta) { f->windowMask = delta >= 32 ? 0 : (f->windowMask << delta); f->baseWin = (uint8_t)nowWin; }
+    f->windowMask |= 1u;
+    int r = constrain(g.bestRssi, -127, 127);
+    if (r < f->rssiMin) f->rssiMin = (int8_t)r;
+    if (r > f->rssiMax) f->rssiMax = (int8_t)r;
+    if (gps) {
+      if (isnan(f->anchorLat)) {
+        f->anchorLat = lat; f->anchorLon = lon;
+        f->lastQLat = qLat; f->lastQLon = qLon; f->distinctFixes = 1;
+      } else {
+        // Equirectangular: dx = dLon*cos(lat), dy = dLat, 1 deg ~ 111320 m.
+        float dx = (lon - f->anchorLon) * cosLat * 111320.0f;
+        float dy = (lat - f->anchorLat) * 111320.0f;
+        float d  = sqrtf(dx * dx + dy * dy);
+        if (d > f->maxSpanM) f->maxSpanM = d;
+        if ((qLat != f->lastQLat || qLon != f->lastQLon) && f->distinctFixes < 255) {
+          f->distinctFixes++; f->lastQLat = qLat; f->lastQLon = qLon;
+        }
+      }
+      f->flags |= FF_HADGPS;
+    }
+  }
+}
+
+static void computeFollowScores() {
+  g_followN = 0;
+  for (int i = 0; i < g_followCount; i++) {
+    FollowState& f = g_follow[i];
+    int pers = __builtin_popcount(f.windowMask);
+    bool gpsOk = (f.flags & FF_HADGPS) && !isnan(f.anchorLat);
+    float span = gpsOk ? f.maxSpanM : 0;
+    int fixes  = gpsOk ? f.distinctFixes : 0;
+    int sc = FOLLOW_W_PERSIST * ((pers >= FOLLOW_PERSIST_B1) + (pers >= FOLLOW_PERSIST_B2) + (pers >= FOLLOW_PERSIST_B3))
+           + FOLLOW_W_SPAN    * ((span >= FOLLOW_SPAN_B1) + (span >= FOLLOW_SPAN_B2) + (span >= FOLLOW_SPAN_B3))
+           + FOLLOW_W_FIXES   * ((fixes >= FOLLOW_FIXES_B1) + (fixes >= FOLLOW_FIXES_B2) + (fixes >= FOLLOW_FIXES_B3));
+    if (span >= FOLLOW_SPAN_MIN && (f.rssiMax - f.rssiMin) <= FOLLOW_RSSI_SPREAD) sc += FOLLOW_W_STABLE;
+    // Threat boost: this MAC's group tier (sigdb) above None. Also capture whitelist state.
+    bool whitelisted = false;
+    for (int k = 0; k < g_groupCount; k++)
+      if (memcmp(g_groups[k].mac, f.mac, 6) == 0) {
+        if (g_groups[k].tier != (int)sigdb::Tier::None) sc += FOLLOW_W_THREAT;
+        whitelisted = g_groups[k].whitelisted;
+        break;
+      }
+    // Whitelisted (known) devices never raise the follow alert or the magenta LED.
+    if (whitelisted) { f.score = 0; f.ftier = 0; continue; }
+    f.score = (uint8_t)min(sc, 100);
+    // PERSISTENT is time-only and capped: only GPS movement can reach FOLLOWING.
+    if (gpsOk && span >= FOLLOW_SPAN_M && fixes >= FOLLOW_FIXES && pers >= FOLLOW_PERSIST_FOLLOW) f.ftier = 2;
+    else if (pers >= FOLLOW_PERSIST_ONLY) f.ftier = 1;
+    else f.ftier = 0;
+    if (f.ftier == 2) g_followN++;
+  }
+}
+
 static void countTiers(int& susp, int& lk, int& conf) {
   susp = lk = conf = 0;
   for (int i = 0; i < g_detCount; i++) {
+    bool muted = false;  // known (whitelisted) devices don't count toward the alarm totals
+    for (int k = 0; k < g_groupCount; k++)
+      if (memcmp(g_groups[k].mac, g_dets[i].mac, 6) == 0) { muted = g_groups[k].whitelisted; break; }
+    if (muted) continue;
     switch (g_score[i].tier) {
       case sigdb::Tier::Suspect:   susp++; break;
       case sigdb::Tier::Likely:    lk++;   break;
@@ -498,6 +702,7 @@ static void beginSessionNamed() {
   g_logNamed   = false;   // re-arm rename-on-sync
   g_logStarted = false;   // file is created lazily on the first row (ensureLogFile)
   g_seenCount  = 0;       // fresh per-session dedup
+  resetFollow();          // a "following" judgement is per continuous trip
   Serial.printf("[CYD] session log (created on first detection): %s\n", g_logPath);
 }
 
@@ -765,6 +970,27 @@ static void sendSessionList() {
   Serial.printf("[CYD] session list sent (%u bytes)\n", (unsigned)list.length());
 }
 
+// Send the active whitelist rules to the phone, same framing as the session list: a
+// "WL=<bytes>" header then <bytes> bytes of "<csv rule line>\n" lines (line order = the
+// index "E:<n>" removes).
+static void sendWhitelist() {
+  String list;
+  whitelist::listAll(list);
+  char hdr[24];
+  int hn = snprintf(hdr, sizeof(hdr), "WL=%u", (unsigned)list.length());
+  phone::logNotify((const uint8_t*)hdr, hn);
+  delay(30);
+  const char* p = list.c_str();
+  size_t rem = list.length();
+  while (rem) {
+    size_t n = rem > 180 ? 180 : rem;
+    phone::logNotify((const uint8_t*)p, n);
+    p += n; rem -= n;
+    delay(15);
+  }
+  Serial.printf("[CYD] whitelist sent (%d rules, %u bytes)\n", whitelist::count(), (unsigned)list.length());
+}
+
 // This device's own BLE MAC, cached at boot so we can drop our own advertisement
 // from the scan results (the CYD's phone-link peripheral is visible to the C5's BLE
 // scan). Captured at runtime -> device-agnostic, works on any CYD unit.
@@ -822,14 +1048,15 @@ static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(sb, sizeof(sb));
-  char s[256];
+  char s[272];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;sess=%s",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;sess=%s",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
-           g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask, sb);
+           g_screen == SCR_SCAN ? 1 : 0, g_brightness, (int)g_srcMask,
+           whitelist::count(), countMuted(), sb);
   phone::setStatus(String(s));
 }
 
@@ -951,12 +1178,17 @@ static bool inCircle(int x, int y, int cx, int cy) {
 // trailing field (the scan viewer's timecode) ellipsised to fit left of the scroll-icon
 // gutter. The live scan uses tagW=9 and trailing=""; the viewer uses a 3-wide tag.
 static void drawDetRow(int y, uint16_t color, const char* tag, const char* name, int rssi,
-                       const char* trailing, bool flag = false, int tagW = 9) {
+                       const char* trailing, bool flag = false, int tagW = 9, bool follow = false,
+                       bool muted = false) {
   char buf[56];
-  int n = snprintf(buf, sizeof(buf), "%c%-*.*s %-13.13s %4d", flag ? '!' : ' ', tagW, tagW, tag,
-                   name, rssi);
+  // col 0 = '!' sigdb threat, col 1 = '>' following (orthogonal axes, so they compose).
+  // A whitelisted (muted) device shows '~' and is dimmed; it never shows the threat/follow glyphs.
+  char c0 = muted ? '~' : (flag ? '!' : ' ');
+  char c1 = (muted || !follow) ? ' ' : '>';
+  int n = snprintf(buf, sizeof(buf), "%c%c%-*.*s %-13.13s %4d", c0, c1,
+                   tagW, tagW, tag, name, rssi);
   tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(color, TFT_BLACK);
+  tft.setTextColor(muted ? TFT_DARKGREY : color, TFT_BLACK);
   tft.drawString(buf, 4, y, 1);
   if (trailing && trailing[0]) {
     int x0   = 4 + (n + 1) * 6;
@@ -1042,9 +1274,10 @@ static void drawScanList(bool clear) {
   for (int r = 0; r < rows; r++) {
     const DevGroup& g = g_groups[g_scrollOffset + r];
     const Detection& d = g_dets[g.rep];
+    const FollowState* fs = findFollow(g.mac);
     drawDetRow(LIST_Y0 + r * LIST_ROW_H, tierColor(g.tier, d.source, d.channel), g.tag,
                g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", g.bestRssi, "",
-               g.tier != (int)sigdb::Tier::None);
+               g.tier != (int)sigdb::Tier::None, 9, fs && fs->ftier == 2, g.whitelisted);
   }
   drawScrollIcons(g_scrollOffset, g_groupCount, vis);
 }
@@ -1091,12 +1324,27 @@ static void render() {
 
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   snprintf(buf, sizeof(buf), "2.4:%d 5G:%d BLE:%d PRB:%d Z:%d U:%d", n24, n5, nble, nprb, n154, g_seenCount);
-  tft.drawString(buf, 4, 58, 1);
+  tft.drawString(buf, 4, 55, 1);
 
   uint16_t tcol = conf ? TFT_RED : lk ? TFT_ORANGE : susp ? TFT_YELLOW : TFT_DARKGREY;
   tft.setTextColor(tcol, TFT_BLACK);
-  snprintf(buf, sizeof(buf), "threats  S:%d  L:%d  C:%d", susp, lk, conf);
-  tft.drawString(buf, 4, 70, 1);
+  snprintf(buf, sizeof(buf), "threats  S:%d  L:%d  C:%d  F:%d", susp, lk, conf, g_followN);
+  tft.drawString(buf, 4, 64, 1);
+
+  // Follow alert banner (y=73..83, just above the list): a tappable bar when devices are
+  // flagged (opens the drill-down), else a dim non-button status line. Plain '!' as the TFT
+  // font has no warning glyph.
+  if (g_followN > 0) {
+    tft.fillRect(0, BANNER_Y, tft.width(), BANNER_H, TFT_MAGENTA);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
+    snprintf(buf, sizeof(buf), "! FOLLOWING: %d  (tap)", g_followN);
+    tft.drawString(buf, tft.width() / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
+    tft.setTextDatum(TL_DATUM);
+  } else {
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("follow: none", 4, BANNER_Y + 1, 1);
+  }
 
   drawScanList(false);
 }
@@ -1828,9 +2076,230 @@ static void openDetail(int viewPos) {  // position within the filtered+sorted vi
   drawDetailList(false);
 }
 
+// ---- Follow drill-down: banner -> flagged list -> action menu -> details ----
+// Entered from the scan-screen banner. A stable snapshot of the flagged g_follow indexes is
+// taken on entry (no scan cycle runs while drilling, so g_follow/g_groups stay put); returning
+// to SCR_SCAN resumes the live view.
+static uint8_t g_flIdx[MAX_DET];  // snapshot: g_follow indexes with ftier >= 1 (FOLLOWING first, then score)
+static int     g_flN = 0, g_flSel = 0, g_flOff = 0, g_flActSel = 0;
+static const char* g_flMsg = nullptr;  // brief list-header confirmation (cleared on entry from scan)
+static uint16_t    g_flMsgCol = TFT_GREEN;
+static const char* const kFollowActItems[] = { "See details", "Add to whitelist", "Back" };
+static constexpr int FOLLOWACT_N = 3;
+
+static const DevGroup* groupByMac(const uint8_t* mac) {
+  for (int k = 0; k < g_groupCount; k++)
+    if (memcmp(g_groups[k].mac, mac, 6) == 0) return &g_groups[k];
+  return nullptr;
+}
+
+static const char* groupName(const DevGroup* g) {
+  return (g && g->nameIdx >= 0) ? g_dets[g->nameIdx].name : "<hidden>";
+}
+
+static void drawFollowRows(bool clear) {
+  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  g_flOff = constrain(g_flOff, 0, max(0, g_flN - vis));
+  int rows = min(g_flN - g_flOff, vis);
+  for (int r = 0; r < rows; r++) {
+    int i = g_flOff + r;
+    const FollowState& f = g_follow[g_flIdx[i]];
+    const DevGroup* g = groupByMac(f.mac);
+    int y = LIST_Y0 + r * LIST_ROW_H;
+    if (g) {
+      const Detection& d = g_dets[g->rep];
+      drawDetRow(y, tierColor(g->tier, d.source, d.channel), g->tag, groupName(g), g->bestRssi,
+                 f.ftier == 2 ? "F" : "P", g->tier != (int)sigdb::Tier::None, 9, true, false);
+    } else {
+      drawDetRow(y, TFT_DARKGREY, "?", "<gone>", f.rssiMax, "", false, 9, true, false);
+    }
+    if (i == g_flSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
+  }
+  drawScrollIcons(g_flOff, g_flN, vis);
+}
+
+static void drawFollowList() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  char b[40];
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  snprintf(b, sizeof(b), "FLAGGED DEVICES: %d", g_flN);
+  tft.drawString(b, 4, 46, 1);
+  if (g_flMsg) tft.setTextColor(g_flMsgCol, TFT_BLACK); else tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(g_flMsg ? g_flMsg : "F=following P=persistent; tap a row", 4, 58, 1);
+  drawFollowRows(false);
+}
+
+// Snapshot the flagged devices and open the list (from the scan banner).
+static void openFollowList() {
+  g_flN = 0;
+  for (int i = 0; i < g_followCount && g_flN < MAX_DET; i++)
+    if (g_follow[i].ftier >= 1) g_flIdx[g_flN++] = (uint8_t)i;
+  std::sort(g_flIdx, g_flIdx + g_flN, [](uint8_t a, uint8_t b) {
+    if (g_follow[a].ftier != g_follow[b].ftier) return g_follow[a].ftier > g_follow[b].ftier;
+    return g_follow[a].score > g_follow[b].score;
+  });
+  g_flSel = 0; g_flOff = 0; g_flMsg = nullptr;
+  g_screen = SCR_FOLLOWLIST;
+  listTouchReset();
+  drawFollowList();
+}
+
+static void followBackToList() {
+  g_screen = SCR_FOLLOWLIST;
+  listTouchReset();
+  drawFollowList();
+}
+
+static void followBackToScan() {
+  g_screen = SCR_SCAN;   // the SCAN case runs a cycle and repaints immediately
+  listTouchReset();
+}
+
+static void drawFollowAction() {
+  const DevGroup* g = groupByMac(g_follow[g_flIdx[g_flSel]].mac);
+  char title[16];
+  snprintf(title, sizeof(title), "%.14s", groupName(g));
+  drawListMenu(title, kFollowActItems, FOLLOWACT_N, g_flActSel);
+}
+
+static void openFollowAction() {
+  g_flActSel = 0;
+  g_screen = SCR_FOLLOWACTION;
+  listTouchReset();
+  drawFollowAction();
+}
+
+// Fill g_detL[] from the live FollowState + its DevGroup/Detections (mirrors openDetail).
+static void openFollowDetail() {
+  const FollowState& f = g_follow[g_flIdx[g_flSel]];
+  const DevGroup* g = groupByMac(f.mac);
+  g_detN = 0; g_detOff = 0;
+  char b[64];
+  addField("Name", groupName(g));
+  snprintf(b, sizeof(b), "%02X:%02X:%02X:%02X:%02X:%02X", f.mac[0], f.mac[1], f.mac[2], f.mac[3], f.mac[4], f.mac[5]);
+  addField("MAC", b);
+  addField("Source", g ? g->tag : "-");
+  snprintf(b, sizeof(b), "%d (%d..%d)", g ? g->bestRssi : (int)f.rssiMax, f.rssiMin, f.rssiMax);
+  addField("RSSI dBm", b);
+  if (g && g_dets[g->rep].channel) { snprintf(b, sizeof(b), "%d", g_dets[g->rep].channel); addField("Channel", b); }
+  else addField("Channel", "-");
+  // sigdb: strongest-scoring member detection of this MAC.
+  int best = -1;
+  for (int i = 0; i < g_detCount; i++)
+    if (memcmp(g_dets[i].mac, f.mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
+  if (best >= 0) {
+    snprintf(b, sizeof(b), "%s (%d)", sigdb::tierName(g_score[best].tier), g_score[best].score);
+    addField("Threat tier", b, tierColor((int)g_score[best].tier, (uint8_t)Source::WifiScan, 0));
+    const char* lbl = sigdb::labelFor(g_score[best]);
+    if (lbl && lbl[0]) addField("Signature", lbl);
+  } else addField("Threat tier", "none");
+  snprintf(b, sizeof(b), "%d / 100", f.score);
+  addField("Follow score", b);
+  addField("Follow tier", f.ftier == 2 ? "FOLLOWING" : "PERSISTENT", f.ftier == 2 ? TFT_RED : TFT_ORANGE);
+  snprintf(b, sizeof(b), "%d windows", __builtin_popcount(f.windowMask));
+  addField("Persistence", b);
+  bool gpsOk = (f.flags & FF_HADGPS) && !isnan(f.anchorLat);
+  snprintf(b, sizeof(b), "%d", gpsOk ? f.distinctFixes : 0);
+  addField("GPS fixes", b);
+  snprintf(b, sizeof(b), "%d m", gpsOk ? (int)f.maxSpanM : 0);
+  addField("Max span", b);
+  snprintf(b, sizeof(b), "%u", (unsigned)f.sightings);
+  addField("Sightings", b);
+  uint32_t nowMs = millis();
+  for (int k = 0; k < 2; k++) {
+    uint32_t ms = k ? f.lastMs : f.firstMs;
+    if (phone::hasTime()) {
+      time_t t = (time_t)(phone::epochNow() - (nowMs - ms) / 1000);
+      struct tm tmv;
+      gmtime_r(&t, &tmv);
+      snprintf(b, sizeof(b), "%04d-%02d-%02d %02d:%02d:%02d", tmv.tm_year + 1900, tmv.tm_mon + 1,
+               tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    } else {
+      snprintf(b, sizeof(b), "+%lus since boot", (unsigned long)(ms / 1000));
+    }
+    addField(k ? "Last seen" : "First seen", b);
+  }
+  if (gpsOk) { snprintf(b, sizeof(b), "%.5f,%.5f", f.anchorLat, f.anchorLon); addField("GPS anchor", b); }
+  else addField("GPS anchor", "-");
+
+  g_screen = SCR_FOLLOWDETAIL;
+  listTouchReset();
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString("FOLLOW DETAIL", 4, 46, 1);
+  drawDetailList(false);
+}
+
+// Compose ONE whitelist rule for the selected device, most durable identifier first:
+// name -> BLE company ID -> BLE service UUID -> MAC. Label is always "follow".
+static void followWhitelistLine(const FollowState& f, char* out, size_t cap) {
+  const DevGroup* g = groupByMac(f.mac);
+  uint8_t bits = 0; uint16_t cid = 0; const uint8_t* svc = nullptr;
+  for (int i = 0; i < g_detCount; i++) {
+    const Detection& d = g_dets[i];
+    if (memcmp(d.mac, f.mac, 6) != 0) continue;
+    bits |= (uint8_t)(1u << d.source);
+    if (!cid) cid = d.companyId;
+    if (!svc) for (int j = 0; j < 16; j++) if (d.svc[j]) { svc = d.svc; break; }
+  }
+  const uint8_t bleB = 1u << (uint8_t)Source::BleScan;
+  const uint8_t wifiB = (1u << (uint8_t)Source::WifiScan) | (1u << (uint8_t)Source::WifiProbe);
+  const uint8_t zigB = 1u << (uint8_t)Source::Ieee802154;
+  char sm = 'A';  // single radio family -> that family, else any
+  if (bits && (bits & ~bleB) == 0) sm = 'B';
+  else if (bits && (bits & ~wifiB) == 0) sm = 'W';
+  else if (bits && (bits & ~zigB) == 0) sm = '4';
+
+  char nm[24]; nm[0] = 0;
+  if (g && g->nameIdx >= 0) {
+    int n = 0;
+    for (const char* p = g_dets[g->nameIdx].name; *p && n < 23; p++) {
+      if (*p == ',' || (unsigned char)*p < 0x20) break;  // rule fields are comma-delimited
+      nm[n++] = *p;
+    }
+    while (n > 0 && nm[n - 1] == ' ') n--;
+    nm[n] = 0;
+  }
+  if (nm[0]) { snprintf(out, cap, "ncontains,%s,%c,follow", nm, sm); return; }
+  if (cid)   { snprintf(out, cap, "blecid,%04X,B,follow", cid); return; }
+  if (svc) {
+    char u[33];
+    for (int j = 0; j < 16; j++) sprintf(u + j * 2, "%02X", svc[j]);
+    snprintf(out, cap, "bleuuid,%s,B,follow", u);
+    return;
+  }
+  snprintf(out, cap, "mac,%02X:%02X:%02X:%02X:%02X:%02X,%c,follow",
+           f.mac[0], f.mac[1], f.mac[2], f.mac[3], f.mac[4], f.mac[5], sm);
+}
+
+static void activateFollowAction(int sel) {
+  if (sel == 0) { openFollowDetail(); return; }
+  if (sel == 2) { followBackToList(); return; }
+  char line[96];
+  followWhitelistLine(g_follow[g_flIdx[g_flSel]], line, sizeof(line));
+  bool ok = whitelist::add(line);
+  Serial.printf("[CYD] follow whitelist add %s: %s\n", ok ? "ok" : "FAILED", line);
+  if (ok) {  // device mutes on the next scan cycle; drop it from the snapshot now
+    for (int i = g_flSel; i < g_flN - 1; i++) g_flIdx[i] = g_flIdx[i + 1];
+    g_flN--;
+    g_flSel = constrain(g_flSel, 0, max(0, g_flN - 1));
+    if (g_flN == 0) { followBackToScan(); return; }
+  }
+  g_flMsg = ok ? "Added to whitelist" : "Whitelist add FAILED";
+  g_flMsgCol = ok ? TFT_GREEN : TFT_RED;
+  followBackToList();
+}
+
 // Act on a scan-menu row (touch tap or long-press select).
 static void activateScanMenu(int sel) {
-  if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; }               // first cycle draws it
+  if (sel == 0)      { g_screen = SCR_SCAN; g_scrollOffset = 0; resetFollow(); }             // first cycle draws it
   else if (sel == 1) {                                                       // New Session
     startNewSession();
     drawScanMenu();
@@ -1878,7 +2347,11 @@ static void runScanCycle() {
   requestScan();
   computeScores();
   buildGroups();  // once per cycle; shared by render() and pushDetections()
-  setLed(!g_linkOk, g_linkOk, false);
+  updateFollowState();
+  computeFollowScores();
+  // Follow alert wins the LED (solid magenta, works headless); else link green/red.
+  if (g_followN > 0) setLed(true, false, true);
+  else               setLed(!g_linkOk, g_linkOk, false);
   int newCount = logNewDetections();
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
@@ -1919,6 +2392,7 @@ void setup() {
   applyBrightness();
   initSD();
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
+  whitelist::begin();  // load /whitelist.csv (seeds a commented header if absent)
   g_touch.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN);
   g_touchOk = g_touch.loadCal();
   phone::begin(DEVICE_NAME);
@@ -1934,6 +2408,20 @@ void loop() {
   if (phone::reloadRequested()) sigdb::reload();
   if (phone::logRequested())    transferLog();
   if (phone::listRequested())   sendSessionList();
+  if (phone::wlReloadRequested()) { whitelist::reload(); pushStatus(); }
+  if (phone::wlListRequested())   sendWhitelist();
+  { char ln[96]; if (phone::wlAddRequested(ln, sizeof(ln))) {  // "A:<rule>": SD write in the loop, not mid-scan
+      bool ok = true;
+      for (const char* c = ln; *c; c++) if ((unsigned char)*c < 0x20) { ok = false; break; }  // one line only
+      if (ok) ok = whitelist::add(ln);
+      Serial.printf("[CYD] whitelist add %s: %s\n", ok ? "ok" : "REJECTED", ln);
+      sendWhitelist(); pushStatus();
+    } }
+  { int ix; if (phone::wlRemoveRequested(&ix)) {
+      bool ok = whitelist::removeAt(ix);
+      Serial.printf("[CYD] whitelist remove %d: %s\n", ix, ok ? "ok" : "FAILED");
+      sendWhitelist(); pushStatus();
+    } }
   { char fn[48]; if (phone::fileRequested(fn, sizeof(fn)))   transferFile(fn); }
   { char fn[48]; if (phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
@@ -1962,11 +2450,15 @@ void loop() {
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
   }
 
-  // Phone can start/stop the scan remotely (single toggle in the web app).
-  if (phone::scanStartRequested()) { if (g_screen != SCR_SCAN) g_scrollOffset = 0; g_screen = SCR_SCAN; }
+  // Phone can start/stop the scan remotely (single toggle in the web app). Ignore a start while
+  // drilling the follow screens so a stray phone toggle can't reset follow state / abandon the
+  // snapshot mid-view; scanStartRequested() is consume-on-read, so short-circuiting leaves it
+  // pending until we return to SCR_SCAN.
+  bool inFollow = (g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL);
+  if (!inFollow && phone::scanStartRequested()) { if (g_screen != SCR_SCAN) { g_scrollOffset = 0; resetFollow(); } g_screen = SCR_SCAN; }
   // Consume the stop flag unconditionally, but only act on it while actually scanning
   // (so a stray stop sent from another screen is discarded, not buffered to fire later).
-  if (phone::scanStopRequested() && g_screen == SCR_SCAN) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
+  if (phone::scanStopRequested() && g_screen == SCR_SCAN) { setLed(!g_linkOk, g_linkOk, false); g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
 
   // Explore and live scan are mutually exclusive: drop the index block as soon as we're out.
   if (g_ex && g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
@@ -2077,6 +2569,41 @@ void loop() {
       return;
     }
 
+    case SCR_FOLLOWLIST: {
+      if (topBarTapped()) { followBackToScan(); return; }
+      int t = listTouch(g_flN, &g_flOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawFollowRows(true); });
+      if (t >= 0) { g_flSel = t; openFollowAction(); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
+        g_flSel = (g_flSel + 1) % g_flN;
+        if (g_flSel < g_flOff) g_flOff = g_flSel;
+        if (g_flSel >= g_flOff + visibleRows()) g_flOff = g_flSel - visibleRows() + 1;
+        drawFollowRows(true);
+      } else if (ev == BTN_LONG) { openFollowAction(); }
+      delay(20);
+      return;
+    }
+
+    case SCR_FOLLOWACTION: {
+      int t = tappedRow(FOLLOWACT_N);
+      if (t >= 0)               { g_flActSel = t; activateFollowAction(t); return; }
+      if      (ev == BTN_SHORT) { g_flActSel = (g_flActSel + 1) % FOLLOWACT_N; drawFollowAction(); }
+      else if (ev == BTN_LONG)  { activateFollowAction(g_flActSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_FOLLOWDETAIL: {
+      if (topBarTapped() || ev == BTN_LONG) { followBackToList(); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: page down (wraps to the top)
+        int maxOff = max(0, g_detN - visibleRows());
+        g_detOff = (g_detOff >= maxOff) ? 0 : min(g_detOff + visibleRows(), maxOff);
+        drawDetailList(true);
+      }
+      listTouch(g_detN, &g_detOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawDetailList(true); });
+      delay(20);
+      return;
+    }
+
     case SCR_APPQR:
       if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }  // any press: back
       delay(20);
@@ -2084,16 +2611,22 @@ void loop() {
 
     case SCR_SCAN:
       // Stop via the on-screen button (touch), a long BOOT hold, or the phone.
-      if (ev == BTN_LONG || topBarTapped()) { g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return; }
+      { bool bn = bannerTapped();  // always called so its edge state stays current
+        if (bn && g_followN > 0 && ev != BTN_LONG) { openFollowList(); return; } }
+      // BOOT short-press opens the follow drill-down (so it's reachable without touch).
+      if (ev == BTN_SHORT && g_followN > 0) { openFollowList(); return; }
+      if (ev == BTN_LONG || topBarTapped()) { setLed(!g_linkOk, g_linkOk, false); g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return; }
       runScanCycle();
       // Responsive ~2 s wait that also honors stop requests and pending downloads.
       {
         uint32_t t0 = millis();
         while (millis() - t0 < 2000) {
           if (buttonEvent() == BTN_LONG || topBarTapped() || phone::scanStopRequested()) {
+            setLed(!g_linkOk, g_linkOk, false);
             g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); return;
           }
           if (phone::downloadRequested()) return;
+          if (bannerTapped() && g_followN > 0) { openFollowList(); return; }
           handleScanTouch();
           delay(20);
         }
