@@ -208,13 +208,18 @@ static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner
 // an item to select it directly. ---
 enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCANSETTINGS,
               SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL, SCR_SORT, SCR_FILTER,
-              SCR_FOLLOWLIST, SCR_FOLLOWACTION, SCR_FOLLOWDETAIL };
+              SCR_FOLLOWLIST, SCR_FOLLOWACTION, SCR_FOLLOWDETAIL,
+              SCR_WHITELIST, SCR_WLADD, SCR_WLRULE };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
 static int    g_scanSel = 0;
 static int    g_scanSetSel = 0;
-static constexpr int SCANSET_N = 5;  // BLE / Wi-Fi 2.4 / Wi-Fi 5G / 802.15.4 / Back
+static constexpr int SCANSET_N = 6;  // 4 source tiles (BLE / 2.4 / 5G / 15.4), Whitelist, Back
+// Scan Settings geometry (shared by drawScanSettings AND scanSetTouch): 4 tiles in one row,
+// then the Whitelist / Back rows on the drawListMenu row style.
+static constexpr int SS_TILE_Y = 70, SS_TILE_H = 44, SS_TILE_GAP = 4, SS_MARGIN = 6;
+static constexpr int SS_ROW_Y0 = 130, SS_ROW_STEP = 40, SS_ROW_H = 34;
 static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
@@ -826,6 +831,11 @@ static int logNewDetections() {
     char uuidStr[33]; uuidStr[0] = 0;
     for (int k = 0; k < 16; k++)
       if (d.svc[k]) { for (int j = 0; j < 16; j++) sprintf(uuidStr + j * 2, "%02X", d.svc[j]); break; }
+    // Whitelist state of this device, looked up per-group by MAC (buildGroups() ran this
+    // cycle). Stamped into the log so downstream tools can filter muted detections.
+    bool wl = false;
+    for (int k = 0; k < g_groupCount; k++)
+      if (memcmp(g_groups[k].mac, d.mac, 6) == 0) { wl = g_groups[k].whitelisted; break; }
     // One NDJSON object per line; optional keys are omitted when blank. Worst case (every
     // optional key + a fully escaped name): ~60 B fixed/numeric + 96 name + 48 sig + 32 uuid
     // + key text ~ 440-480 B, inside the 512 B buffer. lnAppend() is overflow-proof anyway.
@@ -845,6 +855,7 @@ static int logNewDetections() {
     if (safe[0])     lnAppend(ln, n2, ",\"name\":\"%s\"", safe);
     lnAppend(ln, n2, ",\"score\":%d,\"tier\":\"%s\"", sc.score, sigdb::tierName(sc.tier));
     if (sig[0])      lnAppend(ln, n2, ",\"sig\":\"%s\"", sig);
+    lnAppend(ln, n2, ",\"wl\":%d", wl ? 1 : 0);
     if (n2 > (int)LOG_LINE - 2) continue;  // can't close the object in-buffer: drop the row, never write truncated JSON
     ln[n2++] = '}'; ln[n2++] = '\n';
     f.write((const uint8_t*)ln, n2);
@@ -898,7 +909,13 @@ static void transferFile(const char* path) {
 // traversal) and refuses the live session being written. Pushes the refreshed list back.
 static void sendSessionList();  // fwd decl
 static bool exploreHolds(const char* path);  // true if the Scan Viewer has this file open
+static void wipeAllLogs();      // fwd decl ("D:*" bulk delete)
 static void deleteSession(const char* path) {
+  if (strcmp(path, "*") == 0 || strcmp(path, "/logs/*") == 0) {  // "D:*" = wipe all sessions
+    wipeAllLogs();
+    sendSessionList();
+    return;
+  }
   if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
     Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
   } else if (strcmp(path, g_logPath) == 0) {
@@ -915,6 +932,34 @@ static void deleteSession(const char* path) {
 static String logBase(const String& nm) {  // dir entry -> bare basename (core may add a path)
   int slash = nm.lastIndexOf('/');
   return slash >= 0 ? nm.substring(slash + 1) : nm;
+}
+
+// Bulk-delete every /logs/ session except the live one and any file the Scan Viewer holds
+// open (same guards as deleteSession). Two-pass per batch (collect names, then remove) since
+// deleting while iterating a directory is unsafe; re-scans until a pass finds nothing left to
+// delete, bounded so a huge card can't spin forever.
+static void wipeAllLogs() {
+  int removed = 0;
+  for (int pass = 0; pass < 64; pass++) {       // up to 64 * 24 files
+    File dir = SD.open("/logs");
+    if (!dir) break;
+    char victims[24][48];
+    int nv = 0;
+    for (File e = dir.openNextFile(); e && nv < 24; e = dir.openNextFile()) {
+      if (!e.isDirectory()) {
+        char full[48];
+        snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
+        if (strcmp(full, g_logPath) != 0 && !exploreHolds(full))
+          snprintf(victims[nv++], sizeof(victims[0]), "%s", full);
+      }
+      e.close();
+    }
+    dir.close();
+    if (nv == 0) break;                          // only the live/held file(s) remain
+    for (int i = 0; i < nv; i++)
+      if (SD.remove(victims[i])) { removed++; Serial.printf("[CYD] wiped %s\n", victims[i]); }
+  }
+  Serial.printf("[CYD] wipe all logs: %d file(s) removed (live session kept)\n", removed);
 }
 
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
@@ -1546,17 +1591,72 @@ static void drawScanMenu() {
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
 }
 
-// Scan Settings: per-source enable toggles (labels rebuilt each draw to show state).
+// Scan Settings: a row of 4 source tiles (filled = enabled) then Whitelist / Back rows.
+// Focus index g_scanSetSel: 0..3 = tiles (BLE / 2.4 / 5G / 15.4), 4 = Whitelist, 5 = Back.
+static int ssTileW() { return (tft.width() - 2 * SS_MARGIN - 3 * SS_TILE_GAP) / 4; }
 static void drawScanSettings() {
-  char b[20], w24[24], w5[24], z[24];
-  snprintf(b,   sizeof(b),   "BLE: %s",       (g_srcMask & MASK_BLE)    ? "On" : "Off");
-  snprintf(w24, sizeof(w24), "Wi-Fi 2.4: %s", (g_srcMask & MASK_WIFI24) ? "On" : "Off");
-  snprintf(w5,  sizeof(w5),  "Wi-Fi 5G: %s",  (g_srcMask & MASK_WIFI5)  ? "On" : "Off");
-  snprintf(z,   sizeof(z),   "802.15.4: %s",  (g_srcMask & MASK_154)    ? "On" : "Off");
-  const char* items[SCANSET_N] = { b, w24, w5, z, "Back" };
-  drawListMenu("SCAN SETTINGS", items, SCANSET_N, g_scanSetSel);
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  int W = tft.width();
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString("SCAN SETTINGS", W / 2, 32, 4);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Sources", SS_MARGIN, SS_TILE_Y - 12, 1);
+  static const char* const kTileLbl[4] = { "BLE", "2.4", "5G", "15.4" };
+  const uint8_t tileBits[4] = { MASK_BLE, MASK_WIFI24, MASK_WIFI5, MASK_154 };
+  int tw = ssTileW();
+  for (int i = 0; i < 4; i++) {
+    int x = SS_MARGIN + i * (tw + SS_TILE_GAP);
+    bool on = (g_srcMask & tileBits[i]) != 0;
+    if (on) tft.fillRoundRect(x, SS_TILE_Y, tw, SS_TILE_H, 6, TFT_DARKGREEN);
+    else    tft.drawRoundRect(x, SS_TILE_Y, tw, SS_TILE_H, 6, TFT_DARKGREY);
+    if (g_scanSetSel == i) tft.drawRect(x - 2, SS_TILE_Y - 2, tw + 4, SS_TILE_H + 4, TFT_CYAN);  // focus
+    tft.setTextColor(on ? TFT_WHITE : TFT_DARKGREY, on ? TFT_DARKGREEN : TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(kTileLbl[i], x + tw / 2, SS_TILE_Y + SS_TILE_H / 2, 2);
+  }
+  static const char* const kRowLbl[2] = { "Whitelist", "Back" };
+  for (int i = 0; i < 2; i++) {
+    bool s = (g_scanSetSel == 4 + i);
+    int  y = SS_ROW_Y0 + i * SS_ROW_STEP;
+    if (s) tft.fillRoundRect(6, y - 5, W - 12, SS_ROW_H, 6, TFT_NAVY);
+    else   tft.drawRoundRect(6, y - 5, W - 12, SS_ROW_H, 6, TFT_DARKGREY);
+    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? TFT_NAVY : TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(kRowLbl[i], W / 2, y - 5 + SS_ROW_H / 2, 4);
+  }
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+}
+
+// Touch hit-test for the Scan Settings mixed geometry (tiles + rows). On a fresh touch-down
+// edge returns the focus index 0..5, else -1. No-op until touch is calibrated.
+static int scanSetTouch() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return -1; }
+  bool now = g_touch.touched();
+  int  hit = -1;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z)) {
+      int tw = ssTileW();
+      if (sy >= SS_TILE_Y - 2 && sy <= SS_TILE_Y + SS_TILE_H + 2)
+        for (int i = 0; i < 4; i++) {
+          int x = SS_MARGIN + i * (tw + SS_TILE_GAP);
+          if (sx >= x - 2 && sx <= x + tw + 2) { hit = i; break; }
+        }
+      for (int i = 0; i < 2 && hit < 0; i++) {
+        int y = SS_ROW_Y0 + i * SS_ROW_STEP;
+        if (sx >= 6 && sx <= tft.width() - 6 && sy >= y - 5 && sy <= y - 5 + SS_ROW_H) hit = 4 + i;
+      }
+    }
+  }
+  prev = now;
+  return hit;
 }
 
 // ---------------------------------------------------------------- Explore Scan
@@ -1594,6 +1694,7 @@ static int   g_viewOffset = 0, g_detOff = 0, g_detN = 0;
 struct LogRow {
   uint32_t epoch, ms;
   int      rssi, channel, score, tier;
+  bool     wl;  // device was whitelisted (muted) when logged; absent in old logs -> false
   char     lat[16], lon[16], src[4], mac[18], ie[9], cid[5], uuid[33], pan[5], name[33], sig[24];
 };
 
@@ -1648,6 +1749,7 @@ static bool parseJsonLine(char* line, LogRow& r) {
   const char* t = o["tier"] | "";
   r.tier    = t[0] == 's' ? 1 : t[0] == 'l' ? 2 : t[0] == 'c' ? 3 : 0;
   cpyField(r.sig,  sizeof(r.sig),  o["sig"]  | "");
+  r.wl      = (o["wl"] | 0) != 0;  // omitted in older logs -> not whitelisted
   return true;
 }
 
@@ -1684,6 +1786,7 @@ static bool parseCsvLine(char* line, LogRow& r) {
   char t = f[14][0];
   r.tier    = t == 's' ? 1 : t == 'l' ? 2 : t == 'c' ? 3 : 0;
   cpyField(r.sig, sizeof(r.sig), n > 15 ? f[15] : "");
+  r.wl = false;  // legacy CSV logs predate the whitelist flag
   return true;
 }
 
@@ -2046,6 +2149,7 @@ static void openDetail(int viewPos) {  // position within the filtered+sorted vi
   if (r.score) n += snprintf(b + n, sizeof(b) - n, " (score %d)", r.score);
   if (r.sig[0] && n < (int)sizeof(b)) snprintf(b + n, sizeof(b) - n, " - %s", r.sig);
   addField("Threat tier", b, tierColor(r.tier, (uint8_t)Source::WifiScan, 0));
+  if (r.wl) addField("Whitelisted", "yes (muted)", TFT_DARKGREY);
   if (r.ie[0]   && !allZero(r.ie))   addField("IE fingerprint", r.ie);
   if (r.cid[0]  && !allZero(r.cid))  addField("BLE company ID", r.cid);
   if (r.uuid[0] && !allZero(r.uuid)) addField("Service UUID", r.uuid);
@@ -2239,12 +2343,13 @@ static void openFollowDetail() {
 
 // Compose ONE whitelist rule for the selected device, most durable identifier first:
 // name -> BLE company ID -> BLE service UUID -> MAC. Label is always "follow".
-static void followWhitelistLine(const FollowState& f, char* out, size_t cap) {
-  const DevGroup* g = groupByMac(f.mac);
+// Keyed purely off the MAC (shared by the follow flow and the Whitelist add-picker).
+static void whitelistLineForMac(const uint8_t mac[6], char* out, size_t cap) {
+  const DevGroup* g = groupByMac(mac);
   uint8_t bits = 0; uint16_t cid = 0; const uint8_t* svc = nullptr;
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
-    if (memcmp(d.mac, f.mac, 6) != 0) continue;
+    if (memcmp(d.mac, mac, 6) != 0) continue;
     bits |= (uint8_t)(1u << d.source);
     if (!cid) cid = d.companyId;
     if (!svc) for (int j = 0; j < 16; j++) if (d.svc[j]) { svc = d.svc; break; }
@@ -2276,7 +2381,11 @@ static void followWhitelistLine(const FollowState& f, char* out, size_t cap) {
     return;
   }
   snprintf(out, cap, "mac,%02X:%02X:%02X:%02X:%02X:%02X,%c,follow",
-           f.mac[0], f.mac[1], f.mac[2], f.mac[3], f.mac[4], f.mac[5], sm);
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], sm);
+}
+
+static void followWhitelistLine(const FollowState& f, char* out, size_t cap) {
+  whitelistLineForMac(f.mac, out, cap);
 }
 
 static void activateFollowAction(int sel) {
@@ -2295,6 +2404,216 @@ static void activateFollowAction(int sel) {
   g_flMsg = ok ? "Added to whitelist" : "Whitelist add FAILED";
   g_flMsgCol = ok ? TFT_GREEN : TFT_RED;
   followBackToList();
+}
+
+// ---- On-device whitelist manager (Scan Settings -> Whitelist) ----
+// SCR_WHITELIST lists the rules (row 0 = "+ Add seen device", last row = "< Back" so BOOT-only
+// users can exit); SCR_WLADD picks a seen device from a snapshot of g_groups and composes a
+// rule with whitelistLineForMac(); SCR_WLRULE is the per-rule action menu (Remove / Back).
+// Add/remove mirror the phone's GATT handlers: whitelist op -> sendWhitelist -> pushStatus.
+static int g_wlSel = 0, g_wlOff = 0;        // whitelist list cursor/scroll
+static int g_wlRuleSel = 0;                 // rule index the action screen targets
+static int g_wlActSel = 0;                  // action-menu cursor
+static const char* g_wlMsg = nullptr; static uint16_t g_wlMsgCol = TFT_GREEN;  // list-header feedback
+static uint8_t g_wlPickMac[MAX_DET][6];     // add-picker snapshot of g_groups MACs
+static int     g_wlPickN = 0, g_wlPickSel = 0, g_wlPickOff = 0;
+static const char* const kWlActItems[] = { "Remove rule", "Back" };
+static constexpr int WLACT_N = 2;
+
+static void drawWhitelist();
+static void drawWlAdd();
+static void openWlRule();
+static void wlAddEnter();
+
+// "kind pattern (label)" for the idx-th rule (CSV kind,pattern,srcmask,label; label may hold commas).
+static void wlRuleText(int idx, char* out, size_t cap) {
+  char buf[96];
+  out[0] = 0;
+  if (!whitelist::lineAt(idx, buf, sizeof(buf))) return;
+  buf[strcspn(buf, "\r\n")] = 0;
+  char* pat = strchr(buf, ',');
+  if (!pat) { snprintf(out, cap, "%s", buf); return; }
+  *pat++ = 0;
+  char* sm = strchr(pat, ',');
+  const char* lbl = "";
+  if (sm) {
+    *sm++ = 0;
+    char* l = strchr(sm, ',');
+    if (l) lbl = l + 1;
+  }
+  if (lbl[0]) snprintf(out, cap, "%s %s (%s)", buf, pat, lbl);
+  else        snprintf(out, cap, "%s %s", buf, pat);
+}
+
+static void drawWlTextRow(int y, const char* text, uint16_t color) {
+  char t[56];
+  int room = (ICON_GUTTER_X - 4) / 6;  // font-1 chars that fit before the scroll icons
+  snprintf(t, sizeof(t), "%.*s", room < 55 ? room : 55, text);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(color, TFT_BLACK);
+  tft.drawString(t, 4, y, 1);
+}
+
+static void drawWhitelistRows(bool clear) {
+  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  int total = whitelist::count() + 2;  // + Add row, rules, Back row
+  g_wlOff = constrain(g_wlOff, 0, max(0, total - vis));
+  int rows = min(total - g_wlOff, vis);
+  for (int r = 0; r < rows; r++) {
+    int i = g_wlOff + r;
+    int y = LIST_Y0 + r * LIST_ROW_H;
+    if (i == 0) drawWlTextRow(y, "+ Add seen device", TFT_CYAN);
+    else if (i == total - 1) drawWlTextRow(y, "< Back", TFT_LIGHTGREY);
+    else {
+      char t[96];
+      wlRuleText(i - 1, t, sizeof(t));
+      drawWlTextRow(y, t, TFT_WHITE);
+    }
+    if (i == g_wlSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
+  }
+  drawScrollIcons(g_wlOff, total, vis);
+}
+
+static void drawWhitelist() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  char b[40];
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  snprintf(b, sizeof(b), "WHITELIST: %d rules", whitelist::count());
+  tft.drawString(b, 4, 46, 1);
+  if (g_wlMsg) tft.setTextColor(g_wlMsgCol, TFT_BLACK); else tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(g_wlMsg ? g_wlMsg : "tap a rule to remove it", 4, 58, 1);
+  drawWhitelistRows(false);
+}
+
+static void wlEnter() {
+  g_wlSel = 0; g_wlOff = 0; g_wlMsg = nullptr;
+  g_screen = SCR_WHITELIST;
+  listTouchReset();
+  drawWhitelist();
+}
+
+static void wlBackToList() {
+  g_screen = SCR_WHITELIST;
+  listTouchReset();
+  drawWhitelist();
+}
+
+// Row activation on the list: Add / rule action / Back to Scan Settings.
+static void wlActivateRow(int sel) {
+  if (sel == 0) { wlAddEnter(); return; }
+  if (sel == whitelist::count() + 1) {  // Back row -> Scan Settings (focus on Whitelist)
+    g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings();
+    return;
+  }
+  g_wlRuleSel = sel - 1;
+  openWlRule();
+}
+
+static void drawWlAddRows(bool clear) {
+  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  int total = g_wlPickN + 1;  // devices + Back row
+  g_wlPickOff = constrain(g_wlPickOff, 0, max(0, total - vis));
+  int rows = min(total - g_wlPickOff, vis);
+  for (int r = 0; r < rows; r++) {
+    int i = g_wlPickOff + r;
+    int y = LIST_Y0 + r * LIST_ROW_H;
+    if (i == g_wlPickN) drawWlTextRow(y, "< Back", TFT_LIGHTGREY);
+    else {
+      const uint8_t* m = g_wlPickMac[i];
+      const DevGroup* g = groupByMac(m);
+      if (g) {
+        const Detection& d = g_dets[g->rep];
+        drawDetRow(y, tierColor(g->tier, d.source, d.channel), g->tag, groupName(g), g->bestRssi,
+                   "", g->tier != (int)sigdb::Tier::None, 9, false, g->whitelisted);
+      } else {
+        char mb[16];
+        snprintf(mb, sizeof(mb), "%02X:%02X:%02X:%02X", m[2], m[3], m[4], m[5]);
+        drawDetRow(y, TFT_DARKGREY, "?", mb, 0, "", false, 9, false, false);
+      }
+    }
+    if (i == g_wlPickSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
+  }
+  drawScrollIcons(g_wlPickOff, total, vis);
+}
+
+static void drawWlAdd() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  char b[40];
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  snprintf(b, sizeof(b), "ADD FROM SEEN: %d", g_wlPickN);
+  tft.drawString(b, 4, 46, 1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("tap a device to whitelist it", 4, 58, 1);
+  if (g_wlPickN == 0) {
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("No devices seen yet -", tft.width() / 2, 130, 2);
+    tft.drawString("run a scan first", tft.width() / 2, 150, 2);
+    tft.setTextDatum(TL_DATUM);
+  }
+  drawWlAddRows(false);
+}
+
+// Snapshot the last scan's devices and open the picker.
+static void wlAddEnter() {
+  g_wlPickN = 0;
+  for (int k = 0; k < g_groupCount && g_wlPickN < MAX_DET; k++)
+    memcpy(g_wlPickMac[g_wlPickN++], g_groups[k].mac, 6);
+  g_wlPickSel = 0; g_wlPickOff = 0;
+  g_screen = SCR_WLADD;
+  listTouchReset();
+  drawWlAdd();
+}
+
+static void wlAddSelected(int sel) {
+  if (sel < 0 || sel >= g_wlPickN) { wlBackToList(); return; }  // Back row
+  char line[96];
+  whitelistLineForMac(g_wlPickMac[sel], line, sizeof(line));
+  bool ok = whitelist::add(line);
+  Serial.printf("[CYD] whitelist add %s: %s\n", ok ? "ok" : "FAILED", line);
+  sendWhitelist(); pushStatus();
+  g_wlMsg = ok ? "Added to whitelist" : "Whitelist add FAILED";
+  g_wlMsgCol = ok ? TFT_GREEN : TFT_RED;
+  g_wlSel = 0; g_wlOff = 0;
+  wlBackToList();
+}
+
+static void drawWlRule() {
+  drawListMenu("RULE", kWlActItems, WLACT_N, g_wlActSel);
+  char t[96];
+  wlRuleText(g_wlRuleSel, t, sizeof(t));
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString(t, tft.width() / 2, 60, 1);  // between the title and first button
+  tft.setTextDatum(TL_DATUM);
+}
+
+static void openWlRule() {
+  g_wlActSel = 0;
+  g_screen = SCR_WLRULE;
+  listTouchReset();
+  drawWlRule();
+}
+
+static void activateWlRule(int sel) {
+  if (sel == 0) {  // Remove rule
+    bool ok = whitelist::removeAt(g_wlRuleSel);
+    Serial.printf("[CYD] whitelist remove %d: %s\n", g_wlRuleSel, ok ? "ok" : "FAILED");
+    sendWhitelist(); pushStatus();
+    g_wlMsg = ok ? "Rule removed" : "Remove FAILED";
+    g_wlMsgCol = ok ? TFT_GREEN : TFT_RED;
+    g_wlSel = constrain(g_wlSel, 0, whitelist::count() + 1);
+  } else {
+    g_wlMsg = nullptr;
+  }
+  wlBackToList();
 }
 
 // Act on a scan-menu row (touch tap or long-press select).
@@ -2321,6 +2640,7 @@ static void activateScanSettings(int sel) {
   else if (sel == 1) g_srcMask ^= SRC_24_BITS;
   else if (sel == 2) g_srcMask ^= MASK_WIFI5;
   else if (sel == 3) g_srcMask ^= MASK_154;
+  else if (sel == 4) { wlEnter(); return; }                                      // Whitelist
   else { g_screen = SCR_SCANMENU; drawScanMenu(); return; }  // Back
   saveSrcMask();
   drawScanSettings();
@@ -2451,11 +2771,12 @@ void loop() {
   }
 
   // Phone can start/stop the scan remotely (single toggle in the web app). Ignore a start while
-  // drilling the follow screens so a stray phone toggle can't reset follow state / abandon the
-  // snapshot mid-view; scanStartRequested() is consume-on-read, so short-circuiting leaves it
-  // pending until we return to SCR_SCAN.
-  bool inFollow = (g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL);
-  if (!inFollow && phone::scanStartRequested()) { if (g_screen != SCR_SCAN) { g_scrollOffset = 0; resetFollow(); } g_screen = SCR_SCAN; }
+  // drilling the follow or whitelist screens so a stray phone toggle can't reset follow state /
+  // abandon the snapshot mid-view; scanStartRequested() is consume-on-read, so short-circuiting
+  // leaves it pending until we return to SCR_SCAN.
+  bool inDrill = (g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL ||
+                  g_screen == SCR_WHITELIST  || g_screen == SCR_WLADD       || g_screen == SCR_WLRULE);
+  if (!inDrill && phone::scanStartRequested()) { if (g_screen != SCR_SCAN) { g_scrollOffset = 0; resetFollow(); } g_screen = SCR_SCAN; }
   // Consume the stop flag unconditionally, but only act on it while actually scanning
   // (so a stray stop sent from another screen is discarded, not buffered to fire later).
   if (phone::scanStopRequested() && g_screen == SCR_SCAN) { setLed(!g_linkOk, g_linkOk, false); g_screen = SCR_SCANMENU; drawScanMenu(); pushStatus(); }
@@ -2505,7 +2826,7 @@ void loop() {
     }
 
     case SCR_SCANSETTINGS: {
-      int t = tappedRow(SCANSET_N);
+      int t = scanSetTouch();
       if (t >= 0)               { g_scanSetSel = t; activateScanSettings(t); return; }  // touch select
       if      (ev == BTN_SHORT) { g_scanSetSel = (g_scanSetSel + 1) % SCANSET_N; drawScanSettings(); }
       else if (ev == BTN_LONG)  { activateScanSettings(g_scanSetSel); }
@@ -2600,6 +2921,45 @@ void loop() {
         drawDetailList(true);
       }
       listTouch(g_detN, &g_detOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawDetailList(true); });
+      delay(20);
+      return;
+    }
+
+    case SCR_WHITELIST: {
+      int total = whitelist::count() + 2;  // + Add row, rules, Back row
+      if (topBarTapped()) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }
+      int t = listTouch(total, &g_wlOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWhitelistRows(true); });
+      if (t >= 0) { g_wlSel = t; wlActivateRow(t); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
+        g_wlSel = (g_wlSel + 1) % total;
+        if (g_wlSel < g_wlOff) g_wlOff = g_wlSel;
+        if (g_wlSel >= g_wlOff + visibleRows()) g_wlOff = g_wlSel - visibleRows() + 1;
+        drawWhitelistRows(true);
+      } else if (ev == BTN_LONG) { wlActivateRow(g_wlSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_WLADD: {
+      int total = g_wlPickN + 1;  // devices + Back row
+      if (topBarTapped()) { wlBackToList(); return; }
+      int t = listTouch(total, &g_wlPickOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWlAddRows(true); });
+      if (t >= 0) { g_wlPickSel = t; wlAddSelected(t); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
+        g_wlPickSel = (g_wlPickSel + 1) % total;
+        if (g_wlPickSel < g_wlPickOff) g_wlPickOff = g_wlPickSel;
+        if (g_wlPickSel >= g_wlPickOff + visibleRows()) g_wlPickOff = g_wlPickSel - visibleRows() + 1;
+        drawWlAddRows(true);
+      } else if (ev == BTN_LONG) { wlAddSelected(g_wlPickSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_WLRULE: {
+      int t = tappedRow(WLACT_N);
+      if (t >= 0)               { g_wlActSel = t; activateWlRule(t); return; }
+      if      (ev == BTN_SHORT) { g_wlActSel = (g_wlActSel + 1) % WLACT_N; drawWlRule(); }
+      else if (ev == BTN_LONG)  { activateWlRule(g_wlActSel); }
       delay(20);
       return;
     }
