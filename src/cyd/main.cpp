@@ -239,8 +239,8 @@ static constexpr int LIST_Y0 = 106, LIST_ROW_H = 13;
 // Scan-screen state band (y64..75, just above the body-button band at y76): shows the scan state
 // + tier counts, or the tappable follow alert when devices are flagged.
 static constexpr int BANNER_Y = 64, BANNER_H = 11;
-// Body action buttons (tall, in the band just above the list); declared early so requestScan()'s
-// input peek can use the control-region bounds.
+// Body action buttons (tall, in the band just above the list), with the other scan-screen layout
+// constants (drawBodyButtonN below references these).
 static constexpr int BODY_BTN_Y = 76, BODY_BTN_H = 26;
 static constexpr int SCROLL_R = 14, SCROLL_CX_INSET = 18;  // icon radius / centre inset from right edge
 // Rows must keep their content left of this x so they never run under the scroll icons.
@@ -1078,19 +1078,13 @@ static bool isSelfDet(const Detection& d) {
          memcmp(d.mac, g_ownMac, 6) == 0;
 }
 
-// Raw peek at the scan-screen control region (BOOT or a touch on top bar / banner / body buttons).
-// Deliberately does NOT call the edge-detecting tap helpers (they hold statics) so their edge
-// state is untouched; the real tap is handled on the next loop iteration.
-static bool scanInputPending() {
-  if (digitalRead(0) == LOW) return true;                 // BOOT pressed/held
-  if (!g_touchOk || !g_touch.touched()) return false;
-  int16_t sx, sy, z; if (!g_touch.getScreen(tft, sx, sy, z)) return false;
-  return sy >= STOP_Y && sy <= BODY_BTN_Y + BODY_BTN_H;   // top bar + banner + body buttons (not the list)
-}
-
-// Returns true if aborted by user input (abort only stops reading; leftover burst bytes are
-// drained by the next call's preamble, so the synchronous link protocol stays safe).
-static bool requestScan(uint32_t timeoutMs = 2000) {
+// One scan command -> full response, read atomically. The CYD⇄C5 link is STRICTLY synchronous:
+// we send ONE StartScan and must read the C5's entire burst through its closing Status(scanning=0)
+// before the next cycle can send anything, or the C5 drops the next command (it flushes its RX after
+// streaming) and the boards desync. So this does NOT abort mid-transaction on user input -- the C5 is
+// a fast non-blocking dumper (~hundreds of ms), so a tap is serviced on the next loop iteration with
+// no perceptible lag. timeoutMs must comfortably exceed a worst-case dense-table dump.
+static void requestScan(uint32_t timeoutMs = 5000) {
   g_detCount = 0;
   bool sawStart = false, done = false;
   uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
@@ -1103,9 +1097,6 @@ static bool requestScan(uint32_t timeoutMs = 2000) {
   uint32_t t0 = millis();
   uint32_t lastByte = millis();
   while (!done && millis() - t0 < timeoutMs) {
-    // User input: abort the read WITHOUT touching g_linkOk (an abort is not a link failure) so
-    // the caller can bail before the downstream pipeline runs on the zeroed table.
-    if (scanInputPending()) return true;
     bool got = false;
     while (LinkSerial.available()) {
       got = true; lastByte = millis();
@@ -1130,7 +1121,6 @@ static bool requestScan(uint32_t timeoutMs = 2000) {
     if (!got) delay(1);  // yield instead of a tight spin
   }
   g_linkOk = done || sawStart || g_detCount > 0;
-  return false;
 }
 
 // Current session basename: g_logPath without the "/logs/" dir and ".jsonl" extension.
@@ -3013,7 +3003,7 @@ static void activateSettings(int sel) {
 
 // One scan → score → log → render cycle, also mirrored to the phone app.
 static void runScanCycle() {
-  if (requestScan()) return;  // aborted by user input: skip the pipeline, keep the current table/view
+  requestScan();
   computeScores();
   buildGroups();  // once per cycle; shared by render() and pushDetections()
   updateFollowState();
