@@ -18,7 +18,7 @@ The goal is a portable, self-contained scanner that passively observes nearby RF
 signatures of known surveillance gear (e.g. MAC OUI ranges, SSID patterns, probe
 behavior), and surfaces detections on the CYD's touchscreen.
 
-### Scope / ethics
+### Scope / ethics / privacy
 
 This is a **defensive, passive, privacy-research** tool. It observes broadcast RF
 that any receiver can hear. Keep it that way:
@@ -26,6 +26,16 @@ that any receiver can hear. Keep it that way:
   interference with other devices' operation.
 - When in doubt about whether a feature crosses from "detect" into "attack/DoS,"
   stop and ask.
+
+This tool exists to expose *surveillance devices* — machines that
+collect data on everyone without consent. Those devices have no privacy interest this
+project is obligated to respect; revealing their uniqueness is the point, and no lawful
+device-fingerprinting capability here is limited for a machine's sake. The project's
+privacy concern is **human**, and one-directional: captured data can incidentally include
+identifiers of bystanders' devices (phone, wearable, etc.) alongside GPS and timestamps.
+**Such data must never be committed to this public repository.** Keep real captures on your
+own storage; the repo ships only code, device signatures, and synthetic examples.
+
 
 ## Hardware
 
