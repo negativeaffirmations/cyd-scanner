@@ -36,7 +36,6 @@ identifiers of bystanders' devices (phone, wearable, etc.) alongside GPS and tim
 **Such data must never be committed to this public repository.** Keep real captures on your
 own storage; the repo ships only code, device signatures, and synthetic examples.
 
-
 ## Hardware
 
 Two boards. Full pin tables and quick reference:
