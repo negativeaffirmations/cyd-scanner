@@ -336,6 +336,20 @@ pdftotext -layout "hardware/.../file.pdf" -   # text-only extraction
 ```
 Don't commit rendered pages. The `hardware-docs` agent handles this end to end.
 
+## External references & licensing
+
+Outside open-source projects whose ideas may inform this one are cataloged in
+**[docs/references.md](docs/references.md)** (e.g. *Chasing-Your-Tail-NG* for tail-detection /
+false-positive patterns). Add new reference repos there, not scattered in code or chat.
+
+**Before copying or closely porting any code from those projects (or anywhere else):** check the
+license, confirm it permits this project's **non-commercial / personal-research** use, and
+**attribute** the original (project, URL, author, license) both at the adapted code and in that
+file's "Code actually used" section. Treat an unlicensed repo as all-rights-reserved (read for
+ideas, reimplement cleanly — don't copy). cyd-scanner ships no `LICENSE`, so copyleft/share-alike
+code imposes obligations — flag it and ask before incorporating. See the full directive in
+[docs/references.md](docs/references.md).
+
 ## Conventions
 
 - Keep pin definitions centralized (a `pins.h` / config header per board), sourced
