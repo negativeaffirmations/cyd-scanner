@@ -222,13 +222,15 @@ back (5 GHz included). Things that matter, learned the hard way:
   SD/db line, per-band counts (2.4 / 5G / BLE / PRB / unique), a threats line, then
   detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow,
   likely=orange, confirmed=red).
-- **BOOT button = the only input** (touch is unused). It drives a **main menu**
-  (`SCR_MENU` → `SCR_SCAN` / `SCR_APPQR` state machine in `main.cpp`): a short **tap**
-  moves the highlight, a long **hold** selects, and a hold from any screen returns to the
-  menu. Items: **Start Scan** (the live scanner), **Connect to Phone** (full-screen
-  web-app QR), and **Settings**. Boots into the menu. The scan screen has a full-width
-  **STOP** button across the top (tap to end the scan and return to the menu). Scanning
-  can also be started/stopped from the web app (a single toggle button, CMD `G`/`X`).
+- **Input: BOOT button + a touch overlay.** A short **tap** moves the highlight / selects a
+  touched item; a long **hold** selects / returns toward the menu. The HOME menu items are
+  **Phone Link** (full-screen web-app QR; the row reads **"Connected"** while a phone is on the
+  GATT link; the QR screen has a full-width `< BACK` top bar), **Scan**, and **Settings**.
+  **Scan** opens a **Scan menu** (`SCR_SCANMENU`: Start Scan / Explore Scan / Scan Settings) —
+  the scan-flow redesign; the live scanner, the SD-log Explore Viewer (pick/filter/sort/detail),
+  per-band Scan Settings, the Phase-5 follow-me drill-down, and the whitelist manager are all
+  screens in the `main.cpp` state machine. App screens use a full-width `< BACK` bar; menus keep
+  the menu style. Scanning can also be started/stopped from the web app (CMD `G`/`X`).
 
 ### Phone link + web app (Web Bluetooth) — working
 
@@ -240,12 +242,20 @@ back (5 GHz included). Things that matter, learned the hard way:
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
     a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
     refuses the live session) · `"B:<0-100>"` set brightness
-  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db,scan,bri` (`prb` = probe count, `scan` = 1 while scanning, `bri` = backlight %)
+  - `…0004` STATUS (read/notify) — `key=val;…`:
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess`
+    (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
+    `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
+    **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),
+    `sess` = current session name)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
-    scan cycle: a `D:<count>` header then `<count>` tab-separated rows
-    `tier\tsrc\trssi\tmac\tie\tname` (top-of-list first, capped at 12). The web app renders
-    it as a live, tier-colored table.
+    scan cycle. **v3 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
+    `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted` (top-of-list first, capped at
+    12). `ftier` = follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
+    score, `muted` = 1 when whitelisted. The last three were appended in v3; older parsers that
+    read fields 0..6 ignore them. The web app renders it as a live, tier-colored table with
+    follow markers.
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app
@@ -256,7 +266,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
   the scan, downloads the current session log, **lists past sessions and downloads/deletes/maps
-  a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), and a
+  a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), a
+  **"following me" UI** (a magenta follower banner from STATUS `fol`; per-row follow markers +
+  muted dimming; a flagged-device modal; a follower-detail modal with the v3 DETS follow fields
+  plus a Leaflet track map from a loaded session), and a
   **wardriving Map** (Leaflet/OSM) that plots a session's GPS'd detections — grouped by fix,
   colored by threat tier, filterable by source/threats — from the current scan, a picked
   session, or a locally-loaded `.jsonl`/`.csv` file (works offline; the parser sniffs `{` for
