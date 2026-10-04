@@ -101,6 +101,19 @@
   .kv { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #21262d; font-size:.88rem; }
   .kv .k { flex:0 0 7em; } .kv .vv { flex:1 1 auto; min-width:0; word-break:break-word; }
   #detMap { height:220px; width:100%; border-radius:8px; background:#0b0e13; margin-top:.7em; }
+  /* "Following me" alert banner + per-row follow markers (mirror the CYD magenta follow UI). */
+  .folbanner { display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+    padding:.6em .8em; border-radius:10px; cursor:pointer; font-weight:600;
+    background:rgba(219,97,183,.16); border:1px solid #db61b7; color:#f3b6e4; }
+  .folbanner:active { filter:brightness(1.25); }
+  .folbanner .fcount { margin-left:auto; font-family:ui-monospace,monospace; }
+  .fmark { font-weight:700; }
+  .fmark.f2 { color:#ff5cbf; }   /* FOLLOWING */
+  .fmark.f1 { color:#db8b2a; }   /* PERSISTENT */
+  .det.muted { opacity:.5; }
+  .det.following { box-shadow: inset 2px 0 0 #ff5cbf; }
+  .folscore { flex:0 0 4.2em; text-align:right; font-family:ui-monospace,monospace; color:#f3b6e4; }
+  #folDetMap { height:220px; width:100%; border-radius:8px; background:#0b0e13; margin-top:.7em; }
 </style>
 </head>
 <body>
@@ -173,6 +186,7 @@
 
   <h3 style="margin:.6em 0 .3em">Live detections
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
+  <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
@@ -248,6 +262,25 @@
     <div id="detInfo"></div>
     <div id="detMapMsg" class="sub" style="display:none;margin-top:.7em"></div>
     <div id="detMap"></div>
+  </dialog>
+
+  <dialog id="folDlg">
+    <div class="modalhdr">
+      <strong>⚑ Possible followers</strong>
+      <button id="folClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub" style="margin-bottom:.5em">Devices that keep reappearing as you move. Tap one for details.</div>
+    <div id="folList" class="dets" style="max-height:60vh"></div>
+  </dialog>
+
+  <dialog id="folDetDlg">
+    <div class="modalhdr">
+      <strong>Follower details</strong>
+      <button id="folDetClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div id="folDetInfo"></div>
+    <div id="folDetMapMsg" class="sub" style="display:none;margin-top:.7em"></div>
+    <div id="folDetMap"></div>
   </dialog>
 
   <dialog id="mapDlg">
@@ -349,6 +382,8 @@ async function connect(){
 }
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
+  $("folBanner").style.display = "none"; lastDetRows = [];   // clear the follower alert
+  if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";
   ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
     .forEach(id=>$(id).disabled=true);
@@ -698,8 +733,10 @@ function renderMap(){
   if(pts.length) lmap.fitBounds(pts,{padding:[30,30]});
 }
 
-// --- Live detections v2: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot,
-// one row per MAC): seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi") ---
+// --- Live detections v3: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot,
+// one row per MAC): seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi")
+// [ftier fscore muted] — the last three (follow tier 0/1/2, follow score, muted flag) were
+// added in v3; rows from older firmware have only the first 7 fields and parse fine. ---
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
 let emptyStreak = 0;
@@ -734,7 +771,10 @@ function onDets(ev){
     const k = x.lastIndexOf(":");
     return {tag:x.slice(0,k), rssi:+x.slice(k+1)};
   });
-  detState.rows.push({seq, tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources});
+  detState.rows.push({seq, tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources,
+                      ftier: p.length>7 ? (+p[7]||0) : 0,   // DETS v3: follow tier (0/1/2)
+                      fscore: p.length>8 ? (+p[8]||0) : 0,   // follow score 0..100
+                      muted: p.length>9 ? p[9]==="1" : false});
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -761,7 +801,10 @@ function renderDetList(el, rows, opts){
   if (!viewer) for (const m of [...expandedMacs]) if (!rows.some(r => r.mac === m)) expandedMacs.delete(m);  // keep the Set bounded
   el.innerHTML = head + rows.map((r,ri)=>{
     const tn = typeof r.tier === "number" ? r.tier : tierNum(r.tier);
-    const nm = esc(r.name) || "&lt;hidden&gt;";
+    const ft = viewer ? 0 : (r.ftier||0);                 // follow tier (live rows only)
+    const muted = !viewer && r.muted;
+    const fmk = ft>=1 ? `<span class="fmark f${ft}" title="${ft===2?'Possible follower':'Persistent'}">${ft===2?'⚑':'•'}</span> ` : "";
+    const nm = fmk + (esc(r.name) || "&lt;hidden&gt;");
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
     const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : r.sources).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
@@ -771,7 +814,7 @@ function renderDetList(el, rows, opts){
     const open = multi && expandedMacs.has(r.mac);
     const sub = multi ? srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("") : "";
     const ch = viewer && r.channel ? `<span class="chn">ch${esc(r.channel)}</span>` : "";
-    return `<div class="det ${sc}${viewer?" clk":""}" title="${title}"${viewer?` data-ri="${ri}"`:""}><span class="tiercol"><span class="badge b${tn}"></span></span>`+
+    return `<div class="det ${sc}${viewer?" clk":""}${muted?" muted":""}${ft===2?" following":""}" title="${title}"${viewer?` data-ri="${ri}"`:""}><span class="tiercol"><span class="badge b${tn}"></span></span>`+
            `<span class="sigcol">${pills}</span>`+
            `<span class="nm t${tn}">${nm}${ch}</span>`+
            `<span class="rssi">${r.rssi} dBm</span>`+
@@ -795,7 +838,9 @@ function renderDetList(el, rows, opts){
     };
   });
 }
+let lastDetRows = [];           // latest live snapshot, for the follower modal
 function renderDets(rows){   // live view
+  lastDetRows = rows;
   renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…"});
 }
 
@@ -885,6 +930,79 @@ function openDetail(r){
   }, 80);
 }
 
+// --- "Following me" UI: a magenta banner (count from STATUS fol=) opens a flagged list,
+// each row opens a detail modal mirroring the CYD follow-detail (+ a GPS track when available).
+const TIER_NAMES = ["none","suspect","likely","confirmed"];
+const FTIER_TXT  = {2:"FOLLOWING", 1:"PERSISTENT", 0:"none"};
+function followRows(){   // flagged live rows, FOLLOWING first then by score, then signal
+  return lastDetRows.filter(r=>(r.ftier||0) >= 1)
+    .sort((a,b)=> (b.ftier-a.ftier) || (b.fscore-a.fscore) || (b.rssi-a.rssi));
+}
+function openFollowList(){
+  const rows = followRows();
+  const el = $("folList");
+  if (!rows.length){
+    // The DETS stream is capped at the top 12 devices, so a flagged follower ranked below
+    // that won't be in the live snapshot even when the banner count (STATUS fol=) is > 0.
+    const nf = +$("folCount").textContent || 0;
+    el.innerHTML = '<div class="sub" style="padding:6px">' +
+      (nf > 0 ? nf + ' follower(s) flagged on the device, but not in the current live top-12 list.'
+              : 'No active followers right now.') + '</div>';
+  } else {
+    el.innerHTML = rows.map((r,ri)=>{
+      const nm = esc(r.name) || "&lt;hidden&gt;";
+      const fc = r.ftier===2 ? "f2" : "f1";
+      return `<div class="det clk" data-ri="${ri}"><span class="tiercol"><span class="fmark ${fc}">${r.ftier===2?'⚑':'•'}</span></span>`+
+             `<span class="nm">${nm}</span><span class="folscore">${r.fscore}/100</span>`+
+             `<span class="rssi">${r.rssi} dBm</span></div>`;
+    }).join("");
+    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> openFollowDetail(rows[+d.dataset.ri]); });
+  }
+  $("folDlg").showModal();
+}
+let folMap=null, folLayer=null;
+function openFollowDetail(r){
+  const tn = typeof r.tier === "number" ? r.tier : tierNum(r.tier);
+  const rowsKv = [
+    ["Name", r.name || "<hidden>"],
+    ["MAC", r.mac],
+    ["Follow tier", FTIER_TXT[r.ftier] || "none"],
+    ["Follow score", (r.fscore||0) + " / 100"],
+    ["Threat tier", TIER_NAMES[tn] || "none"],
+    ["RSSI", r.rssi + " dBm"],
+    ["Signals", (r.sources||[]).map(s=>s.tag).join(", ") || "?"],
+  ];
+  if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
+  if (r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint", r.ie]);
+  $("folDetInfo").innerHTML = rowsKv.map(([k,v])=>
+    `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  // Map: plot this device's GPS sightings from the loaded Explore session if present; else
+  // fall back to the phone's current position; else hide the map with a hint.
+  const track = expAll.filter(x => (x.mac||"").toUpperCase() === (r.mac||"").toUpperCase() && hasGps(x));
+  const haveHere = !!(lastGps && lastGps.lat);
+  const show = track.length > 0 || haveHere;
+  $("folDetMap").style.display = show ? "" : "none";
+  $("folDetMapMsg").style.display = show ? "none" : "";
+  if (!show) $("folDetMapMsg").textContent =
+    "No GPS track for this device. Load its session in Explore, or enable GPS to show your position.";
+  $("folDetDlg").showModal();
+  if (!show) return;
+  if (!folMap){ folMap = newMap("folDetMap"); folLayer = L.layerGroup().addTo(folMap); }
+  setTimeout(()=>{
+    folMap.invalidateSize(); folLayer.clearLayers();
+    if (track.length){
+      const pts = track.map(x=>[x.lat,x.lon]);
+      pts.forEach(p=> L.circleMarker(p,{radius:6,color:"#ff5cbf",weight:2,fillColor:"#ff5cbf",fillOpacity:.6}).addTo(folLayer));
+      if (pts.length>1) L.polyline(pts,{color:"#ff5cbf",weight:2,opacity:.6}).addTo(folLayer);
+      folMap.fitBounds(L.latLngBounds(pts).pad(.3));
+    } else {
+      L.circleMarker([lastGps.lat,lastGps.lon],{radius:9,color:"#58a6ff",weight:2,fillColor:"#58a6ff",fillOpacity:.7})
+        .addTo(folLayer).bindPopup("Your current position");
+      folMap.setView([lastGps.lat,lastGps.lon],16);
+    }
+  }, 80);
+}
+
 function onStatus(ev){
   const txt = new TextDecoder().decode(ev.target.value);
   const kv = {}; txt.split(";").forEach(p=>{const[a,b]=p.split("=");if(a)kv[a]=b;});
@@ -906,6 +1024,8 @@ function onStatus(ev){
   if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
   if("wl"  in kv){ $("wlCnt").textContent = kv.wl; $("wlCnt2").textContent = kv.wl; $("wlHdr").textContent = kv.wl; }
   if("muted"in kv) $("wlMuted").textContent = kv.muted;
+  if("fol"in kv){ const nf = +kv.fol||0;
+    $("folBanner").style.display = nf>0 ? "flex" : "none"; $("folCount").textContent = nf; }
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
@@ -928,6 +1048,11 @@ $("efT0").addEventListener("input", ()=>{ if(+$("efT0").value>+$("efT1").value) 
 $("efT1").addEventListener("input", ()=>{ if(+$("efT1").value<+$("efT0").value) $("efT0").value=$("efT1").value; applyExplore(); });
 $("detClose").onclick = ()=> $("detDlg").close();
 $("detDlg").addEventListener("click", e=>{ if(e.target === $("detDlg")) $("detDlg").close(); });
+$("folBanner").onclick = openFollowList;
+$("folClose").onclick = ()=> $("folDlg").close();
+$("folDlg").addEventListener("click", e=>{ if(e.target === $("folDlg")) $("folDlg").close(); });
+$("folDetClose").onclick = ()=> $("folDetDlg").close();
+$("folDetDlg").addEventListener("click", e=>{ if(e.target === $("folDetDlg")) $("folDetDlg").close(); });
 $("scanSetBtn").onclick = ()=> $("scanSetDlg").showModal();
 $("scanSetClose").onclick = ()=> $("scanSetDlg").close();
 $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) $("scanSetDlg").close(); });
