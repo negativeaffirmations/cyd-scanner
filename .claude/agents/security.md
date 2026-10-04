@@ -26,11 +26,16 @@ FIRST: discover the structure on disk. Read both `main.cpp` files, `phone.*`, `w
 ## What you audit
 
 ### 1. Passive-scope enforcement (highest priority)
-- Confirm the firmware only RECEIVES/scans. No `esp_wifi_80211_tx`, no deauth/injection, no
-  crafted-frame TX, no BLE advertising spam, no jamming.
-- The only legitimate active radio use: the CYD's own BLE GATT peripheral (phone link) and
-  its on-demand Wi-Fi SoftAP (log download). Flag ANY other TX path.
-- 802.15.4 usage stays receive-only.
+- The rule is **passive toward everything observed**, not "never transmit." Confirm that
+  **observation/detection of third parties is receive-only** — no TX aimed at an observed or
+  surveillance device or the RF around it: no `esp_wifi_80211_tx` deauth/injection, no
+  crafted-frame TX, no spoofing, no beacon/probe floods, no jamming. 802.15.4 stays receive-only.
+- Legitimate active radio use (the tool's own function): the CYD's BLE GATT phone link and its
+  on-demand Wi-Fi SoftAP (log download) — and, if/when built, a **link among the user's own
+  scanner devices** (fleet correlation). TX to the user's own phone or own cooperating units is
+  in scope. Still flag any TX path that is directed at, or interferes with, a device being observed
+  — and sanity-check that an inter-device link can't be turned into one (no third-party-addressed
+  frames, no spam/flood behavior).
 
 ### 2. Captured-data protection
 - `/logs/*.jsonl` are plaintext on a removable FAT card — document as accepted risk; consider

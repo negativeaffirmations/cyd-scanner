@@ -20,12 +20,22 @@ behavior), and surfaces detections on the CYD's touchscreen.
 
 ### Scope / ethics / privacy
 
-This is a **defensive, passive, privacy-research** tool. It observes broadcast RF
-that any receiver can hear. Keep it that way:
-- **Passive detection only** — no jamming, deauth, injection, or any active
-  interference with other devices' operation.
-- When in doubt about whether a feature crosses from "detect" into "attack/DoS,"
-  stop and ask.
+This is a **defensive, privacy-research** tool. Its *observation of other parties is strictly
+passive* — it only listens to broadcast RF that any receiver can hear. The passive rule is about
+the devices it watches and the people around it, **not** a blanket ban on the tool ever
+transmitting. Keep it that way:
+- **Passive toward everything it observes** — never transmit *at* a third-party or surveillance
+  device or the RF around it: no jamming, deauth, injection, spoofing, beacon/probe floods, or any
+  active interference with another device's operation. Detection of third parties stays
+  receive-only.
+- **The tool's own radios may transmit for its own function.** Already in use: the CYD's BLE GATT
+  phone link and its on-demand Wi-Fi SoftAP (log download). **Contemplated (not yet built):**
+  a link so **multiple of the user's own scanner devices can talk to each other** (e.g. share
+  detections / correlate sightings across a small fleet). Transmission *among the user's own
+  cooperating units, or to the user's own phone,* is in scope — it is not interference with the
+  things being observed.
+- When in doubt whether a feature crosses from "detect / coordinate our own devices" into
+  "interfere with / attack / DoS someone else's device," stop and ask.
 
 This tool exists to expose *surveillance devices* — machines that
 collect data on everyone without consent. Those devices have no privacy interest this
