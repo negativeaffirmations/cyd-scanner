@@ -38,6 +38,30 @@ near-verbatim reuse is what triggers the rules above.**
 - **License:** ⚠️ **not yet verified** — check the repo before using any code (see directive above).
 - **Status:** reference only; no code used yet.
 
+### SquachWatch-CYD
+- **URL:** https://github.com/skizzophrenic/SquachWatch-CYD · site https://squachwatch.com
+  (web flasher + in-browser emulator)
+- **Platform / language:** ESP32 **CYD** (same base board as this project) + many other boards
+  incl. a single-board **ESP32-C5**; C/C++ (TFT_eSPI + NimBLE), some Python. Very active (200+
+  stars, 30+ releases).
+- **Why it's here:** the closest sibling to this project — a standalone CYD surveillance-device
+  detector. Deep, directly-relevant prior art for signatures and detection. Ideas worth mining:
+  - **Per-signature confidence grading audited against the IEEE OUI registry** (High/Med/Low),
+    with a minimum-confidence ALERT gate — exactly this project's `sigdb` false-positive problem,
+    done thoroughly (they caught a Sonos OUI mislabeled as a plate reader).
+  - **Large detection taxonomy** this project lacks: Meta/Snap camera glasses, Apple/Google/
+    Samsung/Tile trackers, BT skimmers, Flipper/Pwnagotchi/Pineapple, Ring, ALPR, generic cameras,
+    **Remote-ID drone decode (ASTM F3411 → operator location)**, behavioral **deauth** + **evil-twin** detection.
+  - **`regulars` / `ignore_list`** — their recurring-device + self-filter approach (compare to our
+    follow heuristic + whitelist + the rotating-RPA self-filter problem).
+  - **PC/browser emulator** (same C++ compiled for desktop) — a dev/test idea we don't have.
+- **License:** **GPL-3.0 (copyleft).** ⚠️ This project ships no `LICENSE`; **do NOT copy/port its
+  code** — doing so would force cyd-scanner to become GPL-3.0. Read it for *ideas* and reimplement
+  cleanly; curated signature lists are their work, so attribute if any are reused (and prefer
+  re-deriving OUIs from the IEEE registry directly). Note it also **transmits** (ESP-NOW "squad"
+  mesh, LoRa chat), which is outside this project's strict passive/receive-only charter.
+- **Status:** reference only; no code used yet.
+
 ## Code actually used
 
 *(none yet)* — when code from a cataloged project is adapted into cyd-scanner, record it here:
