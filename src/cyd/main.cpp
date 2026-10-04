@@ -1153,22 +1153,26 @@ static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(sb, sizeof(sb));
-  char s[272];
+  char s[288];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;sess=%s",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
-           whitelist::count(), countMuted(), sb);
+           whitelist::count(), countMuted(), g_followN, sb);
   phone::setStatus(String(s));
 }
 
 // Stream the live detection list to the phone so its app mirrors the CYD screen.
-// DETS stream v2 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
+// DETS stream v3 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
 // row per device (one MAC, merged across sources), top-of-list first:
-//   <seq>\t<tier>\t<mac>\t<bestRssi>\t<ie>\t<name>\t<tag:rssi,tag:rssi,...>
+//   <seq>\t<tier>\t<mac>\t<bestRssi>\t<ie>\t<name>\t<tag:rssi,tag:rssi,...>\t<ftier>\t<fscore>\t<muted>
+// where <ftier> is the follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), <fscore> the
+// 0..100 follow score, and <muted> is 1 when the device matches a whitelist rule. These
+// three trailing fields were appended in v3; older web parsers that read by fixed index
+// (fields 0..6) ignore them, so the change is backward-compatible.
 // The app drops rows whose seq != the current header's and swaps the list in only when
 // the snapshot is complete. Fallbacks considered and held in reserve if this proves
 // lossy: (a) a length-prefixed blob like the log download, (b) a polled READ
@@ -1193,7 +1197,12 @@ static void pushDetections() {
                        g.mac[0], g.mac[1], g.mac[2], g.mac[3], g.mac[4], g.mac[5],
                        g.bestRssi, (unsigned long)g.ie, name);
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    snprintf(row + len, sizeof(row) - len, "%s", g.srcs);  // list pre-built (de-duped) in buildGroups
+    len += snprintf(row + len, sizeof(row) - len, "%s", g.srcs);  // list pre-built (de-duped) in buildGroups
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v3 trailing fields: follow tier / follow score / muted (whitelisted) — all CYD-computed.
+    const FollowState* f = findFollow(g.mac);
+    snprintf(row + len, sizeof(row) - len, "\t%d\t%d\t%d",
+             f ? f->ftier : 0, f ? f->score : 0, g.whitelisted ? 1 : 0);
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }
@@ -1555,15 +1564,17 @@ static void drawDownloadScreen() {
 // QR linking to the hosted web app, so the phone can open it by scanning.
 static void drawAppQrScreen() {
   tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);  // full-width back (app convention)
   int W = tft.width();
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("CONNECT TO PHONE", W / 2, 14, 2);
-  int ty = drawCenteredQr(APP_URL, 40) + 14;
+  int ty = drawCenteredQr(APP_URL, 56) + 14;  // below the back bar (y24..42); +8px margin (QR quiet zone starts at qy-6)
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("Scan to open the app", W / 2, ty, 2);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Press button: back to menu", W / 2, ty + 20, 2);
+  tft.drawString(g_touchOk ? "Tap BACK or press button" : "Press button: back",
+                 W / 2, ty + 20, 2);
+  tft.setTextDatum(TL_DATUM);
 }
 
 // Shared list-menu screen: status bar, centered title, and a highlighted row list on the
@@ -1680,7 +1691,11 @@ static void drawFileList(const char* title, const FileItem* items, int n, int se
 
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
 static void drawMenu() {
-  drawListMenu("HOME", kMenuItems, MENU_N, g_menuSel);
+  // Item 0 reflects the live phone-link state ("Connected" once a phone is on the GATT link);
+  // items 1/2 reuse the shared labels so Scan/Settings stay a single source of truth.
+  const char* items[MENU_N] = { phone::connected() ? "Connected" : kMenuItems[0],
+                                kMenuItems[1], kMenuItems[2] };
+  drawListMenu("HOME", items, MENU_N, g_menuSel);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
 }
@@ -3181,6 +3196,11 @@ void loop() {
       else if (ev == BTN_LONG)  { activateMenu(); }
       else {  // idle: re-check the C5 link and refresh the status bar (dot + clock)
         static uint32_t lastPing = 0;
+        static bool lastConn = false;
+        if (phone::connected() != lastConn) {  // phone link came up/down: refresh the "Phone Link"/"Connected" row
+          lastConn = phone::connected();
+          drawMenu();  // repaints status bar too
+        }
         if (millis() - lastPing > 2000) {
           lastPing = millis();
           g_linkOk = pingC5();
@@ -3359,7 +3379,8 @@ void loop() {
     }
 
     case SCR_APPQR:
-      if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }  // any press: back
+      if (topBarTapped()) { g_screen = SCR_MENU; drawMenu(); return; }  // tap < BACK
+      if (ev != BTN_NONE) { g_screen = SCR_MENU; drawMenu(); }          // any button: back
       delay(20);
       return;
 
