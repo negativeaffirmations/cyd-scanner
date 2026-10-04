@@ -58,8 +58,12 @@ near-verbatim reuse is what triggers the rules above.**
 - **License:** **GPL-3.0 (copyleft).** ⚠️ This project ships no `LICENSE`; **do NOT copy/port its
   code** — doing so would force cyd-scanner to become GPL-3.0. Read it for *ideas* and reimplement
   cleanly; curated signature lists are their work, so attribute if any are reused (and prefer
-  re-deriving OUIs from the IEEE registry directly). Note it also **transmits** (ESP-NOW "squad"
-  mesh, LoRa chat), which is outside this project's strict passive/receive-only charter.
+  re-deriving OUIs from the IEEE registry directly). Transmit note: its only active TX is the
+  **"squad" mesh, which rides BLE advertising** (not ESP-NOW) — manufacturer data, company ID
+  0xFFFF, encrypted chat via AES-128-CCM keyed by a shared 5-word phrase — plus Wi-Fi for OTA/NTP.
+  Its **LoRa feature is receive-only** (a passive sniffer/decoder for Meshtastic/MeshCore/LoRaWAN/
+  APRS/FANET, CrowPanel-7 only). So only the BLE squad beacon is outside this project's strict
+  passive/receive-only charter; the LoRa sniffing is compatible with it.
 - **Status:** reference only; no code used yet.
 
 ## Code actually used
