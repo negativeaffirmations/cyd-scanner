@@ -172,17 +172,23 @@ back (5 GHz included). Things that matter, learned the hard way:
   results — both captured at runtime, so device-agnostic. The phone filter is best-effort:
   phones use rotating random BLE addresses, so their scanned advertisements may not match
   the connection address.
-- **SD logging (CYD) — per-session files.** Each boot opens a new session log under
-  `/logs/`, named by a boot counter (`/logs/sess-NNNNN.csv`) so it works before the phone
-  has synced time; once time syncs, the file is renamed to `/logs/YYYYMMDD-HHMMSS.csv`
-  (`openSession` / `renameSessionOnSync` in `main.cpp`). First-seen devices (dedup by
-  source+MAC for the session) are appended:
-  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature`.
-  `source` is `2.4`/`5G`/`BLE`/`PRB` (PRB = promiscuous probe request); `ie` is the
-  8-hex 802.11 IE fingerprint (Wi-Fi); `cid` is the 4-hex BLE company ID and `uuid` the
-  BLE service UUID (both blank/`0000` when not applicable).
+- **SD logging (CYD) — per-session NDJSON files.** Each boot opens a new session log under
+  `/logs/`, named by a boot counter (`/logs/sess-NNNNN.jsonl`) so it works before the phone
+  has synced time; once time syncs, the file is renamed to `/logs/YYYYMMDD-HHMMSS.jsonl`
+  (`openSession` / `renameSessionOnSync` in `main.cpp`). The log is **NDJSON** — one JSON
+  object per line (`logNewDetections` in `main.cpp`). First-seen devices (dedup by source+MAC
+  for the session) are appended, one object each; optional keys are omitted when blank:
+  `{"epoch":…,"ms":…,"lat":…,"lon":…,"src":"…","mac":"…","rssi":…,"ch":…,"ie":"…","cid":"…","uuid":"…","pan":"…","name":"…","score":…,"tier":"…","sig":"…","wl":0|1}`.
+  `src` is `2.4`/`5G`/`BLE`/`PRB`/`154` (PRB = promiscuous probe request, 154 = 802.15.4); `ie`
+  is the 8-hex 802.11 IE fingerprint (Wi-Fi); `cid` is the 4-hex BLE company ID, `uuid` the BLE
+  service UUID, `pan` the 4-hex 802.15.4 PAN (each present only when applicable); `name` is JSON-
+  escaped; `wl` is 1 when the device matches a whitelist rule.
   `epoch` is LOCAL time once the phone has synced (it sends UTC + tz offset; 0 before);
-  `lat`/`lon` fill once GPS is sent; `score`/`tier`/`signature` come from the signature DB.
+  `lat`/`lon` appear once GPS is sent; `score`/`tier`/`sig` come from the signature DB.
+  **Why NDJSON (not CSV):** append-only so a power-loss torn write only loses the trailing
+  partial line (both readers skip it), self-describing (schema can grow without breaking old-file
+  parse), and JSON string escaping structurally eliminates the unescaped-comma / spreadsheet-
+  formula-injection bug class. Old `.csv` sessions still list/read (readers branch by extension).
   Log download (BLE + Wi-Fi) serves the **current session** file (`webshare::setLogPath`).
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
@@ -253,15 +259,17 @@ back (5 GHz included). Things that matter, learned the hard way:
   a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), and a
   **wardriving Map** (Leaflet/OSM) that plots a session's GPS'd detections — grouped by fix,
   colored by threat tier, filterable by source/threats — from the current scan, a picked
-  session, or a locally-loaded `.csv` (works offline).
-- **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
+  session, or a locally-loaded `.jsonl`/`.csv` file (works offline; the parser sniffs `{` for
+  NDJSON vs legacy CSV).
+- **Log download — BLE (default):** `L` → the CYD streams `/scanlog.jsonl` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
   HTTP server; the CYD screen shows a QR that is the Wi-Fi-join code until the phone joins,
   then switches to `http://192.168.4.1`. That page is a **browsable index of ALL `/logs/`
   sessions** (name + size), each a `/dl?f=<name>` link — so bulk Wi-Fi download can grab any
   past session, not just the current one (the reason for Wi-Fi: BLE is slow for MB-size drive
-  logs). `/scanlog.csv` still streams the current session. Pauses scanning while active.
+  logs). `/scanlog.jsonl` still streams the current session (`/scanlog.csv` kept as an alias).
+  Pauses scanning while active.
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is

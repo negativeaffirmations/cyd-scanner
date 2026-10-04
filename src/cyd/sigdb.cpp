@@ -42,8 +42,8 @@ bool     g_loaded = false;
 const char* kSeedCsv =
     "# cyd-scanner signature DB. kind,pattern,weight,srcmask,label\n"
     "# Expand OUIs from community sources (e.g. flock-you). Edit freely.\n"
-    "# 'ie,<8-hex>,...' matches an 802.11 IE fingerprint (see the 'ie' column in\n"
-    "# scanlog.csv). No Flock IE hashes are seeded yet — capture them in the field.\n"
+    "# 'ie,<8-hex>,...' matches an 802.11 IE fingerprint (see the 'ie' field in\n"
+    "# scanlog.jsonl). No Flock IE hashes are seeded yet — capture them in the field.\n"
     "# 'bleuuid,<uuid>,...' matches a BLE service UUID (16-bit or full 128-bit);\n"
     "# 'blecid,<hex>,...' matches a BLE manufacturer company ID (see the uuid/cid cols).\n"
     "# 802.15.4 devices: the EUI-64 OUI is matched like a MAC OUI; use srcmask 4 (or A):\n"

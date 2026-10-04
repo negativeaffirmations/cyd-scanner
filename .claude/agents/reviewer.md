@@ -47,7 +47,9 @@ HARDWARE CONTEXT:
 
 ### 5. Correctness & robustness
 - Timeouts on all link reads (no infinite wait); graceful handling of link-down
-- SD writes handle "card absent" without crashing; log rows escape commas/newlines
+- SD writes handle "card absent" without crashing; NDJSON log rows JSON-escape string
+  fields (names) and drop a row that can't close its object in-buffer rather than writing
+  truncated JSON; the tab-delimited DETS stream still escapes tabs/newlines (`sanitizeField`)
 - No `delay()` in a render/hot path that starves the link or BLE
 - Scope: nothing here performs active RF interference (jamming/deauth/injection)
 

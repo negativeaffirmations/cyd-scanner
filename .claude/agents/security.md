@@ -19,8 +19,9 @@ FIRST: discover the structure on disk. Read both `main.cpp` files, `phone.*`, `w
   for the phone (`phone.*`), and an on-demand Wi-Fi SoftAP + HTTP server for log download
   (`webshare.*`).
 - C5: RISC-V, Wi-Fi 6 dual-band + BLE 5 + 802.15.4; scans continuously.
-- Scan logs (`/scanlog.csv`) contain third-party device identifiers (MACs, SSIDs, BLE names)
-  and optionally phone-provided GPS — this is sensitive data about other people's devices.
+- Scan logs (NDJSON, `/logs/*.jsonl`; current session also at `/scanlog.jsonl`) contain
+  third-party device identifiers (MACs, SSIDs, BLE names) and optionally phone-provided GPS —
+  this is sensitive data about other people's devices.
 
 ## What you audit
 
@@ -32,7 +33,7 @@ FIRST: discover the structure on disk. Read both `main.cpp` files, `phone.*`, `w
 - 802.15.4 usage stays receive-only.
 
 ### 2. Captured-data protection
-- `/scanlog.csv` is plaintext on a removable FAT card — document as accepted risk; consider
+- `/logs/*.jsonl` are plaintext on a removable FAT card — document as accepted risk; consider
   whether GPS + MAC + timestamp together is more exposure than needed.
 - No secrets/credentials of the OWNER written to SD or logs; grep:
 ```bash
