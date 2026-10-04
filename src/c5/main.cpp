@@ -128,6 +128,10 @@ static void mergeDetection(const Detection& d) {
       g_table[i].d.companyId = keepCid;
       g_table[i].d.panId     = keepPan;
       if (!haveSvc) memcpy(g_table[i].d.svc, prev.svc, 16);  // keep prior UUID
+      // Keep a previously-captured name when this (often nameless ADV_IND) packet omits it:
+      // the complete local name usually rides only in the scan response, so otherwise an
+      // interleaved nameless advert clobbers it and the device streams out as <hidden>.
+      if (!d.name[0] && prev.name[0]) strncpy(g_table[i].d.name, prev.name, sizeof(g_table[i].d.name) - 1);
       g_table[i].lastSeen = millis();
       xSemaphoreGive(g_mux);
       return;
