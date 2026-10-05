@@ -3918,8 +3918,15 @@ void loop() {
         }
         if (millis() - lastPing > 2000) {
           lastPing = millis();
-          g_linkOk = pingC5();
-          if (g_linkOk) g_lastLinkOkMs = millis();  // keep link stickiness fresh from the menu
+          // The background-scan cycle (requestScan) already refreshes g_linkOk *stickily* every
+          // ~2 s while scanning, so an extra ping here is redundant — and, being non-sticky, it
+          // used to flicker the link dot red whenever it collided with the C5's scan-stream busy
+          // window (the "~2 s link drop"). Only ping when the bg scan is idle, and apply the same
+          // LINK_STICKY_MS grace so a single missed reply can't false-drop the link.
+          if (!(g_bgScan && g_scanActive)) {
+            if (pingC5()) g_lastLinkOkMs = millis();
+            g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+          }
           drawStatusBar();  // just the top bar — no full-screen flicker
           drawMenuThreats();  // live bg-scan tier counts (own band only)
           pushStatus();     // keep the phone informed (incl. scan=0) while idle
