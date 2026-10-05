@@ -211,7 +211,8 @@ enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCA
               SCR_PICKLOG, SCR_SCANVIEWER, SCR_DETAIL, SCR_SORT, SCR_FILTER,
               SCR_FOLLOWLIST, SCR_FOLLOWACTION, SCR_FOLLOWDETAIL,
               SCR_WHITELIST, SCR_WLADD, SCR_WLRULE,
-              SCR_SCANROW, SCR_SCANDETAIL, SCR_SCANCONFIRM, SCR_SCANFILTER };
+              SCR_SCANROW, SCR_SCANDETAIL, SCR_SCANCONFIRM, SCR_SCANFILTER,
+              SCR_MENUCAT, SCR_MENUCATDETAIL };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -476,6 +477,21 @@ static constexpr uint16_t FLAGS_NOTABLE = FLAG_BLE_IBEACON | FLAG_BLE_FINDMY | F
                                           FLAG_WIFI_EVILTWIN | FLAG_BLE_ODID;
 static char g_flagLabel[MAX_DET][16];  // aligned with g_dets; "" when no notable flag
 
+// --- Threat categories. A SquachWatch-style grouping of each device's sigdb label + behavioral
+// flags into a small fixed taxonomy, used for the HOME-menu category readout + drill-down and
+// streamed to the phone (DETS v5) so the web app shows the same breakdown. Derived on the CYD so
+// the mapping lives in one place. ---
+enum Category : uint8_t {
+  CAT_NONE = 0, CAT_FLOCK, CAT_AXON, CAT_ALPR, CAT_CAM, CAT_RING, CAT_RAVEN,
+  CAT_GLASS, CAT_TRACKER, CAT_DRONE, CAT_DEAUTH, CAT_FLIPPER, CAT_SKIM, CAT_OTHER, CAT_N
+};
+static const char* const kCatName[CAT_N] = {
+  "", "Flock", "Axon", "ALPR", "Cam", "Ring", "Raven",
+  "Glass", "Tracker", "Drone", "Deauth", "Flipper", "Skim", "Other"
+};
+static uint8_t g_category[MAX_DET];  // aligned with g_dets; filled by computeScores()
+static Category categoryOf(int i);   // defined after detLabel() (it reads the resolved label)
+
 // '+'-joined token list of the notable flags in `flags` ("" if none).
 static void flagTokens(uint16_t flags, char* out, size_t cap) {
   size_t o = 0;
@@ -493,6 +509,39 @@ static const char* detLabel(int i) {
   return g_flagLabel[i][0] ? g_flagLabel[i] : sigdb::labelFor(g_score[i]);
 }
 
+// Map one detection to a category. Behavioral flags win over the sigdb label (they are the most
+// specific signal); otherwise the roster label is matched by substring (labels are the
+// /signatures.csv strings, e.g. "Flock IEEE", "Axon-Body", "ALPR-Motorola", "Wyze", "Ring").
+static Category categoryOf(int i) {
+  uint16_t fl = g_dets[i].flags;
+  if (fl & FLAG_BLE_ODID)                                return CAT_DRONE;
+  if (fl & FLAG_BLE_FINDMY)                              return CAT_TRACKER;
+  if (fl & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN))  return CAT_DEAUTH;
+  const char* l = detLabel(i);
+  if (!l || !l[0]) return CAT_NONE;
+  if (strstr(l, "Flock"))       return CAT_FLOCK;
+  if (strstr(l, "Axon"))        return CAT_AXON;
+  if (strstr(l, "ALPR"))        return CAT_ALPR;
+  if (strstr(l, "Raven"))       return CAT_RAVEN;
+  if (strstr(l, "Ring"))        return CAT_RING;
+  if (strstr(l, "OpenDroneID")) return CAT_DRONE;
+  if (strstr(l, "Tile") || strstr(l, "SmartTag") || strstr(l, "FindMy") || strstr(l, "Find My"))
+    return CAT_TRACKER;
+  if (strstr(l, "RayBan") || strstr(l, "Meta") || strstr(l, "Luxottica") ||
+      strstr(l, "Spectacles") || strstr(l, "Snap"))
+    return CAT_GLASS;
+  if (strstr(l, "Flipper"))     return CAT_FLIPPER;
+  if (strstr(l, "Pineapple") || strstr(l, "Deauth") || strstr(l, "pwned") ||
+      strstr(l, "Pwnagotchi") || strstr(l, "Hak5"))
+    return CAT_DEAUTH;
+  if (strstr(l, "Wyze") || strstr(l, "Hikvision") || strstr(l, "Arlo") || strstr(l, "Blink") ||
+      strstr(l, "Tuya") || strstr(l, "Realtek") || strstr(l, "Amazon-Cam") || strstr(l, "Verkada") ||
+      strstr(l, "Avigilon") || strstr(l, "Axis") || strstr(l, "Cam"))
+    return CAT_CAM;
+  if (strstr(l, "Skim"))        return CAT_SKIM;
+  return CAT_OTHER;
+}
+
 // Score every current detection against the signature DB (aligned into g_score[]), then raise
 // the tier to at least each set flag's floor and record the flag label.
 static void computeScores() {
@@ -504,6 +553,7 @@ static void computeScores() {
       if (r.floor > g_score[i].tier) g_score[i].tier = r.floor;
       if (!g_flagLabel[i][0]) snprintf(g_flagLabel[i], sizeof(g_flagLabel[i]), "%s", r.label);
     }
+    g_category[i] = (uint8_t)categoryOf(i);  // after score+flags so detLabel() is final
   }
 }
 
@@ -657,6 +707,35 @@ static int buildGroups() {
   }
   g_groupCount = n;
   return n;
+}
+
+// Category of a whole device (one MAC = one DevGroup). Behavioral flags (unioned across the
+// device's members in g.flags) win; otherwise the category of its strongest-scoring member.
+static Category groupCategory(const DevGroup& g) {
+  if (g.flags & FLAG_BLE_ODID)                              return CAT_DRONE;
+  if (g.flags & FLAG_BLE_FINDMY)                            return CAT_TRACKER;
+  if (g.flags & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN)) return CAT_DEAUTH;
+  int best = -1;
+  for (int i = 0; i < g_detCount; i++)
+    if (memcmp(g_dets[i].mac, g.mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
+  return best >= 0 ? (Category)g_category[best] : CAT_OTHER;
+}
+
+// Per-category live threat tally over the device groups. Counts only non-whitelisted devices at
+// tier >= Suspect (same alarm basis as countTiers); records the worst tier seen per category so
+// the readout can colour each chip. Returns the total threat devices.
+static int countCategories(int cnt[CAT_N], int worstTier[CAT_N]) {
+  for (int c = 0; c < CAT_N; c++) { cnt[c] = 0; worstTier[c] = 0; }
+  int total = 0;
+  for (int k = 0; k < g_groupCount; k++) {
+    const DevGroup& g = g_groups[k];
+    if (g.whitelisted || g.tier < (int)sigdb::Tier::Suspect) continue;
+    Category c = groupCategory(g);
+    cnt[c]++;
+    if (g.tier > worstTier[c]) worstTier[c] = g.tier;
+    total++;
+  }
+  return total;
 }
 
 static int countMuted() {
@@ -1486,7 +1565,9 @@ static void pushDetections() {
     len += snprintf(row + len, sizeof(row) - len, "\t%d\t%d\t%d",
                     f ? f->ftier : 0, f ? f->score : 0, g.whitelisted ? 1 : 0);
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.flags);  // v4 trailing: notable flag bits
+    len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.flags);  // v4 trailing: notable flag bits
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)groupCategory(g));  // v5 trailing: category id
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }
@@ -1989,33 +2070,82 @@ static void drawFileList(const char* title, const FileItem* items, int n, int se
   tft.setTextDatum(TL_DATUM);
 }
 
-// Background-scan threat readout at the bottom of HOME (above the hint line). Counts come from
-// countTiers() (g_score[], kept fresh by the headless bg cycle). Each number is white at 0 and
-// takes its tier colour (same as tierColor()) when > 0. Repaints only its own band (no flicker).
-static constexpr int MENU_THREAT_Y = 248, MENU_THREAT_H = 44;
+// Background-scan threat readout at the bottom of HOME (above the hint line). Shows one chip per
+// category that currently has a live threat device (name above the count, coloured by the
+// category's worst tier), SquachWatch-style, severity-sorted. Counts come from countCategories()
+// over g_groups (kept fresh by the headless bg cycle). Each chip is tappable (-> that category's
+// device list); BOOT nav walks the HOME items then the chips (g_menuSel MENU_N..MENU_N+N-1).
+// Repaints only its own band so the menu rows above don't flicker.
+static constexpr int MENU_THREAT_Y = 192;                       // "Background threats" caption
+static constexpr int MENU_THREAT_H = 320 - MENU_THREAT_Y - 20;  // down to just above the hint line
+static constexpr int CHIP_Y0 = 206, CHIP_STEP = 30, CHIP_H = 28, CHIP_COLS = 3;
+static constexpr int MENU_CAT_MAX = 9;   // 3 columns x 3 rows
+static uint8_t g_menuCat[MENU_CAT_MAX];  // category ids shown as chips (severity-sorted), for input
+static int     g_menuCatN = 0;
+
 static void drawMenuThreats() {
-  int susp, lk, conf; countTiers(susp, lk, conf);
+  int cnt[CAT_N], worst[CAT_N];
+  countCategories(cnt, worst);
+  // severity-sorted list of the non-empty categories (worst tier, then count)
+  int cats[CAT_N], nc = 0;
+  for (int c = 1; c < CAT_N; c++) if (cnt[c] > 0) cats[nc++] = c;
+  std::sort(cats, cats + nc, [&](int a, int b) {
+    if (worst[a] != worst[b]) return worst[a] > worst[b];
+    return cnt[a] > cnt[b];
+  });
+  if (nc > MENU_CAT_MAX) nc = MENU_CAT_MAX;
+  g_menuCatN = nc;
+  for (int i = 0; i < nc; i++) g_menuCat[i] = (uint8_t)cats[i];
+  if (g_menuSel >= MENU_N + g_menuCatN) g_menuSel = 0;  // a chip under the cursor vanished
+
   int W = tft.width();
   tft.fillRect(0, MENU_THREAT_Y, W, MENU_THREAT_H, TFT_BLACK);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString("Background threats", W / 2, MENU_THREAT_Y + 2, 1);
-  const int cnt[3]   = { susp, lk, conf };
-  const char* lbl[3] = { "S:", "L:", "C:" };
-  const int tiers[3] = { (int)sigdb::Tier::Suspect, (int)sigdb::Tier::Likely, (int)sigdb::Tier::Confirmed };
-  const int colW = W / 3;
-  for (int i = 0; i < 3; i++) {
-    char b[8]; snprintf(b, sizeof(b), "%d", cnt[i]);
-    int lw = tft.textWidth(lbl[i], 4), nw = tft.textWidth(b, 4);
-    int x = i * colW + (colW - lw - nw) / 2;
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString(lbl[i], x, MENU_THREAT_Y + 16, 4);
-    tft.setTextColor(cnt[i] > 0 ? tierColor(tiers[i], 0, 0) : TFT_WHITE, TFT_BLACK);
-    tft.drawString(b, x + lw, MENU_THREAT_Y + 16, 4);
+  if (nc == 0) {
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString("No threats", W / 2, CHIP_Y0 + 6, 2);
+  }
+  const int cellW = W / CHIP_COLS;
+  for (int i = 0; i < nc; i++) {
+    int col = i % CHIP_COLS, rowg = i / CHIP_COLS;
+    int x = col * cellW, y = CHIP_Y0 + rowg * CHIP_STEP;
+    bool sel = (g_menuSel == MENU_N + i);
+    if (sel) tft.drawRoundRect(x + 1, y, cellW - 2, CHIP_H, 4, TFT_CYAN);
+    uint16_t col16 = tierColor(worst[g_menuCat[i]], 0, 0);
+    char b[8]; snprintf(b, sizeof(b), "%d", cnt[g_menuCat[i]]);
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.drawString(kCatName[g_menuCat[i]], x + cellW / 2, y + 2, 1);   // category name (small)
+    tft.setTextColor(col16, TFT_BLACK);
+    tft.drawString(b, x + cellW / 2, y + 12, 2);                       // count, tier-coloured
   }
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
+}
+
+// Fresh tap on a HOME threat chip -> chip index (0..g_menuCatN-1), else -1. Mirrors tappedRow()'s
+// edge detection; its hit region (y >= CHIP_Y0) is disjoint from the menu rows so both can be
+// polled each loop without stealing each other's taps.
+static int menuChipTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return -1; }
+  bool now = g_touch.touched();
+  int  hit = -1;
+  if (now && !prev && g_menuCatN > 0) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z)) {
+      int cellW = tft.width() / CHIP_COLS;
+      for (int i = 0; i < g_menuCatN; i++) {
+        int col = i % CHIP_COLS, rowg = i / CHIP_COLS;
+        int x = col * cellW, y = CHIP_Y0 + rowg * CHIP_STEP;
+        if (sx >= x && sx < x + cellW && sy >= y && sy < y + CHIP_H) { hit = i; break; }
+      }
+    }
+  }
+  prev = now;
+  return hit;
 }
 
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
@@ -3024,7 +3154,9 @@ static void openScanRow(int viewPos) {
 
 // Live device detail (mirrors openFollowDetail minus the follow-only fields); Back returns to
 // the row menu. Built from the live groups/detections by MAC.
-static void openScanDetail(const uint8_t* mac) {
+// Fill the detail field list (g_detL via addField) for a device by MAC. Shared by the scanner
+// row detail and the HOME-menu category drill-down; does not touch the screen.
+static void buildDeviceDetail(const uint8_t* mac) {
   const DevGroup* g = groupByMac(mac);
   g_detN = 0; g_detOff = 0;
   char b[64];
@@ -3044,6 +3176,8 @@ static void openScanDetail(const uint8_t* mac) {
     if (best >= 0) {
       snprintf(b, sizeof(b), "%s (%d)", sigdb::tierName(g_score[best].tier), g_score[best].score);
       addField("Threat tier", b, tierColor((int)g_score[best].tier, (uint8_t)Source::WifiScan, 0));
+      Category cat = groupCategory(*g);
+      if (cat != CAT_NONE && cat != CAT_OTHER) addField("Category", kCatName[cat]);
       const char* lbl = detLabel(best);
       if (lbl && lbl[0]) addField("Signature", lbl);
       if (g->flags) { char ft[64]; flagTokens(g->flags, ft, sizeof(ft)); addField("Flags", ft); }
@@ -3064,8 +3198,13 @@ static void openScanDetail(const uint8_t* mac) {
       addField("Service UUID", u);
     }
   }
+}
 
-  g_screen = SCR_SCANDETAIL;
+// Build + paint the shared device-detail screen. `scr` records where we came from so the input
+// handler's "< BACK" returns to the right list (scanner row menu vs category list).
+static void showDeviceDetail(const uint8_t* mac, Screen scr) {
+  buildDeviceDetail(mac);
+  g_screen = scr;
   listTouchReset();
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
@@ -3075,6 +3214,82 @@ static void openScanDetail(const uint8_t* mac) {
   tft.drawString("DETAIL", 4, 46, 1);
   drawDetailList(false);
 }
+
+static void openScanDetail(const uint8_t* mac) { showDeviceDetail(mac, SCR_SCANDETAIL); }
+
+// ---- HOME-menu category drill-down: SCR_MENUCAT (devices in one category) -> SCR_MENUCATDETAIL ----
+// Opened by tapping a HOME threat chip. Snapshots the matching device MACs on entry; the bg scan
+// cycle is frozen while on these screens (SCR_MENUCAT/DETAIL are in the inDrill set), so g_groups /
+// g_dets stay put and groupByMac() stays valid, exactly like the follow/whitelist drill-downs.
+static Category g_mcCat = CAT_NONE;
+static uint8_t  g_mcMac[MAX_DET][6];
+static int      g_mcN = 0, g_mcSel = 0, g_mcOff = 0;
+
+// Signature/flag label of a device's strongest-scoring member (row trailing text).
+static const char* catRowLabel(const DevGroup* g) {
+  int best = -1;
+  for (int i = 0; i < g_detCount; i++)
+    if (memcmp(g_dets[i].mac, g->mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
+  return best >= 0 ? detLabel(best) : "";
+}
+
+static void drawMenuCatRows(bool clear) {
+  if (clear) tft.fillRect(0, LIST_Y0, tft.width(), tft.height() - LIST_Y0, TFT_BLACK);
+  int vis = visibleRows();
+  g_mcOff = constrain(g_mcOff, 0, max(0, g_mcN - vis));
+  int rows = min(g_mcN - g_mcOff, vis);
+  for (int r = 0; r < rows; r++) {
+    int i = g_mcOff + r;
+    const DevGroup* g = groupByMac(g_mcMac[i]);
+    int y = LIST_Y0 + r * LIST_ROW_H;
+    if (g) {
+      const Detection& d = g_dets[g->rep];
+      drawDetRow(y, tierColor(g->tier, d.source, d.channel), g->tag, groupName(g), g->bestRssi,
+                 catRowLabel(g), g->tier != (int)sigdb::Tier::None, 9, false, g->whitelisted);
+    } else {
+      drawDetRow(y, TFT_DARKGREY, "?", "<gone>", 0, "", false, 9, false, false);
+    }
+    if (i == g_mcSel) tft.drawRect(0, y - 2, ICON_GUTTER_X, LIST_ROW_H, TFT_CYAN);  // BOOT-nav highlight
+  }
+  drawScrollIcons(g_mcOff, g_mcN, vis);
+}
+
+static void drawMenuCat() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+  char b[40];
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  snprintf(b, sizeof(b), "%s: %d", kCatName[g_mcCat], g_mcN);
+  tft.drawString(b, 4, 46, 1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Tap a device for details", 4, 58, 1);
+  drawMenuCatRows(false);
+}
+
+// Snapshot the live threat devices in category c (same filter as the readout) and open the list.
+static void openMenuCat(Category c) {
+  g_mcCat = c;
+  int idx[MAX_DET]; int n = 0;
+  for (int k = 0; k < g_groupCount && n < MAX_DET; k++) {
+    const DevGroup& g = g_groups[k];
+    if (g.whitelisted || g.tier < (int)sigdb::Tier::Suspect) continue;
+    if (groupCategory(g) != c) continue;
+    idx[n++] = k;
+  }
+  std::sort(idx, idx + n, [](int a, int b) {
+    if (g_groups[a].tier != g_groups[b].tier) return g_groups[a].tier > g_groups[b].tier;
+    return g_groups[a].bestRssi > g_groups[b].bestRssi;
+  });
+  for (int i = 0; i < n; i++) memcpy(g_mcMac[i], g_groups[idx[i]].mac, 6);
+  g_mcN = n; g_mcSel = 0; g_mcOff = 0;
+  g_screen = SCR_MENUCAT;
+  listTouchReset();
+  drawMenuCat();
+}
+
+static void openMenuCatDetail(const uint8_t* mac) { showDeviceDetail(mac, SCR_MENUCATDETAIL); }
 
 static void activateScanRow(int sel) {
   if (sel == 0) { openScanDetail(g_scanRowMac); return; }
@@ -3444,11 +3659,16 @@ static void runDownload() {
   delay(2);
 }
 
-// Act on the highlighted menu item (touch tap or long-press select).
+// Act on the highlighted menu item (touch tap or long-press select). g_menuSel >= MENU_N selects a
+// threat chip (index g_menuSel - MENU_N into g_menuCat) -> that category's device list.
 static void activateMenu() {
   if (g_menuSel == 0)      { g_screen = SCR_APPQR;    drawAppQrScreen(); }
   else if (g_menuSel == 1) { g_screen = SCR_SCANMENU; g_scanSel = 0; drawScanMenu(); }   // opens sub-menu; no scan yet
   else if (g_menuSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
+  else {
+    int ci = g_menuSel - MENU_N;
+    if (ci >= 0 && ci < g_menuCatN) openMenuCat((Category)g_menuCat[ci]);
+  }
 }
 
 void setup() {
@@ -3544,7 +3764,7 @@ void loop() {
   bool inDrill = (g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL ||
                   g_screen == SCR_WHITELIST  || g_screen == SCR_WLADD       || g_screen == SCR_WLRULE ||
                   g_screen == SCR_SCANROW    || g_screen == SCR_SCANDETAIL  || g_screen == SCR_SCANCONFIRM ||
-                  g_screen == SCR_SCANFILTER);
+                  g_screen == SCR_SCANFILTER  || g_screen == SCR_MENUCAT    || g_screen == SCR_MENUCATDETAIL);
   if (!inDrill && phone::scanStartRequested()) {
     g_scanActive = true;
     g_lastCycleMs = 0;  // run the first cycle immediately
@@ -3587,8 +3807,11 @@ void loop() {
   switch (g_screen) {
     case SCR_MENU: {
       int t = tappedRow(MENU_N);
-      if (t >= 0)               { g_menuSel = t; activateMenu(); return; }  // touch select
-      if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % MENU_N; drawMenu(); }
+      if (t >= 0)               { g_menuSel = t; activateMenu(); return; }  // touch select (menu item)
+      int ct = menuChipTapped();
+      if (ct >= 0)              { g_menuSel = MENU_N + ct; activateMenu(); return; }  // touch select (threat chip)
+      int navN = MENU_N + g_menuCatN;  // BOOT walks the 3 items, then the threat chips
+      if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % navN; drawMenu(); }
       else if (ev == BTN_LONG)  { activateMenu(); }
       else {  // idle: re-check the C5 link and refresh the status bar (dot + clock)
         static uint32_t lastPing = 0;
@@ -3814,6 +4037,35 @@ void loop() {
     case SCR_SCANFILTER: {
       int t = menuNav(SCANFILTER_N, &g_sfSel, &g_sfOff, ev, drawScanFilter);
       if (t >= 0) activateScanFilter(t);
+      delay(20);
+      return;
+    }
+
+    case SCR_MENUCAT: {  // devices in one threat category (from a HOME chip)
+      if (topBarTapped()) { g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); return; }  // < BACK
+      int t = listTouch(g_mcN, &g_mcOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawMenuCatRows(true); });
+      if (t >= 0) { g_mcSel = t; openMenuCatDetail(g_mcMac[t]); return; }
+      if (g_mcN > 0 && ev == BTN_SHORT) {  // BOOT tap: move the highlight (wraps)
+        g_mcSel = (g_mcSel + 1) % g_mcN;
+        if (g_mcSel < g_mcOff) g_mcOff = g_mcSel;
+        if (g_mcSel >= g_mcOff + visibleRows()) g_mcOff = g_mcSel - visibleRows() + 1;
+        drawMenuCatRows(true);
+      } else if (ev == BTN_LONG) {
+        if (g_mcN > 0) openMenuCatDetail(g_mcMac[g_mcSel]);
+        else { g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); }
+      }
+      delay(20);
+      return;
+    }
+
+    case SCR_MENUCATDETAIL: {
+      if (topBarTapped() || ev == BTN_LONG) { g_screen = SCR_MENUCAT; listTouchReset(); drawMenuCat(); return; }
+      if (ev == BTN_SHORT) {  // BOOT tap: page down (wraps to the top)
+        int maxOff = max(0, g_detN - visibleRows());
+        g_detOff = (g_detOff >= maxOff) ? 0 : min(g_detOff + visibleRows(), maxOff);
+        drawDetailList(true);
+      }
+      listTouch(g_detN, &g_detOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawDetailList(true); });
       delay(20);
       return;
     }

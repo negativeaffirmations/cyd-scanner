@@ -127,6 +127,15 @@
   .evpin { width:18px; height:18px; line-height:18px; text-align:center; border-radius:4px; font-weight:700;
     font-size:12px; color:#fff; border:1px solid #fff; }
   #folDetMap { height:220px; width:100%; border-radius:8px; background:#0b0e13; margin-top:.7em; }
+  /* Threat-category chips (DETS v5): SquachWatch-style breakdown above the live list. */
+  .catchips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:.4em 0 .2em; }
+  .catchips .catlbl { font-size:.72rem; color:#8b949e; margin-right:.1em; }
+  .catchip { display:inline-flex; align-items:baseline; gap:5px; cursor:pointer;
+    background:#0b0e13; border:1px solid #30363d; border-radius:999px; padding:3px 10px;
+    color:#c9d1d9; font-size:.78rem; font-family:inherit; }
+  .catchip:active { filter:brightness(1.3); }
+  .catchip .cn { font-weight:600; }
+  .catchip .cc { font-family:ui-monospace,monospace; font-weight:700; }
 </style>
 </head>
 <body>
@@ -201,6 +210,7 @@
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
   <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
   <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
+  <div id="catChips" class="catchips" style="display:none"></div>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
@@ -292,6 +302,15 @@
     <div id="detInfo"></div>
     <div id="detMapMsg" class="sub" style="display:none;margin-top:.7em"></div>
     <div id="detMap"></div>
+  </dialog>
+
+  <dialog id="catDlg">
+    <div class="modalhdr">
+      <strong id="catTitle">Category</strong>
+      <button id="catClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub" style="margin-bottom:.5em">Threat devices in this category. Tap one for details.</div>
+    <div id="catList" class="dets" style="max-height:60vh"></div>
   </dialog>
 
   <dialog id="folDlg">
@@ -426,6 +445,7 @@ function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connecte
   $("scanPanel").style.display="none"; $("exploreView").style.display="none";
   if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
+  lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
 async function toggleWifi(){
@@ -827,6 +847,8 @@ function renderMap(){
 const DEAUTH_ALERT = 20;   // frames/s the C5 reports before the banner shows (matches the device)
 // DETS v4 trailing field: decimal DetFlags bits -> short badge label + title.
 const FLAG_BADGES = [[8,"iB","iBeacon"],[16,"FM","Find My"],[32,"PWN","Pwnagotchi"],[64,"ET","Evil Twin"],[128,"RID","Drone Remote ID"]];
+// DETS v5 trailing field: threat-category id -> name (must match the CYD's Category enum order).
+const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
 function flagBadges(bits){
   return FLAG_BADGES.filter(f=>bits&f[0]).map(f=>`<span class="flagb" title="${f[2]}">${f[1]}</span>`).join("");
 }
@@ -868,7 +890,8 @@ function onDets(ev){
                       ftier: p.length>7 ? (+p[7]||0) : 0,   // DETS v3: follow tier (0/1/2)
                       fscore: p.length>8 ? (+p[8]||0) : 0,   // follow score 0..100
                       muted: p.length>9 ? p[9]==="1" : false,
-                      flags: p.length>10 ? (+p[10]||0) : 0});   // DETS v4: notable flag bits
+                      flags: p.length>10 ? (+p[10]||0) : 0,     // DETS v4: notable flag bits
+                      cat: p.length>11 ? (+p[11]||0) : 0});     // DETS v5: threat category id
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -932,10 +955,70 @@ function renderDetList(el, rows, opts){
     };
   });
 }
-let lastDetRows = [];           // latest live snapshot, for the follower modal
+let lastDetRows = [];           // latest live snapshot, for the follower + category modals
 function renderDets(rows){   // live view
   lastDetRows = rows;
   renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…"});
+  renderCatChips(rows);
+}
+
+// --- Threat-category breakdown (mirrors the CYD HOME readout): one chip per category with a live
+// threat device, coloured by its worst tier, severity-sorted. Tap a chip -> device list modal ->
+// device detail modal, same drill-down as the device. ---
+const rowTier = r => typeof r.tier === "number" ? r.tier : tierNum(r.tier);
+function renderCatChips(rows){
+  const el = $("catChips"); if (!el) return;
+  const cnt = {}, worst = {};
+  rows.forEach(r=>{
+    const tn = rowTier(r), c = r.cat||0;
+    if (r.muted || tn < 1 || !c) return;          // threats only, categorized, not whitelisted
+    cnt[c] = (cnt[c]||0) + 1; worst[c] = Math.max(worst[c]||0, tn);
+  });
+  const cats = Object.keys(cnt).map(Number).sort((a,b)=> (worst[b]-worst[a]) || (cnt[b]-cnt[a]));
+  if (!cats.length){ el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = '<span class="catlbl">Threats</span>' + cats.map(c=>
+    `<button class="catchip" data-cat="${c}" style="border-color:${TIER_COL[worst[c]]}">`+
+    `<span class="cn">${esc(CAT_NAMES[c]||"?")}</span>`+
+    `<span class="cc" style="color:${TIER_COL[worst[c]]}">${cnt[c]}</span></button>`).join("");
+  el.querySelectorAll(".catchip").forEach(b=>{ b.onclick = ()=> openCatModal(+b.dataset.cat); });
+}
+function catRows(catId){
+  return lastDetRows.filter(r=> (r.cat||0)===catId && !r.muted && rowTier(r)>=1)
+    .sort((a,b)=> (rowTier(b)-rowTier(a)) || (b.rssi-a.rssi));
+}
+function openCatModal(catId){
+  const rows = catRows(catId);
+  $("catTitle").textContent = (CAT_NAMES[catId]||"Category") + " — " + rows.length + " device(s)";
+  const el = $("catList");
+  if (!rows.length){
+    el.innerHTML = '<div class="sub" style="padding:6px">No devices in this category right now.</div>';
+  } else {
+    el.innerHTML = rows.map((r,ri)=>{
+      const tn = rowTier(r), nm = esc(r.name) || "&lt;hidden&gt;";
+      return `<div class="det clk" data-ri="${ri}"><span class="tiercol"><span class="badge b${tn}"></span></span>`+
+             `<span class="nm t${tn}">${nm}${flagBadges(r.flags||0)}</span>`+
+             `<span class="rssi">${r.rssi} dBm</span></div>`;
+    }).join("");
+    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> openCatDevice(rows[+d.dataset.ri]); });
+  }
+  $("catDlg").showModal();
+}
+// Live-detection detail (reuses the detDlg modal; no per-detection GPS in the live stream).
+function openCatDevice(r){
+  const tn = rowTier(r);
+  const rowsKv = [["Name", r.name||"<hidden>"], ["MAC", r.mac],
+    ["Category", CAT_NAMES[r.cat||0] || "Other"],
+    ["Signals", (r.sources||[]).map(s=>s.tag).join(", ") || "?"],
+    ["RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
+  if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
+  if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);
+  if (r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint", r.ie]);
+  $("detInfo").innerHTML = rowsKv.map(([k,v])=>
+    `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  $("detMap").style.display = "none";
+  $("detMapMsg").style.display = ""; $("detMapMsg").textContent = "Live detection — open the Map or a session for GPS.";
+  $("detDlg").showModal();
 }
 
 // --- Explore Scan: pick a past session, browse it in the Scan Viewer, tap a row for details ---
@@ -1150,6 +1233,8 @@ $("efT0").addEventListener("input", ()=>{ if(+$("efT0").value>+$("efT1").value) 
 $("efT1").addEventListener("input", ()=>{ if(+$("efT1").value<+$("efT0").value) $("efT0").value=$("efT1").value; applyExplore(); });
 $("detClose").onclick = ()=> $("detDlg").close();
 $("detDlg").addEventListener("click", e=>{ if(e.target === $("detDlg")) $("detDlg").close(); });
+$("catClose").onclick = ()=> $("catDlg").close();
+$("catDlg").addEventListener("click", e=>{ if(e.target === $("catDlg")) $("catDlg").close(); });
 $("folBanner").onclick = openFollowList;
 $("folClose").onclick = ()=> $("folDlg").close();
 $("folDlg").addEventListener("click", e=>{ if(e.target === $("folDlg")) $("folDlg").close(); });
