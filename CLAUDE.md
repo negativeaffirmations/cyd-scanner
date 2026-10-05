@@ -185,7 +185,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   service data or the Wi-Fi vendor IE; full ASTM F3411 operator-location decode is a planned phase 2).
   It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
   a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,
-  `rid_count`. `Detection.flags` is 16-bit as of v6. (Signature matching still runs on the CYD.)
+  `rid_count`. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
+  `SVC16_MAX` extra 16-bit service UUIDs per device in `Detection.svc16[]` (protocol v7), so the
+  CYD can match a signature UUID even when it isn't the first advertised. (Signature matching still
+  runs on the CYD.)
 - **CYD = poller + UI + logger.** Every ~2 s it sends `StartScan`, the C5 instantly
   dumps its current table (fast, no blocking scan), and the CYD shows per-source
   counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI. It drops its
@@ -246,7 +249,9 @@ back (5 GHz included). Things that matter, learned the hard way:
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
 - Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,
   `ie,<8-hex-fingerprint>,…` (Phase 2 — matches the C5's 802.11 IE hash),
-  `bleuuid,<uuid>,…` (Phase 3 — matches a BLE service UUID, 16-bit or full 128-bit;
+  `bleuuid,<uuid>,…` (Phase 3 — matches a BLE service UUID, 16-bit or full 128-bit; matched
+  against the primary `svc[]` AND the extra 16-bit UUIDs the active scan captures in
+  `Detection.svc16[]`, protocol v7, so a signature UUID is caught even when not advertised first;
   the Flock GATT UUID is seeded), and `blecid,<hex>,…` (Phase 3 — matches a BLE
   manufacturer company ID); `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`:
   W/B/4/A (a probe-request detection also matches W/A rules). Weights sum across the

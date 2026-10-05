@@ -11,8 +11,16 @@
   (`git checkout main && git checkout phase5-dev -- webapp/index.html && commit && push`,
   then `git checkout phase5-dev`). Check build: `gh api repos/.../pages/builds/latest --jq .status`.
 
-## Done — category threat readout + HOME redesign (committed on phase5-dev; CYD flashed, web deployed)
+## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (phase5-dev; both boards flashed v7)
 Newest first:
+- **(this commit) c5+cyd: multiple BLE service UUIDs — protocol v7.** The active BLE scan now
+  captures up to `SVC16_MAX` (4) extra 16-bit service UUIDs per device into `Detection.svc16[]`
+  (unioned across advert + scan-response reports); `sigdb::score()` matches each (expanded to its
+  128-bit base) against `bleuuid` rules, so a signature UUID is caught even when not advertised
+  first. Device detail shows a "More UUIDs" line. `Detection` 67→75 B — **both boards must be v7**
+  (flashed + link-verified: `table=43 (2.4:13 5G:10 BLE:20)`, db loaded). Scan timing already ~99%
+  duty (interval 100/window 99), so untouched. (Passive-only directive was removed earlier — active
+  scanning is the sanctioned behavior.)
 - `3374917` **CYD: HOME title icons nudged down** for status-bar padding (`HOME_ICON_CY` 34→44).
 - `7ba209b` **CYD+web: HOME title-bar icons + centered last threat row + category blurbs.** Phone
   Link → **phone icon upper-right** (grey=no GATT phone, green=connected); Settings → **cog icon
@@ -57,9 +65,9 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **CYD (COM14, CH340 1A86:7523) flashed with the category-readout build.** C5 unchanged
-this round (PROTOCOL_VERSION still v6; DETS v5 is CYD→phone only). Category drill-down + HOME icon
-redesign verified on-device by the user.
+Device state: **both boards flashed with protocol v7** — CYD (COM14, CH340 1A86:7523) + C5 (COM18,
+native 303A:1001). Link verified up post-flash (`table=43 (2.4:13 5G:10 BLE:20)`, db loaded). Category
+drill-down + HOME icon redesign verified on-device by the user. Ports drift — identify by VID:PID.
 
 ## PICK UP HERE — outstanding
 
@@ -87,8 +95,9 @@ redesign verified on-device by the user.
 6. **P3 follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
    pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
    `g_streamingPath` (defense-in-depth).
-7. Older backlog: 802.15.4 opt-in, phone/desktop SQLite import, strict BLE passivity
-   (`setActiveScan(true)` is on), CYD Scan Viewer window caching.
+7. Older backlog: 802.15.4 opt-in, phone/desktop SQLite import, CYD Scan Viewer window caching.
+   (The "strict BLE passivity" item is **dropped** — the passive-only directive was removed; active
+   scanning is now sanctioned, and the active scan's extra UUIDs are captured + matched as of v7.)
 
 *(Done this session, were previously listed here: SEC-M1 random-PSK fix → `32820c2`; CLAUDE.md
 docs sync → `b0b6bc7`.)*

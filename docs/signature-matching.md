@@ -164,9 +164,13 @@ order was followed; the status block below tracks each phase as built.
 > canonical 128-bit) into `Detection.companyId` / `svc[16]` (link protocol bumped to v3),
 > and the CYD scores them via new `bleuuid,<uuid>,…` (16- or 128-bit) and `blecid,<hex>,…`
 > DB rule layers, logging both (`cid`/`uuid` columns, log schema v4). The Flock GATT UUID
-> `e8ccbb38-9532-46a8-9fe5-1814df172e6f` is seeded. **Not yet:** matching *multiple*
-> advertised UUIDs per device (only the first is captured), and Raven's 0x3100–0x3500
-> service range (add specific `bleuuid` rules as they're confirmed in the field).
+> `e8ccbb38-9532-46a8-9fe5-1814df172e6f` is seeded. **Multiple advertised UUIDs are now
+> matched** (protocol v7): the active scan collects up to `SVC16_MAX` extra 16-bit service
+> UUIDs per device into `Detection.svc16[]` (unioned across the advert + scan-response reports),
+> and `sigdb::score()` matches each against the `bleuuid` rules — so a signature UUID is caught
+> even when it isn't advertised first. The Raven 0x3100–0x3500 rules are seeded. **Not yet:** a
+> *secondary 128-bit* UUID beyond the primary `svc[16]` (all current `bleuuid` signatures are
+> 16-bit except the Flock GATT UUID, which is the primary/sole UUID when present).
 >
 > **(5) 802.15.4 presence is now implemented** (Phase 4): the C5 passively sniffs 802.15.4
 > (`src/c5/ieee154.*`) in a `PH_154` time-slice that hops channels {11,15,20,25,26}, fully
