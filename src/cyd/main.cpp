@@ -229,7 +229,8 @@ static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 // "HOME" line. They sit in the BOOT nav right after the list buttons (so they're reachable without
 // touch), then the threat chips follow. Selection index: cog = MENU_N, phone = MENU_N+1.
 static constexpr int HOME_ICONS = 2;
-static constexpr int HOME_ICON_R = 11, HOME_ICON_CY = 34;  // radius + vertical centre on the title line
+static constexpr int HOME_ICON_R = 11, HOME_ICON_CY = 44;  // radius + vertical centre on the title line
+                                                           // (down from the status-bar line at y=21 for padding)
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
 static const char* kScanItems[] = { "Scanner", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
