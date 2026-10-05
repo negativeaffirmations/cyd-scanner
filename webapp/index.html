@@ -56,6 +56,8 @@
   .leaflet-popup-content { font-size:.8rem; }
   .leaflet-popup-content .plist { max-height:200px; overflow:auto; margin-top:.3em;
     font-family:ui-monospace,monospace; white-space:pre; }
+  input[type=number] { width:4.5em; font-size:.9rem; padding:.4em; border-radius:8px;
+           background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   input[type=text] { width:100%; font-size:.9rem; padding:.5em; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
@@ -113,7 +115,27 @@
   .det.muted { opacity:.5; }
   .det.following { box-shadow: inset 2px 0 0 #ff5cbf; }
   .folscore { flex:0 0 4.2em; text-align:right; font-family:ui-monospace,monospace; color:#f3b6e4; }
+  /* Deauth / evil-twin event alert banner (red; mirrors .folbanner, driven by STATUS deauth=/evil=). */
+  .alertbanner { display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+    padding:.6em .8em; border-radius:10px; font-weight:600;
+    background:rgba(248,81,73,.16); border:1px solid #f85149; color:#ffb4ae; }
+  .alertbanner .acount { margin-left:auto; font-family:ui-monospace,monospace; }
+  /* Small badge on detection rows that carry C5 detector flag bits (DETS v4). */
+  .flagb { display:inline-block; font-family:ui-monospace,monospace; font-size:.62rem; font-weight:700;
+    padding:0 4px; margin-left:.35em; border-radius:4px; line-height:1.4; vertical-align:middle;
+    background:rgba(88,166,255,.2); color:#9ecbff; }
+  .evpin { width:18px; height:18px; line-height:18px; text-align:center; border-radius:4px; font-weight:700;
+    font-size:12px; color:#fff; border:1px solid #fff; }
   #folDetMap { height:220px; width:100%; border-radius:8px; background:#0b0e13; margin-top:.7em; }
+  /* Threat-category chips (DETS v5): SquachWatch-style breakdown above the live list. */
+  .catchips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:.4em 0 .2em; }
+  .catchips .catlbl { font-size:.72rem; color:#8b949e; margin-right:.1em; }
+  .catchip { display:inline-flex; align-items:baseline; gap:5px; cursor:pointer;
+    background:#0b0e13; border:1px solid #30363d; border-radius:999px; padding:3px 10px;
+    color:#c9d1d9; font-size:.78rem; font-family:inherit; }
+  .catchip:active { filter:brightness(1.3); }
+  .catchip .cn { font-weight:600; }
+  .catchip .cc { font-family:ui-monospace,monospace; font-weight:700; }
 </style>
 </head>
 <body>
@@ -187,18 +209,36 @@
   <h3 style="margin:.6em 0 .3em">Live detections
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
   <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
+  <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
+  <div id="catChips" class="catchips" style="display:none"></div>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
   <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
   <button id="dlBtn" disabled>Download current session</button>
   <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
+  <details id="filterBox">
+    <summary>Download a time range (filtered on the device)</summary>
+    <select id="expRange">
+      <option value="0">Since boot (whole session)</option>
+      <option value="1">Past 24 hours</option>
+      <option value="2">Custom&hellip;</option>
+    </select>
+    <div id="expCustom" class="maptools" style="display:none">
+      <label>Days <input type="number" id="expD" min="0" max="365" value="0"></label>
+      <label>Hours <input type="number" id="expH" min="0" max="23" value="1"></label>
+      <label>Minutes <input type="number" id="expM" min="0" max="59" value="0"></label>
+    </div>
+    <button id="dlfBleBtn" disabled>Download filtered &mdash; current session (BLE)</button>
+    <button id="dlfWifiBtn" class="secondary">Download filtered over Wi-Fi (join the device AP first)</button>
+  </details>
 
   <details id="sessionsBox">
     <summary>Session logs</summary>
     <button id="listBtn" class="secondary" disabled>Refresh session list</button>
     <select id="sessSel" disabled><option>— connect and refresh —</option></select>
     <button id="sessDlBtn" disabled>Download selected session</button>
+    <button id="sessDlfBtn" class="secondary" disabled>Download selected &mdash; time range (see above)</button>
     <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
     <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
     <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
@@ -264,6 +304,15 @@
     <div id="detMap"></div>
   </dialog>
 
+  <dialog id="catDlg">
+    <div class="modalhdr">
+      <strong id="catTitle">Category</strong>
+      <button id="catClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub" style="margin-bottom:.5em">Threat devices in this category. Tap one for details.</div>
+    <div id="catList" class="dets" style="max-height:60vh"></div>
+  </dialog>
+
   <dialog id="folDlg">
     <div class="modalhdr">
       <strong>⚑ Possible followers</strong>
@@ -298,6 +347,7 @@
       <label><input type="checkbox" id="fble" checked> BLE</label>
       <label><input type="checkbox" id="fprb" checked> PRB</label>
       <label><input type="checkbox" id="f154" checked> 15.4</label>
+      <label><input type="checkbox" id="fEvents" checked> Events</label>
     </div>
     <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
     <div id="map"></div>
@@ -306,7 +356,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-02c</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-04b</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -372,7 +422,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
       .forEach(id=>$(id).disabled=false);
     $("wlBtn").disabled=false;
     log("Connected.");
@@ -382,10 +432,10 @@ async function connect(){
 }
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
-  $("folBanner").style.display = "none"; lastDetRows = [];   // clear the follower alert
+  $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
@@ -395,6 +445,7 @@ function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connecte
   $("scanPanel").style.display="none"; $("exploreView").style.display="none";
   if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
+  lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
   if(gpsWatch!==null){ navigator.geolocation.clearWatch(gpsWatch); gpsWatch=null; } }
 
 async function toggleWifi(){
@@ -464,7 +515,7 @@ function onLogData(ev){
     const txt = new TextDecoder().decode(v);
     if (txt.startsWith("SIZE=")) {
       dl.mode="file"; dl.expect=parseInt(txt.slice(5),10)||0; dl.got=0; dl.chunks=[];
-      if (dl.expect===0){ log(dl.sink==="map"||dl.sink==="explore"?"That session is empty.":"No log on device yet.");
+      if (dl.expect===0){ log(dl.sink==="map"||dl.sink==="explore"?"That session is empty.":"No log on device yet (or no rows in that time range).");
         if(dl.sink==="explore") loadedExplore([], dl.name); dl.mode=null; }
       return;
     }
@@ -504,6 +555,36 @@ async function downloadLog(){
     await chars.cmd.writeValue(enc.encode("L")); log("Requesting current session…"); }
   catch(e){ log("Download failed: "+e.message); }
 }
+// --- Time-filtered export. The CYD filters on the device and streams only the matching lines:
+// BLE = CMD "T:<mode>[:<minutes>][:<path>]" (mode 0 whole file / 1 past 24 h / 2 past <minutes>;
+// path optional, default = current session), Wi-Fi = http://192.168.4.1/dlf?f=<name|current>&mode=&arg=.
+function exportSpec(){
+  const m=$("expRange").value;
+  if(m==="2"){
+    const mins=Math.round((+$("expD").value||0)*1440+(+$("expH").value||0)*60+(+$("expM").value||0));
+    if(mins<1){ log("Custom range: enter at least 1 minute."); return null; }
+    const a=Math.min(mins,525600);
+    return {mode:2, arg:a, tag:"last"+a+"min"};
+  }
+  return m==="1" ? {mode:1, arg:0, tag:"last24h"} : {mode:0, arg:0, tag:"all"};
+}
+async function downloadFiltered(path){   // path "" = the device's current session
+  const sp=exportSpec(); if(!sp) return;
+  const cmd="T:"+sp.mode+(sp.mode===2?":"+sp.arg:"")+(path?":"+path:"");
+  const base=path ? path.split("/").pop().replace(/\.jsonl$/,"")
+                  : ($("sessName").textContent.replace(/^Session:\s*/,"").trim()||"scanlog");
+  try{ dl={mode:null,expect:0,got:0,chunks:[],name:base+"-"+sp.tag+".jsonl",sink:"save"};
+    await chars.cmd.writeValue(enc.encode(cmd)); log("Requesting "+dl.name+" (filtered on device)…"); }
+  catch(e){ log("Filtered download failed: "+e.message); }
+}
+function downloadFilteredWifi(){
+  const sp=exportSpec(); if(!sp) return;
+  const sel=$("sessSel").value, useSel=sel && !sel.startsWith("—");
+  const f=useSel ? sel.split("/").pop() : "current";
+  const url="http://192.168.4.1/dlf?f="+encodeURIComponent(f)+"&mode="+sp.mode+(sp.mode===2?"&arg="+sp.arg:"");
+  log("Opening "+url+" — join the device Wi-Fi first (Wi-Fi download mode). "+(useSel?"(selected session)":"(current session)"));
+  window.open(url,"_blank");
+}
 async function mapCurrent(){
   if(!connected){ log("Connect first to map the current session."); return; }
   try{ dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map"};
@@ -519,7 +600,7 @@ function populateSessions(text){
   const sels=[$("sessSel"),$("expSel")]; sels.forEach(s=>s.innerHTML="");  // one list feeds both pickers
   const rows=(text||"").split("\n").filter(l=>l.includes("\t"));
   if(!rows.length){ sels.forEach(s=>s.innerHTML="<option>— no sessions —</option>");
-    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true;
+    $("sessDlBtn").disabled=true; $("sessDlfBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true;
     if(exploreWant){ exploreWant=false; $("expMsg").textContent="No sessions on the device."; $("scanViewer").innerHTML=""; }
     return; }
   rows.sort().reverse();  // date-time names sort newest-first
@@ -534,7 +615,7 @@ function populateSessions(text){
     else if(flag==="latest")  label+="  (latest session)";
     sels.forEach(s=>{ const o=document.createElement("option"); o.value=path; o.textContent=label; s.appendChild(o); });
   }
-  $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
+  $("sessDlBtn").disabled=false; $("sessDlfBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
   log(rows.length+" session(s) found.");
   if(exploreWant){ exploreWant=false; fetchSession("explore"); }   // newest is first -> default pick
 }
@@ -620,7 +701,7 @@ async function setBrightness(v){
 }
 
 // --- Wardriving map (Leaflet) ---
-let lmap=null, mapLayer=null, mapDets=[];
+let lmap=null, mapLayer=null, mapDets=[], mapEvents=[];
 const TIER_COL=["#3388ff","#e3b341","#db8b2a","#f85149"];  // none / suspect / likely / confirmed
 function tierNum(t){ return t==="confirmed"?3 : t==="likely"?2 : t==="suspect"?1 : 0; }
 
@@ -679,7 +760,7 @@ function parseScanNdjson(text){
       source:s(o.src), mac:s(o.mac), rssi:parseInt(o.rssi,10)||0, channel:s(o.ch),
       ie:s(o.ie), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
       score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig),
-      wl:(o.wl==1||o.wl===true)});
+      flags:s(o.flags), wl:(o.wl==1||o.wl===true)});
   }
   return rows;
 }
@@ -689,15 +770,32 @@ function parseScanLog(text){
   return t[0]==="{" ? parseScanNdjson(t) : parseScanCsv(t);
 }
 const hasGps=r=>isFinite(r.lat)&&isFinite(r.lon)&&!(r.lat===0&&r.lon===0);
+// Event lines (NDJSON objects with an "evt" key: deauth / eviltwin / droneid, no "mac") are skipped by
+// the row parser above; this collects the geolocated ones for the map's event pins.
+function parseScanEvents(text){
+  const out=[];
+  for(const ln of (text||"").split(/\r?\n/)){
+    if(ln[0]!=="{" || !ln.includes('"evt"')) continue;
+    let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
+    if(!o || !o.evt) continue;
+    out.push({evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
+      ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)});
+  }
+  return out;
+}
+const EVT_STYLE={deauth:{col:"#f85149",ch:"D",name:"Deauth flood"}, eviltwin:{col:"#d29922",ch:"E",name:"Evil twin"},
+  droneid:{col:"#58a6ff",ch:"R",name:"Drone Remote ID"}};
 
 // Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
 function plotCsvText(text, label){
   const all=parseScanLog(text);
-  if(!all.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
+  mapEvents=parseScanEvents(text).filter(hasGps);
+  if(!all.length && !mapEvents.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
   mapDets=all.filter(hasGps);
   if(!$("mapDlg").open) openMap(); else renderMap();
   const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
-  $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points.";
+  $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points"+
+    (mapEvents.length?", "+mapEvents.length+" event pin(s).":".");
 }
 
 // Group filtered detections by GPS fix and draw one marker per location.
@@ -730,13 +828,30 @@ function renderMap(){
       '<div class="plist">'+esc(shown+more)+"</div>",{maxWidth:320});
     m.addTo(mapLayer); pts.push([g.lat,g.lon]);
   });
+  if($("fEvents").checked) for(const e of mapEvents){   // event pins (deauth / eviltwin / droneid)
+    const st=EVT_STYLE[e.evt]||{col:"#8b949e",ch:"!",name:e.evt};
+    const m=L.marker([e.lat,e.lon],{icon:L.divIcon({className:"",iconSize:[18,18],
+      html:`<div class="evpin" style="background:${st.col}">${st.ch}</div>`})});
+    m.bindPopup("<b>"+esc(st.name)+"</b><br>count "+e.count+"<br>"+(e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+
+      "<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5));
+    m.addTo(mapLayer); pts.push([e.lat,e.lon]);
+  }
   if(pts.length) lmap.fitBounds(pts,{padding:[30,30]});
 }
 
 // --- Live detections v3: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot,
 // one row per MAC): seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi")
-// [ftier fscore muted] — the last three (follow tier 0/1/2, follow score, muted flag) were
+// [ftier fscore muted flags] — v4 appended the decimal flag bits (iBeacon 8, Find My 16, Pwnagotchi 32,
+// Evil Twin 64, Drone RID 128); the ftier/fscore/muted three (follow tier 0/1/2, follow score, muted flag) were
 // added in v3; rows from older firmware have only the first 7 fields and parse fine. ---
+const DEAUTH_ALERT = 20;   // frames/s the C5 reports before the banner shows (matches the device)
+// DETS v4 trailing field: decimal DetFlags bits -> short badge label + title.
+const FLAG_BADGES = [[8,"iB","iBeacon"],[16,"FM","Find My"],[32,"PWN","Pwnagotchi"],[64,"ET","Evil Twin"],[128,"RID","Drone Remote ID"]];
+// DETS v5 trailing field: threat-category id -> name (must match the CYD's Category enum order).
+const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
+function flagBadges(bits){
+  return FLAG_BADGES.filter(f=>bits&f[0]).map(f=>`<span class="flagb" title="${f[2]}">${f[1]}</span>`).join("");
+}
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
 let emptyStreak = 0;
@@ -774,7 +889,9 @@ function onDets(ev){
   detState.rows.push({seq, tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources,
                       ftier: p.length>7 ? (+p[7]||0) : 0,   // DETS v3: follow tier (0/1/2)
                       fscore: p.length>8 ? (+p[8]||0) : 0,   // follow score 0..100
-                      muted: p.length>9 ? p[9]==="1" : false});
+                      muted: p.length>9 ? p[9]==="1" : false,
+                      flags: p.length>10 ? (+p[10]||0) : 0,     // DETS v4: notable flag bits
+                      cat: p.length>11 ? (+p[11]||0) : 0});     // DETS v5: threat category id
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -804,7 +921,7 @@ function renderDetList(el, rows, opts){
     const ft = viewer ? 0 : (r.ftier||0);                 // follow tier (live rows only)
     const muted = !viewer && r.muted;
     const fmk = ft>=1 ? `<span class="fmark f${ft}" title="${ft===2?'Possible follower':'Persistent'}">${ft===2?'⚑':'•'}</span> ` : "";
-    const nm = fmk + (esc(r.name) || "&lt;hidden&gt;");
+    const nm = fmk + (esc(r.name) || "&lt;hidden&gt;") + (viewer ? "" : flagBadges(r.flags||0));
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
     const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : r.sources).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
@@ -838,10 +955,70 @@ function renderDetList(el, rows, opts){
     };
   });
 }
-let lastDetRows = [];           // latest live snapshot, for the follower modal
+let lastDetRows = [];           // latest live snapshot, for the follower + category modals
 function renderDets(rows){   // live view
   lastDetRows = rows;
   renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…"});
+  renderCatChips(rows);
+}
+
+// --- Threat-category breakdown (mirrors the CYD HOME readout): one chip per category with a live
+// threat device, coloured by its worst tier, severity-sorted. Tap a chip -> device list modal ->
+// device detail modal, same drill-down as the device. ---
+const rowTier = r => typeof r.tier === "number" ? r.tier : tierNum(r.tier);
+function renderCatChips(rows){
+  const el = $("catChips"); if (!el) return;
+  const cnt = {}, worst = {};
+  rows.forEach(r=>{
+    const tn = rowTier(r), c = r.cat||0;
+    if (r.muted || tn < 1 || !c) return;          // threats only, categorized, not whitelisted
+    cnt[c] = (cnt[c]||0) + 1; worst[c] = Math.max(worst[c]||0, tn);
+  });
+  const cats = Object.keys(cnt).map(Number).sort((a,b)=> (worst[b]-worst[a]) || (cnt[b]-cnt[a]));
+  if (!cats.length){ el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = '<span class="catlbl">Threats</span>' + cats.map(c=>
+    `<button class="catchip" data-cat="${c}" style="border-color:${TIER_COL[worst[c]]}">`+
+    `<span class="cn">${esc(CAT_NAMES[c]||"?")}</span>`+
+    `<span class="cc" style="color:${TIER_COL[worst[c]]}">${cnt[c]}</span></button>`).join("");
+  el.querySelectorAll(".catchip").forEach(b=>{ b.onclick = ()=> openCatModal(+b.dataset.cat); });
+}
+function catRows(catId){
+  return lastDetRows.filter(r=> (r.cat||0)===catId && !r.muted && rowTier(r)>=1)
+    .sort((a,b)=> (rowTier(b)-rowTier(a)) || (b.rssi-a.rssi));
+}
+function openCatModal(catId){
+  const rows = catRows(catId);
+  $("catTitle").textContent = (CAT_NAMES[catId]||"Category") + " — " + rows.length + " device(s)";
+  const el = $("catList");
+  if (!rows.length){
+    el.innerHTML = '<div class="sub" style="padding:6px">No devices in this category right now.</div>';
+  } else {
+    el.innerHTML = rows.map((r,ri)=>{
+      const tn = rowTier(r), nm = esc(r.name) || "&lt;hidden&gt;";
+      return `<div class="det clk" data-ri="${ri}"><span class="tiercol"><span class="badge b${tn}"></span></span>`+
+             `<span class="nm t${tn}">${nm}${flagBadges(r.flags||0)}</span>`+
+             `<span class="rssi">${r.rssi} dBm</span></div>`;
+    }).join("");
+    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> openCatDevice(rows[+d.dataset.ri]); });
+  }
+  $("catDlg").showModal();
+}
+// Live-detection detail (reuses the detDlg modal; no per-detection GPS in the live stream).
+function openCatDevice(r){
+  const tn = rowTier(r);
+  const rowsKv = [["Name", r.name||"<hidden>"], ["MAC", r.mac],
+    ["Category", CAT_NAMES[r.cat||0] || "Other"],
+    ["Signals", (r.sources||[]).map(s=>s.tag).join(", ") || "?"],
+    ["RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
+  if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
+  if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);
+  if (r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint", r.ie]);
+  $("detInfo").innerHTML = rowsKv.map(([k,v])=>
+    `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  $("detMap").style.display = "none";
+  $("detMapMsg").style.display = ""; $("detMapMsg").textContent = "Live detection — open the Map or a session for GPS.";
+  $("detDlg").showModal();
 }
 
 // --- Explore Scan: pick a past session, browse it in the Scan Viewer, tap a row for details ---
@@ -908,6 +1085,7 @@ function openDetail(r){
   const rowsKv=[["Name",r.name||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
     ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
   if(r.wl) rowsKv.push(["Whitelisted","yes (muted)"]);
+  if(r.flags) rowsKv.push(["Flags",r.flags.replace(/\+/g,", ")]);
   if(r.pan) rowsKv.push(["PAN ID",r.pan]);
   if(r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint",r.ie]);
   if(r.cid && !/^0+$/.test(r.cid)) rowsKv.push(["BLE company ID",r.cid]);
@@ -1026,6 +1204,13 @@ function onStatus(ev){
   if("muted"in kv) $("wlMuted").textContent = kv.muted;
   if("fol"in kv){ const nf = +kv.fol||0;
     $("folBanner").style.display = nf>0 ? "flex" : "none"; $("folCount").textContent = nf; }
+  if("deauth"in kv || "evil"in kv){   // C5 deauth / evil-twin event counts (STATUS deauth=/evil=)
+    const da = +kv.deauth||0, ev = +kv.evil||0, parts = [];
+    if(da >= DEAUTH_ALERT) parts.push("Deauth flood: "+da+" frames/s");
+    if(ev > 0) parts.push("Evil twin: "+ev+" SSID"+(ev>1?"s":""));
+    $("alertBanner").style.display = parts.length ? "flex" : "none";
+    $("alertText").textContent = parts.join(" · ");
+  }
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
@@ -1048,6 +1233,8 @@ $("efT0").addEventListener("input", ()=>{ if(+$("efT0").value>+$("efT1").value) 
 $("efT1").addEventListener("input", ()=>{ if(+$("efT1").value<+$("efT0").value) $("efT0").value=$("efT1").value; applyExplore(); });
 $("detClose").onclick = ()=> $("detDlg").close();
 $("detDlg").addEventListener("click", e=>{ if(e.target === $("detDlg")) $("detDlg").close(); });
+$("catClose").onclick = ()=> $("catDlg").close();
+$("catDlg").addEventListener("click", e=>{ if(e.target === $("catDlg")) $("catDlg").close(); });
 $("folBanner").onclick = openFollowList;
 $("folClose").onclick = ()=> $("folDlg").close();
 $("folDlg").addEventListener("click", e=>{ if(e.target === $("folDlg")) $("folDlg").close(); });
@@ -1060,6 +1247,10 @@ $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) 
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
+$("expRange").addEventListener("change", ()=>{ $("expCustom").style.display = $("expRange").value==="2" ? "" : "none"; });
+$("dlfBleBtn").onclick = ()=>downloadFiltered("");
+$("dlfWifiBtn").onclick = downloadFilteredWifi;
+$("sessDlfBtn").onclick = ()=>{ const p=$("sessSel").value; if(p && !p.startsWith("—")) downloadFiltered(p); };
 $("wifiBtn").onclick = toggleWifi;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
@@ -1080,7 +1271,7 @@ $("mapBtn").onclick = openMap;
 $("mapClose").onclick = ()=> $("mapDlg").close();
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;
-["fThreats","f24","f5","fble","fprb","f154"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
+["fThreats","f24","f5","fble","fprb","f154","fEvents"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
 $("mapFile").addEventListener("change", e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();
