@@ -3270,6 +3270,24 @@ static void buildDeviceDetail(const uint8_t* mac) {
       for (int j = 0; j < 16; j++) sprintf(u + j * 2, "%02X", svc[j]);
       addField("Service UUID", u);
     }
+    // Extra 16-bit UUIDs from the active scan (deduped across this device's member detections).
+    uint16_t more[SVC16_MAX * 2]; int nm = 0;
+    for (int i = 0; i < g_detCount && nm < (int)(sizeof(more) / sizeof(more[0])); i++) {
+      if (memcmp(g_dets[i].mac, mac, 6) != 0) continue;
+      for (int s = 0; s < SVC16_MAX; s++) {
+        uint16_t v = g_dets[i].svc16[s];
+        if (!v) continue;
+        bool dup = false;
+        for (int k = 0; k < nm; k++) if (more[k] == v) { dup = true; break; }
+        if (!dup && nm < (int)(sizeof(more) / sizeof(more[0]))) more[nm++] = v;
+      }
+    }
+    if (nm > 0) {
+      char u[40]; int o = 0;
+      for (int k = 0; k < nm; k++)
+        o += snprintf(u + o, sizeof(u) - o, k ? " %04X" : "%04X", more[k]);
+      addField("More UUIDs", u);
+    }
   }
 }
 

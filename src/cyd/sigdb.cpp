@@ -417,6 +417,21 @@ void score(const Detection& d, ScoreResult& out) {
       }
     }
   }
+  // v7: match the extra advertised 16-bit UUIDs (active scan often returns several, and the
+  // signature UUID isn't always the primary one). Each is expanded to its 128-bit base form
+  // to compare against the loaded rules (same representation parseUuid() produced).
+  for (int s = 0; s < SVC16_MAX; s++) {
+    uint16_t v = d.svc16[s];
+    if (!v) continue;
+    uint8_t be[16] = {0,0,0,0, 0,0,0x10,0x00, 0x80,0x00,0x00,0x80, 0x5F,0x9B,0x34,0xFB};
+    be[2] = (uint8_t)(v >> 8); be[3] = (uint8_t)(v & 0xFF);
+    for (int i = 0; i < g_uuidN; i++) {
+      if (!(g_uuid[i].srcMask & srcBit)) continue;
+      if (memcmp(be, g_uuid[i].uuid, 16) == 0 && g_uuid[i].weight > uuidW) {
+        uuidW = g_uuid[i].weight; out.bestUuid = (int8_t)i;
+      }
+    }
+  }
 
   int cidW = 0;
   if (d.companyId) {

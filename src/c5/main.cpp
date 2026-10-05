@@ -128,6 +128,13 @@ static void mergeDetection(const Detection& d) {
       g_table[i].d.companyId = keepCid;
       g_table[i].d.panId     = keepPan;
       if (!haveSvc) memcpy(g_table[i].d.svc, prev.svc, 16);  // keep prior UUID
+      // Union the extra 16-bit UUID sets (adv + scan-response reports each carry a subset).
+      for (int p = 0; p < SVC16_MAX && prev.svc16[p]; p++) {
+        bool have = false;
+        for (int k = 0; k < SVC16_MAX; k++) if (g_table[i].d.svc16[k] == prev.svc16[p]) { have = true; break; }
+        if (have) continue;
+        for (int k = 0; k < SVC16_MAX; k++) if (!g_table[i].d.svc16[k]) { g_table[i].d.svc16[k] = prev.svc16[p]; break; }
+      }
       // Keep a previously-captured name when this (often nameless ADV_IND) packet omits it:
       // the complete local name usually rides only in the scan response, so otherwise an
       // interleaved nameless advert clobbers it and the device streams out as <hidden>.
@@ -265,12 +272,26 @@ class ScanCB : public NimBLEScanCallbacks {
       if (dev->getServiceDataUUID(i) == NimBLEUUID((uint16_t)0xFFFA)) { d.flags |= FLAG_BLE_ODID; break; }
     }
 
-    // Primary advertised service UUID, normalized to canonical big-endian 128-bit
-    // (NimBLE stores it little-endian; a 16-bit UUID expands to the Bluetooth base).
-    if (dev->getServiceUUIDCount() > 0) {
-      NimBLEUUID u = dev->getServiceUUID(0).to128();
-      const uint8_t* le = u.getValue();  // 16 bytes, little-endian
-      for (int i = 0; i < 16; i++) d.svc[i] = le[15 - i];
+    // Advertised service UUIDs. The primary (first) is stored full 128-bit big-endian in svc[]
+    // (NimBLE stores it little-endian; a 16-bit UUID expands to the Bluetooth base). Active
+    // scanning often returns MULTIPLE UUIDs (adv + scan response) and the signature one isn't
+    // always first, so additionally collect up to SVC16_MAX distinct 16-bit UUIDs into svc16[]
+    // for the CYD to match (covers Tile/Samsung/Raven/ODID/Flipper/Eddystone-class signatures;
+    // a secondary 128-bit UUID beyond the primary is not carried).
+    uint8_t nsvc16 = 0;
+    for (uint8_t i = 0, n = dev->getServiceUUIDCount(); i < n; i++) {
+      NimBLEUUID u = dev->getServiceUUID(i);
+      if (i == 0) {
+        const uint8_t* le = u.to128().getValue();  // 16 bytes, little-endian
+        for (int k = 0; k < 16; k++) d.svc[k] = le[15 - k];
+      }
+      if (u.bitSize() != 16 || nsvc16 >= SVC16_MAX) continue;
+      const uint8_t* le = u.to128().getValue();          // 16-bit value lives at LE bytes 12/13
+      uint16_t v = (uint16_t)(le[12] | ((uint16_t)le[13] << 8));
+      if (!v) continue;
+      bool dup = false;
+      for (uint8_t k = 0; k < nsvc16; k++) if (d.svc16[k] == v) { dup = true; break; }
+      if (!dup) d.svc16[nsvc16++] = v;
     }
     mergeDetection(d);
   }
