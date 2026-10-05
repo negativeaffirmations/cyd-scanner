@@ -13,6 +13,12 @@
 
 ## Done this session (committed on phase5-dev; BOTH BOARDS FLASHED + boot-verified)
 Newest first:
+- `b0b6bc7` **docs: CLAUDE.md synced** to the v6 code (detectors, logging/export, SEC-M1, UI, GPL).
+- `c8b27c3` **CYD: HOME-menu background threat readout** (`S:/L:/C:`, white at 0, tier color when >0,
+  live on the 2 s idle cadence). ⚠ user wants this reworked — see PICK UP HERE #2.
+- `32820c2` **CYD: SEC-M1 fixed** — random 16-char WPA2 SoftAP PSK generated once + stored in NVS
+  (`"cydscan"`/`"appsk"`), shown only on device/QR; no longer derived from the MAC/BSSID. (Phones
+  with the old network saved must rejoin via QR.)
 - `a3fc96f` **c5: latch deauth peak** (reviewer REV-001) — deauth count held ~10 s so a CYD poll
   between promiscuous windows still catches a flood (was reading 0 most of the time).
 - `e393cad` **CYD logging overhaul** — bg scan **default ON** (+ one-time NVS force-flip);
@@ -36,24 +42,48 @@ Newest first:
 Device state: **CYD (COM14, CH340 1A86:7523) and C5 (COM18, native 303A:1001) both flashed with v6.**
 Boot-verified: `link=up`, both log streams created, background scan self-started and logging, sigdb
 loaded 62 OUI + 14 name + 15 bleuuid + 7 blecid. Reviews: security PASS, reviewer no P1.
+⚠ **But in use the user reports the C5 link drops/reconnects ~every 2 s** (the brief boot capture
+didn't surface it) — see PICK UP HERE #1.
 
 ## PICK UP HERE — outstanding
-1. **Deploy the webapp** to `main` (big changes this session, not yet on Pages — see above).
-2. **SEC-M1 (pre-existing, now more exposed):** the Wi-Fi download SoftAP derives its WPA2 PSK from
-   the efuse MAC, which is the broadcast BSSID → anyone in RF range can compute it and pull all
-   `/logs/` (bystander MACs + GPS) via `/dl` + the new `/dlf`. Fix: random per-device PSK in NVS,
-   shown only on the device/QR. More relevant now that bg logging is always-on.
-3. **Phase 2 — full Remote-ID (ASTM F3411) decode:** this round only flags OpenDroneID *presence*.
+
+### ⚠ USER-REPORTED (observed on-device 2026-10-05 — TOP PRIORITY, not yet addressed)
+1. **BUG — C5 link disconnects & reconnects every ~2 s.** User observes the CYD↔C5 link dropping and
+   coming back roughly every 2 seconds in normal use. **This needs to be fixed.** (Not caught by the
+   brief post-flash boot capture, which showed `link=up`.) Likely tied to **background-scan default-ON**:
+   the headless bg cycle now polls the C5 every ~2 s on *every* screen, and on the HOME menu that runs
+   *alongside* the menu's own ~2 s `pingC5` — the reviewer explicitly flagged this redundant/overlapping
+   double-poll. Suspect the link-status/stickiness path (`g_linkOk`, `LINK_STICKY_MS`, the busy-miss
+   bail in `requestScan`) is flickering under the doubled polling, or a busy-window phase-lock like the
+   earlier `c5-busy-window-link-drop` issue. First moves: de-dupe the HOME-menu ping vs the bg poll so
+   only one poll runs per window; confirm a busy-miss isn't resetting link stickiness. **May also cause
+   #3.**
+2. **UI — rework the HOME-menu threat readout.** Make the threat **numbers smaller**, and put a
+   **title above each number**, spelled out or more readably abbreviated (e.g. Suspect / Likely /
+   Confirmed — clearer than the current inline `S:/L:/C:`). Current impl: `drawMenuThreats()` in
+   `src/cyd/main.cpp` (font-4 numbers, inline `S:/L:/C:` labels, band ~y248–292, refreshed on the
+   SCR_MENU 2 s idle cadence).
+3. **INVESTIGATE — possibly missing some threats** (user unsure). Verify threat/detection counts are
+   complete. Could be a genuine gap, OR a side effect of #1 — if the link drops every ~2 s the C5's
+   detection burst is lost on the dropped poll, so fewer devices/threats surface. Re-check after #1 is
+   fixed; also sanity-check the flag→tier floor, `countTiers` (whitelist exclusion), and per-stream
+   dedup aren't hiding threats.
+
+### Other outstanding
+4. **Deploy the webapp** to `main` (big changes this session, not yet on Pages — see above).
+   `phase5-dev` is also unpushed (15+ commits ahead of origin).
+5. **Phase 2 — full Remote-ID (ASTM F3411) decode:** this round only flags OpenDroneID *presence*.
    Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/
    map list (another coordinated both-board flash). Heaviest piece; BLE-extended-scan coexistence
    risk — check against the BLE/15.4 coexistence rule.
-4. **P3 follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
+6. **P3 follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
    pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
    `g_streamingPath` (defense-in-depth).
-5. **Docs:** CLAUDE.md CMD list / STATUS keys / DETS version / logging + detector sections are now
-   stale (T: command, bg stream, v6 flags, deauth/evil-twin) — update to match.
-6. Older backlog: 802.15.4 opt-in, phone/desktop SQLite import, strict BLE passivity
+7. Older backlog: 802.15.4 opt-in, phone/desktop SQLite import, strict BLE passivity
    (`setActiveScan(true)` is on), CYD Scan Viewer window caching.
+
+*(Done this session, were previously listed here: SEC-M1 random-PSK fix → `32820c2`; CLAUDE.md
+docs sync → `b0b6bc7`.)*
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.
