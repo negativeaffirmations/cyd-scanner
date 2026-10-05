@@ -1,9 +1,10 @@
 # Signature Matching — Research & Design Notes
 
 Reference for how cyd-scanner should identify surveillance devices (Flock/ALPR
-cameras and similar) from passively-observed RF. Survey of prior art + a proposed
-layered engine tailored to this project's two-board hardware. Scope stays **passive
-detection only**.
+cameras and similar) from observed RF. Survey of prior art + a proposed
+layered engine tailored to this project's two-board hardware. Scope stays **detection
+only** — it scans (actively, including BLE scan-response solicitation) and fingerprints,
+but never attacks or interferes with the devices it observes.
 
 ## Implementation status (2026-10-01)
 

@@ -6,7 +6,7 @@
 // the card (or pushed via the phone link) with NO firmware reflash. If the card has
 // no DB, a small built-in fallback keeps detection working.
 //
-// Passive/defensive scope: this only classifies observed broadcast RF.
+// Defensive scope: this only classifies observed RF; it never attacks or interferes.
 #pragma once
 
 #include <Arduino.h>

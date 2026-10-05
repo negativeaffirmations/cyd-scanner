@@ -6,7 +6,7 @@ tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch
 ---
 
 You process hardware reference material for **cyd-scanner** — counter-surveillance
-firmware (passive detection of Flock/ALPR cameras and similar RF surveillance) on
+firmware (detection of Flock/ALPR cameras and similar RF surveillance) on
 two boards: the ESP32-2432S028R "CYD" and the ESP32-C5 DevKit.
 
 FIRST: discover what's on disk. Reference material lives under `hardware/`:

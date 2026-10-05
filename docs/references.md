@@ -68,8 +68,10 @@ near-verbatim reuse is what triggers the rules above.**
   **"squad" mesh, which rides BLE advertising** (not ESP-NOW) — manufacturer data, company ID
   0xFFFF, encrypted chat via AES-128-CCM keyed by a shared 5-word phrase — plus Wi-Fi for OTA/NTP.
   Its **LoRa feature is receive-only** (a passive sniffer/decoder for Meshtastic/MeshCore/LoRaWAN/
-  APRS/FANET, CrowPanel-7 only). So only the BLE squad beacon is outside this project's strict
-  passive/receive-only charter; the LoRa sniffing is compatible with it.
+  APRS/FANET, CrowPanel-7 only). Note which parts transmit — this project's charter allows active
+  scanning and the tool's own links but still forbids *attacking/interfering with* observed devices,
+  so a mesh beacon addressed at the user's own fleet is fine; anything that floods or disrupts others
+  is not.
 - **Status:** **signature DATA reused** (2026-10-04) — see "Code actually used" below.
 
 ## Code actually used

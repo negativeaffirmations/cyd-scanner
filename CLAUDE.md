@@ -13,29 +13,30 @@ tracking beacons) by their RF signatures. It runs on a two-board system:
 - **ESP32-C5 DevKit** — a radio co-processor adding **5 GHz Wi-Fi 6** and
   **802.15.4 (Zigbee/Thread)** coverage the CYD's ESP32 cannot provide.
 
-The goal is a portable, self-contained scanner that passively observes nearby RF
-(Wi-Fi APs/clients, BLE advertisements, 802.15.4 devices), matches them against
+The goal is a portable, self-contained scanner that observes nearby RF
+(Wi-Fi APs/clients, BLE advertisements, 802.15.4 devices — via active scanning plus passive
+promiscuous capture), matches them against
 signatures of known surveillance gear (e.g. MAC OUI ranges, SSID patterns, probe
 behavior), and surfaces detections on the CYD's touchscreen.
 
 ### Scope / ethics / privacy
 
-This is a **defensive, privacy-research** tool. Its *observation of other parties is strictly
-passive* — it only listens to broadcast RF that any receiver can hear. The passive rule is about
-the devices it watches and the people around it, **not** a blanket ban on the tool ever
-transmitting. Keep it that way:
-- **Passive toward everything it observes** — never transmit *at* a third-party or surveillance
-  device or the RF around it: no jamming, deauth, injection, spoofing, beacon/probe floods, or any
-  active interference with another device's operation. Detection of third parties stays
-  receive-only.
-- **The tool's own radios may transmit for its own function.** Already in use: the CYD's BLE GATT
-  phone link and its on-demand Wi-Fi SoftAP (log download). **Contemplated (not yet built):**
-  a link so **multiple of the user's own scanner devices can talk to each other** (e.g. share
-  detections / correlate sightings across a small fleet). Transmission *among the user's own
-  cooperating units, or to the user's own phone,* is in scope — it is not interference with the
-  things being observed.
-- When in doubt whether a feature crosses from "detect / coordinate our own devices" into
-  "interfere with / attack / DoS someone else's device," stop and ask.
+This is a **defensive, privacy-research** tool. It observes and fingerprints nearby surveillance
+RF, and to do that it **actively scans** — standard BLE/Wi-Fi scanning that solicits a response
+(e.g. a BLE `SCAN_REQ` to pull a device's scan-response **name + service UUIDs**, active Wi-Fi
+scanning) is expected and **required**: the device/name/UUID fingerprinting this project depends on
+does not work without it. The line that stays off-limits is **interfering with or attacking** other
+devices, not transmitting as such:
+- **Don't attack or disrupt anything it observes** — no jamming, deauth, injection, spoofing,
+  beacon/probe floods, or any other active interference with another device's operation. Ordinary
+  scanning that a device answers *by design* is fine; anything that degrades, hijacks, spoofs, or
+  denies service to a third-party device is not.
+- **The tool's own radios transmit freely for its own function** — the CYD's BLE GATT phone link,
+  the on-demand Wi-Fi SoftAP (log download), active scan requests, and (contemplated) a link so
+  **multiple of the user's own scanner devices talk to each other** (share detections / correlate
+  sightings across a small fleet).
+- When in doubt whether a feature crosses from "scan / fingerprint / coordinate our own devices"
+  into "interfere with / attack / DoS someone else's device," stop and ask.
 
 This tool exists to expose *surveillance devices* — machines that
 collect data on everyone without consent. Those devices have no privacy interest this
@@ -173,7 +174,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   All sources merge into a shared **detection table** (dedup by source+MAC, 30 s TTL,
   mutex-guarded because the BLE + promiscuous callbacks run in separate tasks; a captured
   IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
-  Promiscuous capture is **receive-only** — nothing is transmitted (passive scope).
+  Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
+  active; see the Scope section).
 - **C5 passive behavioral detectors (protocol v6).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
@@ -362,7 +364,8 @@ A specialized agent suite is available (adapted from the owner's other firmware 
 - **fixer** — implements C++ for CYD/C5 (read-write).
 - **tester** — runs `pio run -e cyd`/`-e c5`, reports build + flash/RAM.
 - **reviewer** — code quality, memory/concurrency, link-protocol correctness (read-only).
-- **security** — enforces passive-only scope, captured-data privacy, attack surface (read-only).
+- **security** — enforces the no-attack/no-interference scope (no jamming/deauth/injection/spoofing/
+  DoS), captured-data privacy, attack surface (read-only).
 - **hardware-docs** — datasheets/pinout images → pin tables & docs; keeps `pins.h` ↔ `PINOUT.md`.
 
 ### Automatic delegation (standing authorization)
@@ -379,7 +382,7 @@ matters from the agent's report back to the user (its final report isn't shown t
 | Implementing a feature or bug fix in C++ (CYD or C5)                               | **fixer**      |
 | Build validation / resource audit (`pio run -e cyd`/`-e c5`, flash/RAM deltas)     | **tester**     |
 | Reviewing existing code for correctness, memory/concurrency, link-protocol issues  | **reviewer**   |
-| Security/safety audit: passive-only scope, captured-data privacy, BLE/Wi-Fi attack surface | **security** |
+| Security/safety audit: no-attack/no-interference scope, captured-data privacy, BLE/Wi-Fi attack surface | **security** |
 | Datasheets, pinouts, pin tables, `pins.h` ↔ `PINOUT.md` sync                        | **hardware-docs** |
 
 Judgment still applies — don't spawn an agent for trivial or read-only work you can finish
