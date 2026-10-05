@@ -36,6 +36,16 @@ bool     g_delReq     = false;
 char     g_delFile[48]= {0};
 bool     g_briReq     = false;
 int      g_briVal     = 100;
+bool     g_wlReload   = false;
+bool     g_wlList     = false;
+bool     g_wlAdd      = false;
+char     g_wlLine[96] = {0};
+bool     g_wlRem      = false;
+int      g_wlIdx      = 0;
+bool     g_expReq     = false;   // "T:<mode>[:<minutes>][:<path>]" time-filtered export
+int      g_expMode    = 0;
+int      g_expArg     = 0;
+char     g_expPath[48]= {0};
 bool     g_srcReq     = false;
 uint8_t  g_srcVal     = 0;
 uint8_t  g_ownMac[6]  = {0};
@@ -137,6 +147,43 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_srcReq = true;
           Serial.printf("[phone] cmd src mask %u\n", g_srcVal);
         }
+      } else if (c0 == 'T' || c0 == 't') {           // "T:<mode>[:<minutes>][:<path>]" filtered export
+        // mode 0 = whole file, 1 = past 24 h, 2 = past <minutes>. Optional /logs/ path (default =
+        // the current session). ('E' is taken by whitelist-remove, hence 'T' for time.)
+        if (val.size() > 2 && val[1] == ':') {
+          const char* s = val.c_str();
+          g_expMode = atoi(s + 2);
+          g_expArg = 0; g_expPath[0] = 0;
+          for (const char* q = strchr(s + 2, ':'); q; ) {
+            q++;
+            if (*q == '/') { strncpy(g_expPath, q, sizeof(g_expPath) - 1); g_expPath[sizeof(g_expPath) - 1] = 0; break; }
+            if (*q >= '0' && *q <= '9') g_expArg = atoi(q);
+            q = strchr(q, ':');
+          }
+          g_expReq = true;
+          Serial.printf("[phone] cmd filtered export mode=%d arg=%d path=%s\n", g_expMode, g_expArg, g_expPath);
+        }
+      } else if (c0 == 'W' || c0 == 'w') {           // reload whitelist
+        g_wlReload = true;
+        Serial.println("[phone] cmd reload whitelist");
+      } else if (c0 == 'Y' || c0 == 'y') {           // list whitelist
+        g_wlList = true;
+        Serial.println("[phone] cmd list whitelist");
+      } else if (c0 == 'A' || c0 == 'a') {           // "A:<csv rule line>" add a rule
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          strncpy(g_wlLine, val.c_str() + colon + 1, sizeof(g_wlLine) - 1);
+          g_wlLine[sizeof(g_wlLine) - 1] = 0;
+          g_wlAdd = true;
+          Serial.printf("[phone] cmd whitelist add %s\n", g_wlLine);
+        }
+      } else if (c0 == 'E' || c0 == 'e') {           // "E:<index>" remove the Nth rule
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          g_wlIdx = atoi(val.c_str() + colon + 1);
+          g_wlRem = true;
+          Serial.printf("[phone] cmd whitelist remove %d\n", g_wlIdx);
+        }
       } else {
         g_download = (c0 == '1');
         Serial.printf("[phone] cmd download=%d\n", g_download);
@@ -234,6 +281,34 @@ bool deleteRequested(char* out, size_t cap) {
   g_delReq = false;
   strncpy(out, g_delFile, cap - 1);
   out[cap - 1] = 0;
+  return true;
+}
+
+bool exportRequested(int* mode, int* minutes, char* path, size_t cap) {
+  if (!g_expReq) return false;
+  g_expReq = false;
+  *mode = g_expMode;
+  *minutes = g_expArg;
+  strncpy(path, g_expPath, cap - 1);
+  path[cap - 1] = 0;
+  return true;
+}
+
+bool wlReloadRequested() { bool r = g_wlReload; g_wlReload = false; return r; }
+bool wlListRequested()   { bool r = g_wlList; g_wlList = false; return r; }
+
+bool wlAddRequested(char* out, size_t cap) {
+  if (!g_wlAdd) return false;
+  g_wlAdd = false;
+  strncpy(out, g_wlLine, cap - 1);
+  out[cap - 1] = 0;
+  return true;
+}
+
+bool wlRemoveRequested(int* outIdx) {
+  if (!g_wlRem) return false;
+  g_wlRem = false;
+  *outIdx = g_wlIdx;
   return true;
 }
 

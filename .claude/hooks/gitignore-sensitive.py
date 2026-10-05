@@ -144,6 +144,12 @@ def main():
             or rel.startswith(".git/") or rel.startswith(".claude/")):
         return
 
+    # Already tracked by git? Then .gitignore wouldn't stop it anyway (git keeps tracking
+    # ignored-but-tracked files), so skip — this hook only keeps NEW/untracked files out.
+    tracked = run_git(repo, "ls-files", "--error-unmatch", rel)
+    if tracked is not None and tracked.returncode == 0:
+        return
+
     try:
         if os.path.getsize(fp) > MAX_BYTES:
             return

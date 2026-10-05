@@ -20,3 +20,14 @@ scanlog*.csv
 *.kml
 *.jsonl
 sessions/
+# User's own device whitelist (SD copy / any local export) — personal identifiers.
+/whitelist.csv
+whitelist*.csv
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Node / Sass toolchain for the web app (webapp/style.css IS committed; node_modules is not)
+node_modules/
+webapp/*.css.map

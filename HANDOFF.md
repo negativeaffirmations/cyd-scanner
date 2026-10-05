@@ -1,193 +1,129 @@
-# Handoff — cyd-scanner
+# Handoff — 2026-10-05 (branch: phase5-dev)
 
-Snapshot for the next session. Read this, then [CLAUDE.md](CLAUDE.md) for architecture
-and gotchas, and [docs/signature-matching.md](docs/signature-matching.md) for the roadmap.
+## Branches / deploy
+- **phase5-dev** = active dev branch (firmware + webapp). Committed; CYD flashed.
+- **main** = GitHub Pages deploy branch (source: `main` `/`). Gets **webapp-only** deploy
+  commits; it lags phase5-dev on firmware. Web app is live at
+  https://negativeaffirmations.github.io/cyd-scanner/webapp/
+- **Web app styles are SCSS now** (`webapp/scss/*.scss` → `webapp/style.css` via Dart Sass;
+  `npm install` once, then `npm run sass:build`, or the auto-starting **"Sass: watch"** VS Code
+  task). Edit the SCSS (theme colors live in `webapp/scss/_variables.scss`), **never** `style.css`
+  (generated). `style.css` **is committed** (Pages doesn't run Sass); `node_modules/` is not.
+- To deploy the web app: **run `npm run sass:build` first**, then copy the whole `webapp/` folder
+  to `main` so `index.html` + `style.css` ship together (index.html now `<link>`s style.css):
+  `git checkout main && git checkout phase5-dev -- webapp/ && commit && push`, then
+  `git checkout phase5-dev`. Check build: `gh api repos/.../pages/builds/latest --jq .status`.
 
-_Last updated: 2026-10-01. Repo: https://github.com/negativeaffirmations/cyd-scanner (public).
-Latest commit: `b521221`. Working tree clean._
+## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (phase5-dev; both boards flashed v7)
+Newest first:
+- `a50ad3a` **CYD: fixed the HOME link-dot flicker** (the "C5 link disconnect every ~2 s"). It was
+  **cosmetic** — dual-serial capture showed the data link streaming cleanly (`[C5] streamed ~50` +
+  `table=~49` every 2 s). Cause: the HOME idle handler set `g_linkOk = pingC5()` **non-stickily**
+  every 2 s *alongside* the background-scan poll (which already keeps the link sticky); a ping that
+  collided with the C5's scan-stream busy window timed out → dot red one cycle → green next. v7's
+  larger frames (75 B × ~50) lengthened that window enough to make it recur. Fix: on HOME skip the
+  redundant ping while `g_bgScan && g_scanActive`, and apply `LINK_STICKY_MS` grace when bg scan is
+  idle. User confirmed steady on-device. (Lesson: link-health must be sticky — never set `g_linkOk`
+  from one ping.)
+- `d931fbf` **c5+cyd: multiple BLE service UUIDs — protocol v7.** The active BLE scan now
+  captures up to `SVC16_MAX` (4) extra 16-bit service UUIDs per device into `Detection.svc16[]`
+  (unioned across advert + scan-response reports); `sigdb::score()` matches each (expanded to its
+  128-bit base) against `bleuuid` rules, so a signature UUID is caught even when not advertised
+  first. Device detail shows a "More UUIDs" line. `Detection` 67→75 B — **both boards must be v7**
+  (flashed + link-verified: `table=43 (2.4:13 5G:10 BLE:20)`, db loaded). Scan timing already ~99%
+  duty (interval 100/window 99), so untouched. (Passive-only directive was removed earlier — active
+  scanning is the sanctioned behavior.)
+- `3374917` **CYD: HOME title icons nudged down** for status-bar padding (`HOME_ICON_CY` 34→44).
+- `7ba209b` **CYD+web: HOME title-bar icons + centered last threat row + category blurbs.** Phone
+  Link → **phone icon upper-right** (grey=no GATT phone, green=connected); Settings → **cog icon
+  upper-left**; list now holds just **Scan**. Both icons stay BOOT-reachable (nav: Scan, cog, phone,
+  chips) so Settings/touch-cal is never touch-only. Partial last threat row is centred (`chipRect()`
+  shared by draw+hit-test). Category device list shows a one-line **signature-type description**
+  (`catDescription` / web `CAT_DESC`), which also explains the vague "Other".
+- `6091880` **CYD: HOME readout = full category list always** — every category as a `FLOCK: 0` /
+  `AXON: 0` tile (3×5 grid, font 1), dim at 0, tier-coloured + outlined when >0, all tappable.
+- `a331ffe` **CYD+web: SquachWatch-style category readout + drill-down.** New `Category` taxonomy
+  (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/Drone/Deauth/Flipper/Skim/Other), `categoryOf()`
+  (flags-first then sigdb label) → `g_category[]`; `groupCategory()`/`countCategories()` per device.
+  HOME chip → `SCR_MENUCAT` device list → `SCR_MENUCATDETAIL` (reuses the scanner detail via
+  `buildDeviceDetail`/`showDeviceDetail`; both new screens are in the `inDrill` freeze set).
+  **DETS v5**: trailing category id (older parsers ignore it); web app mirrors the whole breakdown.
 
-## What this is
+## Done earlier this session (committed on phase5-dev; BOTH BOARDS FLASHED + boot-verified)
+Newest first:
+- `b0b6bc7` **docs: CLAUDE.md synced** to the v6 code (detectors, logging/export, SEC-M1, UI, GPL).
+- `c8b27c3` **CYD: HOME-menu background threat readout** (`S:/L:/C:`) — superseded by the category
+  readout above (`a331ffe`→`3374917`).
+- `32820c2` **CYD: SEC-M1 fixed** — random 16-char WPA2 SoftAP PSK generated once + stored in NVS
+  (`"cydscan"`/`"appsk"`), shown only on device/QR; no longer derived from the MAC/BSSID. (Phones
+  with the old network saved must rejoin via QR.)
+- `a3fc96f` **c5: latch deauth peak** (reviewer REV-001) — deauth count held ~10 s so a CYD poll
+  between promiscuous windows still catches a flood (was reading 0 most of the time).
+- `e393cad` **CYD logging overhaul** — bg scan **default ON** (+ one-time NVS force-flip);
+  dedicated `/logs/bg-*.jsonl` stream (two dedup sets); 512 MB total-/logs/ auto-rotation
+  (oldest-first, never live/held/streaming); **time-filtered export** CMD `T:<mode>[:min][:path]`
+  (0 since-boot / 1 past-24h / 2 custom-min) + HTTP `/dlf`, filtered on-device; `logfilter.h` (new).
+- `391bbc4` **CYD detector integration** — flag→tier/label, NDJSON `flags` key + `evt` event lines,
+  DETS **v4** (trailing flags field), STATUS `deauth=/evil=/rid=`, **red banner + LED alert** for
+  deauth/evil-twin, detail-screen flags row; webapp banner/badges/event-map-pins/time-range UI.
+- `cfe5930` **C5 passive detectors** — iBeacon, AirTag/Find-My, Pwnagotchi (DE:AD:BE:EF IE + "pwnd"),
+  evil-twin (encryption-mismatch verdict, SSID table), deauth/disassoc counting, OpenDroneID
+  **presence** (BLE 0xFFFA + Wi-Fi vendor IE). All RECEIVE-ONLY.
+- `f79c702` **link: protocol v6** — `Detection.flags` → uint16 (67 B) + 5 detector bits;
+  `Status` (12 B) + `deauth_recent`/`evil_count`/`rid_count`. **Both boards must be v6 together.**
+- `c310b98` **CYD: follow thresholds restored** to production (400 m / 3 fixes / 150 m).
+- `97a1fc7` review fixes (FEAA weight 40→15, bg link-down backoff).
+- `c1e6649` **GPL-3.0 LICENSE** + SquachWatch attribution (`docs/references.md`).
+- `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
+  Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Passive counter-surveillance firmware (detect Flock/ALPR cameras & similar RF surveillance)
-on two boards: **CYD** (ESP32-2432S028R, host/UI/SD/phone-link) + **ESP32-C5** (dual-band
-Wi-Fi + BLE + **802.15.4** scanner co-processor), one PlatformIO project, shared UART link
-protocol. **Passive only** — never add jamming/deauth/injection. (The lone exception is the
-separate `env:c5test` bench transmitter — a test tool, never the scanner; see Build section.)
+Device state: **both boards flashed with protocol v7** — CYD (COM14, CH340 1A86:7523) + C5 (COM18,
+native 303A:1001). Link verified up post-flash (`table=43 (2.4:13 5G:10 BLE:20)`, db loaded). Category
+drill-down + HOME icon redesign verified on-device by the user. Ports drift — identify by VID:PID.
 
-## Current state — working on hardware
+## PICK UP HERE — outstanding
 
-- Both boards bring up; inter-board UART link solid (framed, synchronous request/response).
-  **Link protocol is at v5** — Detection carries flags/ie_hash/companyId/svc[16]/**panId**
-  (66 bytes, `static_assert`-guarded); `ScanConfig.sources` mask is
-  `MASK_WIFI24=1<<0, MASK_BLE=1<<1, MASK_154=1<<2, MASK_PROBE=1<<3, MASK_WIFI5=1<<4`.
-  **A v-mismatch kills the link, so both boards MUST be flashed together on any protocol change.**
-- **C5** (`src/c5/main.cpp`, `promisc.*`, `ieee154.*`): continuous async Wi-Fi (2.4+5 GHz) + BLE
-  scan + **passive 802.15.4 capture** → mutex-guarded detection table, streamed on `StartScan`.
-  The single 2.4 GHz radio is time-sliced across phases `PH_SCAN → PH_PROMISC → PH_154 → gap`.
-  Honors the source mask **passively** (skips scan phases / drops disabled bands / starts-stops
-  the BLE scan — only skips/drops, never transmits). BLE scan is callback-only + 5 s watchdog.
-- **CYD** (`src/cyd/main.cpp`): polls ~2 s, scores vs the SD signature DB, logs first-seen
-  devices to **per-session NDJSON files** (`/logs/sess-NNNNN.jsonl`, renamed to
-  `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync). Portrait UI + status bar + threat tiers + link dot.
-- **Touch works**: bit-bang XPT2046, **pressure-based** presence over SPI (PENIRQ unused).
-  Calibration persists in NVS (`touchcal`, `CAL_VERSION=2`).
+### Resolved / superseded (were the top items on 2026-10-05)
+1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — ACTUALLY FIXED (`a50ad3a`).** It recurred
+   after the v7 flash and was root-caused: a **cosmetic** HOME link-dot flicker, not real data loss
+   (serial showed clean streaming throughout). The HOME idle handler's non-sticky `pingC5()` collided
+   with the background-scan poll's busy window. Fixed by de-duping the ping and making it sticky (see
+   the Done section + [[c5-busy-window-link-drop]]). User confirmed steady.
+2. **~~UI — rework the HOME-menu threat readout~~ — DONE, expanded.** Became the full SquachWatch-style
+   **category readout** (per-type `NAME: n` tiles) + tap-through device list/detail + the HOME title-icon
+   redesign (see the Done section above). Both CYD + web app.
+3. **~~INVESTIGATE — possibly missing threats~~ — likely moot.** Was tied to #1 (a dropped poll loses the
+   C5 burst). With the link steady and the new per-category counts visible, re-check if anything still
+   looks low; no evidence of a gap now.
 
-### 802.15.4 / Zigbee-Thread (Phase 4 — NEW, validated on hardware)
+### Other outstanding
+4. **Push `phase5-dev` to origin** (well ahead; currently local-only). Web app on `main` is deployed +
+   current.
+5. **Phase 2 — full Remote-ID (ASTM F3411) decode:** this round only flags OpenDroneID *presence*.
+   Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/
+   map list (another coordinated both-board flash). Heaviest piece; BLE-extended-scan coexistence
+   risk — check against the BLE/15.4 coexistence rule.
+6. **P3 follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
+   pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
+   `g_streamingPath` (defense-in-depth).
+7. Older backlog: 802.15.4 opt-in, phone/desktop SQLite import, CYD Scan Viewer window caching.
+   (The "strict BLE passivity" item is **dropped** — the passive-only directive was removed; active
+   scanning is now sanctioned, and the active scan's extra UUIDs are captured + matched as of v7.)
 
-- **C5 passive 802.15.4 sniffer** (`src/c5/ieee154.*`): `PH_154` time-slice hops channels
-  {11,15,20,25,26} (~150 ms) for ~3 s. Receive-only (promiscuous, no TX/ED/CCA-TX/auto-ACK).
-  ISR-safe: `IRAM_ATTR` parse → `xQueueSendFromISR` → mandatory `receive_handle_done` (20 RX
-  bufs) → task-context `tick()` merges to the table. Carries PAN ID + short/EUI-64 source addr
-  (OUI packed into `mac[]` so the existing `oui,…,4/A` sigdb rules match 15.4 for free) +
-  beacon/extended flags.
-- **15.4 is OPT-IN / default-OFF.** Continuous BLE scan (~99% duty) starves 15.4 RX via radio
-  coexistence, so when 15.4 is enabled the C5 **time-slices BLE off during the `PH_154` window**
-  (publish `g_phase=PH_154` before stopping BLE; 3 restart paths gated on `g_phase!=PH_154`).
-  With 15.4 off, BLE runs bit-for-bit as before. **Do not flip the default back on.** Full
-  rationale: memory `ieee802154-optin-ble-coexistence`. `enable()==ESP_OK` does NOT prove RX —
-  only a transmitter does (see `env:c5test`).
+*(Done this session, were previously listed here: SEC-M1 random-PSK fix → `32820c2`; CLAUDE.md
+docs sync → `b0b6bc7`.)*
 
-### NDJSON scan logs (NEW this session — replaces CSV)
-
-- Scan logs are **NDJSON** (`/logs/*.jsonl`, one JSON object per line): keys
-  `epoch,ms,[lat,lon],src,mac,rssi,ch,[ie,cid,uuid,pan,name,sig],score,tier`. Device writer
-  (JSON-escaped, overflow-guarded, non-finite GPS rejected), on-device Scan-Viewer reader
-  (ArduinoJson **v6** `StaticJsonDocument<512>`, zero-copy on a mutable line buffer — pinned v6,
-  v7 heap-allocates), and web app parser (`parseScanLog`/`parseScanNdjson`, `{`-sniff vs legacy
-  CSV) all updated. **Old `.csv` sessions still list/read** (branch by extension). JSON escaping
-  structurally killed the unescaped-comma + spreadsheet-formula-injection bugs. webshare serves
-  `/scanlog.jsonl` (`.csv` alias kept). Future SQLite/pcap **import** is a host-side tool, not on
-  the device — memory `storage-format-rethink`.
-
-### Scan-flow UI (both surfaces; kept internally consistent per platform)
-
-The entry point opens a **Scan menu**, it does not start a scan.
-
-- **Scan menu:** Start Scan · **New Session** · Explore Scan · Scan Settings (CYD adds Back).
-  A **`Session: <name>`** line (small font) shows the active session on both the CYD Scan menu
-  and the web app scan panel, fed by STATUS `sess=`.
-- **New Session** (Scan menu + phone CMD `N`): starts a fresh log (new file + **reset dedup**)
-  without rebooting. Lazy file create (no empty files); works mid-scan. (A log file is otherwise
-  one-per-boot; nothing else rotates it.)
-- **Scan Settings:** enable/disable **BLE / Wi-Fi 2.4G / Wi-Fi 5G / 802.15.4** (15.4 default OFF,
-  the rest ON). CYD persists the mask in NVS (`cydui`/`srcmask`), sends it each poll; web has a
-  checkbox dialog (CMD `S:<n>`, reflected in STATUS `src=`). Switchable mid-scan.
-- **Explore Scan → Scan Viewer:** pick a past session, browse oldest→newest, tap a row → detail
-  view (Name, MAC, Source, RSSI, Channel, tier+score+signature, IE, BLE cid/UUID, **PAN ID**,
-  time, GPS). Web detail adds a Leaflet mini-map; CYD has none. CYD streams the SD log via a
-  512-row offset index (alloc on Explore enter, freed on exit).
-- **Filter/Sort:** web full set; CYD subset. Reached from the viewer's `< Back / Filter / Sort`.
-
-### Live detections / phone stream
-
-- **DETS stream v2: seq-tagged atomic snapshots, merged by MAC.** Header `D:<seq>:<n>` then rows
-  `seq\ttier\tmac\tbestRssi\tie\tname\ttag:rssi,...`. Web app dedups by MAC, renders complete
-  snapshots only, keeps last list on a transient empty.
-- **Web app** `webapp/index.html`: flexbox live table (per-band pills, `154` source, sticky
-  header). Shared helpers: `parseScanLog`/`parseScanNdjson`/`parseScanCsv`, `renderDetList`, `newMap`.
-
-## Build / flash / test
-
-`pio` is not on PATH; it's at `~/.platformio/penv/Scripts/pio.exe` (Windows). Set
-`PYTHONIOENCODING=utf-8` or uploads hang on Windows.
-```bash
-PYTHONIOENCODING=utf-8 ~/.platformio/penv/Scripts/pio.exe run -e cyd                      # build CYD
-PYTHONIOENCODING=utf-8 ~/.platformio/penv/Scripts/pio.exe run -e c5                       # build C5
-PYTHONIOENCODING=utf-8 ~/.platformio/penv/Scripts/pio.exe run -e cyd -t upload --upload-port COM14
-```
-- **Boards by USB VID:PID** (COM numbers are NOT stable): CYD = CH340 `1A86:7523`;
-  C5 native USB = `303A:1001` (**flash the C5 here**; its UART bridge `2E3C:5740` won't flash).
-  Two C5s share `303A:1001` — tell them apart by the chip MAC in the USB composite-device node.
-- **`[env:c5test]` = 802.15.4 TEST SOURCE** (`src/c5test/`): bench transmitter for a SECOND C5
-  (never the scanner's), cycling short/extended/beacon frames on ch15 to exercise PH_154. Build:
-  `… run -e c5test`; flash via native USB (`303A:1001`), `-t upload --upload-port <COM>`. The only
-  transmitting firmware in the project.
-- **Protocol-version changes require flashing BOTH boards together** (FrameParser rejects a mismatch).
-- Reflashing the live device-C5 over USB may be blocked by the host as "interfere with workloads";
-  a normal flash of a freshly-set-up board was fine. If blocked, surface it to the user.
-- To read serial without resetting the board, use a non-resetting reader (open COM, don't toggle
-  DTR/RTS). The C5 native USB resets on open; for the CYD CH340, esptool `--before default_reset
-  --after hard_reset flash_id` bounces it to run mode.
-
-## Wiring (inter-board link)
-
-CYD **GPIO22 (TX) → C5 GPIO4 (RX)**, CYD **GPIO27 (RX) ← C5 GPIO5 (TX)**, **GND↔GND**.
-115200 baud, C5 link UART pinned to XTAL clock. (Single-cable power VIN→5V0 is documented in
-[hardware/PINOUT.md](hardware/PINOUT.md) §3 but is currently NOT wired — C5 is USB-powered, or
-5 V pin.) A second-C5 15.4 add-on is possible (CYD GPIO26 TX + GPIO35 input-only RX, spare UART)
-but deemed premature — memory `ieee802154-optin-ble-coexistence`.
-
-## Hard-won gotchas (don't rediscover these)
-
-- **802.15.4 ↔ BLE coexistence:** continuous NimBLE scan at ~99% duty starves 15.4 RX on the
-  shared 2.4 GHz radio → 0 frames received even with a close transmitter (while `enable()` still
-  returns ESP_OK). Fix = pause BLE during `PH_154` (only when 15.4 is on). 15.4 default-off.
-- **Touch read bug (fixed):** `readChan()` must skip the XPT2046 busy bit after the command byte,
-  or conversions read at half-scale. Presence is from the **Z pressure channels over SPI**, not
-  PENIRQ (GPIO36 input-only, unreliable). Read-scale change bumps `CAL_VERSION` → one-time recal.
-- **C5 flashing**: native USB port only (`303A:1001`), auto-download, no button press.
-- **BLE discovery**: NimBLE 2.x scan-response OFF by default + 128-bit UUID fills the adv packet →
-  name overflows. Fixed via `enableScanResponse(true)` + name in scan response + web filters by UUID.
-- **Link is synchronous**: CYD sends one command, waits for `Status(scanning=0)`. Never interleave.
-- **Wi-Fi corrupts a UART on the shared PLL clock** → C5 link UART uses `UART_CLK_SRC_XTAL`.
-- **BLE scan must be callback-only** (`setMaxResults(0)`) + a 5 s watchdog, or it stalls after ~10 min.
-- **NDJSON logs:** append-only + power-loss-safe (a torn write loses only the trailing line, which
-  both readers skip). ArduinoJson pinned to **v6** (v7 removes `StaticJsonDocument`/heap-allocates).
-- **partitions**: all envs use `huge_app.csv` (c5test uses default — it's small).
-- **Browser limits**: web app can't auto-join Wi-Fi, can't fetch() `http://192.168.4.1` (mixed
-  content), loses BLE if it navigates there → BLE is the default download path.
-- **Web app cache**: version tag at the bottom (`ui YYYY-MM-DDx`); GitHub Pages/browser caching is
-  sticky — reload with `?v=N` and confirm the tag (currently `ui 2026-10-01d`).
-- **Do NOT ask the user to press the CYD BOOT/RST button** (device is mounted; memory
-  `no-boot-button-requests`). Drive via the web app or the non-resetting serial reader.
-
-## File map
-
-- `src/cyd/main.cpp` — CYD app: poll/scan/score/log(NDJSON)/render, status bar, menus + Scan menu
-  (+ New Session, session-name line) + Scan Settings + **Explore Scan / Scan Viewer / detail /
-  Filter / Sort** (all here), `beginSessionNamed`/`startNewSession`, shared `drawListMenu`/
-  `drawFileList`/`drawDetRow`/`tierColor`/`listTouch`/`drawTopBarSeg`.
-- `src/cyd/sigdb.*` — signature DB load + scoring (OUI layer gated on FLAG_154_EXTENDED for 15.4).
-- `src/cyd/phone.*` — BLE GATT peripheral (CMD `S:`/`N`/… etc.).
-- `src/cyd/webshare.*` — Wi-Fi SoftAP + HTTP log server (serves `/scanlog.jsonl`).
-- `src/cyd/touch.*` — bit-bang XPT2046.  `src/cyd/pins.h`, `src/c5/pins.h` — pin maps (source: PINOUT.md).
-- `src/c5/main.cpp` — async scanner + link responder; phase state machine + BLE time-slice.
-- `src/c5/promisc.*` — Wi-Fi probe/IE capture.  `src/c5/ieee154.*` — passive 802.15.4 sniffer.
-- `src/c5test/main.cpp` — **802.15.4 TEST SOURCE** (separate `env:c5test`; only firmware that TXs).
-- `lib/link_protocol/link_protocol.h` — shared message types (**PROTOCOL_VERSION 5**), `encodeFrame`/`FrameParser`.
-- `webapp/index.html` — phone control app (live table, Explore + viewer + detail + filter/sort, map).
-
-## Signature DB format (`/signatures.csv` on the SD card)
-
-```
-thresholds,40,70,100
-oui,B4:1E:52,70,A,Flock IEEE          # kind,pattern,weight,srcmask(W/B/4/A),label
-prefix,Flock,50,W,Flock SoftAP
-ie,1A2B3C4D,60,W,Flock IE fp          # 8-hex 802.11 IE fingerprint
-bleuuid,<uuid>,...  /  blecid,<hex>,...# BLE service UUID / company ID
-```
-Editable on the card or reloadable from the phone. The signature `srcmask` letters (W/B/4/A) are
-SEPARATE from the scan-source mask in `ScanConfig`. (`4`/`A` rules also match 15.4 EUI-64 OUIs.)
-
-## Backlog / next steps
-
-- **15.4 field validation:** reception confirmed vs the `c5test` transmitter; validate against
-  real Zigbee/Thread gear and tune the channel set/dwell. Signature value is still speculative
-  (no research it's a good surveillance vector) — memory `ieee802154-optin-ble-coexistence`.
-- **Storage:** on-device NDJSON shipped (comma + formula-injection bugs resolved). Still open: the
-  **host-side SQLite/pcap import + `.csv`→`.jsonl` conversion** tool for Phase 5/6 correlation.
-- **Strict passivity (optional):** C5 BLE scan uses `setActiveScan(true)` (transmits scan-request
-  PDUs) — pre-existing; switch to `setActiveScan(false)` for fully receive-only.
-- **CYD viewer drag perf:** re-reads ~18 SD rows per drag redraw; cache the visible window if sluggish.
-- **Roadmap (docs/signature-matching.md):** Phase 4 (802.15.4) **done**; **Phase 5** spatial/temporal
-  correlation; **Phase 6** supervised capture + desktop correlation script.
-
-## AI-assist notes
-
-Custom agents in `.claude/agents/` (orchestrator, architect, fixer, tester, reviewer, security,
-hardware-docs); CLAUDE.md grants standing authorization to auto-delegate. A PostToolUse hook
-(`.claude/hooks/gitignore-sensitive.py`) auto-gitignores files with machine paths/secrets (note:
-captured RF logs `/logs/`, `*.jsonl`, `*.pcap`, etc. are gitignored — never commit captured human
-data to the public repo). `git`/`gh` authenticated as `negativeaffirmations`; commit messages end
-with the `Co-Authored-By: Claude Opus 4.8` trailer. Persistent session memory lives under the
-project's `memory/` — read `MEMORY.md` first.
+## Flash / tooling notes
+- `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.
+- Always `PYTHONIOENCODING=utf-8 pio run -e <env> -t upload` (upload hangs otherwise on Windows).
+- **Identify boards by VID:PID, not COM** (numbers drift; `pio device list`):
+  CYD = CH340 `1A86:7523` (COM14 this session); C5 native USB = `303A:1001` (COM18, **flash this one**);
+  C5 UART bridge = `2E3C:5740` (COM8, does NOT flash). Pass `--upload-port COMnn` — auto-detect
+  grabs the wrong board otherwise.
+- **CYD first upload often fails** "Wrong boot mode detected (0x13)" — just **retry**, it works on
+  the 2nd try (no BOOT/RST press needed; device is mounted).
+- Boot-log capture (no reset-on-open issues): `scratchpad/boot_capture.py` pulses a run-mode reset
+  on COM14 via pyserial and reads ~9 s. Use pyserial, not `pio monitor`.
+- C5-only changes don't need a CYD reflash **while PROTOCOL_VERSION is unchanged**. v6 changed it,
+  so this round both were flashed together.
+- C5 5V pin must be unplugged while its USB is connected (two-5V-source risk); user confirmed safe.

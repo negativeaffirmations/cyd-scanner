@@ -6,7 +6,7 @@ using namespace link_protocol;
 
 namespace {
 
-constexpr int MAX_OUI   = 64;
+constexpr int MAX_OUI   = 96;
 constexpr int MAX_STR   = 48;
 constexpr int MAX_IE    = 32;
 constexpr int MAX_UUID  = 24;
@@ -42,8 +42,8 @@ bool     g_loaded = false;
 const char* kSeedCsv =
     "# cyd-scanner signature DB. kind,pattern,weight,srcmask,label\n"
     "# Expand OUIs from community sources (e.g. flock-you). Edit freely.\n"
-    "# 'ie,<8-hex>,...' matches an 802.11 IE fingerprint (see the 'ie' column in\n"
-    "# scanlog.csv). No Flock IE hashes are seeded yet — capture them in the field.\n"
+    "# 'ie,<8-hex>,...' matches an 802.11 IE fingerprint (see the 'ie' field in\n"
+    "# scanlog.jsonl). No Flock IE hashes are seeded yet — capture them in the field.\n"
     "# 'bleuuid,<uuid>,...' matches a BLE service UUID (16-bit or full 128-bit);\n"
     "# 'blecid,<hex>,...' matches a BLE manufacturer company ID (see the uuid/cid cols).\n"
     "# 802.15.4 devices: the EUI-64 OUI is matched like a MAC OUI; use srcmask 4 (or A):\n"
@@ -64,7 +64,93 @@ const char* kSeedCsv =
     "prefix,Flock,50,W,Flock SoftAP\n"
     "prefix,Penguin-,50,B,Flock Penguin\n"
     "exact,FS Ext Battery,50,B,Flock Penguin batt\n"
-    "bleuuid,e8ccbb38-9532-46a8-9fe5-1814df172e6f,60,B,Flock GATT\n";
+    "bleuuid,e8ccbb38-9532-46a8-9fe5-1814df172e6f,60,B,Flock GATT\n"
+    // Signature data below adapted from SquachWatch-CYD (https://github.com/skizzophrenic/SquachWatch-CYD),
+    // GPL-3.0, commit f49ecbe, src/signatures.cpp. cyd-scanner is GPL-3.0 (see /LICENSE).
+    // Upstream credits carried forward: Flock OUIs via colonelpanichacks/flock-you (MIT) + DeFlock community;
+    // Ring/Verkada/Avigilon/Axis/Motorola OUIs from the public IEEE MA-L registry; Flipper via IEEE + BT SIG.
+    "oui,00:25:DF,70,A,Axon\n"
+    "oui,E4:05:40,15,A,Axon-Body\n"
+    "oui,28:24:FF,15,A,Axon-Signal\n"
+    "oui,00:04:7D,40,W,ALPR-Motorola\n"
+    "oui,00:18:85,40,W,ALPR-Motorola\n"
+    "oui,00:1F:92,40,W,ALPR-Motorola\n"
+    "oui,4C:CC:34,40,W,ALPR-Motorola\n"
+    "oui,B8:E2:8C,40,W,ALPR-Motorola\n"
+    "oui,00:BF:15,40,W,ALPR-Genetec\n"
+    "oui,0C:BF:15,40,W,ALPR-Genetec\n"
+    "oui,2C:AA:8E,70,W,Wyze\n"
+    "oui,D0:3F:27,70,W,Wyze\n"
+    "oui,7C:78:B2,70,W,Wyze\n"
+    "oui,B8:D7:AF,15,W,Wyze-Mod\n"
+    "oui,34:D2:70,40,W,Amazon-Cam\n"
+    "oui,F0:27:2D,40,W,Amazon-Cam\n"
+    "oui,C0:56:E3,70,W,Hikvision\n"
+    "oui,44:19:B6,70,W,Hikvision\n"
+    "oui,28:57:BE,70,W,Hikvision\n"
+    "oui,00:E0:4C,15,W,Realtek-Cam\n"
+    "oui,BC:DD:C2,15,W,Arlo\n"
+    "oui,4C:69:05,15,W,Blink\n"
+    "oui,A4:C1:38,15,W,Tuya-Cam\n"
+    "oui,E0:A7:00,70,W,Verkada\n"
+    "oui,70:1A:D5,70,W,Avigilon\n"
+    "oui,00:40:8C,70,W,Axis-Cam\n"
+    "oui,B8:A4:4F,70,W,Axis-Cam\n"
+    "oui,FC:65:DE,40,W,Ring\n"
+    "oui,68:37:E9,40,W,Ring\n"
+    "oui,AC:9F:C3,70,W,Ring\n"
+    "oui,18:7F:88,70,W,Ring\n"
+    "oui,34:3E:A4,70,W,Ring\n"
+    "oui,54:E0:19,70,W,Ring\n"
+    "oui,5C:47:5E,70,W,Ring\n"
+    "oui,64:9A:63,70,W,Ring\n"
+    "oui,90:48:6C,70,W,Ring\n"
+    "oui,9C:76:13,70,W,Ring\n"
+    "oui,CC:3B:FB,70,W,Ring\n"
+    "oui,C4:DB:AD,70,W,Ring\n"
+    "oui,24:2B:D6,70,W,Ring\n"
+    "oui,00:B4:63,70,W,Ring\n"
+    "oui,50:E4:67,70,W,Ring\n"
+    "oui,0C:FA:22,70,A,Flipper\n"
+    "oui,02:C0:CA,15,W,Hak5-LA\n"
+    "oui,02:13:37,15,W,Hak5-LA\n"
+    "oui,8C:AA:B5,15,W,Flock-ESP-S3\n"
+    "oui,34:85:18,15,W,Flock-ESP-S3\n"
+    "oui,A4:CF:12,15,W,Flock-ESP-S2\n"
+    "oui,C0:49:EF,15,W,Flock-ESP-C6\n"
+    "oui,08:3A:88,15,W,Flock-UGSI\n"
+    "bleuuid,FD5F,70,B,RayBanMeta\n"
+    "bleuuid,FEED,70,B,Tile\n"
+    "bleuuid,FEEC,70,B,Tile\n"
+    "bleuuid,FD5A,70,B,Samsung-SmartTag\n"
+    "bleuuid,FEAA,15,B,GoogleFindMy\n"  // shared Eddystone/Find-My beacon UUID: LOW, escalate only in combination
+    "bleuuid,FFFA,40,B,OpenDroneID\n"
+    "bleuuid,3100,40,B,Raven\n"
+    "bleuuid,3200,40,B,Raven\n"
+    "bleuuid,3300,40,B,Raven\n"
+    "bleuuid,3400,40,B,Raven\n"
+    "bleuuid,3500,40,B,Raven\n"
+    "bleuuid,3081,70,B,Flipper\n"
+    "bleuuid,3082,70,B,Flipper\n"
+    "bleuuid,3083,70,B,Flipper\n"
+    "blecid,09C8,40,B,Flock-XUNTONG\n"
+    "blecid,01AB,15,B,Meta\n"
+    "blecid,058E,15,B,Meta-Tech\n"
+    "blecid,0D53,40,B,Luxottica\n"
+    "blecid,03C2,40,B,Snap-Spectacles\n"
+    "blecid,004C,15,B,Apple\n"
+    "blecid,0E29,70,B,Flipper\n"
+    "contains,Pigvision,40,B,Flock-BLE\n"
+    "exact,Flock_Setup,50,B,Flock-Setup\n"
+    "prefix,flock-,50,W,Flock-Setup\n"
+    "prefix,AB2-,70,W,Axon-Body2\n"
+    "prefix,AB3-,70,W,Axon-Body3\n"
+    "prefix,AB4-,70,W,Axon-Body4\n"
+    "prefix,AXON-,70,W,Axon-Field\n"
+    "contains,Axon,40,B,Axon-BLE\n"
+    "prefix,Pineapple_,40,W,WiFi-Pineapple\n"
+    "prefix,pwned,40,W,Deauther-AP\n"
+    "contains,Flipper,40,B,Flipper-name\n";
 
 void resetTables() {
   g_ouiN = g_strN = g_ieN = g_uuidN = g_cidN = 0;
@@ -327,6 +413,21 @@ void score(const Detection& d, ScoreResult& out) {
     for (int i = 0; i < g_uuidN; i++) {
       if (!(g_uuid[i].srcMask & srcBit)) continue;
       if (memcmp(d.svc, g_uuid[i].uuid, 16) == 0 && g_uuid[i].weight > uuidW) {
+        uuidW = g_uuid[i].weight; out.bestUuid = (int8_t)i;
+      }
+    }
+  }
+  // v7: match the extra advertised 16-bit UUIDs (active scan often returns several, and the
+  // signature UUID isn't always the primary one). Each is expanded to its 128-bit base form
+  // to compare against the loaded rules (same representation parseUuid() produced).
+  for (int s = 0; s < SVC16_MAX; s++) {
+    uint16_t v = d.svc16[s];
+    if (!v) continue;
+    uint8_t be[16] = {0,0,0,0, 0,0,0x10,0x00, 0x80,0x00,0x00,0x80, 0x5F,0x9B,0x34,0xFB};
+    be[2] = (uint8_t)(v >> 8); be[3] = (uint8_t)(v & 0xFF);
+    for (int i = 0; i < g_uuidN; i++) {
+      if (!(g_uuid[i].srcMask & srcBit)) continue;
+      if (memcmp(be, g_uuid[i].uuid, 16) == 0 && g_uuid[i].weight > uuidW) {
         uuidW = g_uuid[i].weight; out.bestUuid = (int8_t)i;
       }
     }

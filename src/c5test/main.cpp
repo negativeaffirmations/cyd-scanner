@@ -5,10 +5,10 @@
 // path of the scanner: short-addr data, extended (EUI-64) data, and a beacon.
 //
 // IMPORTANT:
-//  - This is the ONLY firmware in this project that transmits. It is dev/bench test
-//    equipment, not part of the shipped passive counter-surveillance device.
-//  - It must not be confused with the passive scanner (env:c5). Never flash it to the
-//    scanner's C5.
+//  - This is the only firmware here that transmits CRAFTED test frames (the shipped scanner
+//    only does standard active scans + its own phone/AP links, never crafted/attack traffic).
+//    It is dev/bench test equipment, not part of the shipped counter-surveillance device.
+//  - It must not be confused with the scanner (env:c5). Never flash it to the scanner's C5.
 //  - Polite by design: ~1 frame/s, CCA (listen-before-talk) on, ack-request = 0, and a
 //    made-up PAN/address set (below). No Wi-Fi, no BLE.
 //

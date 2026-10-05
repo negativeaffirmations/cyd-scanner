@@ -13,19 +13,39 @@ tracking beacons) by their RF signatures. It runs on a two-board system:
 - **ESP32-C5 DevKit** — a radio co-processor adding **5 GHz Wi-Fi 6** and
   **802.15.4 (Zigbee/Thread)** coverage the CYD's ESP32 cannot provide.
 
-The goal is a portable, self-contained scanner that passively observes nearby RF
-(Wi-Fi APs/clients, BLE advertisements, 802.15.4 devices), matches them against
+The goal is a portable, self-contained scanner that observes nearby RF
+(Wi-Fi APs/clients, BLE advertisements, 802.15.4 devices — via active scanning plus passive
+promiscuous capture), matches them against
 signatures of known surveillance gear (e.g. MAC OUI ranges, SSID patterns, probe
 behavior), and surfaces detections on the CYD's touchscreen.
 
-### Scope / ethics
+### Scope / ethics / privacy
 
-This is a **defensive, passive, privacy-research** tool. It observes broadcast RF
-that any receiver can hear. Keep it that way:
-- **Passive detection only** — no jamming, deauth, injection, or any active
-  interference with other devices' operation.
-- When in doubt about whether a feature crosses from "detect" into "attack/DoS,"
-  stop and ask.
+This is a **defensive, privacy-research** tool. It observes and fingerprints nearby surveillance
+RF, and to do that it **actively scans** — standard BLE/Wi-Fi scanning that solicits a response
+(e.g. a BLE `SCAN_REQ` to pull a device's scan-response **name + service UUIDs**, active Wi-Fi
+scanning) is expected and **required**: the device/name/UUID fingerprinting this project depends on
+does not work without it. The line that stays off-limits is **interfering with or attacking** other
+devices, not transmitting as such:
+- **Don't attack or disrupt anything it observes** — no jamming, deauth, injection, spoofing,
+  beacon/probe floods, or any other active interference with another device's operation. Ordinary
+  scanning that a device answers *by design* is fine; anything that degrades, hijacks, spoofs, or
+  denies service to a third-party device is not.
+- **The tool's own radios transmit freely for its own function** — the CYD's BLE GATT phone link,
+  the on-demand Wi-Fi SoftAP (log download), active scan requests, and (contemplated) a link so
+  **multiple of the user's own scanner devices talk to each other** (share detections / correlate
+  sightings across a small fleet).
+- When in doubt whether a feature crosses from "scan / fingerprint / coordinate our own devices"
+  into "interfere with / attack / DoS someone else's device," stop and ask.
+
+This tool exists to expose *surveillance devices* — machines that
+collect data on everyone without consent. Those devices have no privacy interest this
+project is obligated to respect; revealing their uniqueness is the point, and no lawful
+device-fingerprinting capability here is limited for a machine's sake. The project's
+privacy concern is **human**, and one-directional: captured data can incidentally include
+identifiers of bystanders' devices (phone, wearable, etc.) alongside GPS and timestamps.
+**Such data must never be committed to this public repository.** Keep real captures on your
+own storage; the repo ships only code, device signatures, and synthetic examples.
 
 ## Hardware
 
@@ -154,7 +174,21 @@ back (5 GHz included). Things that matter, learned the hard way:
   All sources merge into a shared **detection table** (dedup by source+MAC, 30 s TTL,
   mutex-guarded because the BLE + promiscuous callbacks run in separate tasks; a captured
   IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
-  Promiscuous capture is **receive-only** — nothing is transmitted (passive scope).
+  Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
+  active; see the Scope section).
+- **C5 passive behavioral detectors (protocol v6).** Alongside fingerprint capture the C5 decodes
+  broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
+  **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
+  `FLAG_WIFI_PWNAGOTCHI` (beacon DE:AD:BE:EF IE / "pwnd"), `FLAG_WIFI_EVILTWIN` (same SSID from ≥2
+  BSSIDs at **different encryption** — a small C5 SSID table, encryption-mismatch verdict to avoid
+  roaming false-positives), and `FLAG_BLE_ODID` (OpenDroneID / Remote-ID **presence** — BLE 0xFFFA
+  service data or the Wi-Fi vendor IE; full ASTM F3411 operator-location decode is a planned phase 2).
+  It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
+  a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,
+  `rid_count`. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
+  `SVC16_MAX` extra 16-bit service UUIDs per device in `Detection.svc16[]` (protocol v7), so the
+  CYD can match a signature UUID even when it isn't the first advertised. (Signature matching still
+  runs on the CYD.)
 - **CYD = poller + UI + logger.** Every ~2 s it sends `StartScan`, the C5 instantly
   dumps its current table (fast, no blocking scan), and the CYD shows per-source
   counts (2.4 GHz / 5 GHz / BLE) + the strongest devices, sorted by RSSI. It drops its
@@ -163,18 +197,35 @@ back (5 GHz included). Things that matter, learned the hard way:
   results — both captured at runtime, so device-agnostic. The phone filter is best-effort:
   phones use rotating random BLE addresses, so their scanned advertisements may not match
   the connection address.
-- **SD logging (CYD) — per-session files.** Each boot opens a new session log under
-  `/logs/`, named by a boot counter (`/logs/sess-NNNNN.csv`) so it works before the phone
-  has synced time; once time syncs, the file is renamed to `/logs/YYYYMMDD-HHMMSS.csv`
-  (`openSession` / `renameSessionOnSync` in `main.cpp`). First-seen devices (dedup by
-  source+MAC for the session) are appended:
-  `epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,name,score,tier,signature`.
-  `source` is `2.4`/`5G`/`BLE`/`PRB` (PRB = promiscuous probe request); `ie` is the
-  8-hex 802.11 IE fingerprint (Wi-Fi); `cid` is the 4-hex BLE company ID and `uuid` the
-  BLE service UUID (both blank/`0000` when not applicable).
-  `epoch` is LOCAL time once the phone has synced (it sends UTC + tz offset; 0 before);
-  `lat`/`lon` fill once GPS is sent; `score`/`tier`/`signature` come from the signature DB.
-  Log download (BLE + Wi-Fi) serves the **current session** file (`webshare::setLogPath`).
+- **SD logging (CYD) — per-session NDJSON files, two parallel streams.** The log is **NDJSON**
+  (one JSON object per line, `logNewDetections` in `main.cpp`). There are **two independent streams**
+  (each a `LogStream` with its own dedup set): a **foreground** stream for on-screen scan sessions
+  (`/logs/sess-NNNNN.jsonl`, renamed to `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync) and a dedicated
+  **background** stream for the always-on background scan (`/logs/bg-NNNNN.jsonl` → `/logs/bg-…`).
+  The headless background cycle (any screen but `SCR_SCAN`) logs to the bg stream; the on-screen scan
+  logs to the fg stream. First-seen devices (dedup by source+MAC per session) are appended, one object
+  each; optional keys omitted when blank:
+  `{"epoch":…,"ms":…,"lat":…,"lon":…,"src":"…","mac":"…","rssi":…,"ch":…,"ie":"…","cid":"…","uuid":"…","pan":"…","name":"…","score":…,"tier":"…","sig":"…","wl":0|1,"flags":"…"}`.
+  `src` is `2.4`/`5G`/`BLE`/`PRB`/`154`; `ie` the 8-hex IE fingerprint; `cid`/`uuid`/`pan` the BLE
+  company ID / service UUID / 802.15.4 PAN; `name` JSON-escaped; `wl` 1 when whitelisted; **`flags`**
+  is a `+`-joined list of behavioral-detector hits (`ibeacon`/`findmy`/`pwnagotchi`/`eviltwin`/`droneid`,
+  omitted when none). Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
+  rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N}`
+  and `{…,"evt":"eviltwin","count":N}`. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
+  once GPS is sent; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
+  **Why NDJSON:** append-only (a torn write loses only the trailing line), self-describing (schema
+  grows without breaking old parsers), JSON escaping kills the comma/formula-injection bug class.
+  Old `.csv` sessions still list/read (readers branch by extension).
+- **Log retention — 512 MB cap with auto-rotation.** `enforceLogCap()` keeps total `/logs/` size
+  under `LOG_CAP_BYTES` (512 MB) by deleting the **oldest** files (by FS timestamp), never the live
+  fg/bg/Explore-held/currently-streaming file. Runs at boot, on each session rotation, and on a
+  ~10 min loop timer (suppressed during downloads).
+- **Log download + time-filtered export.** Download (BLE + Wi-Fi) serves the **current** stream
+  (`webshare::setLogPath`, kept in sync with the active screen). A **time-filtered export** streams
+  only matching lines, filtered **on the CYD** (two-pass, never the whole 512 MB file): BLE CMD
+  `T:<mode>[:min][:path]` and HTTP `/dlf?f=&mode=&arg=` — mode `0` = since boot (whole file), `1` =
+  past 24 h, `2` = custom minutes. Before the phone syncs time it falls back to `ms`-since-boot.
+  Filtering lives in `src/cyd/logfilter.h`.
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
   UI would need a software-SPI touch driver first. The physical BOOT button drives a
@@ -182,17 +233,25 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 ### Signature matching (Phase 1 — implemented)
 
-- **`src/cyd/sigdb.*`** loads `/signatures.csv` from SD into bounded RAM (~4 KB; caps
-  64 OUI + 48 name rules) and scores each detection. Weights sum across layers
-  (OUI + device-name), best-per-layer, mapped to **suspect / likely / confirmed** tiers
-  (thresholds in the CSV). Shared vendor OUIs (Espressif/Qualcomm) carry LOW weight so
-  they only escalate when combined with an SSID/BLE-name hit — this is what suppresses
-  false positives.
+- **`src/cyd/sigdb.*`** loads `/signatures.csv` from SD into bounded RAM (caps **96 OUI** + 64 name
+  rules) and scores each detection. Weights sum across layers (OUI + device-name), best-per-layer,
+  mapped to **suspect / likely / confirmed** tiers (thresholds in the CSV). Shared vendor OUIs
+  (Espressif/Qualcomm) carry LOW weight so they only escalate when combined with an SSID/BLE-name hit
+  — this is what suppresses false positives. The roster ships a large device taxonomy ported (as
+  data, GPL-3.0, attributed in [docs/references.md](docs/references.md)) from SquachWatch-CYD: Axon,
+  ALPR, cameras (Ring/Verkada/Axis/Hikvision/Wyze/…), Tile/Samsung/Google trackers, Meta/Snap camera
+  glasses, Flipper/Pineapple, OpenDroneID, etc.
+- **Behavioral-flag tiers.** The C5's `DetFlags` (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) raise a
+  detection's **tier floor** on the CYD (`computeScores`): Find-My/Drone-RID → suspect,
+  Pwnagotchi/Evil-twin → likely, iBeacon → label only. Deauth-flood + evil-twin also surface as
+  live **alerts** (red banner + LED) and `evt` log lines.
 - The DB **self-seeds** to the card on first boot and is editable on the card or
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
 - Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,
   `ie,<8-hex-fingerprint>,…` (Phase 2 — matches the C5's 802.11 IE hash),
-  `bleuuid,<uuid>,…` (Phase 3 — matches a BLE service UUID, 16-bit or full 128-bit;
+  `bleuuid,<uuid>,…` (Phase 3 — matches a BLE service UUID, 16-bit or full 128-bit; matched
+  against the primary `svc[]` AND the extra 16-bit UUIDs the active scan captures in
+  `Detection.svc16[]`, protocol v7, so a signature UUID is caught even when not advertised first;
   the Flock GATT UUID is seeded), and `blecid,<hex>,…` (Phase 3 — matches a BLE
   manufacturer company ID); `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`:
   W/B/4/A (a probe-request detection also matches W/A rules). Weights sum across the
@@ -207,13 +266,27 @@ back (5 GHz included). Things that matter, learned the hard way:
   SD/db line, per-band counts (2.4 / 5G / BLE / PRB / unique), a threats line, then
   detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow,
   likely=orange, confirmed=red).
-- **BOOT button = the only input** (touch is unused). It drives a **main menu**
-  (`SCR_MENU` → `SCR_SCAN` / `SCR_APPQR` state machine in `main.cpp`): a short **tap**
-  moves the highlight, a long **hold** selects, and a hold from any screen returns to the
-  menu. Items: **Start Scan** (the live scanner), **Connect to Phone** (full-screen
-  web-app QR), and **Settings**. Boots into the menu. The scan screen has a full-width
-  **STOP** button across the top (tap to end the scan and return to the menu). Scanning
-  can also be started/stopped from the web app (a single toggle button, CMD `G`/`X`).
+- **Input: BOOT button + a touch overlay.** A short **tap** moves the highlight / selects a
+  touched item; a long **hold** selects / returns toward the menu. The HOME screen has **one list
+  button, Scan**, plus two **title-bar icon buttons** on the `HOME` line: a **cog (Settings)** upper-
+  left and a **phone (Phone Link)** upper-right — the phone icon is **grey when no phone is on the GATT
+  link, green when connected**, and tapping it opens the full-screen web-app QR (`< BACK` top bar).
+  Both icons stay in the BOOT nav (order: Scan → cog → phone → threat tiles) so Settings/touch-cal is
+  never touch-only. The HOME screen also shows a **background-scan threat readout** at the bottom: the
+  full fixed **category taxonomy** as `NAME: n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
+  Drone/Deauth/Flipper/Skim/Other), always shown (dim at 0, tier-coloured + outlined when >0;
+  refreshed on the 2 s idle cadence). **Tapping a tile** (or BOOT-selecting it) opens that category's
+  **device list** (`SCR_MENUCAT`, with a one-line "what signatures match" blurb) → a device →
+  **detail** (`SCR_MENUCATDETAIL`, the scanner detail reused via `buildDeviceDetail`/
+  `showDeviceDetail`). Categories are derived on the CYD (`categoryOf()` — behavioral flags first,
+  then sigdb label → `g_category[]`; `groupCategory()`/`countCategories()` per device). The live scan
+  screen shows a **red deauth/evil-twin alert banner** (+ LED) when a flood or evil-twin AP is
+  detected, alongside the follow-me banner.
+  **Scan** opens a **Scan menu** (`SCR_SCANMENU`: Start Scan / Explore Scan / Scan Settings) —
+  the scan-flow redesign; the live scanner, the SD-log Explore Viewer (pick/filter/sort/detail),
+  per-band Scan Settings, the Phase-5 follow-me drill-down, and the whitelist manager are all
+  screens in the `main.cpp` state machine. App screens use a full-width `< BACK` bar; menus keep
+  the menu style. Scanning can also be started/stopped from the web app (CMD `G`/`X`).
 
 ### Phone link + web app (Web Bluetooth) — working
 
@@ -224,35 +297,69 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
     a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
-    refuses the live session) · `"B:<0-100>"` set brightness
-  - `…0004` STATUS (read/notify) — `key=val;…` incl. `link,w24,w5,ble,prb,uniq,time,gps,dl,susp,lk,conf,db,scan,bri` (`prb` = probe count, `scan` = 1 while scanning, `bri` = backlight %)
+    refuses the live session) · `"B:<0-100>"` set brightness ·
+    `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
+    2 = custom minutes; optional `/logs/` path; filtered on-device) · `"W…"` whitelist · `"E…"`
+    whitelist-remove
+  - `…0004` STATUS (read/notify) — `key=val;…`:
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg`
+    (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
+    `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
+    **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),
+    `sess` = current session name, **`deauth`** = recent observed deauth/disassoc rate,
+    **`evil`** = evil-twin SSID count, **`rid`** = Remote-ID emitters seen, **`bg`** = background
+    scan on/off)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
-    scan cycle: a `D:<count>` header then `<count>` tab-separated rows
-    `tier\tsrc\trssi\tmac\tie\tname` (top-of-list first, capped at 12). The web app renders
-    it as a live, tier-colored table.
+    scan cycle. **v5 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
+    `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
+    at 12). `ftier` = follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
+    score, `muted` = 1 when whitelisted, **`flags`** = decimal OR of the device's `DetFlags` bits
+    (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges, **`cat`** = threat-category id
+    (matches the CYD `Category` enum) driving the web category breakdown. Fields were appended across
+    versions (follow in v3, `flags` in v4, `cat` in v5); older parsers reading the earlier fixed
+    fields ignore the extras. The web app renders it as a live, tier-colored table with follow + flag
+    markers, plus a tappable per-category threat breakdown.
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app
     filters by **service UUID** (not name). Without this the phone finds nothing.
 - **Web app** `webapp/index.html` — hosted at
-  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). MUST be
+  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). **Styles are
+  SCSS** under `webapp/scss/` (theme colors in `_variables.scss`; partials `_base`/`_detections`/
+  `_banners`/`_map`), compiled to `webapp/style.css` by Dart Sass (`npm run sass:build`, or the
+  auto-starting "Sass: watch" VS Code task — see `.vscode/tasks.json`). **Edit the SCSS, not
+  `style.css`** (generated, but committed since Pages doesn't run Sass; `node_modules/` is
+  git-ignored). The JS is still inline in `index.html`. MUST be
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
   the scan, downloads the current session log, **lists past sessions and downloads/deletes/maps
-  a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), and a
+  a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), a
+  **"following me" UI** (a magenta follower banner from STATUS `fol`; per-row follow markers +
+  muted dimming; a flagged-device modal; a follower-detail modal with the DETS follow fields
+  plus a Leaflet track map from a loaded session), a **red deauth/evil-twin alert banner** (from
+  STATUS `deauth`/`evil`) with **behavioral-flag badges** on detection rows (from the DETS v4
+  `flags` field), a **threat-category breakdown** mirroring the device HOME readout (chips above the
+  live list from the DETS v5 `cat` field → category device modal → device detail modal, each with a
+  signature-type blurb), a **time-range export** control (since boot / past 24 h / custom
+  days-hours-min, over BLE `T:` or Wi-Fi `/dlf`), and a
   **wardriving Map** (Leaflet/OSM) that plots a session's GPS'd detections — grouped by fix,
-  colored by threat tier, filterable by source/threats — from the current scan, a picked
-  session, or a locally-loaded `.csv` (works offline).
-- **Log download — BLE (default):** `L` → the CYD streams `/scanlog.csv` over the LOGDATA
+  colored by threat tier, filterable by source/threats, with **event pins** for `evt`
+  (deauth/eviltwin/droneid) lines — from the current scan, a picked session, or a locally-loaded
+  `.jsonl`/`.csv` file (works offline; the parser sniffs `{` for NDJSON vs legacy CSV).
+- **Log download — BLE (default):** `L` → the CYD streams `/scanlog.jsonl` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
   HTTP server; the CYD screen shows a QR that is the Wi-Fi-join code until the phone joins,
-  then switches to `http://192.168.4.1`. That page is a **browsable index of ALL `/logs/`
-  sessions** (name + size), each a `/dl?f=<name>` link — so bulk Wi-Fi download can grab any
-  past session, not just the current one (the reason for Wi-Fi: BLE is slow for MB-size drive
-  logs). `/scanlog.csv` still streams the current session. Pauses scanning while active.
+  then switches to `http://192.168.4.1`. The SoftAP **WPA2 password is random per device, generated
+  once and stored in NVS** (`"cydscan"`/`"appsk"`), shown only on the device/QR — it is **not**
+  derived from the MAC/BSSID (the SEC-M1 fix; the old MAC-derived PSK was recomputable by anyone in
+  RF range). That page is a **browsable index of ALL `/logs/` sessions** (name + size), each with a
+  `/dl?f=<name>` link plus a **24 h** `/dlf?...` filtered link — so bulk Wi-Fi download can grab any
+  past session (the reason for Wi-Fi: BLE is slow for MB-size drive logs). `/scanlog.jsonl` still
+  streams the current session (`/scanlog.csv` kept as an alias).
+  Pauses scanning while active.
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is
@@ -267,7 +374,8 @@ A specialized agent suite is available (adapted from the owner's other firmware 
 - **fixer** — implements C++ for CYD/C5 (read-write).
 - **tester** — runs `pio run -e cyd`/`-e c5`, reports build + flash/RAM.
 - **reviewer** — code quality, memory/concurrency, link-protocol correctness (read-only).
-- **security** — enforces passive-only scope, captured-data privacy, attack surface (read-only).
+- **security** — enforces the no-attack/no-interference scope (no jamming/deauth/injection/spoofing/
+  DoS), captured-data privacy, attack surface (read-only).
 - **hardware-docs** — datasheets/pinout images → pin tables & docs; keeps `pins.h` ↔ `PINOUT.md`.
 
 ### Automatic delegation (standing authorization)
@@ -284,7 +392,7 @@ matters from the agent's report back to the user (its final report isn't shown t
 | Implementing a feature or bug fix in C++ (CYD or C5)                               | **fixer**      |
 | Build validation / resource audit (`pio run -e cyd`/`-e c5`, flash/RAM deltas)     | **tester**     |
 | Reviewing existing code for correctness, memory/concurrency, link-protocol issues  | **reviewer**   |
-| Security/safety audit: passive-only scope, captured-data privacy, BLE/Wi-Fi attack surface | **security** |
+| Security/safety audit: no-attack/no-interference scope, captured-data privacy, BLE/Wi-Fi attack surface | **security** |
 | Datasheets, pinouts, pin tables, `pins.h` ↔ `PINOUT.md` sync                        | **hardware-docs** |
 
 Judgment still applies — don't spawn an agent for trivial or read-only work you can finish
@@ -305,6 +413,21 @@ pdftoppm -png -r 150 -f <first> -l <last> "hardware/.../file.pdf" "<tmp>/pg"
 pdftotext -layout "hardware/.../file.pdf" -   # text-only extraction
 ```
 Don't commit rendered pages. The `hardware-docs` agent handles this end to end.
+
+## External references & licensing
+
+Outside open-source projects whose ideas may inform this one are cataloged in
+**[docs/references.md](docs/references.md)** (e.g. *Chasing-Your-Tail-NG* for tail-detection /
+false-positive patterns). Add new reference repos there, not scattered in code or chat.
+
+**Before copying or closely porting any code from those projects (or anywhere else):** check the
+license, confirm it permits this project's **non-commercial / personal-research** use, and
+**attribute** the original (project, URL, author, license) both at the adapted code and in that
+file's "Code actually used" section. Treat an unlicensed repo as all-rights-reserved (read for
+ideas, reimplement cleanly — don't copy). cyd-scanner is **GPL-3.0** (`/LICENSE`, adopted
+2026-10-04), so GPL-compatible code (incl. GPL-3.0 copyleft like SquachWatch-CYD) can be reused
+**with attribution**; still check compatibility for anything non-GPL and attribute all reuse. See
+the full directive in [docs/references.md](docs/references.md).
 
 ## Conventions
 

@@ -5,9 +5,9 @@ description: "Use for implementing features and bug fixes in cyd-scanner — wri
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
-You implement changes in **cyd-scanner** — passive counter-surveillance firmware
-(Arduino framework, PlatformIO) on two boards. Scope is passive detection only; never
-add active-interference behavior.
+You implement changes in **cyd-scanner** — counter-surveillance firmware
+(Arduino framework, PlatformIO) on two boards. Scope is detection/fingerprinting (active
+scanning is fine); never add active-interference/attack behavior.
 
 FIRST: before writing any code, read the files you'll touch plus the patterns they follow:
 - `lib/link_protocol/link_protocol.h` — the shared UART message format (both boards)
@@ -44,7 +44,7 @@ LINK-PROTOCOL PATTERN (follow exactly):
 
 RULES:
 1. Follow existing patterns — read a working path before adding a parallel one.
-2. Keep it passive: no jamming/deauth/injection/active TX beyond normal AP/BLE peripheral use.
+2. Don't attack/interfere: active scanning + the tool's own links are fine; no jamming/deauth/injection/spoofing/floods/DoS of observed devices.
 3. Centralize pins in `src/*/pins.h`; if wiring changes, update `hardware/PINOUT.md` too.
 4. No machine-specific absolute paths in committed files (a hook will gitignore them).
 5. Build the affected env(s) after changes; report flash/RAM and any warnings.

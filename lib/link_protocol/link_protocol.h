@@ -22,7 +22,12 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 5;       // v5: 802.15.4 presence - Detection.panId + 15.4 flags
+static constexpr uint8_t  PROTOCOL_VERSION = 7;       // v7: Detection.svc16[] - up to 4 extra 16-bit BLE service
+                                                          //     UUIDs from the active scan (match any, not just the first)
+                                                          // (v6: C5 behavioral detectors - Detection.flags widened to
+                                                          //     16-bit iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID +
+                                                          //     Status deauth/evil-twin/Remote-ID aggregate counts)
+                                                          // (v5: 802.15.4 presence - Detection.panId + 15.4 flags)
                                                           // (v4: source mask redefined, WIFI24/WIFI5 split)
 static constexpr uint16_t MAX_PAYLOAD      = 256;     // sanity cap for RX buffers
 
@@ -51,6 +56,9 @@ enum class Source : uint8_t {
   WifiProbe  = 3,   // Wi-Fi CLIENT probe request captured in promiscuous mode
 };
 
+// Max extra 16-bit BLE service UUIDs carried per detection (beyond the primary svc[16]).
+static constexpr uint8_t SVC16_MAX = 4;
+
 // Bitmask values for ScanConfig.sources (1 << Source).
 enum SourceMask : uint8_t {
   MASK_WIFI24   = 1 << 0,  // bit0 = 2.4 GHz Wi-Fi AP scan
@@ -61,11 +69,18 @@ enum SourceMask : uint8_t {
   MASK_ALL      = MASK_WIFI24 | MASK_WIFI5 | MASK_BLE | MASK_154 | MASK_PROBE,
 };
 
-// Per-detection behavioral flags (Detection.flags bitfield).
-enum DetFlags : uint8_t {
+// Per-detection behavioral flags (Detection.flags bitfield, 16-bit as of v6).
+// The C5 sets these from passive decode of broadcast adverts/beacons (receive-only).
+enum DetFlags : uint16_t {
   FLAG_WILDCARD_PROBE = 1 << 0,  // probe request with a zero-length (broadcast) SSID
   FLAG_154_EXTENDED   = 1 << 1,  // 802.15.4: mac[] holds an EUI-64 prefix (OUI in mac[0..2])
   FLAG_154_BEACON     = 1 << 2,  // 802.15.4: frame was a beacon
+  FLAG_BLE_IBEACON    = 1 << 3,  // BLE mfr data: Apple 0x004C iBeacon (type 0x02)
+  FLAG_BLE_FINDMY     = 1 << 4,  // BLE mfr data: Apple 0x004C Find My / AirTag (type 0x12/0x07)
+  FLAG_WIFI_PWNAGOTCHI= 1 << 5,  // 802.11 beacon SSID/IE carries a Pwnagotchi identity
+  FLAG_WIFI_EVILTWIN  = 1 << 6,  // AP shares an SSID with another BSSID at different encryption
+  FLAG_BLE_ODID       = 1 << 7,  // OpenDroneID / Remote-ID emitter seen (presence; full decode = phase 2)
+  // bits 8..15 reserved for future detectors
 };
 
 #pragma pack(push, 1)
@@ -81,7 +96,7 @@ struct Detection {
   uint8_t  source;     // Source
   uint8_t  channel;    // Wi-Fi / 802.15.4 channel (0 if not applicable)
   int8_t   rssi;       // signal strength, dBm
-  uint8_t  flags;      // DetFlags bitfield (0 if none)
+  uint16_t flags;      // DetFlags bitfield (0 if none) — 16-bit as of v6
   uint8_t  mac[6];     // device MAC / BSSID (probe: client source address;
                        //  15.4: EUI-64 first 6 bytes, or short addr in [0..1])
   uint32_t ie_hash;    // 802.11 IE-order fingerprint (Wi-Fi; 0 = none)
@@ -89,6 +104,8 @@ struct Detection {
   uint16_t panId;      // 802.15.4 PAN ID, host order (0 = none / not applicable)
   uint8_t  svc[16];    // BLE primary service UUID, 128-bit big-endian (all 0 = none)
   char     name[32];   // SSID or BLE name, NUL-terminated (may be empty)
+  uint16_t svc16[SVC16_MAX];  // v7: extra advertised 16-bit BLE service UUIDs, host order
+                              //     (0 = unused slot); the primary 128-bit UUID is in svc[]
 };
 
 // Sequenced heartbeat for the link connection monitor (Reply::Heartbeat payload).
@@ -103,6 +120,9 @@ struct Status {
   uint8_t  active_sources;// SourceMask currently active
   uint16_t seen_total;    // devices seen since boot (wraps)
   uint32_t uptime_ms;
+  uint16_t deauth_recent; // v6: deauth+disassoc mgmt frames OBSERVED in the last ~1 s (0 = none)
+  uint8_t  evil_count;    // v6: SSIDs currently flagged as evil-twin
+  uint8_t  rid_count;     // v6: Remote-ID / OpenDroneID emitters currently seen (presence)
 };
 
 // Fixed header prepended to every frame's payload on the wire.
@@ -115,7 +135,8 @@ struct FrameHeader {
 
 #pragma pack(pop)
 
-static_assert(sizeof(Detection) == 66, "Detection wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(Detection) == 75, "Detection wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(Status)    == 12, "Status wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.
 inline uint8_t checksum(const uint8_t* data, uint16_t len) {

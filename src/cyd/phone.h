@@ -65,11 +65,22 @@ bool fileRequested(char* out, size_t cap);
 // True once if the app asked to delete a session file ("D:<path>"); fills `out`.
 bool deleteRequested(char* out, size_t cap);
 
+// True once if the app asked for a time-filtered log export ("T:<mode>[:<minutes>][:<path>]");
+// fills mode (0 whole file / 1 past 24 h / 2 past <minutes>), minutes, and path ("" = current session).
+bool exportRequested(int* mode, int* minutes, char* path, size_t cap);
+
 // True once if the app set a brightness ("B:<0-100>"); fills the percent value.
 bool brightnessRequested(int* outPct);
 
 // True once if the app set the scan-source mask ("S:<decimal SourceMask>"); fills `out`.
 bool srcMaskRequested(uint8_t* out);
+
+// Whitelist commands, each true once (consumed on read): "W" reload, "Y" list,
+// "A:<csv rule line>" add (fills `out`), "E:<index>" remove the Nth active rule.
+bool wlReloadRequested();
+bool wlListRequested();
+bool wlAddRequested(char* out, size_t cap);
+bool wlRemoveRequested(int* outIdx);
 
 // Notify a chunk of log data to the connected phone (used during BLE log download).
 void logNotify(const uint8_t* data, size_t len);

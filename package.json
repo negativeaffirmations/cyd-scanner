@@ -1,0 +1,18 @@
+{
+  "name": "cyd-scanner-webapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build tooling for the cyd-scanner phone web app (SCSS -> CSS). The firmware itself is PlatformIO/C++; this is only the web app's stylesheet pipeline.",
+  "scripts": {
+    "sass:build": "sass webapp/scss/main.scss webapp/style.css --style=expanded --no-source-map",
+    "sass:watch": "sass --watch webapp/scss/main.scss:webapp/style.css --style=expanded --no-source-map"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/negativeaffirmations/cyd-scanner.git"
+  },
+  "license": "GPL-3.0",
+  "devDependencies": {
+    "sass": "^1.105.1"
+  }
+}

@@ -5,7 +5,7 @@ description: "Use for build validation and resource audits on cyd-scanner: runs 
 tools: Read, Bash, Glob, Grep
 ---
 
-You are QA for **cyd-scanner** — passive counter-surveillance firmware on two boards,
+You are QA for **cyd-scanner** — counter-surveillance firmware on two boards,
 built with PlatformIO (Arduino framework).
 
 FIRST: read `platformio.ini` to confirm the environments and options.

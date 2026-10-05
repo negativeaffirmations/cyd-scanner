@@ -5,24 +5,16 @@ surveillance hardware (ALPR cameras, covert wireless cameras, tracking beacons) 
 their RF signatures — built on the **ESP32-2432S028R "CYD"** touchscreen board and
 an **ESP32-C5 DevKit** radio co-processor.
 
-> **Purpose & ethics.** This is a *passive, defensive, privacy-research* tool. It
-> only listens to broadcast RF that any receiver can already hear, and classifies
-> devices from their public identifiers and signal metadata. It does **not** jam,
-> deauthenticate, inject, or otherwise interfere with any device. Use it lawfully
-> and responsibly.
-
-> **On privacy.** This tool exists to expose *surveillance devices* — machines that
-> collect data on everyone without consent. Those devices have no privacy interest this
-> project is obligated to respect; revealing their uniqueness is the point, and no lawful
-> device-fingerprinting capability here is limited for a machine's sake. The project's
-> privacy concern is **human**, and one-directional: captured data can incidentally include
-> identifiers of bystanders' devices (phone, wearable, etc.) alongside GPS and timestamps.
-> **Such data must never be committed to this public repository.** Keep real captures on your
-> own storage; the repo ships only code, device signatures, and synthetic examples.
+> **Purpose & ethics.** This is a *defensive, privacy-research* tool. It observes
+> broadcast RF and classifies devices from their public identifiers and signal
+> metadata, using ordinary scanning (including active BLE/Wi-Fi scans that solicit a
+> device's own advertised name and service UUIDs — the same thing any phone does). It
+> does **not** jam, deauthenticate, inject, spoof, flood, or otherwise interfere with
+> or attack any device. Use it lawfully and responsibly.
 
 ## How it works
 
-The scanner passively monitors the RF environment and matches observed devices
+The scanner monitors the RF environment and matches observed devices
 against signatures of known surveillance equipment:
 
 - **Wi-Fi** — APs across 2.4 GHz and **5 GHz** (ESP32-C5), matched on MAC OUI ranges

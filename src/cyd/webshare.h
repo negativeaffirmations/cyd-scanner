@@ -18,6 +18,7 @@ void        setLogPath(const char* path);  // which SD file the download serves
 
 const char* ssid();
 const char* password();
+const char* apPass();      // random NVS-persisted WPA2 PSK (valid after start(); same as password())
 const char* url();         // e.g. "http://192.168.4.1"
 String      wifiQr();      // WIFI: join string for a QR code
 
