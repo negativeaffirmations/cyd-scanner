@@ -216,7 +216,7 @@ static int    g_menuSel = 0;
 static int    g_setSel  = 0;
 static int    g_scanSel = 0;
 static int    g_scanSetSel = 0;
-static constexpr int SCANSET_N = 6;  // 4 source tiles (BLE / 2.4 / 5G / 15.4), Whitelist, Back
+static constexpr int SCANSET_N = 7;  // 4 source tiles (BLE / 2.4 / 5G / 15.4), Background scan, Whitelist, Back
 // Scan Settings geometry (shared by drawScanSettings AND scanSetTouch): 4 tiles in one row,
 // then the Whitelist / Back rows on the drawListMenu row style.
 static constexpr int SS_TILE_Y = 70, SS_TILE_H = 44, SS_TILE_GAP = 4, SS_MARGIN = 6;
@@ -313,6 +313,20 @@ static void loadSrcMask() {
 static void saveSrcMask() {
   Preferences p; p.begin("cydui", false);
   p.putUChar("srcmask", g_srcMask);
+  p.end();
+}
+
+// --- Background scan: when ON the scan cycle keeps running on any (non-SD-heavy) screen, headless,
+// so detection/logging continues while the user is on the menu / Phone Link. Persisted in NVS. ---
+static bool g_bgScan = false;
+static void loadBgScan() {
+  Preferences p; p.begin("cydui", true);
+  g_bgScan = p.getBool("bgscan", false);
+  p.end();
+}
+static void saveBgScan() {
+  Preferences p; p.begin("cydui", false);
+  p.putBool("bgscan", g_bgScan);
   p.end();
 }
 
@@ -1156,12 +1170,12 @@ static void pushStatus() {
   char s[288];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
-           whitelist::count(), countMuted(), g_followN, sb);
+           whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0);
   phone::setStatus(String(s));
 }
 
@@ -1723,7 +1737,7 @@ static void drawScanMenu() {
 }
 
 // Scan Settings: a row of 4 source tiles (filled = enabled) then Whitelist / Back rows.
-// Focus index g_scanSetSel: 0..3 = tiles (BLE / 2.4 / 5G / 15.4), 4 = Whitelist, 5 = Back.
+// Focus index g_scanSetSel: 0..3 = tiles (BLE / 2.4 / 5G / 15.4), 4 = Background scan, 5 = Whitelist, 6 = Back.
 static int ssTileW() { return (tft.width() - 2 * SS_MARGIN - 3 * SS_TILE_GAP) / 4; }
 static void drawScanSettings() {
   tft.fillScreen(TFT_BLACK);
@@ -1748,8 +1762,10 @@ static void drawScanSettings() {
     tft.setTextDatum(MC_DATUM);
     tft.drawString(kTileLbl[i], x + tw / 2, SS_TILE_Y + SS_TILE_H / 2, 2);
   }
-  static const char* const kRowLbl[2] = { "Whitelist", "Back" };
-  for (int i = 0; i < 2; i++) {
+  char bgLbl[24];
+  snprintf(bgLbl, sizeof(bgLbl), "Background: %s", g_bgScan ? "ON" : "OFF");
+  const char* const kRowLbl[3] = { bgLbl, "Whitelist", "Back" };
+  for (int i = 0; i < 3; i++) {
     bool s = (g_scanSetSel == 4 + i);
     int  y = SS_ROW_Y0 + i * SS_ROW_STEP;
     if (s) tft.fillRoundRect(6, y - 5, W - 12, SS_ROW_H, 6, TFT_NAVY);
@@ -1765,7 +1781,7 @@ static void drawScanSettings() {
 }
 
 // Touch hit-test for the Scan Settings mixed geometry (tiles + rows). On a fresh touch-down
-// edge returns the focus index 0..5, else -1. No-op until touch is calibrated.
+// edge returns the focus index 0..6, else -1. No-op until touch is calibrated.
 static int scanSetTouch() {
   static bool prev = false;
   if (!g_touchOk) { prev = false; return -1; }
@@ -1780,7 +1796,7 @@ static int scanSetTouch() {
           int x = SS_MARGIN + i * (tw + SS_TILE_GAP);
           if (sx >= x - 2 && sx <= x + tw + 2) { hit = i; break; }
         }
-      for (int i = 0; i < 2 && hit < 0; i++) {
+      for (int i = 0; i < 3 && hit < 0; i++) {
         int y = SS_ROW_Y0 + i * SS_ROW_STEP;
         if (sx >= 6 && sx <= tft.width() - 6 && sy >= y - 5 && sy <= y - 5 + SS_ROW_H) hit = 4 + i;
       }
@@ -2650,7 +2666,7 @@ static void openScanConfirm() {
 }
 
 static void backFromScan() {
-  if (g_scanActive) { openScanConfirm(); return; }
+  if (g_scanActive && !g_bgScan) { openScanConfirm(); return; }  // background scan keeps running: no confirm
   setLed(!g_linkOk, g_linkOk, false);
   g_screen = SCR_SCANMENU;
   drawScanMenu();
@@ -2988,7 +3004,7 @@ static void activateWlRule(int sel) {
 
 // Act on a scan-menu row (touch tap or long-press select).
 static void activateScanMenu(int sel) {
-  if (sel == 0)      { g_scrollOffset = 0; resetFollow(); g_scanActive = false; g_viewFrozen = false;
+  if (sel == 0)      { g_scrollOffset = 0; resetFollow(); if (!g_bgScan) g_scanActive = false; g_viewFrozen = false;
                        g_frozenCount = 0; showScan(); }                                       // Scanner (idle until START)
   else if (sel == 1) {                                                       // New Session
     startNewSession();
@@ -3011,7 +3027,16 @@ static void activateScanSettings(int sel) {
   else if (sel == 1) g_srcMask ^= SRC_24_BITS;
   else if (sel == 2) g_srcMask ^= MASK_WIFI5;
   else if (sel == 3) g_srcMask ^= MASK_154;
-  else if (sel == 4) { wlEnter(); return; }                                      // Whitelist
+  else if (sel == 4) {                                                           // Background scan
+    g_bgScan = !g_bgScan;
+    saveBgScan();
+    if (g_bgScan) { g_scanActive = true; g_lastCycleMs = 0; }                    // start now; first cycle right away
+    else          { g_scanActive = false; g_viewFrozen = false; setLed(!g_linkOk, g_linkOk, false); }
+    drawScanSettings();
+    pushStatus();
+    return;
+  }
+  else if (sel == 5) { wlEnter(); return; }                                      // Whitelist
   else { g_screen = SCR_SCANMENU; drawScanMenu(); return; }  // Back
   saveSrcMask();
   drawScanSettings();
@@ -3044,7 +3069,7 @@ static void runScanCycle() {
     g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
     if (g_followN > 0) setLed(true, false, true);
     else               setLed(!g_linkOk, g_linkOk, false);
-    drawStatusBar();  // refresh the link dot + clock only (never touches the list region)
+    if (g_screen == SCR_SCAN) drawStatusBar();  // link dot + clock only (never touches the list region); headless in background
     g_lastCycleMs = millis() - (SCAN_CYCLE_MS - SCAN_RETRY_MS);  // fire the next poll in ~SCAN_RETRY_MS
     return;
   }
@@ -3063,7 +3088,8 @@ static void runScanCycle() {
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
                 g_detCount, n24, n5, nble, nprb, n154, newCount, g_seenCount,
                 susp, lk, conf, sigdb::loaded());
-  updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
+  if (g_screen == SCR_SCAN)
+    updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
   pushStatus();
   pushDetections();
 }
@@ -3094,6 +3120,8 @@ void setup() {
   initCommon();
   loadBrightness();
   loadSrcMask();
+  loadBgScan();
+  g_scanActive = g_bgScan;  // background scan resumes at boot (first cycle runs right away)
   applyBrightness();
   initSD();
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
@@ -3153,7 +3181,7 @@ void loop() {
   if (phone::downloadRequested()) { exploreFree(); runDownload(); return; }
   if (webshare::active()) {  // just left download mode: tear down AP and repaint
     webshare::stop();
-    g_scanActive = false; g_viewFrozen = false;  // the download interrupted any running scan
+    g_scanActive = g_bgScan; g_viewFrozen = false;  // the download interrupted any running scan (bg scan resumes)
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
   }
 
@@ -3185,6 +3213,19 @@ void loop() {
   if (g_ex && g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
       g_screen != SCR_SORT && g_screen != SCR_FILTER)
     exploreFree();
+
+  // Background scan: keep the data pipeline (poll -> score -> follow -> log -> phone push) running,
+  // headless, on any screen. SCR_SCAN runs its own cycle in its case below. Suppressed on the
+  // SD-reading Explore screens (the log write would contend for the card) and on the drill-down
+  // screens (they hold indices into the live tables, which a cycle would rebuild). webshare/download
+  // already returned above.
+  if (g_bgScan && g_scanActive && g_screen != SCR_SCAN && !inDrill &&
+      g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
+      g_screen != SCR_SORT && g_screen != SCR_FILTER &&
+      !webshare::active() && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
+    g_lastCycleMs = millis();
+    runScanCycle();
+  }
 
   BtnEv ev = buttonEvent();
 
@@ -3334,7 +3375,7 @@ void loop() {
     case SCR_WHITELIST: {
       int n = whitelist::count();           // body rows are the rules; g_wlSel 0 = ADD button
       int total = n + 1;                     // ADD + rules (BOOT cursor span)
-      if (topBarTapped()) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 4; drawScanSettings(); return; }  // < BACK
+      if (topBarTapped()) { g_screen = SCR_SCANSETTINGS; g_scanSetSel = 5; drawScanSettings(); return; }  // < BACK
       if (bodyButtonTapped(1) == 0) { wlAddEnter(); return; }                                              // + ADD
       int t = listTouch(n, &g_wlOff, visibleRows(), LIST_Y0, LIST_ROW_H, []() { drawWhitelistRows(true); });
       if (t >= 0) { g_wlSel = t + 1; wlActivateRow(t); return; }  // tapped rule index -> cursor 1..n
