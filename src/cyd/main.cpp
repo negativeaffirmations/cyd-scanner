@@ -2070,62 +2070,53 @@ static void drawFileList(const char* title, const FileItem* items, int n, int se
   tft.setTextDatum(TL_DATUM);
 }
 
-// Background-scan threat readout at the bottom of HOME (above the hint line). Shows one chip per
-// category that currently has a live threat device (name above the count, coloured by the
-// category's worst tier), SquachWatch-style, severity-sorted. Counts come from countCategories()
-// over g_groups (kept fresh by the headless bg cycle). Each chip is tappable (-> that category's
-// device list); BOOT nav walks the HOME items then the chips (g_menuSel MENU_N..MENU_N+N-1).
-// Repaints only its own band so the menu rows above don't flicker.
-static constexpr int MENU_THREAT_Y = 192;                       // "Background threats" caption
-static constexpr int MENU_THREAT_H = 320 - MENU_THREAT_Y - 20;  // down to just above the hint line
-static constexpr int CHIP_Y0 = 206, CHIP_STEP = 30, CHIP_H = 28, CHIP_COLS = 3;
-static constexpr int MENU_CAT_MAX = 9;   // 3 columns x 3 rows
-static uint8_t g_menuCat[MENU_CAT_MAX];  // category ids shown as chips (severity-sorted), for input
+// Background-scan threat readout at the bottom of HOME (above the hint line). Shows the FULL fixed
+// category list as "NAME: n" tiles, always (0 included) so the user can see every type at a glance
+// (SquachWatch-style). A non-zero tile is coloured by that category's worst tier; zero tiles are
+// dim. Counts come from countCategories() over g_groups (kept fresh by the headless bg cycle). Each
+// tile is tappable (-> that category's device list); BOOT nav walks the HOME items then the tiles
+// (g_menuSel MENU_N..MENU_N+N-1). Repaints only its own band so the menu rows above don't flicker.
+static constexpr int MENU_THREAT_Y = 190;                       // "Background threats" caption
+static constexpr int MENU_THREAT_H = 320 - MENU_THREAT_Y - 18;  // down to just above the hint line
+// 3 columns x 5 rows holds all 13 categories (CAT_FLOCK..CAT_OTHER); tile text is font 1 (smallest).
+static constexpr int CHIP_Y0 = 202, CHIP_STEP = 20, CHIP_H = 18, CHIP_COLS = 3;
+static constexpr int MENU_CAT_MAX = CAT_N - 1;  // every named category
+static uint8_t g_menuCat[MENU_CAT_MAX];  // category ids in tile order (fixed), for input dispatch
 static int     g_menuCatN = 0;
 
 static void drawMenuThreats() {
   int cnt[CAT_N], worst[CAT_N];
   countCategories(cnt, worst);
-  // severity-sorted list of the non-empty categories (worst tier, then count)
-  int cats[CAT_N], nc = 0;
-  for (int c = 1; c < CAT_N; c++) if (cnt[c] > 0) cats[nc++] = c;
-  std::sort(cats, cats + nc, [&](int a, int b) {
-    if (worst[a] != worst[b]) return worst[a] > worst[b];
-    return cnt[a] > cnt[b];
-  });
-  if (nc > MENU_CAT_MAX) nc = MENU_CAT_MAX;
-  g_menuCatN = nc;
-  for (int i = 0; i < nc; i++) g_menuCat[i] = (uint8_t)cats[i];
-  if (g_menuSel >= MENU_N + g_menuCatN) g_menuSel = 0;  // a chip under the cursor vanished
+  g_menuCatN = CAT_N - 1;                           // always show every category (1..CAT_N-1)
+  for (int i = 0; i < g_menuCatN; i++) g_menuCat[i] = (uint8_t)(i + 1);
+  if (g_menuSel >= MENU_N + g_menuCatN) g_menuSel = 0;
 
   int W = tft.width();
   tft.fillRect(0, MENU_THREAT_Y, W, MENU_THREAT_H, TFT_BLACK);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Background threats", W / 2, MENU_THREAT_Y + 2, 1);
-  if (nc == 0) {
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString("No threats", W / 2, CHIP_Y0 + 6, 2);
-  }
+  tft.drawString("Background threats", W / 2, MENU_THREAT_Y + 1, 1);
   const int cellW = W / CHIP_COLS;
-  for (int i = 0; i < nc; i++) {
+  for (int i = 0; i < g_menuCatN; i++) {
+    int c = g_menuCat[i];
     int col = i % CHIP_COLS, rowg = i / CHIP_COLS;
     int x = col * cellW, y = CHIP_Y0 + rowg * CHIP_STEP;
     bool sel = (g_menuSel == MENU_N + i);
-    if (sel) tft.drawRoundRect(x + 1, y, cellW - 2, CHIP_H, 4, TFT_CYAN);
-    uint16_t col16 = tierColor(worst[g_menuCat[i]], 0, 0);
-    char b[8]; snprintf(b, sizeof(b), "%d", cnt[g_menuCat[i]]);
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.drawString(kCatName[g_menuCat[i]], x + cellW / 2, y + 2, 1);   // category name (small)
-    tft.setTextColor(col16, TFT_BLACK);
-    tft.drawString(b, x + cellW / 2, y + 12, 2);                       // count, tier-coloured
+    bool hot = cnt[c] > 0;
+    uint16_t fg = hot ? tierColor(worst[c], 0, 0) : TFT_DARKGREY;
+    tft.drawRoundRect(x + 1, y, cellW - 2, CHIP_H, 3, sel ? TFT_CYAN : (hot ? fg : 0x2104));
+    char b[20];
+    snprintf(b, sizeof(b), "%s: %d", kCatName[c], cnt[c]);
+    for (char* p = b; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;  // FLOCK: 0 style
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(fg, TFT_BLACK);
+    tft.drawString(b, x + cellW / 2, y + CHIP_H / 2, 1);
   }
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
 }
 
-// Fresh tap on a HOME threat chip -> chip index (0..g_menuCatN-1), else -1. Mirrors tappedRow()'s
+// Fresh tap on a HOME threat tile -> tile index (0..g_menuCatN-1), else -1. Mirrors tappedRow()'s
 // edge detection; its hit region (y >= CHIP_Y0) is disjoint from the menu rows so both can be
 // polled each loop without stealing each other's taps.
 static int menuChipTapped() {
