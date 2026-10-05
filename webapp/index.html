@@ -56,6 +56,8 @@
   .leaflet-popup-content { font-size:.8rem; }
   .leaflet-popup-content .plist { max-height:200px; overflow:auto; margin-top:.3em;
     font-family:ui-monospace,monospace; white-space:pre; }
+  input[type=number] { width:4.5em; font-size:.9rem; padding:.4em; border-radius:8px;
+           background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   input[type=text] { width:100%; font-size:.9rem; padding:.5em; border-radius:8px;
            background:#0b0e13; color:#e6edf3; border:1px solid #30363d; }
   select { width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
@@ -205,12 +207,28 @@
   <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
   <button id="dlBtn" disabled>Download current session</button>
   <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
+  <details id="filterBox">
+    <summary>Download a time range (filtered on the device)</summary>
+    <select id="expRange">
+      <option value="0">Since boot (whole session)</option>
+      <option value="1">Past 24 hours</option>
+      <option value="2">Custom&hellip;</option>
+    </select>
+    <div id="expCustom" class="maptools" style="display:none">
+      <label>Days <input type="number" id="expD" min="0" max="365" value="0"></label>
+      <label>Hours <input type="number" id="expH" min="0" max="23" value="1"></label>
+      <label>Minutes <input type="number" id="expM" min="0" max="59" value="0"></label>
+    </div>
+    <button id="dlfBleBtn" disabled>Download filtered &mdash; current session (BLE)</button>
+    <button id="dlfWifiBtn" class="secondary">Download filtered over Wi-Fi (join the device AP first)</button>
+  </details>
 
   <details id="sessionsBox">
     <summary>Session logs</summary>
     <button id="listBtn" class="secondary" disabled>Refresh session list</button>
     <select id="sessSel" disabled><option>— connect and refresh —</option></select>
     <button id="sessDlBtn" disabled>Download selected session</button>
+    <button id="sessDlfBtn" class="secondary" disabled>Download selected &mdash; time range (see above)</button>
     <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
     <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
     <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
@@ -319,7 +337,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-04a</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-04b</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -385,7 +403,7 @@ async function connect(){
     setConn("connected");
     connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
       .forEach(id=>$(id).disabled=false);
     $("wlBtn").disabled=false;
     log("Connected.");
@@ -398,7 +416,7 @@ function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connecte
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
+  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
     .forEach(id=>$(id).disabled=true);
   if($("settingsDlg").open) $("settingsDlg").close();
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
@@ -477,7 +495,7 @@ function onLogData(ev){
     const txt = new TextDecoder().decode(v);
     if (txt.startsWith("SIZE=")) {
       dl.mode="file"; dl.expect=parseInt(txt.slice(5),10)||0; dl.got=0; dl.chunks=[];
-      if (dl.expect===0){ log(dl.sink==="map"||dl.sink==="explore"?"That session is empty.":"No log on device yet.");
+      if (dl.expect===0){ log(dl.sink==="map"||dl.sink==="explore"?"That session is empty.":"No log on device yet (or no rows in that time range).");
         if(dl.sink==="explore") loadedExplore([], dl.name); dl.mode=null; }
       return;
     }
@@ -517,6 +535,36 @@ async function downloadLog(){
     await chars.cmd.writeValue(enc.encode("L")); log("Requesting current session…"); }
   catch(e){ log("Download failed: "+e.message); }
 }
+// --- Time-filtered export. The CYD filters on the device and streams only the matching lines:
+// BLE = CMD "T:<mode>[:<minutes>][:<path>]" (mode 0 whole file / 1 past 24 h / 2 past <minutes>;
+// path optional, default = current session), Wi-Fi = http://192.168.4.1/dlf?f=<name|current>&mode=&arg=.
+function exportSpec(){
+  const m=$("expRange").value;
+  if(m==="2"){
+    const mins=Math.round((+$("expD").value||0)*1440+(+$("expH").value||0)*60+(+$("expM").value||0));
+    if(mins<1){ log("Custom range: enter at least 1 minute."); return null; }
+    const a=Math.min(mins,525600);
+    return {mode:2, arg:a, tag:"last"+a+"min"};
+  }
+  return m==="1" ? {mode:1, arg:0, tag:"last24h"} : {mode:0, arg:0, tag:"all"};
+}
+async function downloadFiltered(path){   // path "" = the device's current session
+  const sp=exportSpec(); if(!sp) return;
+  const cmd="T:"+sp.mode+(sp.mode===2?":"+sp.arg:"")+(path?":"+path:"");
+  const base=path ? path.split("/").pop().replace(/\.jsonl$/,"")
+                  : ($("sessName").textContent.replace(/^Session:\s*/,"").trim()||"scanlog");
+  try{ dl={mode:null,expect:0,got:0,chunks:[],name:base+"-"+sp.tag+".jsonl",sink:"save"};
+    await chars.cmd.writeValue(enc.encode(cmd)); log("Requesting "+dl.name+" (filtered on device)…"); }
+  catch(e){ log("Filtered download failed: "+e.message); }
+}
+function downloadFilteredWifi(){
+  const sp=exportSpec(); if(!sp) return;
+  const sel=$("sessSel").value, useSel=sel && !sel.startsWith("—");
+  const f=useSel ? sel.split("/").pop() : "current";
+  const url="http://192.168.4.1/dlf?f="+encodeURIComponent(f)+"&mode="+sp.mode+(sp.mode===2?"&arg="+sp.arg:"");
+  log("Opening "+url+" — join the device Wi-Fi first (Wi-Fi download mode). "+(useSel?"(selected session)":"(current session)"));
+  window.open(url,"_blank");
+}
 async function mapCurrent(){
   if(!connected){ log("Connect first to map the current session."); return; }
   try{ dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map"};
@@ -532,7 +580,7 @@ function populateSessions(text){
   const sels=[$("sessSel"),$("expSel")]; sels.forEach(s=>s.innerHTML="");  // one list feeds both pickers
   const rows=(text||"").split("\n").filter(l=>l.includes("\t"));
   if(!rows.length){ sels.forEach(s=>s.innerHTML="<option>— no sessions —</option>");
-    $("sessDlBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true;
+    $("sessDlBtn").disabled=true; $("sessDlfBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true;
     if(exploreWant){ exploreWant=false; $("expMsg").textContent="No sessions on the device."; $("scanViewer").innerHTML=""; }
     return; }
   rows.sort().reverse();  // date-time names sort newest-first
@@ -547,7 +595,7 @@ function populateSessions(text){
     else if(flag==="latest")  label+="  (latest session)";
     sels.forEach(s=>{ const o=document.createElement("option"); o.value=path; o.textContent=label; s.appendChild(o); });
   }
-  $("sessDlBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
+  $("sessDlBtn").disabled=false; $("sessDlfBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
   log(rows.length+" session(s) found.");
   if(exploreWant){ exploreWant=false; fetchSession("explore"); }   // newest is first -> default pick
 }
@@ -1114,6 +1162,10 @@ $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) 
 $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
+$("expRange").addEventListener("change", ()=>{ $("expCustom").style.display = $("expRange").value==="2" ? "" : "none"; });
+$("dlfBleBtn").onclick = ()=>downloadFiltered("");
+$("dlfWifiBtn").onclick = downloadFilteredWifi;
+$("sessDlfBtn").onclick = ()=>{ const p=$("sessSel").value; if(p && !p.startsWith("—")) downloadFiltered(p); };
 $("wifiBtn").onclick = toggleWifi;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;

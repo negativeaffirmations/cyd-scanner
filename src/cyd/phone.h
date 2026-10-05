@@ -65,6 +65,10 @@ bool fileRequested(char* out, size_t cap);
 // True once if the app asked to delete a session file ("D:<path>"); fills `out`.
 bool deleteRequested(char* out, size_t cap);
 
+// True once if the app asked for a time-filtered log export ("T:<mode>[:<minutes>][:<path>]");
+// fills mode (0 whole file / 1 past 24 h / 2 past <minutes>), minutes, and path ("" = current session).
+bool exportRequested(int* mode, int* minutes, char* path, size_t cap);
+
 // True once if the app set a brightness ("B:<0-100>"); fills the percent value.
 bool brightnessRequested(int* outPct);
 

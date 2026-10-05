@@ -26,6 +26,7 @@
 #include "sigdb.h"
 #include "whitelist.h"
 #include "touch.h"
+#include "logfilter.h"
 
 using namespace link_protocol;
 
@@ -318,10 +319,17 @@ static void saveSrcMask() {
 
 // --- Background scan: when ON the scan cycle keeps running on any (non-SD-heavy) screen, headless,
 // so detection/logging continues while the user is on the menu / Phone Link. Persisted in NVS. ---
-static bool g_bgScan = false;
+// Default ON. BGDEF_GEN (like DB_GEN) force-flips already-provisioned units to ON exactly once: bump it
+// only to re-apply a new default (it overwrites a user's saved choice).
+static constexpr uint32_t BGDEF_GEN = 1;
+static bool g_bgScan = true;
 static void loadBgScan() {
-  Preferences p; p.begin("cydui", true);
-  g_bgScan = p.getBool("bgscan", false);
+  Preferences p; p.begin("cydui", false);
+  if (p.getULong("bgdef_gen", 0) < BGDEF_GEN) {
+    p.putBool("bgscan", true);
+    p.putULong("bgdef_gen", BGDEF_GEN);
+  }
+  g_bgScan = p.getBool("bgscan", true);
   p.end();
 }
 static void saveBgScan() {
@@ -385,35 +393,59 @@ static bool bannerTapped() {
 
 SPIClass  sdSPI(HSPI);
 bool      g_sdOk = false;
-char      g_logPath[48] = "/scanlog.jsonl";  // current session log (NDJSON); set in openSession()
-bool      g_logNamed    = false;           // true once renamed to the date-time form
-bool      g_logStarted  = false;           // true once the file is actually created (first row)
 // Legacy CSV header (schema v5): only used to recognize header-only old .csv files in the sweep.
 static const char* kLogHeader =
     "epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,pan,name,score,tier,signature";
 static constexpr size_t LOG_LINE = 512;  // max log line (NDJSON lines are ~100-330 B; worst case < 512)
 
 struct SeenKey { uint8_t source; uint8_t mac[6]; uint16_t pan; };
-SeenKey g_seen[MAX_SEEN];
-int     g_seenCount = 0;
+
+// One log stream = one live NDJSON session file + its own first-seen dedup set. Two streams:
+//   g_fg = foreground/manual sessions (the on-screen scan):  /logs/sess-NNNNN.jsonl -> /logs/YYYYMMDD-HHMMSS.jsonl
+//   g_bg = headless background scan (g_screen != SCR_SCAN):  /logs/bg-NNNNN.jsonl   -> /logs/bg-YYYYMMDD-HHMMSS.jsonl
+// The file is created lazily on the first row; the counter name is renamed to a date-time name once
+// the phone syncs the clock (renameSessionOnSync). Each stream dedups independently (MAX_SEEN each).
+struct LogStream {
+  char    path[48];   // current session file (NDJSON)
+  bool    named;      // true once renamed to the date-time form
+  bool    started;    // true once the file is actually created (first row)
+  SeenKey seen[MAX_SEEN];
+  int     seenCount;
+};
+static LogStream g_fg;  // zero-init (.bss); path set by openSession()
+static LogStream g_bg;
+static char g_streamingPath[48] = "";  // file currently being streamed to a phone (BLE); never auto-deleted
+
+// Headless background cycle = scan polling while NOT on the scanner screen (only runs when bg is on).
+static bool bgCtx() { return g_bgScan && g_screen != SCR_SCAN; }
+// The stream the current screen logs to / "current session" refers to.
+static LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
+// Keep the Wi-Fi download server's "current session" pointed at the active stream.
+static void syncSharePath() {
+  static char last[48] = "";
+  const char* cur = activeStream().path;
+  if (strcmp(last, cur) == 0) return;
+  strncpy(last, cur, sizeof(last) - 1);
+  webshare::setLogPath(cur);
+}
 
 // Short-address 15.4 devices are only unique within a PAN, so key them by panId too
 // (pan = 0 for every other source, which keeps their key source+MAC).
 static uint16_t seenPan(const Detection& d) {
   return (d.source == (uint8_t)Source::Ieee802154 && !(d.flags & FLAG_154_EXTENDED)) ? d.panId : 0;
 }
-static bool seenContains(const Detection& d) {
-  for (int i = 0; i < g_seenCount; i++)
-    if (g_seen[i].source == d.source && memcmp(g_seen[i].mac, d.mac, 6) == 0 &&
-        g_seen[i].pan == seenPan(d)) return true;
+static bool seenContains(const LogStream& st, const Detection& d) {
+  for (int i = 0; i < st.seenCount; i++)
+    if (st.seen[i].source == d.source && memcmp(st.seen[i].mac, d.mac, 6) == 0 &&
+        st.seen[i].pan == seenPan(d)) return true;
   return false;
 }
-static void seenAdd(const Detection& d) {
-  if (g_seenCount >= MAX_SEEN) return;
-  g_seen[g_seenCount].source = d.source;
-  g_seen[g_seenCount].pan = seenPan(d);
-  memcpy(g_seen[g_seenCount].mac, d.mac, 6);
-  g_seenCount++;
+static void seenAdd(LogStream& st, const Detection& d) {
+  if (st.seenCount >= MAX_SEEN) return;
+  st.seen[st.seenCount].source = d.source;
+  st.seen[st.seenCount].pan = seenPan(d);
+  memcpy(st.seen[st.seenCount].mac, d.mac, 6);
+  st.seenCount++;
 }
 
 static void countBands(int& n24, int& n5, int& nble, int& nprb, int& n154) {
@@ -810,77 +842,95 @@ static void sweepEmptySessions() {
 // time is known (renameSessionOnSync). The file itself is created lazily on the first
 // logged detection (ensureLogFile), so idle boots leave no empty file behind. Rows still
 // carry absolute epoch after sync.
-// Shared by boot + "New Session": bump the persistent counter (monotonic across boots and
-// new sessions, so sess-NNNNN names never repeat), adopt the counter name, reset the
-// per-session dedup, and re-arm the time-sync rename (g_logNamed=false) so the next
-// renameSessionOnSync() gives this session a date-time name if time is known.
-static void beginSessionNamed() {
+// Shared by boot + "New Session" + the background stream: bump the persistent counter (monotonic
+// across boots and new sessions, so names never repeat; the bg stream has its own counter), adopt
+// the counter name, reset that stream's dedup, and re-arm the time-sync rename (named=false) so the
+// next renameSessionOnSync() gives it a date-time name if time is known.
+static void enforceLogCap();  // fwd decl (defined with the other /logs/ helpers below)
+static void beginSessionNamed(LogStream& st, bool bg) {
   Preferences p; p.begin("cydscan", false);
-  uint32_t n = p.getULong("bootcnt", 0) + 1;
-  p.putULong("bootcnt", n);
+  const char* key = bg ? "bgcnt" : "bootcnt";
+  uint32_t n = p.getULong(key, 0) + 1;
+  p.putULong(key, n);
   p.end();
-  snprintf(g_logPath, sizeof(g_logPath), "/logs/sess-%05lu.jsonl", (unsigned long)n);
-  g_logNamed   = false;   // re-arm rename-on-sync
-  g_logStarted = false;   // file is created lazily on the first row (ensureLogFile)
-  g_seenCount  = 0;       // fresh per-session dedup
-  resetFollow();          // a "following" judgement is per continuous trip
-  Serial.printf("[CYD] session log (created on first detection): %s\n", g_logPath);
+  snprintf(st.path, sizeof(st.path), bg ? "/logs/bg-%05lu.jsonl" : "/logs/sess-%05lu.jsonl", (unsigned long)n);
+  st.named     = false;   // re-arm rename-on-sync
+  st.started   = false;   // file is created lazily on the first row (ensureLogFile)
+  st.seenCount = 0;       // fresh per-session dedup
+  Serial.printf("[CYD] %s session log (created on first detection): %s\n", bg ? "bg" : "fg", st.path);
 }
 
 static void openSession() {
   SD.mkdir("/logs");
   if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file (CSV era)
   sweepEmptySessions();
-  beginSessionNamed();
+  beginSessionNamed(g_fg, false);
+  resetFollow();          // a "following" judgement is per continuous trip
 }
 
-// Start a fresh session without rebooting (Scan menu / phone CMD "N"). The writer opens
-// with FILE_APPEND and closes every cycle, so there is no handle to flush. An unused
-// previous session left no file (lazy create), so nothing is orphaned.
-static void startNewSession() {
-  beginSessionNamed();
-  webshare::setLogPath(g_logPath);
+// Open the background stream's session (boot with bg on, and when bg is toggled on). A pending bg
+// session that never wrote a row is reused rather than burning another counter value.
+static void openBgSession() {
+  if (!g_sdOk) return;
+  if (g_bg.path[0] && !g_bg.started) return;
+  beginSessionNamed(g_bg, true);
 }
 
-// Create the (empty) current session file the first time a row needs writing. NDJSON has
-// no header. No-op once created. Returns false if SD is unavailable or can't be opened.
-static bool ensureLogFile() {
-  if (g_logStarted) return true;
-  if (!g_sdOk) return false;
-  File f = SD.open(g_logPath, FILE_WRITE);
+// Start a fresh session without rebooting (Scan menu / phone CMD "N"). Rotates the stream the
+// current screen logs to (the Scan menu passes forceFg so its New Session always means the manual
+// foreground session). The writer opens with FILE_APPEND and closes every cycle, so there is no
+// handle to flush. An unused previous session left no file (lazy create), so nothing is orphaned.
+static void startNewSession(bool forceFg = false) {
+  if (!forceFg && bgCtx()) beginSessionNamed(g_bg, true);
+  else                     beginSessionNamed(g_fg, false);
+  resetFollow();
+  enforceLogCap();        // rotation trigger: trim /logs/ to the cap
+  syncSharePath();
+}
+
+// Create the (empty) session file the first time a row needs writing. NDJSON has no header.
+// No-op once created. Returns false if SD is unavailable or can't be opened.
+static bool ensureLogFile(LogStream& st) {
+  if (st.started) return true;
+  if (!g_sdOk || !st.path[0]) return false;
+  File f = SD.open(st.path, FILE_WRITE);
   if (!f) return false;
   f.close();
-  g_logStarted = true;
-  Serial.printf("[CYD] session log created: %s\n", g_logPath);
+  st.started = true;
+  Serial.printf("[CYD] session log created: %s\n", st.path);
   return true;
 }
 
-// Once the phone provides wall-clock time, rename the boot-counter session file to a
-// date-time name. Runs once per session (even if the rename fails, it won't retry-spam).
-static void renameSessionOnSync() {
-  if (g_logNamed || !g_sdOk || !phone::hasTime()) return;
+// Once the phone provides wall-clock time, rename a boot-counter session file to a date-time name
+// (fg: YYYYMMDD-HHMMSS.jsonl, bg: bg-YYYYMMDD-HHMMSS.jsonl). Runs once per session (even if the
+// rename fails, it won't retry-spam).
+static void renameStreamOnSync(LogStream& st, bool bg) {
+  if (st.named || !st.path[0] || !g_sdOk || !phone::hasTime()) return;
   time_t t = (time_t)phone::epochNow();
   struct tm tmv;
   gmtime_r(&t, &tmv);  // epoch is stored already-localized, so gmtime gives local fields
   char nn[48];
-  snprintf(nn, sizeof(nn), "/logs/%04d%02d%02d-%02d%02d%02d.jsonl",
+  snprintf(nn, sizeof(nn), "/logs/%s%04d%02d%02d-%02d%02d%02d.jsonl", bg ? "bg-" : "",
            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-  if (SD.exists(nn)) { g_logNamed = true; return; }  // name taken; keep the current one
-  if (!g_logStarted) {
+  if (SD.exists(nn)) { st.named = true; return; }  // name taken; keep the current one
+  if (!st.started) {
     // File not created yet (no detections logged): just adopt the date-time name so the
     // file is born correctly named when the first row is written.
-    strncpy(g_logPath, nn, sizeof(g_logPath) - 1);
-    g_logPath[sizeof(g_logPath) - 1] = 0;
-    webshare::setLogPath(g_logPath);
-    Serial.printf("[CYD] session log will use %s\n", g_logPath);
-  } else if (SD.rename(g_logPath, nn)) {
-    Serial.printf("[CYD] session log renamed %s -> %s\n", g_logPath, nn);
-    strncpy(g_logPath, nn, sizeof(g_logPath) - 1);
-    g_logPath[sizeof(g_logPath) - 1] = 0;
-    webshare::setLogPath(g_logPath);
+    strncpy(st.path, nn, sizeof(st.path) - 1);
+    st.path[sizeof(st.path) - 1] = 0;
+    Serial.printf("[CYD] session log will use %s\n", st.path);
+  } else if (SD.rename(st.path, nn)) {
+    Serial.printf("[CYD] session log renamed %s -> %s\n", st.path, nn);
+    strncpy(st.path, nn, sizeof(st.path) - 1);
+    st.path[sizeof(st.path) - 1] = 0;
   }
-  g_logNamed = true;
+  st.named = true;
+}
+static void renameSessionOnSync() {
+  renameStreamOnSync(g_fg, false);
+  renameStreamOnSync(g_bg, true);
+  syncSharePath();
 }
 
 // Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
@@ -907,7 +957,9 @@ static void initSD() {
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
   reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
   openSession();       // create this boot's /logs/sess-NNNNN.jsonl (renamed on time sync)
-  webshare::setLogPath(g_logPath);
+  if (g_bgScan) openBgSession();  // and the background stream /logs/bg-NNNNN.jsonl
+  enforceLogCap();     // rotation trigger: boot
+  syncSharePath();
   Serial.println("[CYD] SD ready");
 }
 
@@ -926,16 +978,18 @@ static void lnAppend(char* ln, int& n, const char* fmt, ...) {
 
 static int logNewDetections() {
   int n = 0;
+  LogStream& st = activeStream();  // headless bg cycle -> bg stream; on-screen scan -> fg stream
+  if (bgCtx() && !st.path[0]) openBgSession();
   File f;  // opened lazily on the first new detection so idle boots write no file
   uint32_t ms = millis();
   uint32_t epoch = phone::epochNow();
   bool gps = phone::hasGps();
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
-    if (seenContains(d)) continue;
-    seenAdd(d);
+    if (seenContains(st, d)) continue;
+    seenAdd(st, d);
     n++;
-    if (!f && ensureLogFile()) f = SD.open(g_logPath, FILE_APPEND);
+    if (!f && ensureLogFile(st)) f = SD.open(st.path, FILE_APPEND);
     if (!f) continue;
     char safe[97];  // escaped name (32 B name, worst case \uXXXX per byte truncates safely)
     jsonEscape(safe, sizeof(safe), d.name);
@@ -986,8 +1040,10 @@ static int logNewDetections() {
 //   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N}
 // No "mac" key, so the Explore viewer's row parser skips it; the web Map renders it as an event pin.
 static void logEvent(const char* evt, int count) {
-  if (!ensureLogFile()) return;
-  File f = SD.open(g_logPath, FILE_APPEND);
+  LogStream& st = activeStream();
+  if (bgCtx() && !st.path[0]) openBgSession();
+  if (!ensureLogFile(st)) return;
+  File f = SD.open(st.path, FILE_APPEND);
   if (!f) return;
   char ln[160];
   int n = 0;
@@ -1024,13 +1080,16 @@ static void updateEvents() {
 // Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
 // chunks. The web app reassembles and saves it (no Wi-Fi needed).
 static void streamFileOverBle(const char* path) {
+  strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);  // guard: not rotated away mid-stream
+  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
   if (!g_sdOk || !SD.exists(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.printf("[CYD] BLE dl: no file %s\n", path);
+    g_streamingPath[0] = 0;
     return;
   }
   File f = SD.open(path, "r");
-  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); g_streamingPath[0] = 0; return; }
   size_t sz = f.size();
   char hdr[24];
   int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)sz);
@@ -1047,9 +1106,72 @@ static void streamFileOverBle(const char* path) {
   }
   f.close();
   Serial.printf("[CYD] BLE sent %u/%u bytes of %s\n", (unsigned)sent, (unsigned)sz, path);
+  g_streamingPath[0] = 0;
 }
 
-static void transferLog() { streamFileOverBle(g_logPath); }  // current session ("L")
+// Time-filtered BLE export: filter ON the CYD, never stream the whole file. TWO passes over the
+// file -- pass 1 sums the byte length of the lines inside the window (for the SIZE= header), pass 2
+// streams only those lines. Same LineReader + predicate for both, so the totals always agree.
+static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) {
+  if (!g_sdOk || !SD.exists(path)) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  File f = SD.open(path, "r");
+  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);
+  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
+  char line[logfilter::LINE_CAP];
+  size_t len;
+  uint32_t total = 0, nlines = 0;
+  {
+    logfilter::LineReader rd(f);
+    while (rd.next(line, len)) if (logfilter::keep(line, c)) { total += len; nlines++; }
+  }
+  char hdr[24];
+  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
+  phone::logNotify((const uint8_t*)hdr, hn);
+  if (total == 0) { f.close(); g_streamingPath[0] = 0; Serial.printf("[CYD] BLE filtered: no rows in range (%s)\n", path); return; }
+  delay(30);
+  f.seek(0);
+  uint8_t out[180];  // chunk < MTU-3
+  size_t on = 0;
+  uint32_t sent = 0;
+  logfilter::LineReader rd2(f);
+  while (rd2.next(line, len) && phone::connected()) {
+    if (!logfilter::keep(line, c)) continue;
+    for (size_t off = 0; off < len; ) {
+      size_t n = min(len - off, sizeof(out) - on);
+      memcpy(out + on, line + off, n);
+      on += n; off += n;
+      if (on == sizeof(out)) { phone::logNotify(out, on); sent += on; on = 0; delay(15); }
+    }
+  }
+  if (on) { phone::logNotify(out, on); sent += on; }
+  f.close();
+  g_streamingPath[0] = 0;
+  Serial.printf("[CYD] BLE filtered sent %u/%u bytes (%u lines) of %s\n", (unsigned)sent, (unsigned)total,
+                (unsigned)nlines, path);
+}
+
+// "L": the current session = the stream matching the current screen.
+static void transferLog() { streamFileOverBle(activeStream().path); }
+
+// "T:<mode>[:<minutes>][:<path>]": mode 0 = whole file ("since boot"), 1 = past 24 h, 2 = past
+// <minutes>. Path optional (restricted to /logs/); default = the current session.
+static void transferFiltered(int mode, int minutes, const char* pathIn) {
+  char path[48];
+  if (pathIn && pathIn[0]) {
+    if (strncmp(pathIn, "/logs/", 6) != 0 || strstr(pathIn, "..")) {
+      phone::logNotify((const uint8_t*)"SIZE=0", 6);
+      Serial.printf("[CYD] BLE export: rejected path %s\n", pathIn);
+      return;
+    }
+    snprintf(path, sizeof(path), "%s", pathIn);
+  } else {
+    snprintf(path, sizeof(path), "%s", activeStream().path);
+  }
+  if (mode != 1 && mode != 2) { streamFileOverBle(path); return; }
+  logfilter::Cutoff c = logfilter::make(mode, minutes < 1 ? 1 : (uint32_t)minutes, phone::epochNow(), millis());
+  streamFilteredOverBle(path, c);
+}
 
 // Download a specific session file requested by the phone ("F:<path>"). Restricted to
 // /logs/ (no path traversal) so the phone can't pull arbitrary SD files.
@@ -1075,8 +1197,8 @@ static void deleteSession(const char* path) {
   }
   if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
     Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
-  } else if (strcmp(path, g_logPath) == 0) {
-    Serial.println("[CYD] delete refused: that's the current session");
+  } else if (strcmp(path, g_fg.path) == 0 || strcmp(path, g_bg.path) == 0) {
+    Serial.println("[CYD] delete refused: that's a live session");
   } else if (exploreHolds(path)) {
     Serial.println("[CYD] delete refused: open in the scan viewer");
   } else {
@@ -1106,7 +1228,7 @@ static void wipeAllLogs() {
       if (!e.isDirectory()) {
         char full[48];
         snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
-        if (strcmp(full, g_logPath) != 0 && !exploreHolds(full))
+        if (strcmp(full, g_fg.path) != 0 && strcmp(full, g_bg.path) != 0 && !exploreHolds(full))
           snprintf(victims[nv++], sizeof(victims[0]), "%s", full);
       }
       e.close();
@@ -1119,6 +1241,43 @@ static void wipeAllLogs() {
   Serial.printf("[CYD] wipe all logs: %d file(s) removed (live session kept)\n", removed);
 }
 
+// --- 512 MB /logs/ cap with oldest-first auto-rotation. Sums every /logs/ file and, while over the
+// cap, deletes the OLDEST (by filesystem last-write time), never touching the live fg/bg files, a
+// file the Explore viewer holds open, or one being streamed. Run only at low frequency (boot, each
+// session rotation, a ~10 min loop() timer) -- never per scan cycle. Bounded per call. ---
+static constexpr uint64_t LOG_CAP_BYTES = 512ULL * 1024 * 1024;
+static bool logProtected(const char* full) {
+  return strcmp(full, g_fg.path) == 0 || strcmp(full, g_bg.path) == 0 || exploreHolds(full) ||
+         (g_streamingPath[0] && strcmp(full, g_streamingPath) == 0);
+}
+static void enforceLogCap() {
+  if (!g_sdOk) return;
+  int removed = 0;
+  for (int pass = 0; pass < 64; pass++) {
+    File dir = SD.open("/logs");
+    if (!dir) return;
+    uint64_t total = 0;
+    time_t oldT = 0;
+    char oldest[48] = "";
+    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+      if (!e.isDirectory()) {
+        total += (uint64_t)e.size();
+        char full[48];
+        snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
+        time_t t = e.getLastWrite();
+        if (!logProtected(full) && (!oldest[0] || t < oldT)) { oldT = t; memcpy(oldest, full, sizeof(oldest)); }
+      }
+      e.close();
+    }
+    dir.close();
+    if (total <= LOG_CAP_BYTES || !oldest[0]) break;
+    if (!SD.remove(oldest)) break;
+    removed++;
+    Serial.printf("[CYD] log cap: removed oldest %s (was %llu MB total)\n", oldest, (unsigned long long)(total >> 20));
+  }
+  if (removed) Serial.printf("[CYD] log cap: %d file(s) removed\n", removed);
+}
+
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
 // "<path>\t<size>\t<flag>\n" lines. <flag> marks the newest file: "current" while a scan
 // is running (its file is being written), else "latest"; blank for all other rows. The web
@@ -1126,9 +1285,10 @@ static void wipeAllLogs() {
 static void sendSessionList() {
   // The newest file is the current session when its file exists this boot; otherwise the
   // most recently written prior file (by FS timestamp).
-  String curBase = logBase(String(g_logPath));
+  const LogStream& cs = activeStream();   // the stream "current"/"L" refers to right now
+  String curBase = logBase(String(cs.path));
   String newestBase;
-  if (g_logStarted) {
+  if (cs.started) {
     newestBase = curBase;
   } else {
     time_t newestT = -1;
@@ -1144,7 +1304,7 @@ static void sendSessionList() {
       d.close();
     }
   }
-  const char* flagWord = (g_logStarted && g_screen == SCR_SCAN) ? "current" : "latest";
+  const char* flagWord = (cs.started && (g_screen == SCR_SCAN || (g_bgScan && g_scanActive))) ? "current" : "latest";
 
   String list;
   File dir = SD.open("/logs");
@@ -1258,10 +1418,10 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
   return done || sawStart || g_detCount > 0;
 }
 
-// Current session basename: g_logPath without the "/logs/" dir and ".jsonl" extension.
-static void sessBase(char* out, size_t cap) {
-  const char* b = strrchr(g_logPath, '/');
-  b = b ? b + 1 : g_logPath;
+// Session basename: the stream's path without the "/logs/" dir and ".jsonl" extension.
+static void sessBase(const LogStream& st, char* out, size_t cap) {
+  const char* b = strrchr(st.path, '/');
+  b = b ? b + 1 : st.path;
   strncpy(out, b, cap - 1); out[cap - 1] = 0;
   char* dot = strrchr(out, '.');
   if (dot) *dot = 0;
@@ -1270,12 +1430,12 @@ static void sessBase(char* out, size_t cap) {
 static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
-  char sb[32]; sessBase(sb, sizeof(sb));
+  char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
   char s[320];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d",
-           g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
+           g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
@@ -1574,11 +1734,11 @@ static void drawScanInfo() {
   tft.setTextDatum(TL_DATUM);
   char buf[48];
   // Line 1 (y44): active session name (left) + unique-device count (right).
-  char sb[32]; sessBase(sb, sizeof(sb));
+  char sb[32]; sessBase(g_fg, sb, sizeof(sb));  // the scanner screen always logs to the fg stream
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(buf, sizeof(buf), "Sess: %s", sb);
   tft.drawString(buf, 4, 44, 1);
-  snprintf(buf, sizeof(buf), "U:%d", g_seenCount);
+  snprintf(buf, sizeof(buf), "U:%d", g_fg.seenCount);
   tft.setTextDatum(TR_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(buf, tft.width() - 4, 44, 1);
@@ -1853,7 +2013,7 @@ static void drawSettings() {
 // Scan sub-menu: Start Scan / New Session / Explore Scan / Scan Settings / Back.
 static void drawScanMenu() {
   drawListMenu("SCAN", kScanItems, SCAN_N, g_scanSel);
-  char sb[32], line[48]; sessBase(sb, sizeof(sb));
+  char sb[32], line[48]; sessBase(g_fg, sb, sizeof(sb));
   snprintf(line, sizeof(line), "Session: %s", sb);
   tft.setTextDatum(TC_DATUM);
   tft.drawString(line, tft.width() / 2, 60, 1);  // between the title (ends ~58) and first button (75)
@@ -3136,11 +3296,11 @@ static void activateScanMenu(int sel) {
   if (sel == 0)      { g_scrollOffset = 0; resetFollow(); if (!g_bgScan) g_scanActive = false; g_viewFrozen = false;
                        g_frozenCount = 0; showScan(); }                                       // Scanner (idle until START)
   else if (sel == 1) {                                                       // New Session
-    startNewSession();
+    startNewSession(true);  // manual = foreground stream
     drawScanMenu();
-    const char* nm = strrchr(g_logPath, '/');
+    const char* nm = strrchr(g_fg.path, '/');
     char msg[40];
-    snprintf(msg, sizeof(msg), "New session: %s", nm ? nm + 1 : g_logPath);
+    snprintf(msg, sizeof(msg), "New session: %s", nm ? nm + 1 : g_fg.path);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.drawString(msg, 10, tft.height() - 32, 1);
     pushStatus();
@@ -3159,7 +3319,7 @@ static void activateScanSettings(int sel) {
   else if (sel == 4) {                                                           // Background scan
     g_bgScan = !g_bgScan;
     saveBgScan();
-    if (g_bgScan) { g_scanActive = true; g_lastCycleMs = 0; }                    // start now; first cycle right away
+    if (g_bgScan) { openBgSession(); syncSharePath(); g_scanActive = true; g_lastCycleMs = 0; }  // start now; first cycle right away
     else          { g_scanActive = false; g_viewFrozen = false; setLed(!g_linkOk, g_linkOk, false); }
     drawScanSettings();
     pushStatus();
@@ -3224,11 +3384,17 @@ static void runScanCycle() {
   if (!g_viewFrozen) buildScanView();  // a paused view keeps its snapshot while scanning continues
   updateEvents();   // deauth / evil-twin alert hold + rate-limited event log lines
   applyScanLed();   // alert / follow / link LED (works headless)
+  if (bgCtx() && g_bg.seenCount >= MAX_SEEN - 32) {
+    // The bg stream never ends on its own, and once its dedup set is full new devices would be
+    // re-logged every cycle: roll to a fresh bg session (also a cap-rotation trigger).
+    beginSessionNamed(g_bg, true);
+    enforceLogCap();
+  }
   int newCount = logNewDetections();
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
-                g_detCount, n24, n5, nble, nprb, n154, newCount, g_seenCount,
+                g_detCount, n24, n5, nble, nprb, n154, newCount, activeStream().seenCount,
                 susp, lk, conf, sigdb::loaded());
   if (g_screen == SCR_SCAN)
     updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
@@ -3299,6 +3465,7 @@ void loop() {
       sendWhitelist(); pushStatus();
     } }
   { char fn[48]; if (phone::fileRequested(fn, sizeof(fn)))   transferFile(fn); }
+  { int m, a; char fn[48]; if (phone::exportRequested(&m, &a, fn, sizeof(fn))) transferFiltered(m, a, fn); }
   { char fn[48]; if (phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
       g_brightness = (uint8_t)constrain(b, 10, 100);
@@ -3310,11 +3477,12 @@ void loop() {
       pushStatus();
     } }
   if (phone::newSessionRequested()) { startNewSession(); pushStatus(); }  // web-app "New Session"
-  renameSessionOnSync();  // give this session a date-time filename once time is known
+  renameSessionOnSync();  // give each live session a date-time filename once time is known (also syncs the share path)
+  syncSharePath();        // the screen context (fg/bg) may have changed
   {  // keep the Scan-menu session label live (phone "N", or the time-sync rename)
     static char lastSess[48] = "";
-    if (strcmp(lastSess, g_logPath) != 0) {
-      strncpy(lastSess, g_logPath, sizeof(lastSess) - 1);
+    if (strcmp(lastSess, g_fg.path) != 0) {
+      strncpy(lastSess, g_fg.path, sizeof(lastSess) - 1);
       if (g_screen == SCR_SCANMENU) drawScanMenu();
     }
   }
@@ -3325,6 +3493,18 @@ void loop() {
     webshare::stop();
     g_scanActive = g_bgScan; g_viewFrozen = false;  // the download interrupted any running scan (bg scan resumes)
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
+  }
+
+  // Low-frequency /logs/ cap check (~10 min). Never while a Wi-Fi/phone download is active (both
+  // returned above) and not on the SD-reading Explore screens (avoid contending for the card).
+  {
+    static uint32_t lastCap = 0;
+    if (g_sdOk && millis() - lastCap >= 600000UL &&
+        g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
+        g_screen != SCR_SORT && g_screen != SCR_FILTER) {
+      lastCap = millis();
+      enforceLogCap();
+    }
   }
 
   // Phone can start/stop the scan remotely (single toggle in the web app). Ignore a start while

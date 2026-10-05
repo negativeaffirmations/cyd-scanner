@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <SD.h>
+#include "phone.h"
+#include "logfilter.h"
 
 namespace {
 
@@ -37,7 +39,8 @@ void handleRoot() {
       String base = sl >= 0 ? nm.substring(sl + 1) : nm;
       String cur = (String("/logs/") + base == String(g_logPath)) ? " <small>(current)</small>" : "";
       h += "<li><a href='/dl?f=" + base + "'>" + base + "</a> <small>" +
-           String(e.size() / 1024.0, 1) + " KB</small>" + cur + "</li>";
+           String(e.size() / 1024.0, 1) + " KB</small>" + cur +
+           " <small><a href='/dlf?f=" + base + "&mode=1'>24h</a></small></li>";
       n++;
     }
     dir.close();
@@ -62,6 +65,45 @@ void handleDl() {
   size_t n = g_server.streamFile(file, f.endsWith(".jsonl") ? "application/x-ndjson" : "text/csv");
   file.close();
   Serial.printf("[webshare] streamed %u bytes of %s\n", (unsigned)n, path.c_str());
+}
+
+// Time-filtered download: /dlf?f=<basename|current>&mode=<0|1|2>&arg=<minutes>. mode 0 = whole file,
+// 1 = past 24 h, 2 = past <arg> minutes. The CYD filters line-by-line (logfilter.h) and streams only
+// the matching lines with chunked transfer encoding, so a filtered pull never sends the whole file.
+void handleDlf() {
+  String f = g_server.arg("f");
+  String path;
+  if (!f.length() || f == "current") {
+    path = g_logPath;
+  } else {
+    if (f.indexOf('/') >= 0 || f.indexOf("..") >= 0) { g_server.send(400, "text/plain", "bad name"); return; }
+    path = "/logs/" + f;
+  }
+  int mode = g_server.arg("mode").toInt();
+  uint32_t arg = (uint32_t)g_server.arg("arg").toInt();
+  Serial.printf("[webshare] GET /dlf %s mode=%d arg=%u\n", path.c_str(), mode, (unsigned)arg);
+  if (!SD.exists(path)) { g_server.send(404, "text/plain", "not found"); return; }
+  File file = SD.open(path, "r");
+  if (!file) { g_server.send(500, "text/plain", "open failed"); return; }
+  logfilter::Cutoff c = logfilter::make(mode, arg, phone::epochNow(), millis());
+  String base = path.substring(path.lastIndexOf('/') + 1);
+  g_server.setContentLength(CONTENT_LENGTH_UNKNOWN);  // chunked: the filtered size isn't known up front
+  g_server.sendHeader("Content-Disposition", "attachment; filename=" + base);
+  g_server.send(200, base.endsWith(".jsonl") ? "application/x-ndjson" : "text/csv", "");
+  char line[logfilter::LINE_CAP];
+  char out[1024];
+  size_t len, on = 0, total = 0;
+  logfilter::LineReader rd(file);
+  while (rd.next(line, len)) {
+    if (!logfilter::keep(line, c)) continue;
+    if (on + len > sizeof(out)) { g_server.sendContent(out, on); total += on; on = 0; }
+    memcpy(out + on, line, len);
+    on += len;
+  }
+  if (on) { g_server.sendContent(out, on); total += on; }
+  g_server.sendContent("");  // terminating chunk
+  file.close();
+  Serial.printf("[webshare] filtered %u bytes of %s\n", (unsigned)total, path.c_str());
 }
 
 // /scanlog.jsonl streams the current session directly (/scanlog.csv kept as an alias).
@@ -93,6 +135,7 @@ void start() {
   IPAddress ip = WiFi.softAPIP();
   g_server.on("/", handleRoot);
   g_server.on("/dl", handleDl);
+  g_server.on("/dlf", handleDlf);
   g_server.on("/scanlog.jsonl", handleLog);
   g_server.on("/scanlog.csv", handleLog);
   g_server.onNotFound([]() {       // reveal whatever the phone actually requests
