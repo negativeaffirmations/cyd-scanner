@@ -123,7 +123,7 @@ const char* kSeedCsv =
     "bleuuid,FEED,70,B,Tile\n"
     "bleuuid,FEEC,70,B,Tile\n"
     "bleuuid,FD5A,70,B,Samsung-SmartTag\n"
-    "bleuuid,FEAA,40,B,GoogleFindMy\n"
+    "bleuuid,FEAA,15,B,GoogleFindMy\n"  // shared Eddystone/Find-My beacon UUID: LOW, escalate only in combination
     "bleuuid,FFFA,40,B,OpenDroneID\n"
     "bleuuid,3100,40,B,Raven\n"
     "bleuuid,3200,40,B,Raven\n"

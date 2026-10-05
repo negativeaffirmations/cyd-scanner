@@ -490,6 +490,8 @@ static uint32_t g_lastCycleMs = 0;
 // no successful exchange has happened for LINK_STICKY_MS (covers the longest observed busy window).
 static constexpr uint32_t SCAN_CYCLE_MS  = 2000;   // normal poll spacing
 static constexpr uint32_t SCAN_RETRY_MS  = 400;    // quick re-poll after a busy miss (catch the C5 free)
+static constexpr uint32_t SCAN_CYCLE_DOWN_MS = 5000; // headless bg-scan poll spacing when the C5 link is down
+                                                     // (each poll costs ~800ms of no-reply wait; back off so menus stay snappy)
 static constexpr uint32_t LINK_STICKY_MS = 8000;   // treat the link as up this long after the last reply
 static uint32_t g_lastLinkOkMs = 0;                // millis() of the last successful scan exchange / ping
 static const char* g_scanMsg = nullptr; static uint16_t g_scanMsgCol = TFT_GREEN;  // state-line feedback
@@ -3219,10 +3221,13 @@ void loop() {
   // SD-reading Explore screens (the log write would contend for the card) and on the drill-down
   // screens (they hold indices into the live tables, which a cycle would rebuild). webshare/download
   // already returned above.
+  // When the C5 link is down, each headless poll burns ~800ms waiting for a reply the C5 won't send,
+  // which would make menus feel laggy; back the cadence off until the link is back (SCR_SCAN is unaffected).
   if (g_bgScan && g_scanActive && g_screen != SCR_SCAN && !inDrill &&
       g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
       g_screen != SCR_SORT && g_screen != SCR_FILTER &&
-      !webshare::active() && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
+      !webshare::active() &&
+      millis() - g_lastCycleMs >= (g_linkOk ? SCAN_CYCLE_MS : SCAN_CYCLE_DOWN_MS)) {
     g_lastCycleMs = millis();
     runScanCycle();
   }
