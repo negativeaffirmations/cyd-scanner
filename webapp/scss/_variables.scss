@@ -1,0 +1,67 @@
+// _variables.scss — the web app's theme. Edit colors here and `npm run sass:build`
+// (or the VS Code "Sass: watch" task) regenerates webapp/style.css for the whole app.
+//
+// Tint backgrounds are derived from these base colors with rgba(), so changing a base
+// color (e.g. a source hue or a threat tier) updates every shade that uses it.
+//
+// NOTE: a few colors are ALSO hard-coded in webapp/app.js (the JS TIER_COL array and the
+// Leaflet marker colors). Those are not driven by this file — if you retheme the threat
+// tiers or source colors, update app.js's TIER_COL / SRC colors to match.
+
+// --- Surfaces ---------------------------------------------------------------
+$color-bg:            #0e1116;  // page background
+$color-surface:       #161b22;  // cards, dialogs, details, notes
+$color-surface-inset: #0b0e13;  // log, detection lists, map bg, inputs/selects
+$color-border:        #30363d;  // default borders, secondary buttons
+$color-border-subtle: #21262d;  // key/value row separators
+$color-row-sep:       #161b22;  // detection-row separators (matches surface)
+
+// --- Text -------------------------------------------------------------------
+$color-text:        #e6edf3;  // primary
+$color-text-muted:  #8b949e;  // labels, captions, subtitles
+$color-text-dim:    #c9d1d9;  // slightly brighter muted (map labels, 2.4 pill)
+$color-text-mono:   #9db4c9;  // monospace (log, RSSI)
+
+// --- Actions / semantic -----------------------------------------------------
+$color-accent: #238636;  // primary button, range accent
+$color-danger: #a1222b;  // destructive button
+$color-warn:   #d29922;  // note / warning accent
+
+// --- Status pills -----------------------------------------------------------
+$color-pill-up:   #1a7f37;
+$color-pill-down: #aa1122;
+$color-pill-wait: #9a6700;
+
+// --- Threat tiers (must match the device + app.js TIER_COL) ------------------
+$tier-0:    #e6edf3;  // none
+$tier-1:    #e3b341;  // suspect
+$tier-2:    #db8b2a;  // likely
+$tier-3:    #f85149;  // confirmed (also the deauth/evil alert colour)
+$tier-0-bg: #30363d;  // "none" badge dot
+
+// --- Scan sources (must match the on-device colours) ------------------------
+$src-wifi24: #8b949e;
+$src-wifi5:  #22d3ee;
+$src-ble:    #e879f9;
+$src-probe:  #f59e0b;
+$src-154:    #4ade80;
+
+// Light text for the per-source signal pills (hand-tuned, kept explicit).
+$src-wifi24-text: $color-text-dim;
+$src-wifi5-text:  #7fe9fb;
+$src-ble-text:    #f3b6fb;
+$src-probe-text:  #fcd47a;
+$src-154-text:    #9af0b8;
+
+// --- "Following me" (magenta) -----------------------------------------------
+$follow:        #db61b7;  // persistent-follow banner border
+$follow-strong: #ff5cbf;  // FOLLOWING marker + row rail
+$follow-text:   #f3b6e4;
+
+// --- Deauth / evil-twin alert (red, built on $tier-3) -----------------------
+$alert:      $tier-3;
+$alert-text: #ffb4ae;
+
+// --- Behavioral-flag badge (blue) -------------------------------------------
+$flag-badge:      #58a6ff;
+$flag-badge-text: #9ecbff;

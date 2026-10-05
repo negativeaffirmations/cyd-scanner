@@ -1,0 +1,12 @@
+// main.scss — entry point. Compiles to webapp/style.css (npm run sass:build / the VS Code
+// "Sass: watch" task). Edit the partials, not style.css (it is generated).
+//
+//   _variables  theme tokens (colors) — start here to retheme
+//   _base       page shell, typography, buttons, forms, dialog chrome
+//   _detections detection table, tiers, source tints, pills, chips, flag badges, kv rows
+//   _banners    follower + deauth/evil alert banners
+//   _map        wardriving map dialog, Leaflet overrides, mini-maps
+@use 'base';
+@use 'detections';
+@use 'banners';
+@use 'map';

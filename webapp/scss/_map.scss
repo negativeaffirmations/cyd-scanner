@@ -1,0 +1,26 @@
+// _map.scss — the wardriving Map dialog, Leaflet overrides, and the detail mini-maps.
+@use 'variables' as *;
+
+#mapDlg { width:96vw; max-width:960px; }
+#map { height:68vh; width:100%; border-radius:8px; background:$color-surface-inset; }
+
+.maptools { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:.5em 0; font-size:.85rem; }
+.maptools button { width:auto; padding:.5em .8em; margin:0; }
+.maptools label { display:inline-flex; align-items:center; gap:4px; color:$color-text-dim; }
+#mapMsg { color:$color-text-muted; font-size:.85rem; margin:.3em 0; }
+
+.leaflet-popup-content { font-size:.8rem; }
+.leaflet-popup-content .plist {
+  max-height:200px; overflow:auto; margin-top:.3em;
+  font-family:ui-monospace,monospace; white-space:pre;
+}
+
+// Event pin marker (deauth / eviltwin / droneid) on the map.
+.evpin {
+  width:18px; height:18px; line-height:18px; text-align:center; border-radius:4px; font-weight:700;
+  font-size:12px; color:#fff; border:1px solid #fff;
+}
+
+// Per-detection mini-maps inside the detail / follower modals.
+#detMap    { height:220px; width:100%; border-radius:8px; background:$color-surface-inset; margin-top:.7em; }
+#folDetMap { height:220px; width:100%; border-radius:8px; background:$color-surface-inset; margin-top:.7em; }

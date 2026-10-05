@@ -1,0 +1,79 @@
+// _detections.scss — the detection list (live + viewer), threat tiers, source tinting,
+// signal pills, key/value detail rows, flag badges, and the threat-category chips.
+@use 'variables' as *;
+
+// Live-detections table with flexbox rows. The Device cell is flex:1 with min-width:0 so it
+// grows to fill the full width and ellipsizes long names; the other cells are fixed-basis so
+// the header and rows line up.
+.dets {
+  background:$color-surface-inset; border:1px solid $color-border; border-radius:10px;
+  max-height:280px; overflow-y:auto;
+}
+.dethead, .det { display:flex; align-items:center; gap:8px; padding:5px 6px; width:100%; }
+.dethead {
+  position:sticky; top:0; z-index:2; background:$color-surface-inset;
+  border-bottom:1px solid $color-border; font-size:.68rem; letter-spacing:.04em;
+  color:$color-text-muted; text-transform:uppercase;
+}
+.det { border-bottom:1px solid $color-row-sep; font-size:.82rem; }
+.det:last-child { border-bottom:0; }
+
+.tiercol { flex:0 0 14px; display:flex; justify-content:center; }  // threat-tier dot / ⚠
+.sigcol  { flex:0 0 5.5em; display:flex; flex-wrap:wrap; gap:2px; }
+.hnm     { flex:1 1 auto; }
+.nm      { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rssi    { flex:0 0 4.6em; text-align:right; font-family:ui-monospace,monospace; }
+.det .rssi { color:$color-text-mono; }
+.caret   { flex:0 0 1.2em; text-align:center; cursor:pointer; color:$color-text-muted; user-select:none; }
+.detsub { padding:2px 6px 4px 28px; border-bottom:1px solid $color-row-sep; }
+.sub1 { font-family:ui-monospace,monospace; font-size:.76rem; padding:2px 6px; margin:1px 0; }
+
+// Threat-tier text colour (.tN) + badge-dot background (.bN).
+.badge { width:9px; height:9px; border-radius:50%; }
+.t0{color:$tier-0;} .t1{color:$tier-1;} .t2{color:$tier-2;} .t3{color:$tier-3;font-weight:600;}
+.b0{background:$tier-0-bg;} .b1{background:$tier-1;} .b2{background:$tier-2;} .b3{background:$tier-3;}
+
+// Row background/border tinted by source (matches the on-device colours).
+.src24 { border-left:3px solid $src-wifi24; background:rgba($src-wifi24,.10); }
+.src5  { border-left:3px solid $src-wifi5;  background:rgba($src-wifi5,.12); }
+.srcble{ border-left:3px solid $src-ble;    background:rgba($src-ble,.12); }
+.srcprb{ border-left:3px solid $src-probe;  background:rgba($src-probe,.13); }
+.src154{ border-left:3px solid $src-154;    background:rgba($src-154,.12); }
+
+// Per-band signal pills (which sources this MAC was seen on).
+.sp {
+  display:inline-block; font-family:ui-monospace,monospace; font-size:.66rem; padding:1px 4px;
+  border-radius:4px; line-height:1.35;
+}
+.p24 { background:rgba($src-wifi24,.25); color:$src-wifi24-text; }
+.p5  { background:rgba($src-wifi5,.22);  color:$src-wifi5-text; }
+.pble{ background:rgba($src-ble,.22);    color:$src-ble-text; }
+.pprb{ background:rgba($src-probe,.22);  color:$src-probe-text; }
+.p154{ background:rgba($src-154,.22);    color:$src-154-text; }
+
+.tcol    { flex:0 0 4.4em; text-align:right; font-family:ui-monospace,monospace; color:$color-text-muted; }
+.det.clk { cursor:pointer; } .det.clk:active { filter:brightness(1.3); }
+.chn     { color:$color-text-muted; font-size:.7rem; margin-left:.4em; }
+
+// Key/value rows in the detail modals.
+.kv { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid $color-border-subtle; font-size:.88rem; }
+.kv .k { flex:0 0 7em; } .kv .vv { flex:1 1 auto; min-width:0; word-break:break-word; }
+
+// Small badge on detection rows that carry C5 detector flag bits (DETS v4).
+.flagb {
+  display:inline-block; font-family:ui-monospace,monospace; font-size:.62rem; font-weight:700;
+  padding:0 4px; margin-left:.35em; border-radius:4px; line-height:1.4; vertical-align:middle;
+  background:rgba($flag-badge,.2); color:$flag-badge-text;
+}
+
+// Threat-category chips (DETS v5): SquachWatch-style breakdown above the live list.
+.catchips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:.4em 0 .2em; }
+.catchips .catlbl { font-size:.72rem; color:$color-text-muted; margin-right:.1em; }
+.catchip {
+  display:inline-flex; align-items:baseline; gap:5px; cursor:pointer;
+  background:$color-surface-inset; border:1px solid $color-border; border-radius:999px; padding:3px 10px;
+  color:$color-text-dim; font-size:.78rem; font-family:inherit;
+}
+.catchip:active { filter:brightness(1.3); }
+.catchip .cn { font-weight:600; }
+.catchip .cc { font-family:ui-monospace,monospace; font-weight:700; }
