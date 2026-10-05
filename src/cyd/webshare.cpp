@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <SD.h>
+#include <Preferences.h>
+#include <esp_random.h>
 #include "phone.h"
 #include "logfilter.h"
 
@@ -11,7 +13,7 @@ namespace {
 WebServer  g_server(80);
 bool       g_active = false;
 char       g_ssid[24]  = {0};
-char       g_pw[16]    = {0};
+char       g_pw[20]    = {0};  // WPA2 PSK (random, NVS-persisted); 16 chars + NUL
 const char* kUrl       = "http://192.168.4.1";
 char       g_logPath[48] = "/scanlog.jsonl";  // current session log (set by setLogPath)
 
@@ -119,6 +121,21 @@ void handleLog() {
   Serial.printf("[webshare] streamed %u bytes\n", (unsigned)n);
 }
 
+// SEC-M1 fix: the SoftAP password used to be derived from the efuse MAC, which is broadcast as the
+// AP's BSSID, so anyone in range could recompute it and pull /logs/. Now a random PSK is generated
+// once (esp_random) and persisted in NVS so it is stable across boots (and for the QR). The SSID
+// stays MAC-derived — it isn't a secret.
+void loadOrCreatePsk() {
+  static const char kCs[] = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";  // no look-alikes
+  const size_t kLen = 16;  // WPA2 PSK must be 8..63 chars
+  Preferences p;
+  bool open = p.begin("cydscan", false);
+  if (open && p.getString("appsk", g_pw, sizeof(g_pw)) == kLen) { p.end(); return; }  // stored PSK ok
+  for (size_t i = 0; i < kLen; i++) g_pw[i] = kCs[esp_random() % (sizeof(kCs) - 1)];
+  g_pw[kLen] = 0;
+  if (open) { p.putString("appsk", g_pw); p.end(); }  // if NVS is unavailable, use this boot's PSK only
+}
+
 }  // namespace
 
 namespace webshare {
@@ -127,7 +144,7 @@ void start() {
   if (g_active) return;
   uint64_t mac = ESP.getEfuseMac();
   snprintf(g_ssid, sizeof(g_ssid), "CYD-Scan-%04X", (uint16_t)(mac & 0xFFFF));
-  snprintf(g_pw, sizeof(g_pw), "scan%06X", (uint32_t)((mac >> 16) & 0xFFFFFF));
+  loadOrCreatePsk();  // g_pw = stored random PSK (SEC-M1)
 
   WiFi.persistent(false);          // don't thrash NVS on every AP start
   WiFi.mode(WIFI_AP);
@@ -167,6 +184,7 @@ bool        clientConnected() { return g_active && WiFi.softAPgetStationNum() > 
 void        handle()   { if (g_active) g_server.handleClient(); }
 const char* ssid()     { return g_ssid; }
 const char* password() { return g_pw; }
+const char* apPass()   { return g_pw; }
 const char* url()      { return kUrl; }
 
 String wifiQr() {
