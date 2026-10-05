@@ -35,7 +35,12 @@ near-verbatim reuse is what triggers the rules above.**
   false-positive-filtering patterns — candidates to improve the Phase 5 "following me" heuristic
   and the self-filter problem (your own phone getting flagged). See
   `phase5-followme-direction` (memory) and [docs/signature-matching.md](signature-matching.md).
-- **License:** ⚠️ **not yet verified** — check the repo before using any code (see directive above).
+- **License:** **MIT** (permissive) — verified via the repo's `LICENSE`
+  (https://github.com/ArgeliusLabs/Chasing-Your-Tail-NG/blob/main/LICENSE). Code may be
+  copied/adapted/ported into cyd-scanner under any license (no copyleft; does **not** constrain
+  this repo's licensing). Only obligation: preserve the MIT copyright + license notice for any
+  reused code, plus the in-repo attribution the directive above requires. (It's Python/RPi, so
+  expect to port *logic* into C++ rather than drop in files.)
 - **Status:** reference only; no code used yet.
 
 ### SquachWatch-CYD
