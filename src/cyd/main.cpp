@@ -810,7 +810,7 @@ static void renameSessionOnSync() {
 // Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
 // the firmware (e.g. after adding seed rules). This DISCARDS any on-card DB edits, so
 // only bump it when that's intended.
-static constexpr uint32_t DB_GEN = 1;  // 1: Phase-3 seed adds the Flock GATT bleuuid rule
+static constexpr uint32_t DB_GEN = 2;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion
 
 static void reseedDbIfNeeded() {
   Preferences p;
