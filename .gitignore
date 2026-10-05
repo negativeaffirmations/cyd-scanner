@@ -23,6 +23,3 @@ sessions/
 # User's own device whitelist (SD copy / any local export) — personal identifiers.
 /whitelist.csv
 whitelist*.csv
-
-# Added automatically: contains a machine-specific absolute path (sensitive / would break on another machine)
-HANDOFF.md
