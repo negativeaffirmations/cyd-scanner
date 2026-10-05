@@ -18,6 +18,20 @@ constexpr uint32_t DEAUTH_BUCKET_MS = 100;
 constexpr uint32_t DEAUTH_WIN_MS    = 1000;
 volatile uint32_t  g_dStamp[DEAUTH_BUCKETS] = {0};  // bucket start time (ms)
 volatile uint16_t  g_dCnt[DEAUTH_BUCKETS]   = {0};
+// Sticky peak: rxCb only runs during the ~3 s promiscuous window and the 1 s buckets decay fast,
+// so hold the peak 1 s-rate for ~10 s. A CYD poll landing between promiscuous windows then still
+// reports a recent flood instead of 0. (Still receive-only — this only remembers what was observed.)
+constexpr uint32_t DEAUTH_STICKY_MS = 10000;
+volatile uint16_t  g_dSticky  = 0;  // peak 1 s deauth+disassoc count seen recently
+volatile uint32_t  g_dStickyT = 0;  // millis() when g_dSticky was captured
+
+// Sum the deauth/disassoc buckets covering the last DEAUTH_WIN_MS (the live ~1 s rate).
+static uint16_t deauth1s(uint32_t now) {
+  uint32_t sum = 0;
+  for (int i = 0; i < DEAUTH_BUCKETS; i++)
+    if (now - g_dStamp[i] <= DEAUTH_WIN_MS && g_dCnt[i]) sum += g_dCnt[i];
+  return sum > 65535 ? 65535 : (uint16_t)sum;
+}
 
 inline uint32_t fnv1a(uint32_t h, uint8_t b) { return (h ^ b) * 16777619u; }
 
@@ -72,6 +86,8 @@ void rxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
     uint32_t stamp = now - (now % DEAUTH_BUCKET_MS);
     if (g_dStamp[b] != stamp) { g_dStamp[b] = stamp; g_dCnt[b] = 0; }  // bucket rolled over
     if (g_dCnt[b] < 65535) g_dCnt[b] = g_dCnt[b] + 1;
+    uint16_t cur = deauth1s(now);  // latch the peak so a poll outside this window still sees it
+    if (cur >= g_dSticky || now - g_dStickyT > DEAUTH_STICKY_MS) { g_dSticky = cur; g_dStickyT = now; }
     return;
   }
 
@@ -150,10 +166,9 @@ void begin(DetCb cb, ApCb apCb) { g_cb = cb; g_apCb = apCb; }
 
 uint16_t deauthRecent() {
   uint32_t now = millis();
-  uint32_t sum = 0;
-  for (int i = 0; i < DEAUTH_BUCKETS; i++)
-    if (now - g_dStamp[i] <= DEAUTH_WIN_MS && g_dCnt[i]) sum += g_dCnt[i];
-  return sum > 65535 ? 65535 : (uint16_t)sum;
+  uint16_t cur    = deauth1s(now);
+  uint16_t sticky = (now - g_dStickyT <= DEAUTH_STICKY_MS) ? g_dSticky : 0;
+  return cur > sticky ? cur : sticky;
 }
 
 void enable() {
