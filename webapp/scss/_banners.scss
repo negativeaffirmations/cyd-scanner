@@ -1,0 +1,26 @@
+// _banners.scss — the "following me" banner + per-row follow markers (magenta, mirroring the
+// CYD follow UI) and the deauth / evil-twin event alert banner (red).
+@use 'variables' as *;
+
+.folbanner {
+  display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+  padding:.6em .8em; border-radius:10px; cursor:pointer; font-weight:600;
+  background:rgba($follow,.16); border:1px solid $follow; color:$follow-text;
+}
+.folbanner:active { filter:brightness(1.25); }
+.folbanner .fcount { margin-left:auto; font-family:ui-monospace,monospace; }
+
+.fmark { font-weight:700; }
+.fmark.f2 { color:$follow-strong; }  // FOLLOWING
+.fmark.f1 { color:$tier-2; }         // PERSISTENT
+
+.det.muted { opacity:.5; }
+.det.following { box-shadow: inset 2px 0 0 $follow-strong; }
+.folscore { flex:0 0 4.2em; text-align:right; font-family:ui-monospace,monospace; color:$follow-text; }
+
+.alertbanner {
+  display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+  padding:.6em .8em; border-radius:10px; font-weight:600;
+  background:rgba($alert,.16); border:1px solid $alert; color:$alert-text;
+}
+.alertbanner .acount { margin-left:auto; font-family:ui-monospace,monospace; }

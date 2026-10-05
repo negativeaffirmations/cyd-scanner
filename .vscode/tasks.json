@@ -1,0 +1,41 @@
+{
+  // Web app stylesheet pipeline (SCSS -> webapp/style.css). The firmware is built with
+  // PlatformIO's own tasks; these are just for the phone web app's styles.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Recompiles webapp/style.css whenever any webapp/scss/*.scss file is saved.
+      // Auto-starts when the project is opened (VS Code asks to allow automatic tasks
+      // the first time — choose "Allow"). Run manually any time via:
+      //   Terminal > Run Task... > "Sass: watch".
+      "label": "Sass: watch",
+      "type": "shell",
+      "command": "npm run sass:watch",
+      "isBackground": true,
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "clear": true },
+      "problemMatcher": {
+        "owner": "sass",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(?:.*\\s)?Error:\\s+(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "sass\\s+--watch",
+          "endsPattern": "(?:Compiled .* to .*|Sass is watching for changes)"
+        }
+      }
+    },
+    {
+      // One-shot compile (e.g. before a web deploy). Ctrl+Shift+B runs this.
+      "label": "Sass: build once",
+      "type": "shell",
+      "command": "npm run sass:build",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    }
+  ]
+}

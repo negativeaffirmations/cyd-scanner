@@ -325,7 +325,12 @@ back (5 GHz included). Things that matter, learned the hard way:
     `enableScanResponse(true)` + set the name in the scan response, and the web app
     filters by **service UUID** (not name). Without this the phone finds nothing.
 - **Web app** `webapp/index.html` — hosted at
-  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). MUST be
+  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). **Styles are
+  SCSS** under `webapp/scss/` (theme colors in `_variables.scss`; partials `_base`/`_detections`/
+  `_banners`/`_map`), compiled to `webapp/style.css` by Dart Sass (`npm run sass:build`, or the
+  auto-starting "Sass: watch" VS Code task — see `.vscode/tasks.json`). **Edit the SCSS, not
+  `style.css`** (generated, but committed since Pages doesn't run Sass; `node_modules/` is
+  git-ignored). The JS is still inline in `index.html`. MUST be
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops

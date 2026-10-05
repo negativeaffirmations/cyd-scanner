@@ -2,14 +2,17 @@
 
 ## Branches / deploy
 - **phase5-dev** = active dev branch (firmware + webapp). Committed; CYD flashed.
-  **⚠ phase5-dev is NOT pushed to origin** (well ahead of `origin/phase5-dev`) — push when ready.
 - **main** = GitHub Pages deploy branch (source: `main` `/`). Gets **webapp-only** deploy
   commits; it lags phase5-dev on firmware. Web app is live at
-  https://negativeaffirmations.github.io/cyd-scanner/webapp/ — **up to date** (category breakdown
-  + descriptions deployed, Pages build `built`, commit `797f34b`).
-- To deploy the web app: put `webapp/index.html` on `main`, push, Pages rebuilds
-  (`git checkout main && git checkout phase5-dev -- webapp/index.html && commit && push`,
-  then `git checkout phase5-dev`). Check build: `gh api repos/.../pages/builds/latest --jq .status`.
+  https://negativeaffirmations.github.io/cyd-scanner/webapp/
+- **Web app styles are SCSS now** (`webapp/scss/*.scss` → `webapp/style.css` via Dart Sass;
+  `npm install` once, then `npm run sass:build`, or the auto-starting **"Sass: watch"** VS Code
+  task). Edit the SCSS (theme colors live in `webapp/scss/_variables.scss`), **never** `style.css`
+  (generated). `style.css` **is committed** (Pages doesn't run Sass); `node_modules/` is not.
+- To deploy the web app: **run `npm run sass:build` first**, then copy the whole `webapp/` folder
+  to `main` so `index.html` + `style.css` ship together (index.html now `<link>`s style.css):
+  `git checkout main && git checkout phase5-dev -- webapp/ && commit && push`, then
+  `git checkout phase5-dev`. Check build: `gh api repos/.../pages/builds/latest --jq .status`.
 
 ## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (phase5-dev; both boards flashed v7)
 Newest first:
