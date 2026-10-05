@@ -1,18 +1,21 @@
 # Handoff — 2026-10-05 (branch: phase5-dev)
 
 ## Branches / deploy
-- **phase5-dev** = active dev branch (firmware + webapp). Committed; CYD flashed.
-- **main** = GitHub Pages deploy branch (source: `main` `/`). Gets **webapp-only** deploy
-  commits; it lags phase5-dev on firmware. Web app is live at
-  https://negativeaffirmations.github.io/cyd-scanner/webapp/
-- **Web app styles are SCSS now** (`webapp/scss/*.scss` → `webapp/style.css` via Dart Sass;
-  `npm install` once, then `npm run sass:build`, or the auto-starting **"Sass: watch"** VS Code
-  task). Edit the SCSS (theme colors live in `webapp/scss/_variables.scss`), **never** `style.css`
-  (generated). `style.css` **is committed** (Pages doesn't run Sass); `node_modules/` is not.
-- To deploy the web app: **run `npm run sass:build` first**, then copy the whole `webapp/` folder
-  to `main` so `index.html` + `style.css` ship together (index.html now `<link>`s style.css):
-  `git checkout main && git checkout phase5-dev -- webapp/ && commit && push`, then
-  `git checkout phase5-dev`. Check build: `gh api repos/.../pages/builds/latest --jq .status`.
+- **2026-10-05: phase5-dev was MERGED into `main`** (commit `f025557`); both branches now hold the
+  full firmware + webapp + tooling and point at the same commit. `main` is no longer "webapp-only."
+  Follow/tail thresholds are at **production** (400 m / 3 fixes) — the old 50 m/2 fix TEST values
+  were already restored in `c310b98`.
+- **main** also serves **GitHub Pages** (source: `main` `/`, `.nojekyll` → static, no Jekyll). Web
+  app live at https://negativeaffirmations.github.io/cyd-scanner/webapp/
+- **Web app styles are SCSS** (`webapp/scss/*.scss` → `webapp/style.css` via Dart Sass; `npm install`
+  once, then `npm run sass:build`, or the auto-starting **"Sass: watch"** VS Code task). Edit the
+  SCSS (theme colors in `webapp/scss/_variables.scss`), **never** `style.css` (generated). `style.css`
+  **is committed** (Pages doesn't run Sass); `node_modules/` is not.
+- To deploy the web app now that main carries it directly: `npm run sass:build`, commit
+  `webapp/` on `main`, push — Pages rebuilds. (No more cherry-pick from a separate dev branch.)
+  Check build: `gh api repos/.../pages/builds/latest --jq .status`. ⚠ A Pages build was queued
+  behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
+  serving the last-good version until it clears.
 
 ## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (phase5-dev; both boards flashed v7)
 Newest first:
