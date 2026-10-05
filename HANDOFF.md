@@ -1,21 +1,39 @@
 # Handoff — 2026-10-05 (branch: phase5-dev)
 
 ## Branches / deploy
-- **phase5-dev** = active dev branch (firmware + webapp). Committed; both boards flashed.
+- **phase5-dev** = active dev branch (firmware + webapp). Committed; CYD flashed.
+  **⚠ phase5-dev is NOT pushed to origin** (well ahead of `origin/phase5-dev`) — push when ready.
 - **main** = GitHub Pages deploy branch (source: `main` `/`). Gets **webapp-only** deploy
   commits; it lags phase5-dev on firmware. Web app is live at
-  https://negativeaffirmations.github.io/cyd-scanner/webapp/
+  https://negativeaffirmations.github.io/cyd-scanner/webapp/ — **up to date** (category breakdown
+  + descriptions deployed, Pages build `built`, commit `797f34b`).
 - To deploy the web app: put `webapp/index.html` on `main`, push, Pages rebuilds
   (`git checkout main && git checkout phase5-dev -- webapp/index.html && commit && push`,
   then `git checkout phase5-dev`). Check build: `gh api repos/.../pages/builds/latest --jq .status`.
-  ⚠️ **The webapp changed a lot this session** (deauth/evil banner, flag badges, event map pins,
-  time-range export UI) — it has NOT been deployed to `main` yet.
 
-## Done this session (committed on phase5-dev; BOTH BOARDS FLASHED + boot-verified)
+## Done — category threat readout + HOME redesign (committed on phase5-dev; CYD flashed, web deployed)
+Newest first:
+- `3374917` **CYD: HOME title icons nudged down** for status-bar padding (`HOME_ICON_CY` 34→44).
+- `7ba209b` **CYD+web: HOME title-bar icons + centered last threat row + category blurbs.** Phone
+  Link → **phone icon upper-right** (grey=no GATT phone, green=connected); Settings → **cog icon
+  upper-left**; list now holds just **Scan**. Both icons stay BOOT-reachable (nav: Scan, cog, phone,
+  chips) so Settings/touch-cal is never touch-only. Partial last threat row is centred (`chipRect()`
+  shared by draw+hit-test). Category device list shows a one-line **signature-type description**
+  (`catDescription` / web `CAT_DESC`), which also explains the vague "Other".
+- `6091880` **CYD: HOME readout = full category list always** — every category as a `FLOCK: 0` /
+  `AXON: 0` tile (3×5 grid, font 1), dim at 0, tier-coloured + outlined when >0, all tappable.
+- `a331ffe` **CYD+web: SquachWatch-style category readout + drill-down.** New `Category` taxonomy
+  (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/Drone/Deauth/Flipper/Skim/Other), `categoryOf()`
+  (flags-first then sigdb label) → `g_category[]`; `groupCategory()`/`countCategories()` per device.
+  HOME chip → `SCR_MENUCAT` device list → `SCR_MENUCATDETAIL` (reuses the scanner detail via
+  `buildDeviceDetail`/`showDeviceDetail`; both new screens are in the `inDrill` freeze set).
+  **DETS v5**: trailing category id (older parsers ignore it); web app mirrors the whole breakdown.
+
+## Done earlier this session (committed on phase5-dev; BOTH BOARDS FLASHED + boot-verified)
 Newest first:
 - `b0b6bc7` **docs: CLAUDE.md synced** to the v6 code (detectors, logging/export, SEC-M1, UI, GPL).
-- `c8b27c3` **CYD: HOME-menu background threat readout** (`S:/L:/C:`, white at 0, tier color when >0,
-  live on the 2 s idle cadence). ⚠ user wants this reworked — see PICK UP HERE #2.
+- `c8b27c3` **CYD: HOME-menu background threat readout** (`S:/L:/C:`) — superseded by the category
+  readout above (`a331ffe`→`3374917`).
 - `32820c2` **CYD: SEC-M1 fixed** — random 16-char WPA2 SoftAP PSK generated once + stored in NVS
   (`"cydscan"`/`"appsk"`), shown only on device/QR; no longer derived from the MAC/BSSID. (Phones
   with the old network saved must rejoin via QR.)
@@ -39,39 +57,29 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **CYD (COM14, CH340 1A86:7523) and C5 (COM18, native 303A:1001) both flashed with v6.**
-Boot-verified: `link=up`, both log streams created, background scan self-started and logging, sigdb
-loaded 62 OUI + 14 name + 15 bleuuid + 7 blecid. Reviews: security PASS, reviewer no P1.
-⚠ **But in use the user reports the C5 link drops/reconnects ~every 2 s** (the brief boot capture
-didn't surface it) — see PICK UP HERE #1.
+Device state: **CYD (COM14, CH340 1A86:7523) flashed with the category-readout build.** C5 unchanged
+this round (PROTOCOL_VERSION still v6; DETS v5 is CYD→phone only). Category drill-down + HOME icon
+redesign verified on-device by the user.
 
 ## PICK UP HERE — outstanding
 
-### ⚠ USER-REPORTED (observed on-device 2026-10-05 — TOP PRIORITY, not yet addressed)
-1. **BUG — C5 link disconnects & reconnects every ~2 s.** User observes the CYD↔C5 link dropping and
-   coming back roughly every 2 seconds in normal use. **This needs to be fixed.** (Not caught by the
-   brief post-flash boot capture, which showed `link=up`.) Likely tied to **background-scan default-ON**:
-   the headless bg cycle now polls the C5 every ~2 s on *every* screen, and on the HOME menu that runs
-   *alongside* the menu's own ~2 s `pingC5` — the reviewer explicitly flagged this redundant/overlapping
-   double-poll. Suspect the link-status/stickiness path (`g_linkOk`, `LINK_STICKY_MS`, the busy-miss
-   bail in `requestScan`) is flickering under the doubled polling, or a busy-window phase-lock like the
-   earlier `c5-busy-window-link-drop` issue. First moves: de-dupe the HOME-menu ping vs the bg poll so
-   only one poll runs per window; confirm a busy-miss isn't resetting link stickiness. **May also cause
-   #3.**
-2. **UI — rework the HOME-menu threat readout.** Make the threat **numbers smaller**, and put a
-   **title above each number**, spelled out or more readably abbreviated (e.g. Suspect / Likely /
-   Confirmed — clearer than the current inline `S:/L:/C:`). Current impl: `drawMenuThreats()` in
-   `src/cyd/main.cpp` (font-4 numbers, inline `S:/L:/C:` labels, band ~y248–292, refreshed on the
-   SCR_MENU 2 s idle cadence).
-3. **INVESTIGATE — possibly missing some threats** (user unsure). Verify threat/detection counts are
-   complete. Could be a genuine gap, OR a side effect of #1 — if the link drops every ~2 s the C5's
-   detection burst is lost on the dropped poll, so fewer devices/threats surface. Re-check after #1 is
-   fixed; also sanity-check the flag→tier floor, `countTiers` (whitelist exclusion), and per-stream
-   dedup aren't hiding threats.
+### Resolved / superseded (were the top items on 2026-10-05)
+1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — POSSIBLY RESOLVED (watch for recurrence).**
+   After reflashing the category-readout build the user **no longer sees the ~2 s link drop** in normal
+   use. Suspected it was a bad build or a flaky USB connection rather than a real firmware fault. **Not
+   actively fixed** — if it returns, the prime suspect remains the HOME-menu `pingC5` running *alongside*
+   the background-scan poll (double-poll flickering `g_linkOk`/`LINK_STICKY_MS`/the `requestScan` busy
+   miss), or a busy-window phase-lock like the earlier `c5-busy-window-link-drop` issue.
+2. **~~UI — rework the HOME-menu threat readout~~ — DONE, expanded.** Became the full SquachWatch-style
+   **category readout** (per-type `NAME: n` tiles) + tap-through device list/detail + the HOME title-icon
+   redesign (see the Done section above). Both CYD + web app.
+3. **~~INVESTIGATE — possibly missing threats~~ — likely moot.** Was tied to #1 (a dropped poll loses the
+   C5 burst). With the link steady and the new per-category counts visible, re-check if anything still
+   looks low; no evidence of a gap now.
 
 ### Other outstanding
-4. **Deploy the webapp** to `main` (big changes this session, not yet on Pages — see above).
-   `phase5-dev` is also unpushed (15+ commits ahead of origin).
+4. **Push `phase5-dev` to origin** (well ahead; currently local-only). Web app on `main` is deployed +
+   current.
 5. **Phase 2 — full Remote-ID (ASTM F3411) decode:** this round only flags OpenDroneID *presence*.
    Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/
    map list (another coordinated both-board flash). Heaviest piece; BLE-extended-scan coexistence
