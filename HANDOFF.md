@@ -1,4 +1,4 @@
-# Handoff — 2026-10-05 (branch: phase5-dev)
+# Handoff — 2026-10-05 (main == phase5-dev, merged at `f025557`)
 
 ## Branches / deploy
 - **2026-10-05: phase5-dev was MERGED into `main`** (commit `f025557`); both branches now hold the
@@ -100,21 +100,22 @@ drill-down + HOME icon redesign verified on-device by the user. Ports drift — 
    looks low; no evidence of a gap now.
 
 ### Other outstanding
-4. **Push `phase5-dev` to origin** (well ahead; currently local-only). Web app on `main` is deployed +
-   current.
-5. **Phase 2 — full Remote-ID (ASTM F3411) decode:** this round only flags OpenDroneID *presence*.
-   Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/
-   map list (another coordinated both-board flash). Heaviest piece; BLE-extended-scan coexistence
-   risk — check against the BLE/15.4 coexistence rule.
-6. **P3 follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
+4. **Pages deploy pending a GitHub incident.** The SCSS/split-webapp + `.nojekyll` commits are on
+   `main`, but a Pages build was queued behind **GitHub Actions `degraded_performance`** (2026-10-05).
+   The live webapp keeps serving the last-good version until it clears; verify with
+   `gh api repos/.../pages/builds/latest --jq .status` and `curl .../webapp/style.css` (expect 200).
+5. **Remote-ID DECODE (ASTM F3411)** — the OpenDroneID/Remote-ID feature's *own* "phase 2" (NOT the
+   signature-matching Phase 2, which shipped). Today the C5 only flags *presence* (`FLAG_BLE_ODID`).
+   Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/map
+   list (another coordinated both-board flash). Heaviest remaining feature; BLE-extended-scan
+   coexistence risk — check against the BLE/15.4 coexistence rule. Backlogged (user: leave it).
+6. **Phase-5 follow-up:** the rotating-RPA phone self-filter guard (the `<hidden>` false positive).
+7. **P3 log follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
    pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
    `g_streamingPath` (defense-in-depth).
-7. Older backlog: 802.15.4 opt-in, phone/desktop SQLite import, CYD Scan Viewer window caching.
+8. Older backlog: 802.15.4 opt-in polish, phone/desktop SQLite import, CYD Scan Viewer window caching.
    (The "strict BLE passivity" item is **dropped** — the passive-only directive was removed; active
-   scanning is now sanctioned, and the active scan's extra UUIDs are captured + matched as of v7.)
-
-*(Done this session, were previously listed here: SEC-M1 random-PSK fix → `32820c2`; CLAUDE.md
-docs sync → `b0b6bc7`.)*
+   scanning is sanctioned, and its extra UUIDs are captured + matched as of v7.)
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.

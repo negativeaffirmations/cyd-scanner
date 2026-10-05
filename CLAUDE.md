@@ -81,8 +81,9 @@ a UART link protocol and are developed together.
 
 - **CYD is the master.** It drives the UI, polls the C5, scores detections against
   the signature DB, logs to SD, and hosts the phone link.
-- **C5 is the scanning co-processor.** It runs Wi-Fi (2.4 + 5 GHz) / BLE scanning
-  (802.15.4 planned) continuously and streams detections back to the CYD on request.
+- **C5 is the scanning co-processor.** It runs Wi-Fi (2.4 + 5 GHz) AP scan, promiscuous
+  probe/IE capture, active BLE scanning, and opt-in 802.15.4 continuously, streaming
+  detections back to the CYD on request.
 - **Phone link (implemented):** the CYD is a BLE GATT peripheral for a phone web app
   (time/GPS sync, log download, DB reload) and can raise an on-demand Wi-Fi SoftAP for
   bulk log download. See "Phone link + web app" below.
@@ -176,7 +177,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
   Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
   active; see the Scope section).
-- **C5 passive behavioral detectors (protocol v6).** Alongside fingerprint capture the C5 decodes
+- **C5 behavioral detectors (added in protocol v6; link now v7).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
   `FLAG_WIFI_PWNAGOTCHI` (beacon DE:AD:BE:EF IE / "pwnd"), `FLAG_WIFI_EVILTWIN` (same SSID from ≥2

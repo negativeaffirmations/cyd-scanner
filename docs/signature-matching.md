@@ -6,7 +6,7 @@ layered engine tailored to this project's two-board hardware. Scope stays **dete
 only** — it scans (actively, including BLE scan-response solicitation) and fingerprints,
 but never attacks or interferes with the devices it observes.
 
-## Implementation status (2026-10-01)
+## Implementation status (2026-10-05)
 
 This document began as *pre-implementation* design notes, and most of the "proposed / target /
 future" language below has since shipped. Authoritative current state (details in §6):
@@ -15,11 +15,18 @@ future" language below has since shipped. Authoritative current state (details i
 |---|---|
 | **Phase 1** — SD signature DB + weighted confidence scoring (§4.1, §4.3) | **Shipped** — `src/cyd/sigdb.*`, `/signatures.csv` |
 | **Phase 2** — promiscuous-mode Wi-Fi capture: client probe requests + 802.11 IE fingerprints (§4.2) | **Shipped** — `src/c5/promisc.*`, the `PH_PROMISC` time-slice hopping 2.4 GHz 1/6/11 |
-| **Phase 3** — BLE signature matching: company ID + service UUID (§4.4) | **Shipped** — `Detection.companyId`/`svc[16]`, `bleuuid`/`blecid` rules |
-| **Phase 4** — 802.15.4 presence/fingerprint (§4.5) | **Shipped** — `src/c5/ieee154.*`, passive sniffer, **opt-in / default-off** |
-| **Phase 5** — spatial/temporal correlation (§4.6) | **In progress** — "following me" heuristic + whitelist landed (CYD); follow-UI redesign + rotating-RPA self-filter guard remain |
+| **Phase 3** — BLE signature matching: company ID + service UUID (§4.4) | **Shipped** — `Detection.companyId`/`svc[16]` + `svc16[]` (extra 16-bit UUIDs, proto v7); `bleuuid`/`blecid` rules match any advertised UUID |
+| **Phase 4** — 802.15.4 presence/fingerprint (§4.5) | **Shipped** — `src/c5/ieee154.*`, receive-only sniffer, **opt-in / default-off** |
+| **Phase 5** — spatial/temporal correlation (§4.6) | **Mostly shipped** — "following me" heuristic + whitelist + follow-UI (device + web app, incl. a session track map); rotating-RPA self-filter guard remains |
 | **Phase 6** — supervised capture → offline correlation (§7) | Planned |
 | Export — PCAP/KML (§4.7) | Not started — on-device logs are NDJSON (`.jsonl`); pcap/SQLite **import** deferred to a host-side tool |
+
+**Additional shipped layers** (beyond the original phase model): **behavioral detectors** on the C5
+(iBeacon / Find My / Pwnagotchi / evil-twin / deauth-flood / OpenDroneID presence) that raise threat
+tiers + fire live alerts, and a **threat-category** taxonomy (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/
+Tracker/Drone/Deauth/Flipper/Skim) with a tappable on-device readout + drill-down, mirrored in the
+web app. Active BLE scanning is on (scan-response names/UUIDs); the project is **detection-only** —
+it scans and fingerprints but never attacks/interferes with observed devices (see CLAUDE.md scope).
 
 **So: promiscuous-mode capture IS implemented.** Where the body below calls it "the biggest gap"
 or "a future architecture addition," read that as the original (now-superseded) framing, kept for
