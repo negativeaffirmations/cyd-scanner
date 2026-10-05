@@ -1989,6 +1989,35 @@ static void drawFileList(const char* title, const FileItem* items, int n, int se
   tft.setTextDatum(TL_DATUM);
 }
 
+// Background-scan threat readout at the bottom of HOME (above the hint line). Counts come from
+// countTiers() (g_score[], kept fresh by the headless bg cycle). Each number is white at 0 and
+// takes its tier colour (same as tierColor()) when > 0. Repaints only its own band (no flicker).
+static constexpr int MENU_THREAT_Y = 248, MENU_THREAT_H = 44;
+static void drawMenuThreats() {
+  int susp, lk, conf; countTiers(susp, lk, conf);
+  int W = tft.width();
+  tft.fillRect(0, MENU_THREAT_Y, W, MENU_THREAT_H, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Background threats", W / 2, MENU_THREAT_Y + 2, 1);
+  const int cnt[3]   = { susp, lk, conf };
+  const char* lbl[3] = { "S:", "L:", "C:" };
+  const int tiers[3] = { (int)sigdb::Tier::Suspect, (int)sigdb::Tier::Likely, (int)sigdb::Tier::Confirmed };
+  const int colW = W / 3;
+  for (int i = 0; i < 3; i++) {
+    char b[8]; snprintf(b, sizeof(b), "%d", cnt[i]);
+    int lw = tft.textWidth(lbl[i], 4), nw = tft.textWidth(b, 4);
+    int x = i * colW + (colW - lw - nw) / 2;
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString(lbl[i], x, MENU_THREAT_Y + 16, 4);
+    tft.setTextColor(cnt[i] > 0 ? tierColor(tiers[i], 0, 0) : TFT_WHITE, TFT_BLACK);
+    tft.drawString(b, x + lw, MENU_THREAT_Y + 16, 4);
+  }
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
+}
+
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
 static void drawMenu() {
   // Item 0 reflects the live phone-link state ("Connected" once a phone is on the GATT link);
@@ -1998,6 +2027,7 @@ static void drawMenu() {
   drawListMenu("HOME", items, MENU_N, g_menuSel);
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+  drawMenuThreats();
 }
 
 // Settings screen: Calibrate Touch / Brightness / Back.
@@ -3572,6 +3602,7 @@ void loop() {
           g_linkOk = pingC5();
           if (g_linkOk) g_lastLinkOkMs = millis();  // keep link stickiness fresh from the menu
           drawStatusBar();  // just the top bar — no full-screen flicker
+          drawMenuThreats();  // live bg-scan tier counts (own band only)
           pushStatus();     // keep the phone informed (incl. scan=0) while idle
         }
       }
