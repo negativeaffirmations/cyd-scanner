@@ -223,8 +223,13 @@ static constexpr int SCANSET_N = 7;  // 4 source tiles (BLE / 2.4 / 5G / 15.4), 
 // then the Whitelist / Back rows on the drawListMenu row style.
 static constexpr int SS_TILE_Y = 70, SS_TILE_H = 44, SS_TILE_GAP = 4, SS_MARGIN = 6;
 static constexpr int SS_ROW_Y0 = 130, SS_ROW_STEP = 40, SS_ROW_H = 34;
-static const char* kMenuItems[] = { "Phone Link", "Scan", "Settings" };
+static const char* kMenuItems[] = { "Scan" };  // Phone Link + Settings are now title-bar icons
 static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
+// HOME title-bar icon buttons: a cog (left = Settings) and a phone (right = Phone Link), on the
+// "HOME" line. They sit in the BOOT nav right after the list buttons (so they're reachable without
+// touch), then the threat chips follow. Selection index: cog = MENU_N, phone = MENU_N+1.
+static constexpr int HOME_ICONS = 2;
+static constexpr int HOME_ICON_R = 11, HOME_ICON_CY = 34;  // radius + vertical centre on the title line
 static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
 static const char* kScanItems[] = { "Scanner", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
@@ -489,6 +494,25 @@ static const char* const kCatName[CAT_N] = {
   "", "Flock", "Axon", "ALPR", "Cam", "Ring", "Raven",
   "Glass", "Tracker", "Drone", "Deauth", "Flipper", "Skim", "Other"
 };
+// One-line "what signatures match this category" blurb, shown atop the category device list.
+static const char* catDescription(int c) {
+  switch (c) {
+    case CAT_FLOCK:   return "Flock OUIs, SoftAP SSID, GATT UUID";
+    case CAT_AXON:    return "Axon OUIs + name prefixes (AB#/AXON)";
+    case CAT_ALPR:    return "ALPR OUIs (Motorola / Genetec)";
+    case CAT_CAM:     return "Camera OUIs (Wyze/Hik/Axis/Arlo)";
+    case CAT_RING:    return "Ring camera/doorbell OUIs";
+    case CAT_RAVEN:   return "Raven BLE UUIDs (0x3100-0x3500)";
+    case CAT_GLASS:   return "Smart-glasses BLE IDs (Meta/Snap)";
+    case CAT_TRACKER: return "Find My + tracker BLE UUIDs (Tile)";
+    case CAT_DRONE:   return "OpenDroneID (BLE 0xFFFA / Wi-Fi)";
+    case CAT_DEAUTH:  return "Deauth / evil-twin / pwnagotchi";
+    case CAT_FLIPPER: return "Flipper OUI / BLE UUID / name";
+    case CAT_SKIM:    return "Card-skimmer BLE modules";
+    case CAT_OTHER:   return "Suspected; no category match";
+    default:          return "";
+  }
+}
 static uint8_t g_category[MAX_DET];  // aligned with g_dets; filled by computeScores()
 static Category categoryOf(int i);   // defined after detLabel() (it reads the resolved label)
 
@@ -2083,34 +2107,43 @@ static constexpr int CHIP_Y0 = 202, CHIP_STEP = 20, CHIP_H = 18, CHIP_COLS = 3;
 static constexpr int MENU_CAT_MAX = CAT_N - 1;  // every named category
 static uint8_t g_menuCat[MENU_CAT_MAX];  // category ids in tile order (fixed), for input dispatch
 static int     g_menuCatN = 0;
+// First g_menuSel index that maps to a threat chip (after the list buttons + the two title icons).
+static constexpr int MENU_CHIP0 = MENU_N + HOME_ICONS;
+
+// Geometry of threat tile i (of n total): top-left x,y and width w. A partial last row is centred
+// (e.g. the lone "OTHER" tile sits in the middle instead of hugging the left column).
+static void chipRect(int i, int n, int& x, int& y, int& w) {
+  int cellW = tft.width() / CHIP_COLS;
+  int rowg = i / CHIP_COLS, col = i % CHIP_COLS;
+  int inRow = min(CHIP_COLS, n - rowg * CHIP_COLS);     // tiles on this row
+  int startX = (tft.width() - inRow * cellW) / 2;        // centre a short row
+  x = startX + col * cellW; y = CHIP_Y0 + rowg * CHIP_STEP; w = cellW;
+}
 
 static void drawMenuThreats() {
   int cnt[CAT_N], worst[CAT_N];
   countCategories(cnt, worst);
   g_menuCatN = CAT_N - 1;                           // always show every category (1..CAT_N-1)
   for (int i = 0; i < g_menuCatN; i++) g_menuCat[i] = (uint8_t)(i + 1);
-  if (g_menuSel >= MENU_N + g_menuCatN) g_menuSel = 0;
+  if (g_menuSel >= MENU_CHIP0 + g_menuCatN) g_menuSel = 0;
 
   int W = tft.width();
   tft.fillRect(0, MENU_THREAT_Y, W, MENU_THREAT_H, TFT_BLACK);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString("Background threats", W / 2, MENU_THREAT_Y + 1, 1);
-  const int cellW = W / CHIP_COLS;
   for (int i = 0; i < g_menuCatN; i++) {
-    int c = g_menuCat[i];
-    int col = i % CHIP_COLS, rowg = i / CHIP_COLS;
-    int x = col * cellW, y = CHIP_Y0 + rowg * CHIP_STEP;
-    bool sel = (g_menuSel == MENU_N + i);
+    int c = g_menuCat[i], x, y, w; chipRect(i, g_menuCatN, x, y, w);
+    bool sel = (g_menuSel == MENU_CHIP0 + i);
     bool hot = cnt[c] > 0;
     uint16_t fg = hot ? tierColor(worst[c], 0, 0) : TFT_DARKGREY;
-    tft.drawRoundRect(x + 1, y, cellW - 2, CHIP_H, 3, sel ? TFT_CYAN : (hot ? fg : 0x2104));
+    tft.drawRoundRect(x + 1, y, w - 2, CHIP_H, 3, sel ? TFT_CYAN : (hot ? fg : 0x2104));
     char b[20];
     snprintf(b, sizeof(b), "%s: %d", kCatName[c], cnt[c]);
     for (char* p = b; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;  // FLOCK: 0 style
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(fg, TFT_BLACK);
-    tft.drawString(b, x + cellW / 2, y + CHIP_H / 2, 1);
+    tft.drawString(b, x + w / 2, y + CHIP_H / 2, 1);
   }
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
@@ -2127,11 +2160,9 @@ static int menuChipTapped() {
   if (now && !prev && g_menuCatN > 0) {
     int16_t sx, sy, z;
     if (g_touch.getScreen(tft, sx, sy, z)) {
-      int cellW = tft.width() / CHIP_COLS;
       for (int i = 0; i < g_menuCatN; i++) {
-        int col = i % CHIP_COLS, rowg = i / CHIP_COLS;
-        int x = col * cellW, y = CHIP_Y0 + rowg * CHIP_STEP;
-        if (sx >= x && sx < x + cellW && sy >= y && sy < y + CHIP_H) { hit = i; break; }
+        int x, y, w; chipRect(i, g_menuCatN, x, y, w);
+        if (sx >= x && sx < x + w && sy >= y && sy < y + CHIP_H) { hit = i; break; }
       }
     }
   }
@@ -2139,13 +2170,63 @@ static int menuChipTapped() {
   return hit;
 }
 
-// Home menu. Reuses the status bar (time / GPS / connection / link dot) up top.
+// --- HOME title-bar icon buttons: cog (Settings, left) + phone (Phone Link, right). Drawn on the
+// "HOME" line; the phone is grey when no phone is on the GATT link, green when connected. ---
+static int homeCogCx()   { return HOME_ICON_R + 6; }
+static int homePhoneCx() { return tft.width() - HOME_ICON_R - 6; }
+
+static void drawCogIcon(int cx, int cy, int r, uint16_t color, bool sel) {
+  if (sel) tft.drawCircle(cx, cy, r + 2, TFT_CYAN);
+  for (int k = 0; k < 8; k++) {                 // 8 teeth
+    float a = k * (float)PI / 4.0f;
+    int tx = cx + (int)(cosf(a) * (r - 1)), ty = cy + (int)(sinf(a) * (r - 1));
+    tft.fillRect(tx - 1, ty - 1, 3, 3, color);
+  }
+  tft.drawCircle(cx, cy, r - 3, color);          // gear body
+  tft.fillCircle(cx, cy, 2, color);              // hub
+}
+
+static void drawPhoneIcon(int cx, int cy, int r, uint16_t color, bool sel) {
+  if (sel) tft.drawCircle(cx, cy, r + 2, TFT_CYAN);
+  tft.drawCircle(cx, cy, r, color);              // circular badge
+  const int bw = 8, bh = 13;                     // smartphone body
+  tft.drawRoundRect(cx - bw / 2, cy - bh / 2, bw, bh, 2, color);
+  tft.drawFastHLine(cx - 2, cy - bh / 2 + 2, 4, color);  // earpiece
+  tft.fillCircle(cx, cy + bh / 2 - 2, 1, color);         // home button
+}
+
+static void drawHomeIcons() {
+  bool conn = phone::connected();
+  drawCogIcon(homeCogCx(), HOME_ICON_CY, HOME_ICON_R, TFT_LIGHTGREY, g_menuSel == MENU_N);
+  drawPhoneIcon(homePhoneCx(), HOME_ICON_CY, HOME_ICON_R, conn ? TFT_GREEN : TFT_DARKGREY,
+                g_menuSel == MENU_N + 1);
+}
+
+// Fresh tap on a HOME title icon: 0 = cog (Settings), 1 = phone (Phone Link), else -1.
+static int homeIconTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return -1; }
+  bool now = g_touch.touched();
+  int  hit = -1;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z)) {
+      int d = HOME_ICON_R + 3;
+      if (abs(sy - HOME_ICON_CY) <= d) {
+        if      (abs(sx - homeCogCx())   <= d) hit = 0;
+        else if (abs(sx - homePhoneCx()) <= d) hit = 1;
+      }
+    }
+  }
+  prev = now;
+  return hit;
+}
+
+// Home menu. Reuses the status bar (time / GPS / connection / link dot) up top. Phone Link and
+// Settings are the two title-bar icons (phone right, cog left); the list holds just Scan.
 static void drawMenu() {
-  // Item 0 reflects the live phone-link state ("Connected" once a phone is on the GATT link);
-  // items 1/2 reuse the shared labels so Scan/Settings stay a single source of truth.
-  const char* items[MENU_N] = { phone::connected() ? "Connected" : kMenuItems[0],
-                                kMenuItems[1], kMenuItems[2] };
-  drawListMenu("HOME", items, MENU_N, g_menuSel);
+  drawListMenu("HOME", kMenuItems, MENU_N, g_menuSel);
+  drawHomeIcons();  // cog (Settings) left + phone (Phone Link) right, on the HOME line
   tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
                            : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
   drawMenuThreats();
@@ -3254,8 +3335,10 @@ static void drawMenuCat() {
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(b, sizeof(b), "%s: %d", kCatName[g_mcCat], g_mcN);
   tft.drawString(b, 4, 46, 1);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString(catDescription(g_mcCat), 4, 58, 1);   // what signatures this category matches
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Tap a device for details", 4, 58, 1);
+  tft.drawString("Tap a device for details", 4, 72, 1);
   drawMenuCatRows(false);
 }
 
@@ -3651,13 +3734,14 @@ static void runDownload() {
 }
 
 // Act on the highlighted menu item (touch tap or long-press select). g_menuSel >= MENU_N selects a
-// threat chip (index g_menuSel - MENU_N into g_menuCat) -> that category's device list.
+// threat chip (index g_menuSel - MENU_CHIP0 into g_menuCat) -> that category's device list.
+// Layout: 0 = Scan (list), MENU_N = cog/Settings, MENU_N+1 = phone/Phone Link, then the chips.
 static void activateMenu() {
-  if (g_menuSel == 0)      { g_screen = SCR_APPQR;    drawAppQrScreen(); }
-  else if (g_menuSel == 1) { g_screen = SCR_SCANMENU; g_scanSel = 0; drawScanMenu(); }   // opens sub-menu; no scan yet
-  else if (g_menuSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
+  if      (g_menuSel < MENU_N)        { g_screen = SCR_SCANMENU; g_scanSel = 0; drawScanMenu(); }  // Scan
+  else if (g_menuSel == MENU_N)       { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }   // cog
+  else if (g_menuSel == MENU_N + 1)   { g_screen = SCR_APPQR;    drawAppQrScreen(); }               // phone
   else {
-    int ci = g_menuSel - MENU_N;
+    int ci = g_menuSel - MENU_CHIP0;
     if (ci >= 0 && ci < g_menuCatN) openMenuCat((Category)g_menuCat[ci]);
   }
 }
@@ -3798,18 +3882,20 @@ void loop() {
   switch (g_screen) {
     case SCR_MENU: {
       int t = tappedRow(MENU_N);
-      if (t >= 0)               { g_menuSel = t; activateMenu(); return; }  // touch select (menu item)
+      if (t >= 0)               { g_menuSel = t; activateMenu(); return; }  // touch select (Scan button)
+      int it = homeIconTapped();
+      if (it >= 0)              { g_menuSel = MENU_N + it; activateMenu(); return; }  // cog / phone icon
       int ct = menuChipTapped();
-      if (ct >= 0)              { g_menuSel = MENU_N + ct; activateMenu(); return; }  // touch select (threat chip)
-      int navN = MENU_N + g_menuCatN;  // BOOT walks the 3 items, then the threat chips
+      if (ct >= 0)              { g_menuSel = MENU_CHIP0 + ct; activateMenu(); return; }  // touch select (threat chip)
+      int navN = MENU_CHIP0 + g_menuCatN;  // BOOT walks Scan, the two icons, then the threat chips
       if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % navN; drawMenu(); }
       else if (ev == BTN_LONG)  { activateMenu(); }
       else {  // idle: re-check the C5 link and refresh the status bar (dot + clock)
         static uint32_t lastPing = 0;
         static bool lastConn = false;
-        if (phone::connected() != lastConn) {  // phone link came up/down: refresh the "Phone Link"/"Connected" row
+        if (phone::connected() != lastConn) {  // phone link came up/down: recolour the phone icon
           lastConn = phone::connected();
-          drawMenu();  // repaints status bar too
+          drawStatusBar(); drawHomeIcons();  // no full-screen flicker
         }
         if (millis() - lastPing > 2000) {
           lastPing = millis();

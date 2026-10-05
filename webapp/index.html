@@ -309,6 +309,7 @@
       <strong id="catTitle">Category</strong>
       <button id="catClose" class="xbtn" aria-label="Close">&times;</button>
     </div>
+    <div id="catDesc" class="sub" style="margin-bottom:.2em;color:#c9d1d9"></div>
     <div class="sub" style="margin-bottom:.5em">Threat devices in this category. Tap one for details.</div>
     <div id="catList" class="dets" style="max-height:60vh"></div>
   </dialog>
@@ -849,6 +850,21 @@ const DEAUTH_ALERT = 20;   // frames/s the C5 reports before the banner shows (m
 const FLAG_BADGES = [[8,"iB","iBeacon"],[16,"FM","Find My"],[32,"PWN","Pwnagotchi"],[64,"ET","Evil Twin"],[128,"RID","Drone Remote ID"]];
 // DETS v5 trailing field: threat-category id -> name (must match the CYD's Category enum order).
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
+// What signatures each category matches (shown atop the category device list).
+const CAT_DESC = ["",
+  "Flock OUIs, SoftAP SSID, GATT UUID",
+  "Axon OUIs + name prefixes (AB#/AXON)",
+  "ALPR OUIs (Motorola / Genetec)",
+  "Camera OUIs (Wyze / Hikvision / Axis / Arlo)",
+  "Ring camera / doorbell OUIs",
+  "Raven BLE service UUIDs (0x3100–0x3500)",
+  "Smart-glasses BLE company IDs / UUIDs (Meta / Snap)",
+  "Find My + tracker BLE UUIDs (Tile / AirTag / SmartTag)",
+  "OpenDroneID presence (BLE 0xFFFA / Wi-Fi IE)",
+  "Deauth frames / evil-twin APs / pwnagotchi",
+  "Flipper Zero OUI / BLE UUID / name",
+  "Card-skimmer BLE modules",
+  "Suspected device, no specific category match"];
 function flagBadges(bits){
   return FLAG_BADGES.filter(f=>bits&f[0]).map(f=>`<span class="flagb" title="${f[2]}">${f[1]}</span>`).join("");
 }
@@ -990,6 +1006,7 @@ function catRows(catId){
 function openCatModal(catId){
   const rows = catRows(catId);
   $("catTitle").textContent = (CAT_NAMES[catId]||"Category") + " — " + rows.length + " device(s)";
+  $("catDesc").textContent = CAT_DESC[catId] || "";
   const el = $("catList");
   if (!rows.length){
     el.innerHTML = '<div class="sub" style="padding:6px">No devices in this category right now.</div>';
