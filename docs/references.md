@@ -60,18 +60,42 @@ near-verbatim reuse is what triggers the rules above.**
   - **`regulars` / `ignore_list`** — their recurring-device + self-filter approach (compare to our
     follow heuristic + whitelist + the rotating-RPA self-filter problem).
   - **PC/browser emulator** (same C++ compiled for desktop) — a dev/test idea we don't have.
-- **License:** **GPL-3.0 (copyleft).** ⚠️ This project ships no `LICENSE`; **do NOT copy/port its
-  code** — doing so would force cyd-scanner to become GPL-3.0. Read it for *ideas* and reimplement
-  cleanly; curated signature lists are their work, so attribute if any are reused (and prefer
-  re-deriving OUIs from the IEEE registry directly). Transmit note: its only active TX is the
+- **License:** **GPL-3.0 (copyleft).** cyd-scanner is **now GPL-3.0 too** (see `/LICENSE`, adopted
+  2026-10-04), so its code and signature data **may be reused/ported with attribution** — no longer
+  all-rights-reserved-blocked. Still: curated signature lists are their work, so attribute reuse
+  (and prefer re-deriving OUIs from the IEEE registry where practical). Reimplement their *logic*
+  cleanly rather than copying large C++ blocks verbatim. Transmit note: its only active TX is the
   **"squad" mesh, which rides BLE advertising** (not ESP-NOW) — manufacturer data, company ID
   0xFFFF, encrypted chat via AES-128-CCM keyed by a shared 5-word phrase — plus Wi-Fi for OTA/NTP.
   Its **LoRa feature is receive-only** (a passive sniffer/decoder for Meshtastic/MeshCore/LoRaWAN/
   APRS/FANET, CrowPanel-7 only). So only the BLE squad beacon is outside this project's strict
   passive/receive-only charter; the LoRa sniffing is compatible with it.
-- **Status:** reference only; no code used yet.
+- **Status:** **signature DATA reused** (2026-10-04) — see "Code actually used" below.
 
 ## Code actually used
 
-*(none yet)* — when code from a cataloged project is adapted into cyd-scanner, record it here:
-project, what was used, where it landed (file/function), the license, and the attribution added.
+### SquachWatch-CYD — surveillance-device signature DATA (2026-10-04)
+
+- **What was used:** signature *data only* (MAC OUI prefixes, BLE service UUIDs, BLE manufacturer
+  company IDs, and SSID/BLE-name patterns) for surveillance/tracker device classes cyd-scanner
+  previously lacked: **Axon** body cameras, **ALPR** (Motorola/Vigilant + Genetec AutoVu),
+  consumer/commercial **cameras** (Wyze, Hikvision, Amazon, Arlo, Blink, Tuya, Verkada, Avigilon,
+  Axis), **Ring**, BLE **trackers** (Tile, Samsung SmartTag, Google Find My), **Ray-Ban Meta** +
+  **Snap Spectacles** camera glasses, **Flipper Zero / Wi-Fi Pineapple / deauther**, **OpenDroneID**
+  (Remote-ID) + **Raven** gunshot-detector BLE UUIDs, plus a few Flock BLE/module signals.
+  No C++ logic was copied — only the fact tables were extracted and re-expressed as `sigdb` rules.
+- **Where it landed:** `src/cyd/sigdb.cpp` (the compiled seed / `kSeedCsv`), self-seeded to the SD
+  card as `/signatures.csv`. An attribution comment sits directly above the added rules.
+- **Source:** SquachWatch-CYD by *skizzophrenic*, `src/signatures.cpp` @ commit `f49ecbe`
+  (https://github.com/skizzophrenic/SquachWatch-CYD).
+- **License:** GPL-3.0 — compatible, as cyd-scanner is now GPL-3.0 (`/LICENSE`).
+- **Upstream credits carried forward:** Flock OUIs via `colonelpanichacks/flock-you` (MIT) + the
+  DeFlock community field list; Ring/Verkada/Avigilon/Axis/Motorola OUIs read from the public
+  **IEEE MA-L registry**; Flipper constants verified against IEEE + Bluetooth SIG registries.
+- **Deliberately NOT ported:** BT-Classic skimmer signatures (scanner build is BLE-only, so
+  unobservable); and the behavioral/payload matchers (iBeacon, AirTag raw-advert payload,
+  Pwnagotchi beacon-IE, evil-twin, deauth-burst, full ASTM F3411 Remote-ID decode) — these aren't
+  identifier lookups and would need dedicated detector code (candidate future C5-side work).
+
+*When further code/data from a cataloged project is adapted, record it here too: project, what was
+used, where it landed (file/function), the license, and the attribution added.*
