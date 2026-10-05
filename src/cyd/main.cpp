@@ -428,10 +428,68 @@ static void countBands(int& n24, int& n5, int& nble, int& nprb, int& n154) {
   }
 }
 
-// Score every current detection against the signature DB (aligned into g_score[]).
-static void computeScores() {
-  for (int i = 0; i < g_detCount; i++) sigdb::score(g_dets[i], g_score[i]);
+// --- C5 behavioral-detector flags (Detection.flags, protocol v6). Notable flags carry a minimum
+// threat tier (applied after sigdb::score), a short on-screen label that overrides the sigdb
+// signature label, and a lowercase token for the NDJSON "flags" key. iBeacon is informational
+// only (no tier bump). Order = label priority when several are set. ---
+struct FlagRule { uint16_t bit; sigdb::Tier floor; const char* label; const char* token; };
+static const FlagRule kFlagRules[] = {
+  { FLAG_BLE_FINDMY,      sigdb::Tier::Suspect, "Find My",    "findmy"     },
+  { FLAG_WIFI_PWNAGOTCHI, sigdb::Tier::Likely,  "Pwnagotchi", "pwnagotchi" },
+  { FLAG_WIFI_EVILTWIN,   sigdb::Tier::Likely,  "Evil Twin",  "eviltwin"   },
+  { FLAG_BLE_ODID,        sigdb::Tier::Suspect, "Drone RID",  "droneid"    },
+  { FLAG_BLE_IBEACON,     sigdb::Tier::None,    "iBeacon",    "ibeacon"    },
+};
+static constexpr uint16_t FLAGS_NOTABLE = FLAG_BLE_IBEACON | FLAG_BLE_FINDMY | FLAG_WIFI_PWNAGOTCHI |
+                                          FLAG_WIFI_EVILTWIN | FLAG_BLE_ODID;
+static char g_flagLabel[MAX_DET][16];  // aligned with g_dets; "" when no notable flag
+
+// '+'-joined token list of the notable flags in `flags` ("" if none).
+static void flagTokens(uint16_t flags, char* out, size_t cap) {
+  size_t o = 0;
+  if (cap) out[0] = 0;
+  for (const FlagRule& r : kFlagRules) {
+    if (!(flags & r.bit)) continue;
+    int w = snprintf(out + o, cap - o, o ? "+%s" : "%s", r.token);
+    if (w < 0 || (size_t)w >= cap - o) { out[o] = 0; break; }
+    o += w;
+  }
 }
+
+// Label to show for detection i: the flag label when one exists, else the sigdb signature label.
+static const char* detLabel(int i) {
+  return g_flagLabel[i][0] ? g_flagLabel[i] : sigdb::labelFor(g_score[i]);
+}
+
+// Score every current detection against the signature DB (aligned into g_score[]), then raise
+// the tier to at least each set flag's floor and record the flag label.
+static void computeScores() {
+  for (int i = 0; i < g_detCount; i++) {
+    sigdb::score(g_dets[i], g_score[i]);
+    g_flagLabel[i][0] = 0;
+    for (const FlagRule& r : kFlagRules) {
+      if (!(g_dets[i].flags & r.bit)) continue;
+      if (r.floor > g_score[i].tier) g_score[i].tier = r.floor;
+      if (!g_flagLabel[i][0]) snprintf(g_flagLabel[i], sizeof(g_flagLabel[i]), "%s", r.label);
+    }
+  }
+}
+
+// --- Aggregate C5 events (Status.deauth_recent / evil_count / rid_count, protocol v6). The values
+// are refreshed by every requestScan(); an alert is held for EVENT_HOLD_MS so a one-cycle burst
+// stays visible across the ~2 s poll cadence. Receive-side only: these are counts of frames the C5
+// OBSERVED, nothing is transmitted. ---
+#define DEAUTH_ALERT      20        // deauth/disassoc frames in the C5's last ~1 s that raise the alert
+#define EVENT_HOLD_MS     6000UL    // keep an alert up this long after the last trigger
+#define EVENT_LOG_GAP_MS  30000UL   // log at most one event line per type per this interval
+static uint16_t g_deauthRecent = 0;
+static uint8_t  g_evilCount = 0, g_ridCount = 0;
+static uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
+static uint8_t  g_evilShown = 0;
+static uint32_t g_deauthUntil = 0, g_evilUntil = 0;  // millis() deadlines (0 = never raised)
+static bool deauthAlertActive() { return g_deauthUntil && (int32_t)(g_deauthUntil - millis()) > 0; }
+static bool evilAlertActive()   { return g_evilUntil   && (int32_t)(g_evilUntil   - millis()) > 0; }
+static bool eventAlertActive()  { return deauthAlertActive() || evilAlertActive(); }
 
 // Fill idx[0..g_detCount) with detection indices sorted threat-tier-first then
 // RSSI — the order shown on screen and streamed to the phone. Returns the count.
@@ -457,6 +515,7 @@ struct DevGroup {
   bool     whitelisted;  // matches a /whitelist.csv rule (muted; excluded from threat counts)
   char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
   char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
+  uint16_t flags;     // union of the notable C5 detector flags (FLAGS_NOTABLE) across members
   uint8_t  srcMask;   // union of srcType bits (2.4/5G/BLE/PRB/154) across members; computed at
                       // build time so the live-view/snapshot filter never depends on the transient
                       // g_dets table (which requestScan() zeroes, and an aborted scan leaves empty)
@@ -512,13 +571,14 @@ static int buildGroups() {
       DevGroup& g = g_groups[gi];
       memcpy(g.mac, d.mac, 6);
       g.tier = (int)g_score[i].tier; g.bestRssi = d.rssi; g.rep = i;
-      g.nameIdx = -1; g.ie = 0; g.whitelisted = false; g.srcMask = 0;
+      g.nameIdx = -1; g.ie = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0;
     }
     DevGroup& g = g_groups[gi];
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
     if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
     if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
+    g.flags |= (uint16_t)(d.flags & FLAGS_NOTABLE);
     g.srcMask |= (uint8_t)(1u << srcTypeOf(srcTag(d)));
   }
   // Whitelist check per device (before the sort, which uses it): union of member sources,
@@ -881,7 +941,8 @@ static int logNewDetections() {
     jsonEscape(safe, sizeof(safe), d.name);
     const sigdb::ScoreResult& sc = g_score[i];
     char sig[49];
-    jsonEscape(sig, sizeof(sig), sigdb::labelFor(sc));
+    jsonEscape(sig, sizeof(sig), detLabel(i));
+    char flagStr[64]; flagTokens(d.flags, flagStr, sizeof(flagStr));
     char panStr[5]; panStr[0] = 0;  // hex PAN, 802.15.4 only
     if (d.source == (uint8_t)Source::Ieee802154 && d.panId) snprintf(panStr, sizeof(panStr), "%04X", d.panId);
     char uuidStr[33]; uuidStr[0] = 0;
@@ -911,6 +972,7 @@ static int logNewDetections() {
     if (safe[0])     lnAppend(ln, n2, ",\"name\":\"%s\"", safe);
     lnAppend(ln, n2, ",\"score\":%d,\"tier\":\"%s\"", sc.score, sigdb::tierName(sc.tier));
     if (sig[0])      lnAppend(ln, n2, ",\"sig\":\"%s\"", sig);
+    if (flagStr[0])  lnAppend(ln, n2, ",\"flags\":\"%s\"", flagStr);
     lnAppend(ln, n2, ",\"wl\":%d", wl ? 1 : 0);
     if (n2 > (int)LOG_LINE - 2) continue;  // can't close the object in-buffer: drop the row, never write truncated JSON
     ln[n2++] = '}'; ln[n2++] = '\n';
@@ -918,6 +980,45 @@ static int logNewDetections() {
   }
   if (f) f.close();
   return n;
+}
+
+// Append one event line to the current session log:
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N}
+// No "mac" key, so the Explore viewer's row parser skips it; the web Map renders it as an event pin.
+static void logEvent(const char* evt, int count) {
+  if (!ensureLogFile()) return;
+  File f = SD.open(g_logPath, FILE_APPEND);
+  if (!f) return;
+  char ln[160];
+  int n = 0;
+  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
+  if (phone::hasGps() && isfinite(phone::lat()) && isfinite(phone::lon()))
+    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+  lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d}\n", evt, count);
+  if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  f.close();
+}
+
+// Raise/hold the deauth + evil-twin alerts from the latest C5 Status and log an event line for each
+// type at most once per EVENT_LOG_GAP_MS (never per cycle).
+static void updateEvents() {
+  uint32_t now = millis();
+  static uint32_t lastLog[2] = {0, 0};
+  static bool     logged[2]  = {false, false};
+  if (g_deauthRecent >= DEAUTH_ALERT) {
+    g_deauthUntil = now + EVENT_HOLD_MS; if (!g_deauthUntil) g_deauthUntil = 1;
+    g_deauthShown = g_deauthRecent;
+    if (!logged[0] || now - lastLog[0] >= EVENT_LOG_GAP_MS) {
+      logged[0] = true; lastLog[0] = now; logEvent("deauth", g_deauthRecent);
+    }
+  }
+  if (g_evilCount > 0) {
+    g_evilUntil = now + EVENT_HOLD_MS; if (!g_evilUntil) g_evilUntil = 1;
+    g_evilShown = g_evilCount;
+    if (!logged[1] || now - lastLog[1] >= EVENT_LOG_GAP_MS) {
+      logged[1] = true; lastLog[1] = now; logEvent("eviltwin", g_evilCount);
+    }
+  }
 }
 
 // Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
@@ -1145,6 +1246,7 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
         }
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
+        g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
         if (st->scanning != 0) sawStart = true;
         else                   done     = true;
       }
@@ -1169,26 +1271,30 @@ static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(sb, sizeof(sb));
-  char s[288];
+  char s[320];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, g_seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
-           whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0);
+           whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
+           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount);
   phone::setStatus(String(s));
 }
 
 // Stream the live detection list to the phone so its app mirrors the CYD screen.
-// DETS stream v3 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
+// DETS stream v4 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
 // row per device (one MAC, merged across sources), top-of-list first:
 //   <seq>\t<tier>\t<mac>\t<bestRssi>\t<ie>\t<name>\t<tag:rssi,tag:rssi,...>\t<ftier>\t<fscore>\t<muted>
 // where <ftier> is the follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), <fscore> the
 // 0..100 follow score, and <muted> is 1 when the device matches a whitelist rule. These
 // three trailing fields were appended in v3; older web parsers that read by fixed index
-// (fields 0..6) ignore them, so the change is backward-compatible.
+// (fields 0..6) ignore them, so the change is backward-compatible. v4 appends ONE more trailing
+// field, <flags>: the decimal DetFlags bits (FLAGS_NOTABLE only: iBeacon 8 / Find My 16 /
+// Pwnagotchi 32 / Evil Twin 64 / Drone RID 128) OR'd across the device's members, 0 if none.
+// Older parsers read fields 0..9 and ignore it.
 // The app drops rows whose seq != the current header's and swaps the list in only when
 // the snapshot is complete. Fallbacks considered and held in reserve if this proves
 // lossy: (a) a length-prefixed blob like the log download, (b) a polled READ
@@ -1217,8 +1323,10 @@ static void pushDetections() {
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
     // v3 trailing fields: follow tier / follow score / muted (whitelisted) — all CYD-computed.
     const FollowState* f = findFollow(g.mac);
-    snprintf(row + len, sizeof(row) - len, "\t%d\t%d\t%d",
-             f ? f->ftier : 0, f ? f->score : 0, g.whitelisted ? 1 : 0);
+    len += snprintf(row + len, sizeof(row) - len, "\t%d\t%d\t%d",
+                    f ? f->ftier : 0, f ? f->score : 0, g.whitelisted ? 1 : 0);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.flags);  // v4 trailing: notable flag bits
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }
@@ -1484,14 +1592,30 @@ static void drawScanInfo() {
   // State band (y64..75, BANNER_Y/H): a tappable magenta follow alert when devices are flagged
   // (opens the drill-down), else one-shot feedback, else the scan state + tier counts. The
   // scan/pause state is also shown by the buttons. Plain '!' (the TFT font has no warning glyph).
-  if (g_followN > 0) {
-    tft.fillRect(0, BANNER_Y, tft.width(), BANNER_H, TFT_MAGENTA);
+  bool evA = eventAlertActive();
+  if (g_followN > 0 || evA) {
+    // Red deauth / evil-twin alert (full width alone, right half when stacked with the follow
+    // banner, which keeps the left half and stays tappable anywhere on the band).
+    int W = tft.width(), fw = evA ? W / 2 : W;
     tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
-    snprintf(buf, sizeof(buf), "! FOLLOWING: %d  (tap)", g_followN);
-    tft.drawString(buf, tft.width() / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
+    if (g_followN > 0) {
+      tft.fillRect(0, BANNER_Y, fw, BANNER_H, TFT_MAGENTA);
+      tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
+      snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", g_followN);
+      tft.drawString(buf, fw / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
+    }
+    if (evA) {
+      int x0 = (g_followN > 0) ? fw : 0;
+      tft.fillRect(x0, BANNER_Y, W - x0, BANNER_H, TFT_RED);
+      tft.setTextColor(TFT_WHITE, TFT_RED);
+      char a[32];
+      int an = snprintf(a, sizeof(a), "! ");
+      if (deauthAlertActive()) an += snprintf(a + an, sizeof(a) - an, "DEAUTH:%d ", (int)g_deauthShown);
+      if (evilAlertActive())   an += snprintf(a + an, sizeof(a) - an, "EVIL:%d", (int)g_evilShown);
+      tft.drawString(a, x0 + (W - x0) / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
+    }
     tft.setTextDatum(TL_DATUM);
-    g_scanMsg = nullptr;  // discard any pending one-shot while a follow alert is up
+    g_scanMsg = nullptr;  // discard any pending one-shot while an alert is up
   } else if (g_scanMsg) {  // one-shot feedback (e.g. whitelist add / new session), once
     tft.setTextColor(g_scanMsgCol, TFT_BLACK);
     tft.drawString(g_scanMsg, 4, BANNER_Y + 1, 1);
@@ -2502,8 +2626,10 @@ static void openFollowDetail() {
   if (best >= 0) {
     snprintf(b, sizeof(b), "%s (%d)", sigdb::tierName(g_score[best].tier), g_score[best].score);
     addField("Threat tier", b, tierColor((int)g_score[best].tier, (uint8_t)Source::WifiScan, 0));
-    const char* lbl = sigdb::labelFor(g_score[best]);
+    const char* lbl = detLabel(best);
     if (lbl && lbl[0]) addField("Signature", lbl);
+    char ft[64]; flagTokens(g_dets[best].flags, ft, sizeof(ft));
+    if (ft[0]) addField("Flags", ft);
   } else addField("Threat tier", "none");
   snprintf(b, sizeof(b), "%d / 100", f.score);
   addField("Follow score", b);
@@ -2728,8 +2854,9 @@ static void openScanDetail(const uint8_t* mac) {
     if (best >= 0) {
       snprintf(b, sizeof(b), "%s (%d)", sigdb::tierName(g_score[best].tier), g_score[best].score);
       addField("Threat tier", b, tierColor((int)g_score[best].tier, (uint8_t)Source::WifiScan, 0));
-      const char* lbl = sigdb::labelFor(g_score[best]);
+      const char* lbl = detLabel(best);
       if (lbl && lbl[0]) addField("Signature", lbl);
+      if (g->flags) { char ft[64]; flagTokens(g->flags, ft, sizeof(ft)); addField("Flags", ft); }
     } else addField("Threat tier", "none");
     if (g->whitelisted) addField("Whitelisted", "yes (muted)", TFT_DARKGREY);
     uint16_t cid = 0; const uint8_t* svc = nullptr;
@@ -3060,6 +3187,20 @@ static void activateSettings(int sel) {
   }
 }
 
+// Scan-cycle LED (works headless). Event alert (deauth / evil twin) blinks red each cycle, alternating
+// with magenta when a follow alert is also up, else with the link colour; follow alone = solid
+// magenta; otherwise link green/red.
+static void applyScanLed() {
+  static bool phase = false;
+  phase = !phase;
+  if (eventAlertActive()) {
+    if (phase) setLed(true, false, false);
+    else if (g_followN > 0) setLed(true, false, true);
+    else setLed(!g_linkOk, g_linkOk, false);
+  } else if (g_followN > 0) setLed(true, false, true);
+  else setLed(!g_linkOk, g_linkOk, false);
+}
+
 // One scan → score → log → render cycle, also mirrored to the phone app.
 static void runScanCycle() {
   if (!requestScan()) {
@@ -3069,8 +3210,8 @@ static void runScanCycle() {
     // the phone, and keep the link dot/LED green until LINK_STICKY_MS of total silence. Re-poll soon
     // so we catch the C5 the moment it frees up, instead of waiting the full cadence.
     g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
-    if (g_followN > 0) setLed(true, false, true);
-    else               setLed(!g_linkOk, g_linkOk, false);
+    if (!g_linkOk) { g_deauthRecent = 0; g_evilCount = 0; g_ridCount = 0; }  // no stale C5 events
+    applyScanLed();
     if (g_screen == SCR_SCAN) drawStatusBar();  // link dot + clock only (never touches the list region); headless in background
     g_lastCycleMs = millis() - (SCAN_CYCLE_MS - SCAN_RETRY_MS);  // fire the next poll in ~SCAN_RETRY_MS
     return;
@@ -3081,9 +3222,8 @@ static void runScanCycle() {
   updateFollowState();
   computeFollowScores();
   if (!g_viewFrozen) buildScanView();  // a paused view keeps its snapshot while scanning continues
-  // Follow alert wins the LED (solid magenta, works headless); else link green/red.
-  if (g_followN > 0) setLed(true, false, true);
-  else               setLed(!g_linkOk, g_linkOk, false);
+  updateEvents();   // deauth / evil-twin alert hold + rate-limited event log lines
+  applyScanLed();   // alert / follow / link LED (works headless)
   int newCount = logNewDetections();
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);

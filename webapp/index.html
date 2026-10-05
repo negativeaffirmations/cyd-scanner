@@ -113,6 +113,17 @@
   .det.muted { opacity:.5; }
   .det.following { box-shadow: inset 2px 0 0 #ff5cbf; }
   .folscore { flex:0 0 4.2em; text-align:right; font-family:ui-monospace,monospace; color:#f3b6e4; }
+  /* Deauth / evil-twin event alert banner (red; mirrors .folbanner, driven by STATUS deauth=/evil=). */
+  .alertbanner { display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+    padding:.6em .8em; border-radius:10px; font-weight:600;
+    background:rgba(248,81,73,.16); border:1px solid #f85149; color:#ffb4ae; }
+  .alertbanner .acount { margin-left:auto; font-family:ui-monospace,monospace; }
+  /* Small badge on detection rows that carry C5 detector flag bits (DETS v4). */
+  .flagb { display:inline-block; font-family:ui-monospace,monospace; font-size:.62rem; font-weight:700;
+    padding:0 4px; margin-left:.35em; border-radius:4px; line-height:1.4; vertical-align:middle;
+    background:rgba(88,166,255,.2); color:#9ecbff; }
+  .evpin { width:18px; height:18px; line-height:18px; text-align:center; border-radius:4px; font-weight:700;
+    font-size:12px; color:#fff; border:1px solid #fff; }
   #folDetMap { height:220px; width:100%; border-radius:8px; background:#0b0e13; margin-top:.7em; }
 </style>
 </head>
@@ -187,6 +198,7 @@
   <h3 style="margin:.6em 0 .3em">Live detections
     <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
   <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
+  <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
   <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
   <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
@@ -298,6 +310,7 @@
       <label><input type="checkbox" id="fble" checked> BLE</label>
       <label><input type="checkbox" id="fprb" checked> PRB</label>
       <label><input type="checkbox" id="f154" checked> 15.4</label>
+      <label><input type="checkbox" id="fEvents" checked> Events</label>
     </div>
     <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
     <div id="map"></div>
@@ -306,7 +319,7 @@
   <h3 style="margin-bottom:.3em">Activity</h3>
   <div id="log"></div>
 
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-02c</div>
+  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-04a</div>
 
 <script>
 const SVC  = "9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f";
@@ -382,7 +395,7 @@ async function connect(){
 }
 
 function onDisconnect(){ setConn("disconnected"); log("Disconnected."); connected=false;
-  $("folBanner").style.display = "none"; lastDetRows = [];   // clear the follower alert
+  $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";
   ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154"]
@@ -620,7 +633,7 @@ async function setBrightness(v){
 }
 
 // --- Wardriving map (Leaflet) ---
-let lmap=null, mapLayer=null, mapDets=[];
+let lmap=null, mapLayer=null, mapDets=[], mapEvents=[];
 const TIER_COL=["#3388ff","#e3b341","#db8b2a","#f85149"];  // none / suspect / likely / confirmed
 function tierNum(t){ return t==="confirmed"?3 : t==="likely"?2 : t==="suspect"?1 : 0; }
 
@@ -679,7 +692,7 @@ function parseScanNdjson(text){
       source:s(o.src), mac:s(o.mac), rssi:parseInt(o.rssi,10)||0, channel:s(o.ch),
       ie:s(o.ie), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
       score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig),
-      wl:(o.wl==1||o.wl===true)});
+      flags:s(o.flags), wl:(o.wl==1||o.wl===true)});
   }
   return rows;
 }
@@ -689,15 +702,32 @@ function parseScanLog(text){
   return t[0]==="{" ? parseScanNdjson(t) : parseScanCsv(t);
 }
 const hasGps=r=>isFinite(r.lat)&&isFinite(r.lon)&&!(r.lat===0&&r.lon===0);
+// Event lines (NDJSON objects with an "evt" key: deauth / eviltwin / droneid, no "mac") are skipped by
+// the row parser above; this collects the geolocated ones for the map's event pins.
+function parseScanEvents(text){
+  const out=[];
+  for(const ln of (text||"").split(/\r?\n/)){
+    if(ln[0]!=="{" || !ln.includes('"evt"')) continue;
+    let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
+    if(!o || !o.evt) continue;
+    out.push({evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
+      ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)});
+  }
+  return out;
+}
+const EVT_STYLE={deauth:{col:"#f85149",ch:"D",name:"Deauth flood"}, eviltwin:{col:"#d29922",ch:"E",name:"Evil twin"},
+  droneid:{col:"#58a6ff",ch:"R",name:"Drone Remote ID"}};
 
 // Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
 function plotCsvText(text, label){
   const all=parseScanLog(text);
-  if(!all.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
+  mapEvents=parseScanEvents(text).filter(hasGps);
+  if(!all.length && !mapEvents.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
   mapDets=all.filter(hasGps);
   if(!$("mapDlg").open) openMap(); else renderMap();
   const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
-  $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points.";
+  $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points"+
+    (mapEvents.length?", "+mapEvents.length+" event pin(s).":".");
 }
 
 // Group filtered detections by GPS fix and draw one marker per location.
@@ -730,13 +760,28 @@ function renderMap(){
       '<div class="plist">'+esc(shown+more)+"</div>",{maxWidth:320});
     m.addTo(mapLayer); pts.push([g.lat,g.lon]);
   });
+  if($("fEvents").checked) for(const e of mapEvents){   // event pins (deauth / eviltwin / droneid)
+    const st=EVT_STYLE[e.evt]||{col:"#8b949e",ch:"!",name:e.evt};
+    const m=L.marker([e.lat,e.lon],{icon:L.divIcon({className:"",iconSize:[18,18],
+      html:`<div class="evpin" style="background:${st.col}">${st.ch}</div>`})});
+    m.bindPopup("<b>"+esc(st.name)+"</b><br>count "+e.count+"<br>"+(e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+
+      "<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5));
+    m.addTo(mapLayer); pts.push([e.lat,e.lon]);
+  }
   if(pts.length) lmap.fitBounds(pts,{padding:[30,30]});
 }
 
 // --- Live detections v3: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot,
 // one row per MAC): seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi")
-// [ftier fscore muted] — the last three (follow tier 0/1/2, follow score, muted flag) were
+// [ftier fscore muted flags] — v4 appended the decimal flag bits (iBeacon 8, Find My 16, Pwnagotchi 32,
+// Evil Twin 64, Drone RID 128); the ftier/fscore/muted three (follow tier 0/1/2, follow score, muted flag) were
 // added in v3; rows from older firmware have only the first 7 fields and parse fine. ---
+const DEAUTH_ALERT = 20;   // frames/s the C5 reports before the banner shows (matches the device)
+// DETS v4 trailing field: decimal DetFlags bits -> short badge label + title.
+const FLAG_BADGES = [[8,"iB","iBeacon"],[16,"FM","Find My"],[32,"PWN","Pwnagotchi"],[64,"ET","Evil Twin"],[128,"RID","Drone Remote ID"]];
+function flagBadges(bits){
+  return FLAG_BADGES.filter(f=>bits&f[0]).map(f=>`<span class="flagb" title="${f[2]}">${f[1]}</span>`).join("");
+}
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
 let emptyStreak = 0;
@@ -774,7 +819,8 @@ function onDets(ev){
   detState.rows.push({seq, tier:+p[1], mac:p[2], rssi:+p[3], ie:p[4], name:p[5], sources,
                       ftier: p.length>7 ? (+p[7]||0) : 0,   // DETS v3: follow tier (0/1/2)
                       fscore: p.length>8 ? (+p[8]||0) : 0,   // follow score 0..100
-                      muted: p.length>9 ? p[9]==="1" : false});
+                      muted: p.length>9 ? p[9]==="1" : false,
+                      flags: p.length>10 ? (+p[10]||0) : 0});   // DETS v4: notable flag bits
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -804,7 +850,7 @@ function renderDetList(el, rows, opts){
     const ft = viewer ? 0 : (r.ftier||0);                 // follow tier (live rows only)
     const muted = !viewer && r.muted;
     const fmk = ft>=1 ? `<span class="fmark f${ft}" title="${ft===2?'Possible follower':'Persistent'}">${ft===2?'⚑':'•'}</span> ` : "";
-    const nm = fmk + (esc(r.name) || "&lt;hidden&gt;");
+    const nm = fmk + (esc(r.name) || "&lt;hidden&gt;") + (viewer ? "" : flagBadges(r.flags||0));
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
     const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : r.sources).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
@@ -908,6 +954,7 @@ function openDetail(r){
   const rowsKv=[["Name",r.name||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
     ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
   if(r.wl) rowsKv.push(["Whitelisted","yes (muted)"]);
+  if(r.flags) rowsKv.push(["Flags",r.flags.replace(/\+/g,", ")]);
   if(r.pan) rowsKv.push(["PAN ID",r.pan]);
   if(r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint",r.ie]);
   if(r.cid && !/^0+$/.test(r.cid)) rowsKv.push(["BLE company ID",r.cid]);
@@ -1026,6 +1073,13 @@ function onStatus(ev){
   if("muted"in kv) $("wlMuted").textContent = kv.muted;
   if("fol"in kv){ const nf = +kv.fol||0;
     $("folBanner").style.display = nf>0 ? "flex" : "none"; $("folCount").textContent = nf; }
+  if("deauth"in kv || "evil"in kv){   // C5 deauth / evil-twin event counts (STATUS deauth=/evil=)
+    const da = +kv.deauth||0, ev = +kv.evil||0, parts = [];
+    if(da >= DEAUTH_ALERT) parts.push("Deauth flood: "+da+" frames/s");
+    if(ev > 0) parts.push("Evil twin: "+ev+" SSID"+(ev>1?"s":""));
+    $("alertBanner").style.display = parts.length ? "flex" : "none";
+    $("alertText").textContent = parts.join(" · ");
+  }
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
@@ -1080,7 +1134,7 @@ $("mapBtn").onclick = openMap;
 $("mapClose").onclick = ()=> $("mapDlg").close();
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;
-["fThreats","f24","f5","fble","fprb","f154"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
+["fThreats","f24","f5","fble","fprb","f154","fEvents"].forEach(id=>$(id).addEventListener("change", ()=>{ if(lmap) renderMap(); }));
 $("mapFile").addEventListener("change", e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();
