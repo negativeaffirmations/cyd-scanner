@@ -23,3 +23,7 @@ sessions/
 # User's own device whitelist (SD copy / any local export) — personal identifiers.
 /whitelist.csv
 whitelist*.csv
+
+# Python bytecode cache
+__pycache__/
+*.pyc
