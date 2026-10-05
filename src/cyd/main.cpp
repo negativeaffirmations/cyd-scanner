@@ -168,8 +168,8 @@ static constexpr int MAX_SEEN = 400;
 // places (fixes). Without GPS movement a device can only reach PERSISTENT. ---
 #define FOLLOW_WINDOW_MS     15000UL   // presence-history bucket (32-bit mask -> ~8 min)
 #define FOLLOW_TTL_MS        300000UL  // drop a device unseen this long (> the C5's 30 s TTL)
-#define FOLLOW_SPAN_M        50.0f     // *** TEST BUILD: was 400.0f (easy short-loop trigger) ***
-#define FOLLOW_FIXES         2         // *** TEST BUILD: was 3 (easy short-loop trigger) ***
+#define FOLLOW_SPAN_M        400.0f    // min GPS span (m) over which a device must track to FOLLOW
+#define FOLLOW_FIXES         3         // ...across at least this many distinct GPS fixes
 #define FOLLOW_PERSIST_FOLLOW 4        // ...and >= this many present windows (popcount)
 #define FOLLOW_PERSIST_ONLY  6         // PERSISTENT (time only, no GPS needed): present windows
 #define FOLLOW_PERSIST_B1    3         // persistence buckets (windows present)
@@ -182,7 +182,7 @@ static constexpr int MAX_SEEN = 400;
 #define FOLLOW_FIXES_B2      4
 #define FOLLOW_FIXES_B3      8
 #define FOLLOW_RSSI_SPREAD   12        // max-min RSSI (dB) counted as "stable" ...
-#define FOLLOW_SPAN_MIN      40.0f     // *** TEST BUILD: was 150.0f (stability bonus on short loop) ***
+#define FOLLOW_SPAN_MIN      150.0f    // min span (m) before the RSSI-stability bonus applies
 #define FOLLOW_W_PERSIST     10        // score weight per persistence bucket (max 30)
 #define FOLLOW_W_SPAN        12        // per span bucket (max 36)
 #define FOLLOW_W_FIXES       6         // per fixes bucket (max 18)
