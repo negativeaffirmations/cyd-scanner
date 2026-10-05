@@ -13,7 +13,16 @@
 
 ## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (phase5-dev; both boards flashed v7)
 Newest first:
-- **(this commit) c5+cyd: multiple BLE service UUIDs — protocol v7.** The active BLE scan now
+- `a50ad3a` **CYD: fixed the HOME link-dot flicker** (the "C5 link disconnect every ~2 s"). It was
+  **cosmetic** — dual-serial capture showed the data link streaming cleanly (`[C5] streamed ~50` +
+  `table=~49` every 2 s). Cause: the HOME idle handler set `g_linkOk = pingC5()` **non-stickily**
+  every 2 s *alongside* the background-scan poll (which already keeps the link sticky); a ping that
+  collided with the C5's scan-stream busy window timed out → dot red one cycle → green next. v7's
+  larger frames (75 B × ~50) lengthened that window enough to make it recur. Fix: on HOME skip the
+  redundant ping while `g_bgScan && g_scanActive`, and apply `LINK_STICKY_MS` grace when bg scan is
+  idle. User confirmed steady on-device. (Lesson: link-health must be sticky — never set `g_linkOk`
+  from one ping.)
+- `d931fbf` **c5+cyd: multiple BLE service UUIDs — protocol v7.** The active BLE scan now
   captures up to `SVC16_MAX` (4) extra 16-bit service UUIDs per device into `Detection.svc16[]`
   (unioned across advert + scan-response reports); `sigdb::score()` matches each (expanded to its
   128-bit base) against `bleuuid` rules, so a signature UUID is caught even when not advertised
@@ -72,12 +81,11 @@ drill-down + HOME icon redesign verified on-device by the user. Ports drift — 
 ## PICK UP HERE — outstanding
 
 ### Resolved / superseded (were the top items on 2026-10-05)
-1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — POSSIBLY RESOLVED (watch for recurrence).**
-   After reflashing the category-readout build the user **no longer sees the ~2 s link drop** in normal
-   use. Suspected it was a bad build or a flaky USB connection rather than a real firmware fault. **Not
-   actively fixed** — if it returns, the prime suspect remains the HOME-menu `pingC5` running *alongside*
-   the background-scan poll (double-poll flickering `g_linkOk`/`LINK_STICKY_MS`/the `requestScan` busy
-   miss), or a busy-window phase-lock like the earlier `c5-busy-window-link-drop` issue.
+1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — ACTUALLY FIXED (`a50ad3a`).** It recurred
+   after the v7 flash and was root-caused: a **cosmetic** HOME link-dot flicker, not real data loss
+   (serial showed clean streaming throughout). The HOME idle handler's non-sticky `pingC5()` collided
+   with the background-scan poll's busy window. Fixed by de-duping the ping and making it sticky (see
+   the Done section + [[c5-busy-window-link-drop]]). User confirmed steady.
 2. **~~UI — rework the HOME-menu threat readout~~ — DONE, expanded.** Became the full SquachWatch-style
    **category readout** (per-type `NAME: n` tiles) + tap-through device list/detail + the HOME title-icon
    redesign (see the Done section above). Both CYD + web app.
