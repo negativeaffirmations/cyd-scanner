@@ -260,13 +260,21 @@ back (5 GHz included). Things that matter, learned the hard way:
   detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow,
   likely=orange, confirmed=red).
 - **Input: BOOT button + a touch overlay.** A short **tap** moves the highlight / selects a
-  touched item; a long **hold** selects / returns toward the menu. The HOME menu items are
-  **Phone Link** (full-screen web-app QR; the row reads **"Connected"** while a phone is on the
-  GATT link; the QR screen has a full-width `< BACK` top bar), **Scan**, and **Settings**. The HOME
-  menu also shows a **background-scan threat readout** at the bottom (`S:/L:/C:` tier counts from the
-  live background scan; each number is white at 0 and turns its tier color — yellow/orange/red — when
-  >0; refreshed on the menu's 2 s idle cadence). The live scan screen shows a **red deauth/evil-twin
-  alert banner** (+ LED) when a flood or evil-twin AP is detected, alongside the follow-me banner.
+  touched item; a long **hold** selects / returns toward the menu. The HOME screen has **one list
+  button, Scan**, plus two **title-bar icon buttons** on the `HOME` line: a **cog (Settings)** upper-
+  left and a **phone (Phone Link)** upper-right — the phone icon is **grey when no phone is on the GATT
+  link, green when connected**, and tapping it opens the full-screen web-app QR (`< BACK` top bar).
+  Both icons stay in the BOOT nav (order: Scan → cog → phone → threat tiles) so Settings/touch-cal is
+  never touch-only. The HOME screen also shows a **background-scan threat readout** at the bottom: the
+  full fixed **category taxonomy** as `NAME: n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
+  Drone/Deauth/Flipper/Skim/Other), always shown (dim at 0, tier-coloured + outlined when >0;
+  refreshed on the 2 s idle cadence). **Tapping a tile** (or BOOT-selecting it) opens that category's
+  **device list** (`SCR_MENUCAT`, with a one-line "what signatures match" blurb) → a device →
+  **detail** (`SCR_MENUCATDETAIL`, the scanner detail reused via `buildDeviceDetail`/
+  `showDeviceDetail`). Categories are derived on the CYD (`categoryOf()` — behavioral flags first,
+  then sigdb label → `g_category[]`; `groupCategory()`/`countCategories()` per device). The live scan
+  screen shows a **red deauth/evil-twin alert banner** (+ LED) when a flood or evil-twin AP is
+  detected, alongside the follow-me banner.
   **Scan** opens a **Scan menu** (`SCR_SCANMENU`: Start Scan / Explore Scan / Scan Settings) —
   the scan-flow redesign; the live scanner, the SD-log Explore Viewer (pick/filter/sort/detail),
   per-band Scan Settings, the Phase-5 follow-me drill-down, and the whitelist manager are all
@@ -296,13 +304,15 @@ back (5 GHz included). Things that matter, learned the hard way:
     scan on/off)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
-    scan cycle. **v4 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
-    `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags` (top-of-list first, capped
+    scan cycle. **v5 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
+    `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
     at 12). `ftier` = follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
     score, `muted` = 1 when whitelisted, **`flags`** = decimal OR of the device's `DetFlags` bits
-    (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges. Fields were appended across
-    versions (follow in v3, `flags` in v4); older parsers reading the earlier fixed fields ignore
-    the extras. The web app renders it as a live, tier-colored table with follow + flag markers.
+    (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges, **`cat`** = threat-category id
+    (matches the CYD `Category` enum) driving the web category breakdown. Fields were appended across
+    versions (follow in v3, `flags` in v4, `cat` in v5); older parsers reading the earlier fixed
+    fields ignore the extras. The web app renders it as a live, tier-colored table with follow + flag
+    markers, plus a tappable per-category threat breakdown.
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app
@@ -318,8 +328,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   muted dimming; a flagged-device modal; a follower-detail modal with the DETS follow fields
   plus a Leaflet track map from a loaded session), a **red deauth/evil-twin alert banner** (from
   STATUS `deauth`/`evil`) with **behavioral-flag badges** on detection rows (from the DETS v4
-  `flags` field), a **time-range export** control (since boot / past 24 h / custom days-hours-min,
-  over BLE `T:` or Wi-Fi `/dlf`), and a
+  `flags` field), a **threat-category breakdown** mirroring the device HOME readout (chips above the
+  live list from the DETS v5 `cat` field → category device modal → device detail modal, each with a
+  signature-type blurb), a **time-range export** control (since boot / past 24 h / custom
+  days-hours-min, over BLE `T:` or Wi-Fi `/dlf`), and a
   **wardriving Map** (Leaflet/OSM) that plots a session's GPS'd detections — grouped by fix,
   colored by threat tier, filterable by source/threats, with **event pins** for `evt`
   (deauth/eviltwin/droneid) lines — from the current scan, a picked session, or a locally-loaded
