@@ -116,7 +116,7 @@ static void mergeDetection(const Detection& d) {
     if (sameDev(g_table[i].d, d)) {
       // Don't lose identifying info a later, sparser advertisement might omit.
       uint32_t keepIe  = d.ie_hash ? d.ie_hash : g_table[i].d.ie_hash;
-      uint8_t  keepFl  = d.flags | g_table[i].d.flags;                  // flags are sticky
+      uint16_t keepFl  = d.flags | g_table[i].d.flags;                  // flags are sticky
       uint16_t keepCid = d.companyId ? d.companyId : g_table[i].d.companyId;
       uint16_t keepPan = d.panId ? d.panId : g_table[i].d.panId;
       bool     haveSvc = false;
@@ -145,6 +145,95 @@ static void mergeDetection(const Detection& d) {
   xSemaphoreGive(g_mux);
 }
 
+// --- Evil-twin: SSID observation table (fed by AP scan + promiscuous beacons) ---
+// Verdict: the SAME SSID seen from >=2 distinct BSSIDs whose encryption CLASS differs
+// (open / WEP / secured). BSSID count alone never flags (band-roaming, mesh, extenders).
+// Guarded by g_mux (promiscuous callback + loop task + stream path).
+static constexpr int SSID_SLOTS = 24, SSID_APS = 4;
+struct SsidObs {
+  char     ssid[33];
+  uint8_t  n;          // valid aps
+  bool     used, evil;
+  uint32_t last;
+  struct { uint8_t bssid[6]; uint8_t enc; uint8_t ch; uint32_t t; } ap[SSID_APS];
+};
+static SsidObs g_ssidTab[SSID_SLOTS];
+
+// Drop stale APs, recompute the verdict. Caller holds g_mux.
+static void ssidRecompute(SsidObs& e, uint32_t now) {
+  int w = 0;
+  for (int i = 0; i < e.n; i++)
+    if (now - e.ap[i].t <= ENTRY_TTL_MS) e.ap[w++] = e.ap[i];
+  e.n = (uint8_t)w;
+  e.evil = false;
+  for (int i = 1; i < e.n && !e.evil; i++)
+    for (int j = 0; j < i; j++)
+      if (e.ap[i].enc != e.ap[j].enc) { e.evil = true; break; }
+  if (e.n == 0) e.used = false;
+}
+
+// OR FLAG_WIFI_EVILTWIN onto the AP detections of an evil SSID. Caller holds g_mux.
+static void flagEvilEntries(const SsidObs& e) {
+  for (int a = 0; a < e.n; a++)
+    for (int i = 0; i < MAX_ENTRIES; i++)
+      if (g_table[i].used && g_table[i].d.source == (uint8_t)Source::WifiScan &&
+          memcmp(g_table[i].d.mac, e.ap[a].bssid, 6) == 0)
+        g_table[i].d.flags |= FLAG_WIFI_EVILTWIN;
+}
+
+// enc class: 0 open, 1 WEP, 2 secured (WPA/RSN/WPA3).
+static void ssidObserve(const char* ssid, const uint8_t* bssid, uint8_t enc, uint8_t ch) {
+  if (!g_mux || !ssid[0]) return;  // hidden SSIDs can't be compared
+  uint32_t now = millis();
+  xSemaphoreTake(g_mux, portMAX_DELAY);
+  int freeIdx = -1, oldIdx = 0, hit = -1;
+  uint32_t oldest = UINT32_MAX;
+  for (int i = 0; i < SSID_SLOTS; i++) {
+    if (!g_ssidTab[i].used) { if (freeIdx < 0) freeIdx = i; continue; }
+    if (strncmp(g_ssidTab[i].ssid, ssid, 32) == 0) { hit = i; break; }
+    if (g_ssidTab[i].last < oldest) { oldest = g_ssidTab[i].last; oldIdx = i; }
+  }
+  if (hit < 0) {
+    hit = (freeIdx >= 0) ? freeIdx : oldIdx;
+    memset(&g_ssidTab[hit], 0, sizeof(SsidObs));
+    strncpy(g_ssidTab[hit].ssid, ssid, 32);
+    g_ssidTab[hit].used = true;
+  }
+  SsidObs& e = g_ssidTab[hit];
+  e.last = now;
+  int slot = -1;
+  for (int i = 0; i < e.n; i++) if (memcmp(e.ap[i].bssid, bssid, 6) == 0) { slot = i; break; }
+  if (slot < 0) {
+    if (e.n < SSID_APS) slot = e.n++;
+    else {  // full: replace the stalest AP
+      slot = 0;
+      for (int i = 1; i < SSID_APS; i++) if (e.ap[i].t < e.ap[slot].t) slot = i;
+    }
+    memcpy(e.ap[slot].bssid, bssid, 6);
+  }
+  e.ap[slot].enc = enc;
+  e.ap[slot].ch  = ch;
+  e.ap[slot].t   = now;
+  ssidRecompute(e, now);
+  if (e.used && e.evil) flagEvilEntries(e);
+  xSemaphoreGive(g_mux);
+}
+
+// Count currently-evil SSIDs and distinct ODID emitters (presence) for Status.
+static void countAggregates(uint8_t& evil, uint8_t& rid) {
+  uint32_t now = millis();
+  int ev = 0, rd = 0;
+  xSemaphoreTake(g_mux, portMAX_DELAY);
+  for (int i = 0; i < SSID_SLOTS; i++)
+    if (g_ssidTab[i].used) { ssidRecompute(g_ssidTab[i], now); if (g_ssidTab[i].used && g_ssidTab[i].evil) ev++; }
+  for (int i = 0; i < MAX_ENTRIES; i++)
+    if (g_table[i].used && now - g_table[i].lastSeen <= ENTRY_TTL_MS &&
+        (g_table[i].d.flags & FLAG_BLE_ODID) && sourceEnabled(g_table[i].d)) rd++;
+  xSemaphoreGive(g_mux);
+  evil = ev > 255 ? 255 : (uint8_t)ev;
+  rid  = rd > 255 ? 255 : (uint8_t)rd;
+}
+
 // --- BLE: continuous scan, merging each advertisement into the table ---
 class ScanCB : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* dev) override {
@@ -163,6 +252,18 @@ class ScanCB : public NimBLEScanCallbacks {
     std::string md = dev->getManufacturerData();
     if (md.size() >= 2)
       d.companyId = (uint16_t)((uint8_t)md[0] | ((uint8_t)md[1] << 8));
+
+    // Passive advert decode (same scan, no extra scanning): Apple continuity subtype.
+    // md = [cid_lo cid_hi type len ...]; guard length before indexing.
+    if (md.size() >= 4 && d.companyId == 0x004C) {
+      uint8_t t = (uint8_t)md[2], l = (uint8_t)md[3];
+      if (t == 0x02 && l == 0x15) d.flags |= FLAG_BLE_IBEACON;
+      else if (t == 0x12 || t == 0x07) d.flags |= FLAG_BLE_FINDMY;
+    }
+    // OpenDroneID rides service data under 16-bit UUID 0xFFFA (presence only).
+    for (uint8_t i = 0, n = dev->getServiceDataCount(); i < n; i++) {
+      if (dev->getServiceDataUUID(i) == NimBLEUUID((uint16_t)0xFFFA)) { d.flags |= FLAG_BLE_ODID; break; }
+    }
 
     // Primary advertised service UUID, normalized to canonical big-endian 128-bit
     // (NimBLE stores it little-endian; a 16-bit UUID expands to the Bluetooth base).
@@ -201,6 +302,7 @@ static int      g_hopIdx    = 0;
 
 // Promiscuous sink (Wi-Fi task context): just fold each frame into the table.
 static void onPromisc(const Detection& d) { mergeDetection(d); }
+static void onPromiscAp(const char* ssid, const uint8_t* bssid, uint8_t enc, uint8_t ch) { ssidObserve(ssid, bssid, enc, ch); }
 
 static void on154(const Detection& d) { mergeDetection(d); }
 
@@ -276,6 +378,9 @@ static void wifiTick() {
         memcpy(d.mac, WiFi.BSSID(i), 6);
         strncpy(d.name, WiFi.SSID(i).c_str(), sizeof(d.name) - 1);
         mergeDetection(d);
+        wifi_auth_mode_t am = WiFi.encryptionType(i);
+        if (am != WIFI_AUTH_OWE)  // enhanced-open legitimately pairs with open (transition mode)
+          ssidObserve(d.name, d.mac, am == WIFI_AUTH_OPEN ? 0 : am == WIFI_AUTH_WEP ? 1 : 2, d.channel);
       }
       WiFi.scanDelete();
       g_wifiScanning = false;
@@ -329,6 +434,8 @@ static void sendStatus(uint8_t scanning, uint16_t total) {
   st.active_sources = g_srcMask;
   st.seen_total     = total;
   st.uptime_ms      = millis();
+  st.deauth_recent  = promisc::deauthRecent();
+  countAggregates(st.evil_count, st.rid_count);
   sendFrame((uint8_t)Reply::Status, &st, sizeof(st));
 }
 
@@ -390,7 +497,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  promisc::begin(&onPromisc);  // promiscuous capture feeds the same table
+  promisc::begin(&onPromisc, &onPromiscAp);  // promiscuous capture feeds the same table
   ieee154::begin(&on154);      // 802.15.4 presence feeds the same table
 
   NimBLEDevice::init("");
