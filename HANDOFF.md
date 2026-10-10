@@ -1,10 +1,15 @@
-# Handoff — 2026-10-05 (main == phase5-dev, merged at `f025557`)
+# Handoff — 2026-10-09 (single-branch: everything on `main`; phase5-dev retired)
 
 ## Branches / deploy
-- **2026-10-05: phase5-dev was MERGED into `main`** (commit `f025557`); both branches now hold the
-  full firmware + webapp + tooling and point at the same commit. `main` is no longer "webapp-only."
-  Follow/tail thresholds are at **production** (400 m / 3 fixes) — the old 50 m/2 fix TEST values
-  were already restored in `c310b98`.
+- **2026-10-09: `phase5-dev` is RETIRED.** `main` was fast-forwarded to `f44df6a` (picking up the
+  post-merge work that had accumulated only on phase5-dev — C5 board photos, wiring diagrams, the
+  Adobe-ignore rules, and the on-board **battery power subsystem** docs) and pushed; then
+  `phase5-dev` was deleted locally and on the remote. **`main` is now the only branch.** Start the
+  next dev round with a fresh `git checkout -b <name>` when needed.
+- **2026-10-05: phase5-dev had been MERGED into `main`** (commit `f025557`); both held the full
+  firmware + webapp + tooling. `main` is no longer "webapp-only." Follow/tail thresholds are at
+  **production** (400 m / 3 fixes) — the old 50 m/2 fix TEST values were already restored in
+  `c310b98`.
 - **main** also serves **GitHub Pages** (source: `main` `/`, `.nojekyll` → static, no Jekyll). Web
   app live at https://negativeaffirmations.github.io/cyd-scanner/webapp/
 - **Web app styles are SCSS** (`webapp/scss/*.scss` → `webapp/style.css` via Dart Sass; `npm install`
@@ -17,8 +22,14 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
-## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (phase5-dev; both boards flashed v7)
+## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (both boards flashed v7)
 Newest first:
+- `f44df6a` **docs: on-board battery power subsystem.** Rig is now portable — 5000 mAh 3.7 V LiPo →
+  TP4056 Type-C charger → master switch → 1.5 A boost (3.7→5 V), 5 V out feeding **both boards in
+  parallel** (CYD VIN + C5 5V, common ground = the UART-link ground). PINOUT.md §4 + README Power
+  note, from `hardware/diagrams/cyd-scanner_wiring_diagram_labeled.png`. Data link (22/27 ⇄ C5 4/5)
+  unchanged. Safety: feed 5 V only, never bridge the 3.3 V rails, **switch battery OFF before USB
+  flashing** (back-feed risk). See [[battery-power-subsystem]].
 - `a50ad3a` **CYD: fixed the HOME link-dot flicker** (the "C5 link disconnect every ~2 s"). It was
   **cosmetic** — dual-serial capture showed the data link streaming cleanly (`[C5] streamed ~50` +
   `table=~49` every 2 s). Cause: the HOME idle handler set `g_linkOk = pingC5()` **non-stickily**
