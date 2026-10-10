@@ -198,6 +198,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   results — both captured at runtime, so device-agnostic. The phone filter is best-effort:
   phones use rotating random BLE addresses, so their scanned advertisements may not match
   the connection address.
+- **Nameless devices show their MAC** (not a generic `<hidden>`). The `groupName()` helper
+  (`src/cyd/main.cpp`) returns a device's advertised name, or — when it has none — its MAC as
+  text, so nameless devices stay individually identifiable everywhere a name is shown (live
+  list, detail screens, Explore viewer, the DETS phone stream, and the web app). This is a
+  **CYD-side display fallback**: the C5 sends empty names (no protocol involvement). The NDJSON
+  log is unchanged — it still omits `name` when blank and carries `mac` separately; readers
+  apply the MAC fallback at display time.
 - **SD logging (CYD) — per-session NDJSON files, two parallel streams.** The log is **NDJSON**
   (one JSON object per line, `logNewDetections` in `main.cpp`). There are **two independent streams**
   (each a `LogStream` with its own dedup set): a **foreground** stream for on-screen scan sessions
@@ -314,7 +321,9 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v5 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
     `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
-    at 12). `ftier` = follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
+    at 12). `name` is the advertised name, or the device's **MAC as text** when it has none (so
+    nameless devices stay distinguishable — see `groupName()`). `ftier` = follow tier (0 none /
+    1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
     score, `muted` = 1 when whitelisted, **`flags`** = decimal OR of the device's `DetFlags` bits
     (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges, **`cat`** = threat-category id
     (matches the CYD `Category` enum) driving the web category breakdown. Fields were appended across

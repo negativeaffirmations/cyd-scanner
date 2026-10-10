@@ -24,6 +24,15 @@
 
 ## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (both boards flashed v7)
 Newest first:
+- `1cf88f4` **cyd+web: nameless devices show their MAC** (instead of a single generic `<hidden>`).
+  Reworked `groupName()` (`src/cyd/main.cpp`) into one early helper: advertised name, or the MAC as
+  text when there is none — so nameless devices stay individually identifiable. Feeds the live list,
+  detail screens, Explore viewer, the DETS phone stream, and the web app (live/category/follower
+  lists, map popups, detail modals). **CYD-side display fallback only** — the C5 sends empty names,
+  so **no C5 reflash, no protocol bump**. NDJSON log unchanged (still omits blank `name`, carries
+  `mac`; readers fall back at display time). CYD rebuilt (RAM 33.0% / Flash 44.7%) + **flashed**
+  (COM17 this session); link verified up (`table=21 … BLE:21 db=1`). Drone-decode work explicitly
+  left untouched per user.
 - `f44df6a` **docs: on-board battery power subsystem.** Rig is now portable — 5000 mAh 3.7 V LiPo →
   TP4056 Type-C charger → master switch → 1.5 A boost (3.7→5 V), 5 V out feeding **both boards in
   parallel** (CYD VIN + C5 5V, common ground = the UART-link ground). PINOUT.md §4 + README Power
@@ -91,8 +100,9 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **both boards flashed with protocol v7** — CYD (COM14, CH340 1A86:7523) + C5 (COM18,
-native 303A:1001). Link verified up post-flash (`table=43 (2.4:13 5G:10 BLE:20)`, db loaded). Category
+Device state: **both boards on protocol v7.** CYD reflashed 2026-10-09 with the MAC-name fallback
+(`1cf88f4`); C5 unchanged since the v7 flash (CH340 1A86:7523 = COM17 this session; C5 native
+303A:1001 = COM18). Link verified up post-flash (`table=21 … BLE:21`, db loaded). Category
 drill-down + HOME icon redesign verified on-device by the user. Ports drift — identify by VID:PID.
 
 ## PICK UP HERE — outstanding
@@ -120,7 +130,8 @@ drill-down + HOME icon redesign verified on-device by the user. Ports drift — 
    Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/map
    list (another coordinated both-board flash). Heaviest remaining feature; BLE-extended-scan
    coexistence risk — check against the BLE/15.4 coexistence rule. Backlogged (user: leave it).
-6. **Phase-5 follow-up:** the rotating-RPA phone self-filter guard (the `<hidden>` false positive).
+6. **Phase-5 follow-up:** the rotating-RPA phone self-filter guard (a rotating-random-address phone,
+   now shown by MAC rather than `<hidden>`, still gets flagged as a follower).
 7. **P3 log follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
    pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
    `g_streamingPath` (defense-in-depth).
