@@ -134,7 +134,7 @@ cyd-scanner/
 ├── src/cyd/           # CYD host firmware (main, pins, phone, webshare, sigdb, whitelist, logfilter, touch)
 ├── src/c5/            # ESP32-C5 scanner firmware (main, promisc, ieee154)
 ├── lib/link_protocol/ # shared UART message protocol
-├── webapp/            # phone control web app (Web Bluetooth, GitHub Pages); styles in webapp/scss/ (SCSS → style.css)
+├── webapp/            # phone control web app (Web Bluetooth, GitHub Pages); JS in webapp/js/ (ES modules, no build), styles in webapp/scss/ (SCSS → style.css)
 ├── docs/              # signature-matching research + design
 ├── hardware/          # datasheets, pinouts, PINOUT.md
 └── .claude/           # agents + hooks for AI-assisted development

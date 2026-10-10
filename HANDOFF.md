@@ -1,4 +1,4 @@
-# Handoff — 2026-10-09 (single-branch: everything on `main`; phase5-dev retired)
+# Handoff — 2026-10-10 (single-branch: everything on `main`; phase5-dev retired)
 
 ## Branches / deploy
 - **2026-10-09: `phase5-dev` is RETIRED.** `main` was fast-forwarded to `f44df6a` (picking up the
@@ -16,11 +16,32 @@
   once, then `npm run sass:build`, or the auto-starting **"Sass: watch"** VS Code task). Edit the
   SCSS (theme colors in `webapp/scss/_variables.scss`), **never** `style.css` (generated). `style.css`
   **is committed** (Pages doesn't run Sass); `node_modules/` is not.
+- **Web app JS is native ES modules (2026-10-10, `17c8325`)** under `webapp/js/`, loaded by
+  `<script type="module" src="js/main.js">`. **No build step, no bundler** — the browser resolves
+  the imports and Pages serves them as-is, so unlike the SCSS there's nothing to compile or commit
+  downstream: **edit a `.js` and commit it.** Shared mutable state (anything two modules both read
+  and write) lives in `js/state.js` (ESM exports are read-only live bindings); module-private state
+  stays local. All DOM wiring is `addEventListener` in `js/main.js` — **no inline `onclick=` in the
+  HTML** (module scope isn't global). See the full layout in CLAUDE.md's "Phone link + web app".
 - To deploy the web app now that main carries it directly: `npm run sass:build`, commit
   `webapp/` on `main`, push — Pages rebuilds. (No more cherry-pick from a separate dev branch.)
   Check build: `gh api repos/.../pages/builds/latest --jq .status`. ⚠ A Pages build was queued
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
+
+## Done — webapp JS extracted into ES modules (2026-10-10, no firmware change)
+- `17c8325` **webapp: inline `<script>` → native ES modules.** The ~940-line inline script in
+  `webapp/index.html` (1174→236 lines) is split into 19 modules under `webapp/js/`
+  (`config.js`, `state.js`, `util/{dom,format}.js`, `ble/{connection,status,commands,download}.js`,
+  `gps.js`, `data/parse.js`, `features/{detections,categories,followers,explore,sessions,whitelist,
+  map,detail}.js`, `main.js`). **Extraction, not a rewrite** — the tuned logic (DETS partial-frame
+  flush, LOGDATA download reassembly, GPS throttling) moved unchanged. **No build step** (ES modules
+  load natively; Chrome-Android-only = full ESM support). Cross-module mutable state routed through
+  one `state` object; imports form a DAG. Statically verified (all parse as ESM; every import
+  resolves to a real export; no undefined calls / missing constants / orphaned inline handlers).
+  CLAUDE.md + README + this file updated. **Not yet smoke-tested in-browser** (needs Android Chrome
+  / Web Bluetooth) — if something breaks, the likely cause is a function placed in the wrong module
+  boundary. **No C++/firmware change; both boards still on protocol v7.**
 
 ## Done — active-BLE-scan multi-UUID + category readout + HOME redesign (both boards flashed v7)
 Newest first:
