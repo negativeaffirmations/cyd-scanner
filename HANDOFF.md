@@ -29,6 +29,35 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — FIXED promiscuous RX starvation (2026-10-10, C5-only, FLASHED + bench-verified)
+**The client-capture path (probe requests AND the new data-frame clients) was capturing almost
+nothing** — root-caused on the bench with both boards on USB. Field test: user saw only 2 "Ring"
+hits and a known camera 30 ft away (clear LOS) was never detected.
+- **Diagnosis:** added per-window RX counters to `promisc.cpp` (`frameStats()`, printed at window end
+  by `main.cpp`). First capture: `promisc window end: mgmt=2 data=0 dataClient=0` and CYD `PRB:0`
+  every cycle. AP scan worked (2.4:11 5G:11) and BLE worked (20) — only the PASSIVE promiscuous RX was
+  dead. Cause: the continuous NimBLE scan (~99% duty, interval100/window99) starves the single 2.4 GHz
+  radio's passive RX; active AP scan survives because it gets coex priority. Same starvation the repo
+  already documented for 802.15.4 ([[ieee802154-optin-ble-coexistence]]).
+- **Fix 1 (the big one): pause BLE during the promiscuous window** (mirrors the 15.4 handling). New
+  `blePaused()` = `PH_PROMISC || PH_154`; every BLE (re)start path (onScanEnd, applyBleMask, watchdog,
+  the window-exit) now gates on it; `enterPromisc()` stops BLE, window-exit restarts it (unless 15.4
+  takes the radio). Result: `mgmt 2→101-142`, `data 0→9-14`, **CYD `PRB:0→~14`**. Client capture now
+  works end-to-end (verified: probe-request clients flow to the CYD band count).
+- **Fix 2: capture clients BOTH directions** in `handleData` — uplink ToDS `addr2` *and* downlink
+  FromDS `addr1` (was uplink-only). A camera is seen whether transmitting or being addressed. (Caveat:
+  a downlink frame's RSSI is the AP's, so a downlink-only client carries an approximate RSSI.)
+- **Fix 3: sweep all 2.4 GHz channels 1-11** (was 1/6/11), `HOP_DWELL_MS` 200→160, `PROMISC_MS`
+  3000→4500 — catches cameras on auto-selected non-1/6/11 channels.
+- **Still bench-limited:** `dataClient=0` at the bench only because nothing nearby was actively
+  streaming unicast (the 14 captured data frames were multicast/broadcast, correctly rejected). A
+  running camera on a walk should now produce dataClient hits + Ring/Nest matches. **Needs a field
+  re-test near a known active camera.** Remaining gaps: **5 GHz-associated cameras** (promiscuous is
+  2.4-only — a 5 GHz promiscuous sweep is the next lever) and **battery cameras asleep** (RF-silent
+  until motion — fundamentally uncatchable while dormant; trigger motion to wake them).
+- C5 FLASHED (COM18). CYD unchanged this round. No protocol bump. Kept the `mgmt/data/dataClient`
+  per-window serial diagnostic (cheap, useful in the field).
+
 ## Done — HOME readout tweaks (2026-10-10, CYD-only, FLASHED)
 All in `src/cyd/main.cpp`; CYD rebuilt + flashed (COM14). No C5/protocol change.
 - **"Other" tile removed** from the HOME category readout — `drawMenuThreats()` now builds `g_menuCat`

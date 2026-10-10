@@ -169,17 +169,22 @@ back (5 GHz included). Things that matter, learned the hard way:
 - **C5 = continuous async scanner.** It **time-slices the Wi-Fi radio** between two
   phases (see `src/c5/promisc.*`): an async dual-band AP scan (`WiFi.scanNetworks(true)`,
   2.4 + 5 GHz beacons) and a **passive promiscuous-mode capture window** (Phase 2) that
-  hops the 2.4 GHz probe hotspots 1/6/11 (~200 ms dwell, ~3 s window) to catch Wi-Fi
+  sweeps **all 2.4 GHz channels 1–11** (~160 ms dwell, ~4.5 s window) to catch Wi-Fi
   **client probe requests** + **beacon/probe-resp 802.11 IE fingerprints** + **associated-client
-  uplink DATA frames** (the `addr2` source MAC of a client already joined to a home AP — a
-  Ring/Nest/Wyze camera that neither beacons nor, once joined, probes; emitted as a Wi-Fi client /
-  `Source::WifiProbe`, throttled by a recent-MAC ring) — all the client behavior `scanNetworks()`
-  can't see. BLE runs continuously (NimBLE callback) alongside.
+  DATA frames** (the client MAC in the clear — `addr2` on an uplink/ToDS frame, `addr1` on a
+  downlink/FromDS frame — of a device already joined to a home AP: a Ring/Nest/Wyze camera that
+  neither beacons nor, once joined, probes; emitted as a Wi-Fi client / `Source::WifiProbe`, throttled
+  by a recent-MAC ring) — all the client behavior `scanNetworks()` can't see.
+  **BLE is PAUSED for the duration of the promiscuous window** (and the 802.15.4 window) — a
+  continuous NimBLE scan runs at ~99% radio duty and *starves* the passive promiscuous RX to near-zero
+  (measured ~2 mgmt frames/window with BLE live vs ~100+ paused); it runs alongside the active AP scan
+  only, which gets coex priority. The `blePaused()` helper gates every BLE (re)start path.
   All sources merge into a shared **detection table** (dedup by source+MAC, 30 s TTL,
   mutex-guarded because the BLE + promiscuous callbacks run in separate tasks; a captured
   IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
   Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
-  active; see the Scope section).
+  active; see the Scope section). The C5 prints a per-window `mgmt/data/dataClient` capture-health
+  line to its USB console.
 - **C5 behavioral detectors (added in protocol v6; link now v7).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),

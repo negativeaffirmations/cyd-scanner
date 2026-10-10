@@ -36,5 +36,6 @@ void enable();               // turn promiscuous mode on (management + data-fram
 void disable();              // turn promiscuous mode off (before an AP scan)
 void setChannel(uint8_t ch); // park the radio on a channel while capturing
 bool active();               // true while promiscuous mode is on
+void frameStats(uint32_t& mgmt, uint32_t& data, uint32_t& dataClient);  // read+reset per-window RX counters
 
 }  // namespace promisc

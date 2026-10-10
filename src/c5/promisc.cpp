@@ -12,6 +12,11 @@ promisc::DetCb g_cb     = nullptr;
 promisc::ApCb  g_apCb   = nullptr;
 volatile bool  g_active = false;
 
+// Per-window RX counters (field diagnostic): how many frames the callback actually saw this
+// promiscuous window — mgmt, data, and data frames that yielded a client MAC. main.cpp prints these
+// at each window end; a near-zero mgmt count is the tell-tale of the BLE-coexistence RX starvation.
+volatile uint32_t g_nMgmt = 0, g_nData = 0, g_nDataClient = 0;
+
 // Deauth/disassoc counting: 10 x 100 ms buckets = ~1 s sliding window.
 constexpr int      DEAUTH_BUCKETS   = 10;
 constexpr uint32_t DEAUTH_BUCKET_MS = 100;
@@ -67,18 +72,25 @@ bool seenRecently(const uint8_t* mac) {
 // Handle one 802.11 DATA frame: pull the associated client's source MAC.
 void handleData(const uint8_t* f, int len, const wifi_promiscuous_pkt_t* pkt) {
   if (len < 24) return;                 // need the 3-address header (through addr3)
-  // Infrastructure UPLINK only: ToDS=1, FromDS=0 -> addr2 is the client SA.
-  // (A FromDS downlink's addr2 is the AP BSSID, already seen via beacons; a WDS
-  //  frame with both bits set is 4-address and not a simple client, so skip it.)
-  if ((f[1] & 0x03) != 0x01) return;
-  const uint8_t* sa = f + 10;           // addr2 = source (transmitter) station
-  if (sa[0] & 0x01) return;             // group/multicast guard (a real SA is never group)
-  if (seenRecently(sa)) return;         // throttle a chatty station
+  // A client station's MAC is in the clear regardless of frame direction: an UPLINK (ToDS=1,
+  // FromDS=0) frame carries it as addr2 (the source station); a DOWNLINK (ToDS=0, FromDS=1) frame
+  // carries it as addr1 (the destination station). Capture both, so an associated camera is seen
+  // whether it is transmitting to its AP or just being addressed by it. (IBSS 0x00 and WDS 4-address
+  // 0x03 are skipped — neither is a simple infrastructure client.) Note: a downlink frame's RSSI is
+  // the AP's, not the client's, so a downlink-only client carries an approximate RSSI.
+  uint8_t ds = f[1] & 0x03;
+  const uint8_t* client;
+  if      (ds == 0x01) client = f + 10;   // ToDS   uplink   -> addr2 = client source
+  else if (ds == 0x02) client = f + 4;    // FromDS downlink -> addr1 = client destination
+  else return;
+  if (client[0] & 0x01) return;         // group/multicast/broadcast is never an individual client
+  if (seenRecently(client)) return;     // throttle a chatty station
+  g_nDataClient++;
   Detection d{};
   d.source  = (uint8_t)Source::WifiProbe;  // a Wi-Fi client observed in promiscuous mode
   d.channel = pkt->rx_ctrl.channel;
   d.rssi    = (int8_t)pkt->rx_ctrl.rssi;
-  memcpy(d.mac, sa, 6);
+  memcpy(d.mac, client, 6);
   g_cb(d);                              // feeds the same mutex-guarded table as everything else
 }
 
@@ -122,8 +134,9 @@ void rxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
   int len = pkt->rx_ctrl.sig_len;
   if (len > 4) len -= 4;   // drop the trailing FCS
 
-  if (type == WIFI_PKT_DATA) { handleData(f, len, pkt); return; }  // associated-client capture
+  if (type == WIFI_PKT_DATA) { g_nData++; handleData(f, len, pkt); return; }  // associated-client capture
   if (type != WIFI_PKT_MGMT) return;
+  g_nMgmt++;
   if (len < 24) return;    // need a full management header (through addr3)
 
   uint8_t fc = f[0];
@@ -243,5 +256,10 @@ void setChannel(uint8_t ch) {
 }
 
 bool active() { return g_active; }
+
+void frameStats(uint32_t& mgmt, uint32_t& data, uint32_t& dataClient) {
+  mgmt = g_nMgmt; data = g_nData; dataClient = g_nDataClient;
+  g_nMgmt = g_nData = g_nDataClient = 0;
+}
 
 }  // namespace promisc

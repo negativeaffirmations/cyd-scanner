@@ -81,6 +81,12 @@ static Detection          g_streamBuf[MAX_ENTRIES];  // copy target for streamin
 enum WifiPhase { PH_SCAN, PH_PROMISC, PH_154 };
 static volatile WifiPhase g_phase = PH_SCAN;
 
+// BLE must be paused while the radio does a PASSIVE capture (promiscuous Wi-Fi OR 802.15.4): a
+// continuous BLE scan runs at ~99% duty and starves the passive RX of airtime (measured: only ~2
+// mgmt frames / 0 data per promiscuous window with BLE live). Active AP scan (PH_SCAN) gets coex
+// priority so BLE can run alongside it. Every BLE (re)start path checks this.
+static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_154; }
+
 // Active scan-source mask (SourceMask bits), set by the CYD's StartScan payload.
 // Disabled sources are only skipped/dropped here - never transmitted around.
 static volatile uint8_t   g_srcMask = MASK_ALL & ~MASK_154;  // 802.15.4 is opt-in
@@ -296,7 +302,7 @@ class ScanCB : public NimBLEScanCallbacks {
     mergeDetection(d);
   }
   void onScanEnd(const NimBLEScanResults&, int) override {
-    if ((g_srcMask & MASK_BLE) && g_phase != PH_154) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->start(0, false); }  // keep scanning continuously
+    if ((g_srcMask & MASK_BLE) && !blePaused()) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->start(0, false); }  // keep scanning continuously
   }
 };
 static ScanCB g_scanCB;
@@ -313,11 +319,13 @@ static ScanCB g_scanCB;
 static bool      g_wifiScanning = false;
 static uint32_t  g_lastWifiDone = 0;
 
-// Channels Flock-class cameras channel-hop across as clients (~125 ms dwell).
-static const uint8_t   kHopChans[]      = {1, 6, 11};
+// All US 2.4 GHz channels (1-11): associated cameras sit on whatever channel their home AP chose,
+// which is often NOT 1/6/11 (routers auto-select 3/4/8/9/...), so sweep the whole band. BLE is paused
+// for this window (see blePaused()), so passive RX gets full airtime even across more channels.
+static const uint8_t   kHopChans[]      = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 static constexpr int   NUM_HOPS         = sizeof(kHopChans) / sizeof(kHopChans[0]);
-static constexpr uint32_t PROMISC_MS    = 3000;  // length of a capture window
-static constexpr uint32_t HOP_DWELL_MS  = 200;   // per-channel dwell while capturing
+static constexpr uint32_t PROMISC_MS    = 4500;  // length of a capture window (covers ~2.5 full sweeps)
+static constexpr uint32_t HOP_DWELL_MS  = 160;   // per-channel dwell while capturing
 static uint32_t g_promStart = 0, g_lastHop = 0;
 static int      g_hopIdx    = 0;
 
@@ -360,7 +368,8 @@ static void after154Slot() {
 }
 
 static void enterPromisc() {
-  g_phase     = PH_PROMISC;
+  g_phase     = PH_PROMISC;   // publish first: blePaused() is now true, so no path re-arms BLE
+  if (g_srcMask & MASK_BLE) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->stop(); }  // free the radio for passive RX
   g_hopIdx    = 0;
   g_promStart = millis();
   g_lastHop   = g_promStart;
@@ -437,9 +446,15 @@ static void wifiTick() {
   uint32_t now = millis();
   if (now - g_promStart >= PROMISC_MS) {
     promisc::disable();
+    uint32_t pm, pd, pdc; promisc::frameStats(pm, pd, pdc);  // field diagnostic: capture health
+    Serial.printf("[C5] promisc window end: mgmt=%u data=%u dataClient=%u\n", (unsigned)pm, (unsigned)pd, (unsigned)pdc);
     g_phase        = PH_SCAN;
     g_lastWifiDone = now;             // honor WIFI_GAP_MS before the next scan
-    after154Slot();
+    after154Slot();                   // may hand the radio to 802.15.4 (which keeps BLE paused)
+    if (g_phase == PH_SCAN && (g_srcMask & MASK_BLE)) {  // back to scan phase -> resume BLE promptly
+      NimBLEScan* bs = NimBLEDevice::getScan();
+      if (bs && !bs->isScanning()) bs->start(0, false);
+    }
     return;
   }
   if (now - g_lastHop >= HOP_DWELL_MS) {
@@ -488,7 +503,7 @@ static void streamTable() {
 static void applyBleMask() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (!scan) return;
-  bool want = (g_srcMask & MASK_BLE) && g_phase != PH_154;
+  bool want = (g_srcMask & MASK_BLE) && !blePaused();
   if (want && !scan->isScanning()) scan->start(0, false);
   else if (!want && scan->isScanning()) scan->stop();
 }
@@ -550,7 +565,7 @@ void loop() {
   if (millis() - lastBleChk > 5000) {
     lastBleChk = millis();
     NimBLEScan* scan = NimBLEDevice::getScan();
-    if (scan && (g_srcMask & MASK_BLE) && g_phase != PH_154 && !scan->isScanning()) {
+    if (scan && (g_srcMask & MASK_BLE) && !blePaused() && !scan->isScanning()) {
       scan->start(0, false);
       Serial.println("[C5] BLE scan restarted by watchdog");
     }
