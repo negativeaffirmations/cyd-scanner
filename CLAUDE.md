@@ -340,7 +340,17 @@ back (5 GHz included). Things that matter, learned the hard way:
   `_banners`/`_map`), compiled to `webapp/style.css` by Dart Sass (`npm run sass:build`, or the
   auto-starting "Sass: watch" VS Code task — see `.vscode/tasks.json`). **Edit the SCSS, not
   `style.css`** (generated, but committed since Pages doesn't run Sass; `node_modules/` is
-  git-ignored). The JS is still inline in `index.html`. MUST be
+  git-ignored). **The JS is split into native ES modules** under `webapp/js/` — **no build step,
+  no bundler**: `index.html` loads `<script type="module" src="js/main.js">` and the browser
+  resolves the imports directly (Pages serves them as-is). Layout: `config.js` (UUIDs + shared
+  constants), `state.js` (the single cross-module mutable-state object — anything two modules both
+  read and write lives here, since ESM exports are read-only live bindings), `util/` (`dom.js`,
+  `format.js`), `ble/` (`connection.js`, `status.js`, `commands.js`, `download.js`), `gps.js`,
+  `data/parse.js`, `features/` (`detections.js`, `categories.js`, `followers.js`, `explore.js`,
+  `sessions.js`, `whitelist.js`, `map.js`, `detail.js`), and `main.js` (wires every DOM event
+  listener). Imports form a DAG; module-private state (`detState`, `lmap`, `detMap`, …) stays local
+  to its module. **No inline `onclick=` handlers in the HTML** — module scope isn't global, so all
+  wiring is `addEventListener` in `main.js`. MUST be
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
   (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
