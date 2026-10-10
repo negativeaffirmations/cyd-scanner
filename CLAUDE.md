@@ -168,14 +168,17 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 - **C5 = continuous async scanner.** It **time-slices the Wi-Fi radio** between two
   phases (see `src/c5/promisc.*`): an async dual-band AP scan (`WiFi.scanNetworks(true)`,
-  2.4 + 5 GHz beacons) and a **passive promiscuous-mode capture window** (Phase 2) that
-  sweeps **all 2.4 GHz channels 1–11** (~160 ms dwell, ~4.5 s window) to catch Wi-Fi
-  **client probe requests** + **beacon/probe-resp 802.11 IE fingerprints** + **associated-client
-  DATA frames** (the client MAC in the clear — `addr2` on an uplink/ToDS frame, `addr1` on a
-  downlink/FromDS frame — of a device already joined to a home AP: a Ring/Nest/Wyze camera that
-  neither beacons nor, once joined, probes; emitted as a Wi-Fi client / `Source::WifiProbe`, throttled
-  by a recent-MAC ring) — all the client behavior `scanNetworks()` can't see.
-  **BLE is PAUSED for the duration of the promiscuous window** (and the 802.15.4 window) — a
+  2.4 + 5 GHz beacons) and **two back-to-back passive promiscuous-capture windows** (Phase 2):
+  **`PH_PROMISC`** sweeps all 2.4 GHz channels 1–11 (~160 ms dwell, ~4.5 s), then **`PH_PROMISC5`**
+  sweeps the common US non-DFS 5 GHz channels (36/40/44/48/149/153/157/161/165, ~160 ms, ~4 s) so a
+  camera on a 5 GHz AP is caught too (`esp_wifi_set_channel()` switches band by channel number; DFS
+  52–144 skipped — an unassociated STA often can't park there). Both capture Wi-Fi **client probe
+  requests** + **beacon/probe-resp 802.11 IE fingerprints** + **associated-client DATA frames** (the
+  client MAC in the clear — `addr2` on an uplink/ToDS frame, `addr1` on a downlink/FromDS frame — of a
+  device already joined to a home AP: a Ring/Nest/Wyze camera that neither beacons nor, once joined,
+  probes; emitted as a Wi-Fi client / `Source::WifiProbe`, throttled by a recent-MAC ring) — all the
+  client behavior `scanNetworks()` can't see.
+  **BLE is PAUSED for both promiscuous windows** (and the 802.15.4 window) — a
   continuous NimBLE scan runs at ~99% radio duty and *starves* the passive promiscuous RX to near-zero
   (measured ~2 mgmt frames/window with BLE live vs ~100+ paused); it runs alongside the active AP scan
   only, which gets coex priority. The `blePaused()` helper gates every BLE (re)start path.

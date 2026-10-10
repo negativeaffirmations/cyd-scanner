@@ -78,14 +78,14 @@ static SemaphoreHandle_t  g_mux;
 static Detection          g_streamBuf[MAX_ENTRIES];  // copy target for streaming
 
 // Wi-Fi radio phase (declared early: the BLE callback/watchdog read it).
-enum WifiPhase { PH_SCAN, PH_PROMISC, PH_154 };
+enum WifiPhase { PH_SCAN, PH_PROMISC, PH_PROMISC5, PH_154 };  // PROMISC = 2.4 GHz sweep, PROMISC5 = 5 GHz sweep
 static volatile WifiPhase g_phase = PH_SCAN;
 
-// BLE must be paused while the radio does a PASSIVE capture (promiscuous Wi-Fi OR 802.15.4): a
-// continuous BLE scan runs at ~99% duty and starves the passive RX of airtime (measured: only ~2
+// BLE must be paused while the radio does a PASSIVE capture (promiscuous Wi-Fi 2.4/5 GHz OR 802.15.4):
+// a continuous BLE scan runs at ~99% duty and starves the passive RX of airtime (measured: only ~2
 // mgmt frames / 0 data per promiscuous window with BLE live). Active AP scan (PH_SCAN) gets coex
 // priority so BLE can run alongside it. Every BLE (re)start path checks this.
-static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_154; }
+static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_PROMISC5 || g_phase == PH_154; }
 
 // Active scan-source mask (SourceMask bits), set by the CYD's StartScan payload.
 // Disabled sources are only skipped/dropped here - never transmitted around.
@@ -329,6 +329,18 @@ static constexpr uint32_t HOP_DWELL_MS  = 160;   // per-channel dwell while capt
 static uint32_t g_promStart = 0, g_lastHop = 0;
 static int      g_hopIdx    = 0;
 
+// 5 GHz promiscuous sweep (PH_PROMISC5): runs right after the 2.4 GHz window, same radio, BLE still
+// paused. These are the common US non-DFS channels (UNII-1 + UNII-3) — the vast majority of consumer
+// APs. DFS channels (52-144) are skipped: an unassociated STA often can't passively park on them, and
+// consumer cameras rarely use them. esp_wifi_set_channel() switches band automatically for a 5 GHz
+// channel number (per the IDF header), so promisc::setChannel() needs no change.
+static const uint8_t   kHopChans5[]      = {36, 40, 44, 48, 149, 153, 157, 161, 165};
+static constexpr int   NUM_5G_HOPS       = sizeof(kHopChans5) / sizeof(kHopChans5[0]);
+static constexpr uint32_t PROMISC5_MS    = 4000;  // ~2.7 full 5 GHz sweeps
+static constexpr uint32_t HOP5_DWELL_MS  = 160;
+static uint32_t g_prom5Start = 0, g_lastHop5 = 0;
+static int      g_hop5Idx    = 0;
+
 // Promiscuous sink (Wi-Fi task context): just fold each frame into the table.
 static void onPromisc(const Detection& d) { mergeDetection(d); }
 static void onPromiscAp(const char* ssid, const uint8_t* bssid, uint8_t enc, uint8_t ch) { ssidObserve(ssid, bssid, enc, ch); }
@@ -375,6 +387,29 @@ static void enterPromisc() {
   g_lastHop   = g_promStart;
   promisc::enable();
   promisc::setChannel(kHopChans[0]);
+}
+
+// Transition from the 2.4 GHz promiscuous window into the 5 GHz one (same radio, BLE stays paused,
+// promiscuous mode stays enabled — just retune to the first 5 GHz channel and reset the hop timer).
+static void enterPromisc5() {
+  g_phase      = PH_PROMISC5;
+  g_hop5Idx    = 0;
+  g_prom5Start = millis();
+  g_lastHop5   = g_prom5Start;
+  promisc::setChannel(kHopChans5[0]);
+}
+
+// Tear down promiscuous capture, hand the radio to 802.15.4 (if enabled) or the inter-scan gap, and
+// resume BLE if we're back in the scan phase. Shared by both promiscuous windows' exit paths.
+static void finishPromisc(uint32_t now) {
+  promisc::disable();
+  g_phase        = PH_SCAN;
+  g_lastWifiDone = now;             // honor WIFI_GAP_MS before the next scan
+  after154Slot();                   // may hand the radio to 802.15.4 (which keeps BLE paused)
+  if (g_phase == PH_SCAN && (g_srcMask & MASK_BLE)) {  // back to scan phase -> resume BLE promptly
+    NimBLEScan* bs = NimBLEDevice::getScan();
+    if (bs && !bs->isScanning()) bs->start(0, false);
+  }
 }
 
 // After the AP-scan phase: capture probes if enabled, else just wait out the gap.
@@ -442,25 +477,37 @@ static void wifiTick() {
     return;
   }
 
-  // PH_PROMISC: hop channels for the capture window, then return to scanning.
-  uint32_t now = millis();
-  if (now - g_promStart >= PROMISC_MS) {
-    promisc::disable();
-    uint32_t pm, pd, pdc; promisc::frameStats(pm, pd, pdc);  // field diagnostic: capture health
-    Serial.printf("[C5] promisc window end: mgmt=%u data=%u dataClient=%u\n", (unsigned)pm, (unsigned)pd, (unsigned)pdc);
-    g_phase        = PH_SCAN;
-    g_lastWifiDone = now;             // honor WIFI_GAP_MS before the next scan
-    after154Slot();                   // may hand the radio to 802.15.4 (which keeps BLE paused)
-    if (g_phase == PH_SCAN && (g_srcMask & MASK_BLE)) {  // back to scan phase -> resume BLE promptly
-      NimBLEScan* bs = NimBLEDevice::getScan();
-      if (bs && !bs->isScanning()) bs->start(0, false);
+  if (g_phase == PH_PROMISC) {  // 2.4 GHz promiscuous sweep
+    uint32_t now = millis();
+    if (now - g_promStart >= PROMISC_MS) {
+      uint32_t pm, pd, pdc; promisc::frameStats(pm, pd, pdc);  // field diagnostic: capture health
+      Serial.printf("[C5] promisc 2.4 end: mgmt=%u data=%u dataClient=%u\n", (unsigned)pm, (unsigned)pd, (unsigned)pdc);
+      if (g_srcMask & MASK_WIFI5) { enterPromisc5(); return; }  // sweep 5 GHz next (BLE stays paused)
+      finishPromisc(now);
+      return;
+    }
+    if (now - g_lastHop >= HOP_DWELL_MS) {
+      g_lastHop = now;
+      g_hopIdx  = (g_hopIdx + 1) % NUM_HOPS;
+      promisc::setChannel(kHopChans[g_hopIdx]);
     }
     return;
   }
-  if (now - g_lastHop >= HOP_DWELL_MS) {
-    g_lastHop = now;
-    g_hopIdx  = (g_hopIdx + 1) % NUM_HOPS;
-    promisc::setChannel(kHopChans[g_hopIdx]);
+
+  if (g_phase == PH_PROMISC5) {  // 5 GHz promiscuous sweep (follows the 2.4 GHz window)
+    uint32_t now = millis();
+    if (now - g_prom5Start >= PROMISC5_MS) {
+      uint32_t pm, pd, pdc; promisc::frameStats(pm, pd, pdc);
+      Serial.printf("[C5] promisc 5G end: mgmt=%u data=%u dataClient=%u\n", (unsigned)pm, (unsigned)pd, (unsigned)pdc);
+      finishPromisc(now);
+      return;
+    }
+    if (now - g_lastHop5 >= HOP5_DWELL_MS) {
+      g_lastHop5 = now;
+      g_hop5Idx  = (g_hop5Idx + 1) % NUM_5G_HOPS;
+      promisc::setChannel(kHopChans5[g_hop5Idx]);
+    }
+    return;
   }
 }
 

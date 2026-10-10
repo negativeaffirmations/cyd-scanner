@@ -29,6 +29,23 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — 5 GHz promiscuous sweep (2026-10-10, C5-only, FLASHED + bench-verified)
+Added a second promiscuous sub-phase so associated **5 GHz** cameras are caught (previously 2.4-only).
+- New `PH_PROMISC5` phase runs right after the 2.4 `PH_PROMISC` window (same radio, BLE stays paused —
+  `blePaused()` now covers it). Sweeps common US non-DFS 5 GHz channels
+  `{36,40,44,48,149,153,157,161,165}` (~160 ms dwell, ~4 s). DFS 52–144 skipped (an unassociated STA
+  often can't passively park there; consumer cams rarely use them). `promisc::setChannel()` needed NO
+  change — `esp_wifi_set_channel(primary, NONE)` switches band by channel number on the C5 (confirmed
+  in the IDF header: attention-6 + the line-1706 note). Refactored the window-exit into a shared
+  `finishPromisc()`; gated on `MASK_WIFI5`.
+- **Bench-verified:** `promisc 2.4 end: mgmt=137 data=24 dataClient=2` and `promisc 5G end: mgmt=10
+  data=0 dataClient=0` — the 5 GHz beacons prove the sweep tunes + captures; data=0 only because no
+  5 GHz client was streaming at the bench. Diagnostic lines are now split per band ("promisc 2.4 end"
+  / "promisc 5G end").
+- **Cycle is now longer** (~AP-scan 10 s + 2.4 promisc 4.5 s + 5 GHz promisc 4 s + gap 3 s ≈ 21 s), so
+  each band's sweep comes around ~every 21 s — on a walk, **pause ~20–30 s near a target** so both
+  bands sweep while in range. C5 FLASHED (COM18). CYD unchanged. No protocol bump.
+
 ## Done — FIXED promiscuous RX starvation (2026-10-10, C5-only, FLASHED + bench-verified)
 **The client-capture path (probe requests AND the new data-frame clients) was capturing almost
 nothing** — root-caused on the bench with both boards on USB. Field test: user saw only 2 "Ring"
