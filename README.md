@@ -49,6 +49,18 @@ The two boards are linked over a serial (UART) connection: the CYD drives the UI
 and the phone link, while the **C5 does all the RF scanning** (Wi-Fi 2.4 + 5 GHz, BLE, and
 802.15.4) — including the 5 GHz and 802.15.4 bands the CYD's original ESP32 cannot see.
 
+### Power
+
+The rig is **battery-powered and portable**: a 5000 mAh 3.7 V LiPo → TP4056 Type-C charger →
+master switch → 1.5 A boost converter (3.7→5 V), whose 5 V output feeds **both boards in
+parallel** (CYD VIN + C5 5V, common ground). Full wiring is in
+[hardware/PINOUT.md](hardware/PINOUT.md#4-power-subsystem--on-board-battery-current-rig)
+(diagram: [`cyd-scanner_wiring_diagram_labeled.png`](hardware/diagrams/cyd-scanner_wiring_diagram_labeled.png)).
+
+> ⚠️ **Feed 5 V only, one source at a time.** Each board keeps its own 3.3 V regulator — never
+> tie the two 3.3 V rails together. Switch the battery **off** before reflashing either board
+> over USB so the boost output and USB 5 V can't back-feed each other.
+
 ### Reference material
 
 All datasheets, pinout diagrams, and board images are kept under

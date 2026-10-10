@@ -7,6 +7,7 @@ in sync when wiring changes.
 - CYD pinout diagram: [cyd_esp32-2432S028r_pinout-1.png](boards/cyd_esp32-2432S028r/pinout/cyd_esp32-2432S028r_pinout-1.png)
 - ESP32-C5 pinout diagram: [esp32-c5-devkit_pinout.jpg](boards/esp32-c5-devkit/pinout/esp32-c5-devkit_pinout.jpg)
 - ESP32-C5 datasheet: [esp32-c5_datasheet_en.pdf](boards/esp32-c5-devkit/datasheets/esp32-c5_datasheet_en.pdf)
+- **Full wiring diagram (data link + battery power):** [cyd-scanner_wiring_diagram_labeled.png](diagrams/cyd-scanner_wiring_diagram_labeled.png)
 
 ---
 
@@ -162,21 +163,72 @@ change both together.
 | Common ground   | GND (expansion)           | GND                    |
 | 5V power feed   | VIN (P1)                  | 5V0                    |
 
-### In-car / single-cable power (confirmed working)
-
-Power the whole rig from **one USB-C into the CYD** — no separate cable to the C5:
-
-- Wire CYD **VIN** (P1 header, = USB 5 V) → C5 **5V0**, plus GND↔GND (already shared by
-  the link). Each board keeps its **own** 3.3 V regulator; only the 5 V USB input is shared.
-- Plug just the CYD's USB-C into a car charger / power bank rated **≥1 A** (both ESP32s on
-  Wi-Fi/BLE + the display can peak ~0.7–1 A at 5 V).
-- **Feed 5 V only** — never tie the two 3.3 V rails together (the CYD's AMS1117-3.3 can't
-  power a second Wi-Fi SoC → brownouts).
-- Make the VIN→5V0 link a **removable jumper**: pop it off before reflashing the C5 over
-  its own USB, so you never have two 5 V sources back-feeding each other. One source at a time.
-
 > Both CYD pins (GPIO22, GPIO27) are output-capable and free (GPIO35 is input-only,
 > so it can serve as an RX but never TX). The ESP32's UART matrix lets any UART route
 > to any GPIO. On the C5, GPIO4/5 are the LP_UART RX/TX. I2C over GPIO22 (SCL) /
 > GPIO21 or GPIO27 on the CYD expansion headers is an alternative transport if UART
 > proves tight. **Confirm wiring and test before relying on these assignments.**
+
+---
+
+## 4. Power subsystem — on-board battery (current rig)
+
+The scanner now runs from a **self-contained LiPo battery pack**, making it fully portable
+(no external USB needed in the field). See
+[cyd-scanner_wiring_diagram_labeled.png](diagrams/cyd-scanner_wiring_diagram_labeled.png).
+
+### Components
+
+| Part                              | Role                                                                 |
+|-----------------------------------|----------------------------------------------------------------------|
+| 5000 mAh 3.7 V LiPo cell          | Energy store (18.5 Wh)                                                |
+| TP4056 Type-C USB charger (5V 1A) | Li-ion charge controller + protection; charge via its own USB-C port |
+| SPDT slide switch                 | Master power on/off, inline on the charger's positive output         |
+| 1.5 A boost converter (3.7→5 V)   | Steps the cell up to the 5 V both boards need                        |
+
+### Wiring (power path)
+
+```
+Battery + ──┐                                   Switch
+Battery − ──┼── TP4056 B+ / B−                  ┌──────┐
+            │   TP4056 OUT+ ───────────────────►│ in   │──► Boost  +in
+            │   TP4056 OUT− ──────────────────────────────► Boost  −in
+            │                                   └──────┘
+            │   Boost OUT+ (5 V) ──┬──► CYD VIN (P1)
+            │                      └──► C5  5V
+            │   Boost OUT− (GND) ──┬──► CYD GND
+            └──────────────────────┴──► C5  GND  (also the link common ground)
+```
+
+| From                | To                         | Notes                                   |
+|---------------------|----------------------------|-----------------------------------------|
+| Battery `+` / `−`   | TP4056 `B+` / `B−`         | The cell; charges via TP4056 USB-C      |
+| TP4056 `OUT+`       | Switch → Boost `+` input   | Switch breaks the +rail = master on/off |
+| TP4056 `OUT−`       | Boost `−` input            |                                         |
+| Boost `OUT+` (5 V)  | CYD **VIN** + C5 **5V**    | Both boards fed 5 V in parallel         |
+| Boost `OUT−` (GND)  | CYD **GND** + C5 **GND**   | Common ground (shared with the UART link)|
+
+### Rules / safety
+
+- **Feed 5 V only** — the 5 V boost output drives each board's VIN/5V pin. Each board keeps its
+  **own** 3.3 V regulator; **never tie the two 3.3 V rails together** (the CYD's AMS1117-3.3
+  can't power a second Wi-Fi SoC → brownouts).
+- **One 5 V source at a time.** Before reflashing either board over its own USB, switch the
+  battery **OFF** (or unplug that board's 5 V feed) so USB-5 V and the boost output never
+  back-feed each other. (Matches the existing C5-flash rule: C5 5 V must be disconnected while
+  its USB is connected.)
+- **Charge-while-run:** the TP4056 can charge the cell from its USB-C while the rig is powered;
+  its OUT pads still source the load. Keep total draw within the TP4056's 1 A path.
+- Current budget: both ESP32s on Wi-Fi/BLE + the display can peak ~0.7–1 A at 5 V, which is
+  within the 1.5 A boost rating. At ~0.5 A average the 5000 mAh cell gives on the order of
+  several hours of runtime.
+
+### Alternative: single-USB (bench / in-car) power
+
+The battery pack is removable from the picture — the rig can still be powered from **one USB-C
+into the CYD** (no battery, no separate cable to the C5):
+
+- Wire CYD **VIN** (P1, = USB 5 V) → C5 **5V**, GND↔GND (already shared by the link). Plug the
+  CYD's USB-C into a car charger / power bank rated **≥1 A**.
+- Same "feed 5 V only / one source at a time" rules apply — don't combine this with the battery
+  boost output live at the same time.
