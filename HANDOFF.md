@@ -217,12 +217,27 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **both boards on protocol v7.** CYD reflashed 2026-10-09 with the MAC-name fallback
-(`1cf88f4`); C5 unchanged since the v7 flash (CH340 1A86:7523 = COM17 this session; C5 native
-303A:1001 = COM18). Link verified up post-flash (`table=21 … BLE:21`, db loaded). Category
-drill-down + HOME icon redesign verified on-device by the user. Ports drift — identify by VID:PID.
+Device state: **both boards on protocol v7** (no bump since; all 2026-10-10 work is wire-compatible).
+**Latest flashes (2026-10-10 this session):** CYD = camera OUIs + HOME readout tweaks (Nest/Reolink/
+SimpliSafe, Tracker follow-gate, no "Other" tile, 2-line hint, `DB_GEN` 3); C5 = associated-client
+data-frame capture + BLE-pause starvation fix + 2.4 ch 1–11 + **5 GHz promiscuous sweep** + per-window
+capture diagnostic. Ports this session: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` =
+COM18 (flash), C5 UART bridge `2E3C:5740` = COM8 (does NOT flash). Bench-verified both promiscuous
+bands capture (`promisc 2.4 end mgmt=137 data=24 dataClient=2`, `promisc 5G end mgmt=10`). Ports
+drift — identify by VID:PID. **A field re-test near a known active camera is the pending validation
+(see outstanding #0).**
 
 ## PICK UP HERE — outstanding
+
+0. **FIELD RE-TEST of Wi-Fi client / camera capture (TOP, in progress).** The promiscuous
+   starvation fix + both-direction data-frame capture + 2.4 ch 1–11 + 5 GHz sweep are all flashed and
+   bench-verified, but the real validation is a walk near a KNOWN active camera. Watch the C5 console
+   `promisc 2.4 end` / `promisc 5G end` lines for `data`/`dataClient` climbing, and the CYD for the
+   camera's brand label. **Pause ~20–30 s near a target** — the cycle is ~21 s so each band sweeps only
+   ~once per cycle; a quick walk-by can fall between windows. Known residual gaps to keep in mind when
+   judging results: **DFS 5 GHz channels (52–144) are not swept**, and **dormant battery cameras are
+   RF-silent** until motion (walk in front to wake them). If 5 GHz `dataClient` stays 0 near a known
+   5 GHz camera, next lever is adding DFS channels and/or lengthening the 5 GHz window.
 
 ### Resolved / superseded (were the top items on 2026-10-05)
 1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — ACTUALLY FIXED (`a50ad3a`).** It recurred
