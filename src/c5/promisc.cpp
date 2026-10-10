@@ -35,6 +35,53 @@ static uint16_t deauth1s(uint32_t now) {
 
 inline uint32_t fnv1a(uint32_t h, uint8_t b) { return (h ^ b) * 16777619u; }
 
+// --- Associated-client data-frame capture -----------------------------------
+// A device ASSOCIATED to a home AP (a Ring/Nest/Wyze camera, a doorbell, any
+// Wi-Fi client) neither beacons nor — once it has joined — sends probe requests,
+// so WiFi.scanNetworks() and the probe-request path above are both blind to it.
+// Its source MAC is, however, in the clear in the addr2 field of every uplink
+// (ToDS) data frame. We harvest that and emit it as a Wi-Fi client detection so
+// the CYD scores it against the OUI rules. Strictly receive-only: we read an
+// address field already on the air; nothing is transmitted or injected.
+//
+// A chatty station sends many frames per second; re-merging each into the shared
+// (mutex-guarded) table would spin the lock needlessly, so a tiny recent-MAC ring
+// suppresses repeats of the same client within SEEN_SUPPRESS_MS.
+constexpr int      SEEN_SLOTS       = 32;
+constexpr uint32_t SEEN_SUPPRESS_MS = 1000;
+uint8_t  g_seenMac[SEEN_SLOTS][6]   = {};
+uint32_t g_seenAt [SEEN_SLOTS]      = {0};
+uint8_t  g_seenNext                 = 0;
+
+bool seenRecently(const uint8_t* mac) {
+  uint32_t now = millis();
+  for (int i = 0; i < SEEN_SLOTS; i++)
+    if (g_seenAt[i] && now - g_seenAt[i] <= SEEN_SUPPRESS_MS && memcmp(g_seenMac[i], mac, 6) == 0)
+      return true;
+  memcpy(g_seenMac[g_seenNext], mac, 6);
+  g_seenAt[g_seenNext] = now ? now : 1;  // never store 0 (the "empty" sentinel)
+  g_seenNext = (uint8_t)((g_seenNext + 1) % SEEN_SLOTS);
+  return false;
+}
+
+// Handle one 802.11 DATA frame: pull the associated client's source MAC.
+void handleData(const uint8_t* f, int len, const wifi_promiscuous_pkt_t* pkt) {
+  if (len < 24) return;                 // need the 3-address header (through addr3)
+  // Infrastructure UPLINK only: ToDS=1, FromDS=0 -> addr2 is the client SA.
+  // (A FromDS downlink's addr2 is the AP BSSID, already seen via beacons; a WDS
+  //  frame with both bits set is 4-address and not a simple client, so skip it.)
+  if ((f[1] & 0x03) != 0x01) return;
+  const uint8_t* sa = f + 10;           // addr2 = source (transmitter) station
+  if (sa[0] & 0x01) return;             // group/multicast guard (a real SA is never group)
+  if (seenRecently(sa)) return;         // throttle a chatty station
+  Detection d{};
+  d.source  = (uint8_t)Source::WifiProbe;  // a Wi-Fi client observed in promiscuous mode
+  d.channel = pkt->rx_ctrl.channel;
+  d.rssi    = (int8_t)pkt->rx_ctrl.rssi;
+  memcpy(d.mac, sa, 6);
+  g_cb(d);                              // feeds the same mutex-guarded table as everything else
+}
+
 // Build the IE-order fingerprint of a management-frame body and pull the SSID
 // out along the way. We hash the ordered list of element IDs (the classic
 // fingerprint that survives MAC randomization, since it's driver/firmware
@@ -67,13 +114,16 @@ uint32_t fingerprint(const uint8_t* f, int len, int off, char* ssid, int ssidCap
   return h ? h : 1;  // never collide with the "none" sentinel
 }
 
-// Promiscuous RX callback (runs in the Wi-Fi task). Management frames only.
+// Promiscuous RX callback (runs in the Wi-Fi task). Management + data frames.
 void rxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
-  if (type != WIFI_PKT_MGMT || !g_cb) return;
+  if (!g_cb) return;
   auto* pkt = reinterpret_cast<wifi_promiscuous_pkt_t*>(buf);
   const uint8_t* f = pkt->payload;
   int len = pkt->rx_ctrl.sig_len;
   if (len > 4) len -= 4;   // drop the trailing FCS
+
+  if (type == WIFI_PKT_DATA) { handleData(f, len, pkt); return; }  // associated-client capture
+  if (type != WIFI_PKT_MGMT) return;
   if (len < 24) return;    // need a full management header (through addr3)
 
   uint8_t fc = f[0];
@@ -173,7 +223,10 @@ uint16_t deauthRecent() {
 
 void enable() {
   wifi_promiscuous_filter_t filt = {};
-  filt.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;  // management frames only
+  // MGMT = beacons/probes/deauth (fingerprints + behavioral detectors);
+  // DATA  = uplink frames whose addr2 reveals an ASSOCIATED client (e.g. a Ring
+  //         doorbell that neither beacons nor probes once joined to its home AP).
+  filt.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
   esp_wifi_set_promiscuous_filter(&filt);
   esp_wifi_set_promiscuous_rx_cb(&rxCb);
   esp_wifi_set_promiscuous(true);

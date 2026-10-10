@@ -170,8 +170,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   phases (see `src/c5/promisc.*`): an async dual-band AP scan (`WiFi.scanNetworks(true)`,
   2.4 + 5 GHz beacons) and a **passive promiscuous-mode capture window** (Phase 2) that
   hops the 2.4 GHz probe hotspots 1/6/11 (~200 ms dwell, ~3 s window) to catch Wi-Fi
-  **client probe requests** + **beacon/probe-resp 802.11 IE fingerprints** — the client
-  behavior `scanNetworks()` can't see. BLE runs continuously (NimBLE callback) alongside.
+  **client probe requests** + **beacon/probe-resp 802.11 IE fingerprints** + **associated-client
+  uplink DATA frames** (the `addr2` source MAC of a client already joined to a home AP — a
+  Ring/Nest/Wyze camera that neither beacons nor, once joined, probes; emitted as a Wi-Fi client /
+  `Source::WifiProbe`, throttled by a recent-MAC ring) — all the client behavior `scanNetworks()`
+  can't see. BLE runs continuously (NimBLE callback) alongside.
   All sources merge into a shared **detection table** (dedup by source+MAC, 30 s TTL,
   mutex-guarded because the BLE + promiscuous callbacks run in separate tasks; a captured
   IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
@@ -247,8 +250,9 @@ back (5 GHz included). Things that matter, learned the hard way:
   (Espressif/Qualcomm) carry LOW weight so they only escalate when combined with an SSID/BLE-name hit
   — this is what suppresses false positives. The roster ships a large device taxonomy ported (as
   data, GPL-3.0, attributed in [docs/references.md](docs/references.md)) from SquachWatch-CYD: Axon,
-  ALPR, cameras (Ring/Verkada/Axis/Hikvision/Wyze/…), Tile/Samsung/Google trackers, Meta/Snap camera
-  glasses, Flipper/Pineapple, OpenDroneID, etc.
+  ALPR, cameras (Ring/Verkada/Axis/Hikvision/Wyze/Nest/Reolink/SimpliSafe/…), Tile/Samsung/Google
+  trackers, Meta/Snap camera glasses, Flipper/Pineapple, OpenDroneID, etc. (Nest/Reolink/SimpliSafe
+  OUIs + the Arlo/Blink reweight were added 2026-10-10 straight from the IEEE MA-L registry.)
 - **Behavioral-flag tiers.** The C5's `DetFlags` (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) raise a
   detection's **tier floor** on the CYD (`computeScores`): Find-My/Drone-RID → suspect,
   Pwnagotchi/Evil-twin → likely, iBeacon → label only. Deauth-flood + evil-twin also surface as
@@ -281,13 +285,19 @@ back (5 GHz included). Things that matter, learned the hard way:
   link, green when connected**, and tapping it opens the full-screen web-app QR (`< BACK` top bar).
   Both icons stay in the BOOT nav (order: Scan → cog → phone → threat tiles) so Settings/touch-cal is
   never touch-only. The HOME screen also shows a **background-scan threat readout** at the bottom: the
-  full fixed **category taxonomy** as `NAME: n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
-  Drone/Deauth/Flipper/Skim/Other), always shown (dim at 0, tier-coloured + outlined when >0;
-  refreshed on the 2 s idle cadence). **Tapping a tile** (or BOOT-selecting it) opens that category's
-  **device list** (`SCR_MENUCAT`, with a one-line "what signatures match" blurb) → a device →
-  **detail** (`SCR_MENUCATDETAIL`, the scanner detail reused via `buildDeviceDetail`/
-  `showDeviceDetail`). Categories are derived on the CYD (`categoryOf()` — behavioral flags first,
-  then sigdb label → `g_category[]`; `groupCategory()`/`countCategories()` per device). The live scan
+  fixed **category taxonomy** as `NAME: n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
+  Drone/Deauth/Flipper/Skim — **12 tiles, 4 rows; the `Other` catch-all is NOT tiled**), always shown
+  (dim at 0, tier-coloured + outlined when >0; refreshed on the 2 s idle cadence). **Tapping a tile**
+  (or BOOT-selecting it) opens that category's **device list** (`SCR_MENUCAT`, with a one-line "what
+  signatures match" blurb) → a device → **detail** (`SCR_MENUCATDETAIL`, the scanner detail reused via
+  `buildDeviceDetail`/`showDeviceDetail`). Categories are derived on the CYD (`categoryOf()` —
+  behavioral flags first, then sigdb label → `g_category[]`; `groupCategory()`/`countCategories()` per
+  device). **`Tracker` is follow-gated:** a tracker (Find-My flag or Tile/SmartTag label) only resolves
+  to `CAT_TRACKER` while it is actually **FOLLOWING** (`isFollowing()`, ftier 2 ≥ `FOLLOW_SPAN_M`);
+  otherwise it drops to `CAT_NONE` so ubiquitous idle AirTags/Tiles don't flood the readout. Since
+  `groupCategory()` is the single source for the HOME count, the drill-down, and the DETS `cat` field,
+  the phone/web breakdown mirrors this automatically. (A non-following tracker still keeps its Find-My
+  Suspect tier floor on the live list — only the category tile is gated.) The live scan
   screen shows a **red deauth/evil-twin alert banner** (+ LED) when a flood or evil-twin AP is
   detected, alongside the follow-me banner.
   **Scan** opens a **Scan menu** (`SCR_SCANMENU`: Start Scan / Explore Scan / Scan Settings) —

@@ -89,13 +89,19 @@ const char* kSeedCsv =
     "oui,44:19:B6,70,W,Hikvision\n"
     "oui,28:57:BE,70,W,Hikvision\n"
     "oui,00:E0:4C,15,W,Realtek-Cam\n"
-    "oui,BC:DD:C2,15,W,Arlo\n"
-    "oui,4C:69:05,15,W,Blink\n"
+    "oui,BC:DD:C2,40,W,Arlo\n"       // was 15: a clean Arlo MA-L, enough to stand alone as suspect
+    "oui,4C:69:05,40,W,Blink\n"      // was 15: Amazon Blink camera, same rationale
     "oui,A4:C1:38,15,W,Tuya-Cam\n"
     "oui,E0:A7:00,70,W,Verkada\n"
     "oui,70:1A:D5,70,W,Avigilon\n"
     "oui,00:40:8C,70,W,Axis-Cam\n"
     "oui,B8:A4:4F,70,W,Axis-Cam\n"
+    // Nest/Reolink/SimpliSafe added 2026-10-10 from the public IEEE MA-L registry
+    // (see docs/references.md). Nest (Google) doorbell/cam, 2 blocks; Reolink; SimpliSafe.
+    "oui,64:16:66,70,W,Nest-Cam\n"
+    "oui,18:B4:30,70,W,Nest-Cam\n"
+    "oui,EC:71:DB,70,W,Reolink\n"
+    "oui,F8:51:28,70,W,SimpliSafe\n"
     "oui,FC:65:DE,40,W,Ring\n"
     "oui,68:37:E9,40,W,Ring\n"
     "oui,AC:9F:C3,70,W,Ring\n"

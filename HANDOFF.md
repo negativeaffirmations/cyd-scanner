@@ -29,6 +29,56 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — HOME readout tweaks (2026-10-10, CYD-only, FLASHED)
+All in `src/cyd/main.cpp`; CYD rebuilt + flashed (COM14). No C5/protocol change.
+- **"Other" tile removed** from the HOME category readout — `drawMenuThreats()` now builds `g_menuCat`
+  skipping `CAT_OTHER` (12 tiles / 4 rows instead of 13 / 5). Devices can still resolve to `CAT_OTHER`
+  internally; it just isn't tiled or counted on HOME.
+- **TRACKER gated to FOLLOWING-only.** `groupCategory()` now returns `CAT_TRACKER` only when the
+  device `isFollowing()` (ftier 2 = tracked ≥`FOLLOW_SPAN_M` 400 m across the GPS route); otherwise
+  `CAT_NONE`. Fixes the suburban false-positive flood (user saw 8–12 idle AirTags/Tiles). Because
+  `groupCategory()` is the single source for the HOME count, the `SCR_MENUCAT` drill-down, AND the
+  DETS `cat` field, the phone/web breakdown became consistent for free (no web change). New helper
+  `isFollowing(mac)` (fwd-declared before `groupCategory`, defined by the follow helpers). Blurb
+  updated. **Caveat:** a non-following tracker still keeps its Find-My Suspect tier floor, so it still
+  shows as a yellow suspect row on the live list + Suspect tally — only the category tile is gated.
+  (Follow-state is computed *after* scoring, so gating the tier floor too would be a separate change.)
+- **Bottom hint now two lines** (the single line overran 240 px). Threat caption/tiles raised
+  (`MENU_THREAT_Y` 190→176, `CHIP_Y0` 202→190; new `MENU_HINT_Y`=292); hint reads "Tap an item, or
+  use BOOT:" / "tap = next,  hold = select".
+
+## Done — associated-client (data-frame) capture + camera OUIs (2026-10-10, BOTH BOARDS FLASHED)
+Root cause of "walked past Ring doorbells, saw nothing": the scanner was deaf to **associated
+Wi-Fi clients**. An installed Ring/Nest/Wyze cam is a client joined to a home AP — it never beacons
+(so `WiFi.scanNetworks()` misses it) and, once joined, doesn't probe (so the probe-request path
+misses it). Its MAC is only in the clear in the `addr2` of its uplink **data frames**, which the C5
+promiscuous filter was discarding (`WIFI_PROMIS_FILTER_MASK_MGMT` only).
+- **C5 (`src/c5/promisc.*`):** broadened the filter to `MGMT | DATA`; `rxCb` now dispatches
+  `WIFI_PKT_DATA` to a new `handleData()` that takes the `addr2` source MAC of **uplink (ToDS=1,
+  FromDS=0)** data frames and emits it as `Source::WifiProbe` (a Wi-Fi client). A 32-slot recent-MAC
+  ring (`seenRecently`, 1 s suppress) keeps a chatty station from spinning the table mutex every
+  frame. **Still 100% receive-only** (reads an address already on the air). **Wire-compatible:
+  reuses `WifiProbe`, so NO protocol bump (still v7), NO struct change** — an unchanged CYD already
+  scores `WifiProbe` against `W`/`A` OUI rules, so Ring etc. fire. Caveat: these clients land in the
+  same 96-entry table (oldest-evict, 30 s TTL); a dense area could pressure it (tuning follow-up:
+  per-source sub-caps). Only 2.4 GHz 1/6/11 during the promiscuous window (Ring is 2.4 GHz).
+- **CYD DB (`src/cyd/sigdb.cpp`):** added camera OUIs from the public IEEE MA-L registry —
+  **Nest** `64:16:66`/`18:B4:30`, **Reolink** `EC:71:DB`, **SimpliSafe** `F8:51:28` (all `70,W`);
+  **re-weighted Arlo `BC:DD:C2` + Blink `4C:69:05` 15→40** so they stand alone as suspect. New labels
+  map to `CAT_CAM` (`categoryOf()` now matches Nest/Reolink/SimpliSafe). **Bumped `DB_GEN` 2→3** so
+  the device deletes + re-seeds `/signatures.csv` on next boot. (Eufy/Anker researched but omitted —
+  no clean verified brand OUI.) Attribution in `docs/references.md`.
+- **Builds:** both PASS — C5 clean; CYD RAM 33.0% / Flash 44.7% (unchanged). **BOTH FLASHED
+  2026-10-10** (C5 native COM18 `303A:1001`; CYD COM14 `1A86:7523`; boards were off-battery +
+  unlinked during flash). No protocol bump, so they interoperate even mid-upgrade. **On-device
+  verification still pending** — needs the UART link + power reconnected; the CYD reseeds
+  `/signatures.csv` on this boot (`DB_GEN` 3).
+- **Separately diagnosed (not a code bug): "boot shows BLE only, no APs."** Code review confirms the
+  C5 does scan dual-band Wi-Fi at boot and the CYD bg scan (default ON) requests it. Likely causes:
+  (1) first dual-band scan takes ~10 s so APs appear late; (2) a persisted NVS `srcmask` with Wi-Fi
+  off — check web STATUS `src=` (all-on default = **27**); (3) C5 Wi-Fi/BLE coexistence scan failure
+  — check CYD serial `table=(2.4:.. 5G:.. BLE:..)`. User to confirm on-device.
+
 ## Done — webapp JS extracted into ES modules (2026-10-10, no firmware change)
 - `17c8325` **webapp: inline `<script>` → native ES modules.** The ~940-line inline script in
   `webapp/index.html` (1174→236 lines) is split into 19 modules under `webapp/js/`

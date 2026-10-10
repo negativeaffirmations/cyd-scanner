@@ -99,5 +99,17 @@ near-verbatim reuse is what triggers the rules above.**
   Pwnagotchi beacon-IE, evil-twin, deauth-burst, full ASTM F3411 Remote-ID decode) — these aren't
   identifier lookups and would need dedicated detector code (candidate future C5-side work).
 
+### Camera OUIs read directly from the IEEE MA-L registry (2026-10-10)
+
+- **What was used:** MAC OUI prefixes for camera/doorbell brands the roster lacked, read straight
+  from the **public IEEE MA-L registry** (standards-oui.ieee.org) — not copied from any project:
+  **Nest Labs** `64:16:66` / `18:B4:30`, **Reolink** `EC:71:DB`, **SimpliSafe** `F8:51:28`. Also
+  re-weighted the existing Arlo/Blink OUIs (15→40) so they stand alone as suspect.
+- **Where it landed:** `src/cyd/sigdb.cpp` seed (`kSeedCsv`), `W` srcmask, label → `CAT_CAM`.
+- **Why these are detectable now:** paired with the C5 associated-client capture (uplink data-frame
+  addr2, 2026-10-10), an *installed* camera that neither beacons nor probes now surfaces as a Wi-Fi
+  client and these OUI rules fire. (Eufy/Anker were researched but left out — no clean, verified
+  brand OUI; their registrations are fragmented.)
+
 *When further code/data from a cataloged project is adapted, record it here too: project, what was
 used, where it landed (file/function), the license, and the attribution added.*

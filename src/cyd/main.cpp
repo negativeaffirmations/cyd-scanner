@@ -505,7 +505,7 @@ static const char* catDescription(int c) {
     case CAT_RING:    return "Ring camera/doorbell OUIs";
     case CAT_RAVEN:   return "Raven BLE UUIDs (0x3100-0x3500)";
     case CAT_GLASS:   return "Smart-glasses BLE IDs (Meta/Snap)";
-    case CAT_TRACKER: return "Find My + tracker BLE UUIDs (Tile)";
+    case CAT_TRACKER: return "AirTag/Tile/Tag - only if following you";
     case CAT_DRONE:   return "OpenDroneID (BLE 0xFFFA / Wi-Fi)";
     case CAT_DEAUTH:  return "Deauth / evil-twin / pwnagotchi";
     case CAT_FLIPPER: return "Flipper OUI / BLE UUID / name";
@@ -561,7 +561,8 @@ static Category categoryOf(int i) {
     return CAT_DEAUTH;
   if (strstr(l, "Wyze") || strstr(l, "Hikvision") || strstr(l, "Arlo") || strstr(l, "Blink") ||
       strstr(l, "Tuya") || strstr(l, "Realtek") || strstr(l, "Amazon-Cam") || strstr(l, "Verkada") ||
-      strstr(l, "Avigilon") || strstr(l, "Axis") || strstr(l, "Cam"))
+      strstr(l, "Avigilon") || strstr(l, "Axis") || strstr(l, "Nest") || strstr(l, "Reolink") ||
+      strstr(l, "SimpliSafe") || strstr(l, "Cam"))
     return CAT_CAM;
   if (strstr(l, "Skim"))        return CAT_SKIM;
   return CAT_OTHER;
@@ -749,14 +750,25 @@ static int buildGroups() {
 
 // Category of a whole device (one MAC = one DevGroup). Behavioral flags (unioned across the
 // device's members in g.flags) win; otherwise the category of its strongest-scoring member.
+static bool isFollowing(const uint8_t* mac);  // fwd: defined with the follow-state helpers below
+
 static Category groupCategory(const DevGroup& g) {
-  if (g.flags & FLAG_BLE_ODID)                              return CAT_DRONE;
-  if (g.flags & FLAG_BLE_FINDMY)                            return CAT_TRACKER;
-  if (g.flags & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN)) return CAT_DEAUTH;
-  int best = -1;
-  for (int i = 0; i < g_detCount; i++)
-    if (memcmp(g_dets[i].mac, g.mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
-  return best >= 0 ? (Category)g_category[best] : CAT_OTHER;
+  Category c;
+  if      (g.flags & FLAG_BLE_ODID)                              c = CAT_DRONE;
+  else if (g.flags & FLAG_BLE_FINDMY)                            c = CAT_TRACKER;
+  else if (g.flags & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN)) c = CAT_DEAUTH;
+  else {
+    int best = -1;
+    for (int i = 0; i < g_detCount; i++)
+      if (memcmp(g_dets[i].mac, g.mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
+    c = best >= 0 ? (Category)g_category[best] : CAT_OTHER;
+  }
+  // AirTag/Tile/SmartTag trackers are everywhere in daily life; counting every one as a threat
+  // buries the real signal. Treat a tracker as the TRACKER threat category only when it is actually
+  // FOLLOWING (ftier 2 = tracked across >=FOLLOW_SPAN_M of the GPS route); otherwise it drops out of
+  // the HOME readout, the drill-down list, and the phone breakdown (all derive from this function).
+  if (c == CAT_TRACKER && !isFollowing(g.mac)) return CAT_NONE;
+  return c;
 }
 
 // Per-category live threat tally over the device groups. Counts only non-whitelisted devices at
@@ -812,6 +824,13 @@ static const FollowState* findFollow(const uint8_t* mac) {
   for (int i = 0; i < g_followCount; i++)
     if (memcmp(g_follow[i].mac, mac, 6) == 0) return &g_follow[i];
   return nullptr;
+}
+
+// True only when this MAC is currently FOLLOWING (ftier 2). Used to gate the TRACKER category so
+// stationary/passing AirTags don't alarm — only a tracker tailing the user's route does.
+static bool isFollowing(const uint8_t* mac) {
+  const FollowState* f = findFollow(mac);
+  return f && f->ftier == 2;
 }
 
 static void updateFollowState() {
@@ -1053,7 +1072,8 @@ static void renameSessionOnSync() {
 // Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
 // the firmware (e.g. after adding seed rules). This DISCARDS any on-card DB edits, so
 // only bump it when that's intended.
-static constexpr uint32_t DB_GEN = 2;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion
+static constexpr uint32_t DB_GEN = 3;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion;
+                                       // 3: Nest/Reolink/SimpliSafe OUIs + Arlo/Blink reweight (2026-10-10)
 
 static void reseedDbIfNeeded() {
   Preferences p;
@@ -1255,7 +1275,8 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
   while (rd2.next(line, len) && phone::connected()) {
     if (!logfilter::keep(line, c)) continue;
     for (size_t off = 0; off < len; ) {
-      size_t n = min(len - off, sizeof(out) - on);
+      size_t rem = len - off, avail = sizeof(out) - on;
+      size_t n = rem < avail ? rem : avail;  // (not min(): Arduino's min macro trips IntelliSense here)
       memcpy(out + on, line + off, n);
       on += n; off += n;
       if (on == sizeof(out)) { phone::logNotify(out, on); sent += on; on = 0; delay(15); }
@@ -2114,11 +2135,13 @@ static void drawFileList(const char* title, const FileItem* items, int n, int se
 // dim. Counts come from countCategories() over g_groups (kept fresh by the headless bg cycle). Each
 // tile is tappable (-> that category's device list); BOOT nav walks the HOME items then the tiles
 // (g_menuSel MENU_N..MENU_N+N-1). Repaints only its own band so the menu rows above don't flicker.
-static constexpr int MENU_THREAT_Y = 190;                       // "Background threats" caption
-static constexpr int MENU_THREAT_H = 320 - MENU_THREAT_Y - 18;  // down to just above the hint line
-// 3 columns x 5 rows holds all 13 categories (CAT_FLOCK..CAT_OTHER); tile text is font 1 (smallest).
-static constexpr int CHIP_Y0 = 202, CHIP_STEP = 20, CHIP_H = 18, CHIP_COLS = 3;
-static constexpr int MENU_CAT_MAX = CAT_N - 1;  // every named category
+static constexpr int MENU_HINT_Y   = 292;                       // first of the two-line hint at the bottom
+static constexpr int MENU_THREAT_Y = 176;                       // "Background threats" caption (raised)
+static constexpr int MENU_THREAT_H = MENU_HINT_Y - MENU_THREAT_Y - 2;  // down to just above the hint
+// 3 columns x 4 rows holds the 12 tiled categories (CAT_FLOCK..CAT_SKIM; OTHER is not tiled);
+// tile text is font 1 (smallest).
+static constexpr int CHIP_Y0 = 190, CHIP_STEP = 20, CHIP_H = 18, CHIP_COLS = 3;
+static constexpr int MENU_CAT_MAX = CAT_N - 1;  // array capacity (>= number of tiled categories)
 static uint8_t g_menuCat[MENU_CAT_MAX];  // category ids in tile order (fixed), for input dispatch
 static int     g_menuCatN = 0;
 // First g_menuSel index that maps to a threat chip (after the list buttons + the two title icons).
@@ -2137,8 +2160,8 @@ static void chipRect(int i, int n, int& x, int& y, int& w) {
 static void drawMenuThreats() {
   int cnt[CAT_N], worst[CAT_N];
   countCategories(cnt, worst);
-  g_menuCatN = CAT_N - 1;                           // always show every category (1..CAT_N-1)
-  for (int i = 0; i < g_menuCatN; i++) g_menuCat[i] = (uint8_t)(i + 1);
+  g_menuCatN = 0;                                   // every category except OTHER (the catch-all is not tiled)
+  for (int c = 1; c < CAT_N; c++) if (c != CAT_OTHER) g_menuCat[g_menuCatN++] = (uint8_t)c;
   if (g_menuSel >= MENU_CHIP0 + g_menuCatN) g_menuSel = 0;
 
   int W = tft.width();
@@ -2241,8 +2264,11 @@ static int homeIconTapped() {
 static void drawMenu() {
   drawListMenu("HOME", kMenuItems, MENU_N, g_menuSel);
   drawHomeIcons();  // cog (Settings) left + phone (Phone Link) right, on the HOME line
-  tft.drawString(g_touchOk ? "Tap an item, or BOOT: tap=next hold=select"
-                           : "BOOT: tap=next  hold=select", 10, tft.height() - 18, 1);
+  // Two-line hint (the single line overran 240 px); kept just below the threat readout.
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(g_touchOk ? "Tap an item, or use BOOT:" : "Navigate with the BOOT button:", 10, MENU_HINT_Y, 1);
+  tft.drawString("tap = next,  hold = select", 10, MENU_HINT_Y + 10, 1);
   drawMenuThreats();
 }
 
