@@ -631,6 +631,19 @@ static int      g_sortIdx[MAX_DET];   // detections sorted tier-first then RSSI 
 static DevGroup g_groups[MAX_DET];
 static int      g_groupCount = 0;
 
+// Name to show for a device: its advertised name, or — when it has none — its MAC as text, so
+// nameless devices stay individually identifiable instead of all collapsing to one "<hidden>".
+// Returns either a pointer into g_dets[] (persistent) or a single static buffer; every caller
+// consumes the result (copies/draws it) before the next call, so one buffer is safe.
+static const char* groupName(const DevGroup* g) {
+  if (g && g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) return g_dets[g->nameIdx].name;
+  static char buf[18];  // "AA:BB:CC:DD:EE:FF" + NUL
+  if (g) snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+                  g->mac[0], g->mac[1], g->mac[2], g->mac[3], g->mac[4], g->mac[5]);
+  else snprintf(buf, sizeof(buf), "?");
+  return buf;
+}
+
 // --- Scanner screen (SCR_SCAN) state. The visible list is a filtered view (g_scanView) of either
 // the live g_groups or, while the view is frozen (PAUSE), a snapshot (g_frozenRows). Bounded static
 // buffers sized MAX_DET (no heap). ---
@@ -1576,7 +1589,7 @@ static void pushDetections() {
   for (int r = 0; r < n; r++) {
     const DevGroup& g = g_groups[r];
     char name[24];
-    sanitizeField(name, sizeof(name), g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>");
+    sanitizeField(name, sizeof(name), groupName(&g));
     char row[192];
     int len = snprintf(row, sizeof(row), "%u\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%08lX\t%s\t",
                        (unsigned)g_detsSeq, g.tier,
@@ -1790,7 +1803,7 @@ static void drawScanList(bool clear) {
       const Detection& d = g_dets[g.rep];
       const FollowState* fs = findFollow(g.mac);
       drawDetRow(y, tierColor(g.tier, d.source, d.channel), g.tag,
-                 g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>", g.bestRssi, "",
+                 groupName(&g), g.bestRssi, "",
                  g.tier != (int)sigdb::Tier::None, 9, fs && fs->ftier == 2, g.whitelisted);
     }
   }
@@ -2667,7 +2680,7 @@ static void drawViewerList(bool clear) {
     char tc[12];
     fmtTimecode(lr.epoch, lr.ms, tc, sizeof(tc));
     drawDetRow(LIST_Y0 + r * LIST_ROW_H, tierColor(lr.tier, linkSourceOf(e.srcType), lr.channel),
-               lr.src, lr.name[0] ? lr.name : "<hidden>", lr.rssi, tc, lr.tier > 0, 3);
+               lr.src, lr.name[0] ? lr.name : lr.mac, lr.rssi, tc, lr.tier > 0, 3);
   }
   drawScrollIcons(g_viewOffset, g_viewN, vis);
 }
@@ -2855,7 +2868,7 @@ static void openDetail(int viewPos) {  // position within the filtered+sorted vi
   if (row < 0 || row >= g_idxN || !readRowAt(g_ex->idx[row].offset, line, sizeof(line), r)) return;
   g_detN = 0; g_detOff = 0;
   char b[64];
-  addField("Name", r.name[0] ? r.name : "<hidden>");
+  addField("Name", r.name[0] ? r.name : r.mac);  // fall back to MAC when nameless (still unique)
   addField("MAC", r.mac);
   addField("Source", !strcmp(r.src, "BLE") ? "BLE" : !strcmp(r.src, "PRB") ? "Probe request"
                    : !strcmp(r.src, "154") ? "802.15.4 (Zigbee/Thread)"
@@ -2916,10 +2929,6 @@ static const DevGroup* groupByMac(const uint8_t* mac) {
   for (int k = 0; k < g_groupCount; k++)
     if (memcmp(g_groups[k].mac, mac, 6) == 0) return &g_groups[k];
   return nullptr;
-}
-
-static const char* groupName(const DevGroup* g) {
-  return (g && g->nameIdx >= 0) ? g_dets[g->nameIdx].name : "<hidden>";
 }
 
 static void drawFollowRows(bool clear) {
@@ -3147,7 +3156,7 @@ static void snapshotFrozen() {
     const DevGroup& g = g_groups[k];
     ScanRow& s = g_frozenRows[k];
     memcpy(s.mac, g.mac, 6);
-    snprintf(s.name, sizeof(s.name), "%.19s", g.nameIdx >= 0 ? g_dets[g.nameIdx].name : "<hidden>");
+    snprintf(s.name, sizeof(s.name), "%.19s", groupName(&g));
     snprintf(s.tag, sizeof(s.tag), "%s", g.tag);
     s.rssi = (int16_t)g.bestRssi;
     s.tier = (uint8_t)g.tier;

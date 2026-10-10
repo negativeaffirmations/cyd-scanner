@@ -694,7 +694,7 @@ function renderMap(){
     g.items.sort((a,b)=> tierNum(b.tier)-tierNum(a.tier) || b.rssi-a.rssi);
     const shown=g.items.slice(0,60).map(d=>{
       const flag=tierNum(d.tier)?" ["+d.tier+"]":"";
-      return (d.source||"?")+" "+d.rssi+"dBm "+(d.name||"<hidden>")+" "+d.mac+(d.pan?" PAN "+d.pan:"")+flag;
+      return (d.source||"?")+" "+d.rssi+"dBm "+(d.name?d.name+" ":"")+d.mac+(d.pan?" PAN "+d.pan:"")+flag;
     }).join("\n");
     const more=g.items.length>60?"\n… +"+(g.items.length-60)+" more":"";
     m.bindPopup("<b>"+g.items.length+" device(s)</b><br>"+g.lat.toFixed(5)+", "+g.lon.toFixed(5)+
@@ -809,7 +809,7 @@ function renderDetList(el, rows, opts){
     const ft = viewer ? 0 : (r.ftier||0);                 // follow tier (live rows only)
     const muted = !viewer && r.muted;
     const fmk = ft>=1 ? `<span class="fmark f${ft}" title="${ft===2?'Possible follower':'Persistent'}">${ft===2?'⚑':'•'}</span> ` : "";
-    const nm = fmk + (esc(r.name) || "&lt;hidden&gt;") + (viewer ? "" : flagBadges(r.flags||0));
+    const nm = fmk + (esc(r.name) || esc(r.mac) || "&lt;hidden&gt;") + (viewer ? "" : flagBadges(r.flags||0));
     const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
     const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : r.sources).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
@@ -884,7 +884,7 @@ function openCatModal(catId){
     el.innerHTML = '<div class="sub" style="padding:6px">No devices in this category right now.</div>';
   } else {
     el.innerHTML = rows.map((r,ri)=>{
-      const tn = rowTier(r), nm = esc(r.name) || "&lt;hidden&gt;";
+      const tn = rowTier(r), nm = esc(r.name) || esc(r.mac) || "&lt;hidden&gt;";
       return `<div class="det clk" data-ri="${ri}"><span class="tiercol"><span class="badge b${tn}"></span></span>`+
              `<span class="nm t${tn}">${nm}${flagBadges(r.flags||0)}</span>`+
              `<span class="rssi">${r.rssi} dBm</span></div>`;
@@ -896,7 +896,7 @@ function openCatModal(catId){
 // Live-detection detail (reuses the detDlg modal; no per-detection GPS in the live stream).
 function openCatDevice(r){
   const tn = rowTier(r);
-  const rowsKv = [["Name", r.name||"<hidden>"], ["MAC", r.mac],
+  const rowsKv = [["Name", r.name||r.mac||"<hidden>"], ["MAC", r.mac],
     ["Category", CAT_NAMES[r.cat||0] || "Other"],
     ["Signals", (r.sources||[]).map(s=>s.tag).join(", ") || "?"],
     ["RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
@@ -971,7 +971,7 @@ function openDetail(r){
   const tn=tierNum(r.tier);
   const tierTxt=(tn?r.tier.charAt(0).toUpperCase()+r.tier.slice(1):"None")+(r.score?" (score "+r.score+")":"")+
     (r.signature?" — "+r.signature:"");
-  const rowsKv=[["Name",r.name||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
+  const rowsKv=[["Name",r.name||r.mac||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
     ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
   if(r.wl) rowsKv.push(["Whitelisted","yes (muted)"]);
   if(r.flags) rowsKv.push(["Flags",r.flags.replace(/\+/g,", ")]);
@@ -1017,7 +1017,7 @@ function openFollowList(){
               : 'No active followers right now.') + '</div>';
   } else {
     el.innerHTML = rows.map((r,ri)=>{
-      const nm = esc(r.name) || "&lt;hidden&gt;";
+      const nm = esc(r.name) || esc(r.mac) || "&lt;hidden&gt;";
       const fc = r.ftier===2 ? "f2" : "f1";
       return `<div class="det clk" data-ri="${ri}"><span class="tiercol"><span class="fmark ${fc}">${r.ftier===2?'⚑':'•'}</span></span>`+
              `<span class="nm">${nm}</span><span class="folscore">${r.fscore}/100</span>`+
@@ -1031,7 +1031,7 @@ let folMap=null, folLayer=null;
 function openFollowDetail(r){
   const tn = typeof r.tier === "number" ? r.tier : tierNum(r.tier);
   const rowsKv = [
-    ["Name", r.name || "<hidden>"],
+    ["Name", r.name || r.mac || "<hidden>"],
     ["MAC", r.mac],
     ["Follow tier", FTIER_TXT[r.ftier] || "none"],
     ["Follow score", (r.fscore||0) + " / 100"],
