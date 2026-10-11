@@ -317,9 +317,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   link, green when connected**, and tapping it opens the full-screen web-app QR (`< BACK` top bar).
   Both icons stay in the BOOT nav (order: Scan → cog → phone → threat tiles) so Settings/touch-cal is
   never touch-only. The HOME screen also shows a **background-scan threat readout** at the bottom: the
-  fixed **category taxonomy** as `NAME: n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
+  fixed **category taxonomy** as `NAME:n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
   Drone/Deauth/Flipper/Skim — **12 tiles, 4 rows; the `Other` catch-all is NOT tiled**), always shown
-  (dim at 0, tier-coloured + outlined when >0; refreshed on the 2 s idle cadence). **Tapping a tile**
+  (dim grey at 0; when >0 each tile is **coloured by its category hue** — the `kCatColor[]` RGB565
+  palette approximating the web app's `CAT_COL`, so the readout matches the phone — plus a
+  **tier-coloured threat-score badge** on the right showing the sigdb score, or the tier level 1-3 when
+  the DB gave no score, so severity survives the category-hue switch; refreshed on the 2 s idle
+  cadence). **Tapping a tile**
   (or BOOT-selecting it) opens that category's **device list** (`SCR_MENUCAT`, with a one-line "what
   signatures match" blurb) → a device → **detail** (`SCR_MENUCATDETAIL`, the scanner detail reused via
   `buildDeviceDetail`/`showDeviceDetail`). Categories are derived on the CYD (`categoryOf()` —

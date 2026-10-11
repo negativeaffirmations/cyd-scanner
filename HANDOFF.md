@@ -33,6 +33,21 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — HOME threat tiles: per-category colours + threat-score badge (2026-10-11, branch `remoteid-ui`, CYD FLASHED COM14)
+User-requested consistency fix: the CYD HOME category tiles were coloured by **tier** while the web app
+colours the same categories by **category hue** (`CAT_COL`). Aligned the CYD to the web app:
+- New **`kCatColor[CAT_N]`** RGB565 palette (`src/cyd/main.cpp`) approximating `webapp/js/config.js`
+  `CAT_COL` (TFT 16-bit gamut can't match sRGB exactly → nearest RGB565, documented per entry). Tiles
+  now use the category hue for outline + label (dim grey at 0, cyan when BOOT-selected).
+- Because the hue no longer encodes severity, each hot tile gets a **tier-coloured number badge** on the
+  right (`drawMenuThreats`): the **sigdb score**, or the **tier level 1-3** when the DB gave no numeric
+  score (user chose "score, fall back to tier" — so a behavioral-flag-only threat like the ODID test
+  drone reads its tier `1`, not `0`). Added `int score` to `DevGroup` (max member sigdb score, captured
+  in `buildGroups` like `tier`); `countCategories()` now also returns `scoreMax[CAT_N]`.
+- CYD-only, no protocol/webapp change (the web app already uses `CAT_COL`). Build SUCCESS, **flashed
+  COM14**. **Needs a quick on-device eyeball** (label/badge fit on the 80px tiles, hue contrast on the
+  TFT) — flag any tweak. Row tier colours (suspect/likely/confirmed) were intentionally left as-is.
+
 ## Done — Remote-ID increment 3: CYD detail UI + NDJSON `rid` line (2026-10-11, branch `remoteid-ui`, CYD FLASHED COM14)
 Surfaces the decoded Remote-ID the CYD already stores in `g_rids[]` (from increment 2). **CYD-only, no
 protocol/C5/DETS/web change** (`git diff --stat` = only `src/cyd/main.cpp`; PROTOCOL_VERSION still 8).
