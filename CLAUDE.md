@@ -407,7 +407,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   white connected). The five pages:
     - **Home** — scan-type counts (4 centered columns; a column grays when its source is off in Scan
       Settings), a counts/tiers card (Probe + Unique over Suspect/Likely/Confirmed), and the
-      **Threats** readout: the full 12-category taxonomy as color-coded cards (**4/row** on web) —
+      **Threats** readout: the full 12-category taxonomy as color-coded cards (**3/row × 4 rows**,
+      matching the CYD HOME tile layout) —
       each card's **outline is its category colour at all times** (per-category palette **`CAT_COL`**
       in `js/config.js`; **reuse it everywhere categories appear**), grey fill at 0, tinted when >0;
       tap a card → that category's device modal. The narrow cards abbreviate two labels
