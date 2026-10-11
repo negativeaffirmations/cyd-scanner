@@ -1,6 +1,10 @@
-# Handoff — 2026-10-11 (single-branch: everything on `main`; phase5-dev retired)
+# Handoff — 2026-10-11 (active branch: `remoteid-decode`; `main` is the trunk)
 
 ## Branches / deploy
+- **2026-10-11: active feature branch `remoteid-decode`** (forked from `main` after `f88ed01`). Holds
+  the in-progress Remote-ID ASTM F3411 decode (increment 1 — see outstanding #5 + Done below). Pushed
+  to origin. Merge back to `main` when the feature lands; `main` is otherwise the trunk and everything
+  else below was committed there.
 - **2026-10-09: `phase5-dev` is RETIRED.** `main` was fast-forwarded to `f44df6a` (picking up the
   post-merge work that had accumulated only on phase5-dev — C5 board photos, wiring diagrams, the
   Adobe-ignore rules, and the on-board **battery power subsystem** docs) and pushed; then
@@ -433,15 +437,20 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **both boards on protocol v7** (no bump since; all 2026-10-10 work is wire-compatible).
-**Latest flashes (2026-10-10 this session):** CYD = camera OUIs + HOME readout tweaks (Nest/Reolink/
-SimpliSafe, Tracker follow-gate, no "Other" tile, 2-line hint, `DB_GEN` 3); C5 = associated-client
-data-frame capture + BLE-pause starvation fix + 2.4 ch 1–11 + **5 GHz promiscuous sweep** + per-window
-capture diagnostic. Ports this session: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` =
-COM18 (flash), C5 UART bridge `2E3C:5740` = COM8 (does NOT flash). Bench-verified both promiscuous
-bands capture (`promisc 2.4 end mgmt=137 data=24 dataClient=2`, `promisc 5G end mgmt=10`). Ports
-drift — identify by VID:PID. **A field re-test near a known active camera is the pending validation
-(see outstanding #0).**
+Device state: **both boards on protocol v7** (no bump yet; everything flashed 2026-10-11 is
+wire-compatible — the Remote-ID frame that bumps to v8 is increment 2, not yet landed, so the boards
+still interoperate even across the branch work).
+**Latest flashes (2026-10-11 this session):** CYD (COM14) was reflashed several times on `main` —
+web lock/unlock (`K1`/`K0` + STATUS `lock=`), the follower RPA false-positive guard, and the P3 log
+hardening (dense-area rotate guard + two defensive tweaks). C5 (COM18) was flashed on branch
+`remoteid-decode` with **Remote-ID ASTM F3411 decode increment 1** (serial `[RID] …` readout; no
+protocol change). Earlier 2026-10-10 flashes: CYD camera OUIs + HOME readout tweaks (`DB_GEN` 3);
+C5 associated-client data-frame capture + BLE-pause starvation fix + 2.4 ch 1–11 + 5 GHz promiscuous
+sweep. Ports: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (flash); C5 UART bridge
+`2E3C:5740` = COM8 (does NOT flash) — ports drift, identify by VID:PID.
+**Pending field validation:** (a) Wi-Fi client/camera capture near a known active camera (outstanding
+#0); (b) the follower RPA guard — confirm your own phone no longer trips the follower banner (#6);
+(c) Remote-ID decode — point an ODID transmitter/sim at the C5 and watch the `[RID]` serial lines (#5).
 
 ## PICK UP HERE — outstanding
 

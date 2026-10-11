@@ -194,7 +194,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   `FLAG_WIFI_PWNAGOTCHI` (beacon DE:AD:BE:EF IE / "pwnd"), `FLAG_WIFI_EVILTWIN` (same SSID from ≥2
   BSSIDs at **different encryption** — a small C5 SSID table, encryption-mismatch verdict to avoid
   roaming false-positives), and `FLAG_BLE_ODID` (OpenDroneID / Remote-ID **presence** — BLE 0xFFFA
-  service data or the Wi-Fi vendor IE; full ASTM F3411 operator-location decode is a planned phase 2).
+  service data or the Wi-Fi vendor IE). **Full ASTM F3411 decode is IN PROGRESS** on branch
+  `remoteid-decode`: `src/c5/remoteid.*` already decodes the broadcast (UAS ID, drone + operator
+  lat/lon, height/speed) from the 0xFFFA service data to the C5 USB console (increment 1, no protocol
+  change); increment 2 adds `Reply::RemoteId` (→ protocol v8) + CYD UI/log/map. Plan:
+  [docs/remoteid-decode.md](docs/remoteid-decode.md).
   It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
   a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,
   `rid_count`. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
