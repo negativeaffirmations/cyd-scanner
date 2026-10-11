@@ -29,6 +29,13 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Webapp cache-busting (2026-10-11)
+`webapp/index.html` links the stylesheet as `style.css?v=<token>` — **bump the `?v=` token whenever
+`style.css` changes** so phones (which can't hard-refresh and keep a stale cached CSS) fetch the new
+file. The HTML itself is `no-cache`, so it re-reads the new URL. (Diagnosed when a correct
+`.dets.tall { overflow:visible }` rule wasn't taking effect on the phone — it was serving old CSS.)
+JS modules aren't versioned (no build step); they've been refreshing in practice.
+
 ## In progress — webapp redesign (Material bottom-nav), PHASE 1 done (2026-10-10, webapp-only)
 Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-component-reuse]].
 - **Phase 1 (DONE): sticky bottom navbar + page scaffolding.** `index.html` restructured into a
