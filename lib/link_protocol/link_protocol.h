@@ -22,8 +22,9 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 7;       // v7: Detection.svc16[] - up to 4 extra 16-bit BLE service
-                                                          //     UUIDs from the active scan (match any, not just the first)
+static constexpr uint8_t  PROTOCOL_VERSION = 8;       // v8: Reply::RemoteId frame + RemoteId struct - decoded Remote-ID (ASTM F3411) broadcast keyed to a Detection by MAC
+                                                          // (v7: Detection.svc16[] - up to 4 extra 16-bit BLE service
+                                                          //     UUIDs from the active scan (match any, not just the first))
                                                           // (v6: C5 behavioral detectors - Detection.flags widened to
                                                           //     16-bit iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID +
                                                           //     Status deauth/evil-twin/Remote-ID aggregate counts)
@@ -44,6 +45,7 @@ enum class Reply : uint8_t {
   Pong      = 0x81,  // no payload
   Heartbeat = 0x82,  // payload = Heartbeat (link connection monitor)
   Detection = 0x90,  // payload = Detection (one per detected device)
+  RemoteId  = 0x91,  // payload = RemoteId (ASTM F3411 Remote-ID broadcast, keyed to a Detection by MAC)
   Status    = 0xA0,  // payload = Status
   Error     = 0xEF,  // payload = 1 byte error code
 };
@@ -108,6 +110,21 @@ struct Detection {
                               //     (0 = unused slot); the primary 128-bit UUID is in svc[]
 };
 
+// Decoded Remote-ID (ASTM F3411) broadcast for one emitter (Reply::RemoteId payload), v8.
+// Sent after the Detection frames; the CYD joins it to a Detection by MAC. Maps 1:1 onto
+// remoteid::RidEntry (src/c5/remoteid.h) minus its lastMs.
+struct RemoteId {
+  uint8_t  mac[6];
+  uint8_t  have;                      // RidHave bits: which message types were decoded
+  uint8_t  idType, uaType;
+  int32_t  droneLat, droneLon;        // deg * 1e7 (0 = unknown)
+  int32_t  operatorLat, operatorLon;  // deg * 1e7 (0 = unknown)
+  int16_t  heightM, altGeoM;          // metres (-1000 = unknown)
+  uint16_t speedCms, headingDeg;      // speed cm/s; heading 0-359, 361 = unknown
+  char     uasId[21];
+  char     operatorId[21];
+};
+
 // Sequenced heartbeat for the link connection monitor (Reply::Heartbeat payload).
 // The receiver tracks gaps in `seq` to measure packet loss on the wire.
 struct Heartbeat {
@@ -136,6 +153,7 @@ struct FrameHeader {
 #pragma pack(pop)
 
 static_assert(sizeof(Detection) == 75, "Detection wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(RemoteId)  == 75, "RemoteId wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(Status)    == 12, "Status wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.

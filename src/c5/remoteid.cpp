@@ -1,6 +1,8 @@
 // remoteid.cpp — ASTM F3411 / OpenDroneID broadcast decode (C5). See remoteid.h / docs/remoteid-decode.md.
 #include "remoteid.h"
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 namespace remoteid {
 namespace {
@@ -13,6 +15,28 @@ constexpr uint32_t RID_TTL_MS    = 30000;// drop an emitter unseen this long
 
 RidEntry g_tab[RID_MAX];
 int      g_count = 0;
+
+// g_tab/g_count are touched from two tasks: ingest()/expire() on the NimBLE scan-callback task and
+// snapshot() on the Arduino loop task (streamTable). A FreeRTOS mutex (not a portMUX critical
+// section) because ingest() prints to Serial while holding it. Lazily created via a thread-safe
+// function-local static so no setup() hook is needed.
+SemaphoreHandle_t ridMux() {
+  static SemaphoreHandle_t m = xSemaphoreCreateMutex();
+  return m;
+}
+struct RidLock {
+  RidLock()  { xSemaphoreTake(ridMux(), portMAX_DELAY); }
+  ~RidLock() { xSemaphoreGive(ridMux()); }
+};
+
+// Caller must hold the lock.
+void expireLocked(uint32_t ttlMs) {
+  uint32_t now = millis();
+  int w = 0;
+  for (int i = 0; i < g_count; i++)
+    if (now - g_tab[i].lastMs <= ttlMs) { if (w != i) g_tab[w] = g_tab[i]; w++; }
+  g_count = w;
+}
 
 // Little-endian readers.
 int32_t rd32(const uint8_t* p) {
@@ -119,7 +143,8 @@ void report(RidEntry* e, int type, uint8_t prevHave) {
 
 void ingest(const uint8_t mac[6], const uint8_t* svcData, size_t len) {
   if (!svcData || len < ODID_MSG_SIZE) return;
-  expire(RID_TTL_MS);  // same context as the BLE scan callback -> no lock needed on the table
+  RidLock lock;  // table is shared with the loop task (snapshot); held for the whole ingest
+  expireLocked(RID_TTL_MS);
   // Strip the legacy BLE framing: [0x0D app-code][counter][message...].
   if (svcData[0] == AD_APP_CODE && len >= (size_t)ODID_MSG_SIZE + 2) { svcData += 2; len -= 2; }
   if (len < ODID_MSG_SIZE) return;
@@ -146,14 +171,30 @@ void ingest(const uint8_t mac[6], const uint8_t* svcData, size_t len) {
 }
 
 void expire(uint32_t ttlMs) {
-  uint32_t now = millis();
-  int w = 0;
-  for (int i = 0; i < g_count; i++)
-    if (now - g_tab[i].lastMs <= ttlMs) { if (w != i) g_tab[w] = g_tab[i]; w++; }
-  g_count = w;
+  RidLock lock;
+  expireLocked(ttlMs);
 }
 
-int             count()      { return g_count; }
-const RidEntry* at(int i)    { return (i >= 0 && i < g_count) ? &g_tab[i] : nullptr; }
+void toLinkStruct(const RidEntry& e, link_protocol::RemoteId& out) {
+  memcpy(out.mac, e.mac, 6);
+  out.have = e.have;
+  out.idType = e.idType;           out.uaType = e.uaType;
+  out.droneLat = e.droneLat;       out.droneLon = e.droneLon;
+  out.operatorLat = e.operatorLat; out.operatorLon = e.operatorLon;
+  out.heightM = e.heightM;         out.altGeoM = e.altGeoM;
+  out.speedCms = e.speedCms;       out.headingDeg = e.headingDeg;
+  strncpy(out.uasId, e.uasId, sizeof(out.uasId));
+  out.uasId[sizeof(out.uasId) - 1] = 0;
+  strncpy(out.operatorId, e.operatorId, sizeof(out.operatorId));
+  out.operatorId[sizeof(out.operatorId) - 1] = 0;
+}
+
+// Copy the current entries (as wire structs) under the lock; callers stream them outside it.
+int snapshot(link_protocol::RemoteId* out, int maxOut) {
+  RidLock lock;
+  int n = (g_count < maxOut) ? g_count : maxOut;
+  for (int i = 0; i < n; i++) toLinkStruct(g_tab[i], out[i]);
+  return n;
+}
 
 }  // namespace remoteid

@@ -188,16 +188,21 @@ back (5 GHz included). Things that matter, learned the hard way:
   Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
   active; see the Scope section). The C5 prints a per-window `mgmt/data/dataClient` capture-health
   line to its USB console.
-- **C5 behavioral detectors (added in protocol v6; link now v7).** Alongside fingerprint capture the C5 decodes
+- **C5 behavioral detectors (added in protocol v6; link now v8).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
   `FLAG_WIFI_PWNAGOTCHI` (beacon DE:AD:BE:EF IE / "pwnd"), `FLAG_WIFI_EVILTWIN` (same SSID from ≥2
   BSSIDs at **different encryption** — a small C5 SSID table, encryption-mismatch verdict to avoid
   roaming false-positives), and `FLAG_BLE_ODID` (OpenDroneID / Remote-ID **presence** — BLE 0xFFFA
   service data or the Wi-Fi vendor IE). **Full ASTM F3411 decode is IN PROGRESS** on branch
-  `remoteid-decode`: `src/c5/remoteid.*` already decodes the broadcast (UAS ID, drone + operator
-  lat/lon, height/speed) from the 0xFFFA service data to the C5 USB console (increment 1, no protocol
-  change); increment 2 adds `Reply::RemoteId` (→ protocol v8) + CYD UI/log/map. Plan:
+  `remoteid-decode`: `src/c5/remoteid.*` decodes the broadcast (UAS ID, drone + operator
+  lat/lon, height/speed) from the 0xFFFA service data (increment 1 printed it to the C5 USB console, no
+  protocol change). **Increment 2 (DONE, built + reviewed, not yet flashed):** `Reply::RemoteId` (0x91)
+  + a 75-byte `RemoteId` struct → **protocol bumped to v8** (both boards must flash together); the C5
+  emits one frame per active emitter inside its scan-dump burst (mutex-guarded `remoteid::snapshot()`),
+  the CYD stores it keyed to a `Detection` by MAC (`g_rids[8]`) with a temporary serial `[RID]` readout
+  to verify the link. **Still to come:** increment 3 = CYD detail UI + NDJSON `rid` log line; increment
+  4 = web-app Map plotting of drone + operator positions. Plan:
   [docs/remoteid-decode.md](docs/remoteid-decode.md).
   It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
   a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,

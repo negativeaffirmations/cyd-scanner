@@ -33,6 +33,40 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — Remote-ID increment 2: link frame + CYD store (2026-10-11, branch `remoteid-decode`, BUILT + REVIEWED, NOT YET FLASHED)
+Increment 2 of the ASTM F3411 decode (HANDOFF outstanding #5; plan in
+[docs/remoteid-decode.md](docs/remoteid-decode.md)). The decoded Remote-ID now crosses the link.
+- **Protocol → v8** (`lib/link_protocol/link_protocol.h`): `Reply::RemoteId = 0x91` + a packed
+  **75-byte `RemoteId` struct** (mac/have/idType/uaType, drone + operator lat-lon int32·1e7,
+  height/altGeo int16 m, speed cm/s + heading deg, uasId[21], operatorId[21]) with a
+  `static_assert(sizeof==75)`; `PROTOCOL_VERSION` 7→8, history comment updated. **Both boards must
+  flash together — the FrameParser rejects a version mismatch, so a v8 board won't talk to a v7 board.**
+- **C5** (`src/c5/remoteid.*`, `src/c5/main.cpp`): `toLinkStruct(RidEntry&, RemoteId&)` maps the decode
+  table → wire struct in one place; `streamTable()` emits one `Reply::RemoteId` per active emitter
+  **inside the existing burst** (between the opening `Status(scanning=1)` and closing `Status(0)`,
+  same `delay(2)` pacing as the Detection loop) — the synchronous request/response contract is
+  preserved (RID frames are non-terminating; the CYD still ends on the closing Status or the 250 ms
+  idle-gap backstop).
+- **CYD** (`src/cyd/main.cpp`): bounded `g_rids[MAX_RID=8]` store keyed by MAC (replace-on-match /
+  append / evict-index-0), reset alongside `g_detCount=0` each poll; new length-checked
+  `Reply::RemoteId` parse branch in `requestScan()`. Ends with a **temporary, clearly-commented serial
+  `[RID]` readout** (mac + uasId + drone lat/lon) to verify frames cross the link — **increment 3
+  removes it** when the real detail UI lands.
+- **Race fixed (introduced by this increment):** the emit loop read the C5 RID table from the loop
+  task while the NimBLE task mutates it via `ingest()`/`expire()` (the detection table has `g_mux`;
+  the RID table was "single-task"). Could emit a torn RID frame — benign serial-only now, a landmine
+  for increment 3's UI/log, so closed now (C5-only): replaced raw-pointer `count()`/`at()` with
+  `int snapshot(RemoteId* out, int maxOut)` that copies under a **FreeRTOS mutex** (not a spinlock —
+  `ingest()` does `Serial.printf`); `ingest()`/`expire()`/`snapshot()` share the lazily-created lock;
+  `streamTable()` snapshots into a local `ridBuf[8]` then streams outside the lock.
+- **Builds clean both envs** (tester): CYD Flash 44.7% / RAM 33.2%; C5 Flash 45.8% / RAM 24.0%
+  (+~1.6 KB flash, +24 B RAM, +~600 B transient loop stack for `ridBuf[8]`). Reviewer: mergeable, no
+  blockers (packing/assert, version consistency, 0x91 no collision, sync contract, store bounds-safe;
+  worst-case burst ~<1 s, inside the CYD's 5 s timeout). **Nothing flashed — flash both boards to v8
+  together at the bench, then watch the CYD + C5 serial for `[RID]` lines to confirm end-to-end.**
+- **Next:** increment 3 (CYD detail UI + NDJSON `rid` line — can consume the snapshot with no further
+  locking) then increment 4 (web Map drone + operator plotting).
+
 ## Done — device-detail sighting-trail map (2026-10-11, webapp-only, pushed + Pages-deployed)
 The Scanner-page device-detail modal (`openLiveDetail`) now shows a **map at the bottom** of where a
 device was seen. The live DETS stream carries **no per-detection GPS**, so this is a webapp-side
@@ -437,9 +471,10 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **both boards on protocol v7** (no bump yet; everything flashed 2026-10-11 is
-wire-compatible — the Remote-ID frame that bumps to v8 is increment 2, not yet landed, so the boards
-still interoperate even across the branch work).
+Device state: **both FLASHED boards are still on protocol v7** and interoperate. **Source on branch
+`remoteid-decode` is now v8** (Remote-ID increment 2 landed — `Reply::RemoteId`), but nothing v8 has
+been flashed yet, so the running boards stay wire-compatible. **The next flash must do BOTH boards
+together** (a v8 board rejects a v7 peer).
 **Latest flashes (2026-10-11 this session):** CYD (COM14) was reflashed several times on `main` —
 web lock/unlock (`K1`/`K0` + STATUS `lock=`), the follower RPA false-positive guard, and the P3 log
 hardening (dense-area rotate guard + two defensive tweaks). C5 (COM18) was flashed on branch
@@ -448,21 +483,19 @@ protocol change). Earlier 2026-10-10 flashes: CYD camera OUIs + HOME readout twe
 C5 associated-client data-frame capture + BLE-pause starvation fix + 2.4 ch 1–11 + 5 GHz promiscuous
 sweep. Ports: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (flash); C5 UART bridge
 `2E3C:5740` = COM8 (does NOT flash) — ports drift, identify by VID:PID.
-**Pending field validation:** (a) Wi-Fi client/camera capture near a known active camera (outstanding
-#0); (b) the follower RPA guard — confirm your own phone no longer trips the follower banner (#6);
-(c) Remote-ID decode — point an ODID transmitter/sim at the C5 and watch the `[RID]` serial lines (#5).
+**Pending field validation:** (a) ~~Wi-Fi client/camera capture~~ — DONE, user-confirmed on a walk
+(#0); (b) the follower RPA guard — confirm your own phone no longer trips the follower banner (#6);
+(c) Remote-ID decode — point an ODID transmitter/sim at the C5 and watch the `[RID]` serial lines on
+BOTH boards once v8 is flashed (increment 2 now carries RID over the link to the CYD too) (#5).
 
 ## PICK UP HERE — outstanding
 
-0. **FIELD RE-TEST of Wi-Fi client / camera capture (TOP, in progress).** The promiscuous
-   starvation fix + both-direction data-frame capture + 2.4 ch 1–11 + 5 GHz sweep are all flashed and
-   bench-verified, but the real validation is a walk near a KNOWN active camera. Watch the C5 console
-   `promisc 2.4 end` / `promisc 5G end` lines for `data`/`dataClient` climbing, and the CYD for the
-   camera's brand label. **Pause ~20–30 s near a target** — the cycle is ~21 s so each band sweeps only
-   ~once per cycle; a quick walk-by can fall between windows. Known residual gaps to keep in mind when
-   judging results: **DFS 5 GHz channels (52–144) are not swept**, and **dormant battery cameras are
-   RF-silent** until motion (walk in front to wake them). If 5 GHz `dataClient` stays 0 near a known
-   5 GHz camera, next lever is adding DFS channels and/or lengthening the 5 GHz window.
+0. **~~FIELD RE-TEST of Wi-Fi client / camera capture~~ — DONE (2026-10-11, user-confirmed).** On a
+   walk the scanner picked up **most/all of the cameras walked past**, so the promiscuous-starvation
+   fix + both-direction data-frame capture + 2.4 ch 1–11 + 5 GHz sweep are validated in the field.
+   Residual gaps remain by design (not regressions): **DFS 5 GHz channels (52–144) not swept** and
+   **dormant battery cameras RF-silent until motion**. If a specific known 5 GHz camera is ever missed,
+   the next levers are adding DFS channels and/or lengthening the 5 GHz window.
 
 ### Resolved / superseded (were the top items on 2026-10-05)
 1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — ACTUALLY FIXED (`a50ad3a`).** It recurred
@@ -478,12 +511,12 @@ sweep. Ports: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (
    looks low; no evidence of a gap now.
 
 ### Other outstanding
-4. **~~Pages deploy pending a GitHub incident~~ — RESOLVED.** The 2026-10-05 **GitHub Actions
-   `degraded_performance`** backlog has cleared; the latest build is `built` (2026-10-11T04:08Z, the
-   webapp-redesign push) and the live webapp serves current. **Open webapp item instead: an in-browser
-   smoke test** of the redesigned 5-page UI on **Android Chrome** (Web Bluetooth + geolocation) — the
-   entire redesign was statically verified only. Re-verify a deploy anytime with
-   `gh api repos/negativeaffirmations/cyd-scanner/pages/builds/latest --jq .status`.
+4. **~~Pages deploy + in-browser smoke test of the redesigned webapp~~ — effectively DONE
+   (2026-10-11, user-confirmed).** The 2026-10-05 GitHub Actions `degraded_performance` backlog
+   cleared, the live webapp serves current, and the user exercised the redesigned 5-page UI on the
+   phone and reported it **working** (no unpushed webapp version outstanding). Treat the redesign as
+   field-confirmed; file a fresh item only if a specific page/control misbehaves. Re-verify a deploy
+   anytime with `gh api repos/negativeaffirmations/cyd-scanner/pages/builds/latest --jq .status`.
 5. **Remote-ID DECODE (ASTM F3411) — IN PROGRESS on branch `remoteid-decode`.** Design +
    increment plan in [docs/remoteid-decode.md](docs/remoteid-decode.md).
    - **Increment 1 DONE (2026-10-11, C5 FLASHED COM18, no protocol change):** `src/c5/remoteid.*`
@@ -492,11 +525,17 @@ sweep. Ports: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (
      in the scan callback; accumulates per emitter MAC in a bounded TTL table and **prints decoded
      UAS ID + drone/operator lat-lon + height/speed to the C5 USB console** (`[RID] …`). Link stays
      **v7** (both boards interoperate) — bench-test with an ODID transmitter/sim and watch the serial.
-   - **Increment 2 (next):** `Reply::RemoteId` frame + `RemoteId` struct → **PROTOCOL_VERSION 8, both
-     boards flash together**; the C5 emits one per emitter in its scan-dump burst; the CYD keys it to
-     the Detection by MAC. Then (3) CYD detail UI + NDJSON `rid` log line, (4) web-app Map plotting of
-     drone + operator positions. BLE-extended-scan (BT5 packs) coexistence risk stays a later, measured
-     change — check against the BLE/15.4 coexistence rule.
+   - **Increment 2 DONE (2026-10-11, BUILT + REVIEWED, NOT YET FLASHED):** `Reply::RemoteId` (0x91) +
+     a 75-byte `RemoteId` struct → **PROTOCOL_VERSION bumped 7→8 (both boards must flash together)**;
+     the C5 emits one per emitter inside its scan-dump burst (mutex-guarded `remoteid::snapshot()` — a
+     cross-task race introduced by the emit loop was found + fixed), the CYD stores it keyed to the
+     Detection by MAC (`g_rids[8]`) with a temporary serial `[RID]` readout to verify the link. Both
+     envs build clean. See the "Done — Remote-ID increment 2" entry above. **TO DO: flash both boards
+     to v8 together, then confirm `[RID]` lines on the CYD + C5 serial.**
+   - **Increment 3 (next):** CYD detail UI + NDJSON `rid` log line (can consume the snapshot with no
+     further locking). Then (4) web-app Map plotting of drone + operator positions. BLE-extended-scan
+     (BT5 packs) coexistence risk stays a later, measured change — check against the BLE/15.4
+     coexistence rule.
 6. **~~Phase-5 rotating-RPA follower false-positive~~ — HEURISTIC GUARD DONE (2026-10-11, CYD FLASHED).**
    `computeFollowScores()` now refuses to escalate a **benign BLE Resolvable Private Address** to
    FOLLOWING: `macIsBleRpa()` tests the MAC's top two bits (`0b01` = RPA, the privacy-rotating address

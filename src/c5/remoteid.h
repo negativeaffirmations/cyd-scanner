@@ -8,6 +8,7 @@
 #include <Arduino.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "link_protocol.h"
 
 namespace remoteid {
 
@@ -46,8 +47,11 @@ void ingest(const uint8_t mac[6], const uint8_t* svcData, size_t len);
 // Drop entries not updated within ttlMs (call periodically from the C5 loop).
 void expire(uint32_t ttlMs);
 
-// Table access (for increment 2's Reply::RemoteId emission).
-int             count();
-const RidEntry* at(int i);
+// Map a table entry onto the wire struct (everything but lastMs).
+void toLinkStruct(const RidEntry& e, link_protocol::RemoteId& out);
+
+// Thread-safe copy of the table (as wire structs) into `out` (up to maxOut; 8 are tracked).
+// Returns the number copied. ingest()/expire()/snapshot() all take the same internal mutex.
+int snapshot(link_protocol::RemoteId* out, int maxOut);
 
 }  // namespace remoteid

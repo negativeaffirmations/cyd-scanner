@@ -547,6 +547,14 @@ static void streamTable() {
     sendFrame((uint8_t)Reply::Detection, &g_streamBuf[i], sizeof(Detection));
     delay(2);
   }
+  // Remote-ID decodes ride inside the same burst (before the closing Status). The RID table is
+  // written on the NimBLE task, so copy it under remoteid's own mutex and stream outside it.
+  link_protocol::RemoteId ridBuf[8];
+  int ridCnt = remoteid::snapshot(ridBuf, 8);
+  for (int i = 0; i < ridCnt; i++) {
+    sendFrame((uint8_t)Reply::RemoteId, &ridBuf[i], sizeof(ridBuf[i]));
+    delay(2);
+  }
   sendStatus(0, cnt);
   Serial.printf("[C5] streamed %d detections\n", cnt);
   while (LinkSerial.available()) LinkSerial.read();  // drop stale commands
