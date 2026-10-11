@@ -45,6 +45,14 @@ change, no CSS change (so no `style.css` recompile / `?v=` bump). ES-module-synt
 import cycle (categories.js → detail.js is one-way). **Static-verified only — needs an Android-Chrome
 GPS-walk smoke test** (rolls into the redesign's one open test item).
 
+## Done — P3 log hardening (2026-10-11, CYD FLASHED COM14)
+Three small log follow-ups (`src/cyd/main.cpp`): (a) **dense-area thrash guard** — a full per-session
+dedup set (`MAX_SEEN` 400) no longer re-logs unknown MACs every cycle; `logNewDetections()` skips them
+and auto-rotates to a fresh session (resumes capture) at most once per `SESS_ROTATE_MIN_MS` (5 min); new
+`LogStream.lastRotateMs`. (b) pre-time-sync `enforceLogCap` eviction-order comment (FAT-epoch timestamps
+are near-equal before clock sync). (c) `deleteSession` also refuses the currently-streaming file
+(`g_streamingPath`). CYD built + flashed COM14; no protocol bump. Resolves outstanding #7.
+
 ## Done — follower RPA false-positive guard (2026-10-11, CYD FLASHED COM14)
 `computeFollowScores()` (`src/cyd/main.cpp`) no longer escalates a **benign BLE Resolvable Private
 Address** to FOLLOWING. New `macIsBleRpa()` = MAC MSB top two bits `0b01` (the privacy-rotating address
@@ -484,9 +492,14 @@ drift — identify by VID:PID. **A field re-test near a known active camera is t
    COM14. **Field-verify** on a walk that your own phone no longer trips the follower banner. The
    analogous **Wi-Fi randomized-MAC** case (locally-administered probe MACs) is a cheap follow-up if it
    shows up in the field — not done yet. See [[phase5-followme-direction]].
-7. **P3 log follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
-   pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
-   `g_streamingPath` (defense-in-depth).
+7. **~~P3 log follow-ups~~ — DONE (2026-10-11, CYD FLASHED).** (a) **Dense-area thrash guard:** when a
+   stream's dedup set (`MAX_SEEN` 400) fills, `logNewDetections()` now **skips** unknown MACs (was
+   re-logging every ~2 s cycle) and **auto-rotates** to a fresh session so capture resumes — capped to
+   once per `SESS_ROTATE_MIN_MS` (5 min) so a dense drive can't spew tiny files; `LogStream` gained
+   `lastRotateMs`, armed in `beginSessionNamed`. (b) `enforceLogCap` got the pre-time-sync
+   eviction-order comment (FAT-epoch timestamps are near-equal pre-sync → arbitrary but benign order).
+   (c) `deleteSession` now also refuses `g_streamingPath` (defense-in-depth; was already in
+   `logProtected`). CYD-only, no protocol bump.
 8. Older backlog: 802.15.4 opt-in polish, phone/desktop SQLite import, CYD Scan Viewer window caching.
    (The "strict BLE passivity" item is **dropped** — the passive-only directive was removed; active
    scanning is sanctioned, and its extra UUIDs are captured + matched as of v7.)

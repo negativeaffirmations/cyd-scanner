@@ -418,12 +418,18 @@ struct SeenKey { uint8_t source; uint8_t mac[6]; uint16_t pan; };
 // The file is created lazily on the first row; the counter name is renamed to a date-time name once
 // the phone syncs the clock (renameSessionOnSync). Each stream dedups independently (MAX_SEEN each).
 struct LogStream {
-  char    path[48];   // current session file (NDJSON)
-  bool    named;      // true once renamed to the date-time form
-  bool    started;    // true once the file is actually created (first row)
-  SeenKey seen[MAX_SEEN];
-  int     seenCount;
+  char     path[48];   // current session file (NDJSON)
+  bool     named;      // true once renamed to the date-time form
+  bool     started;    // true once the file is actually created (first row)
+  SeenKey  seen[MAX_SEEN];
+  int      seenCount;
+  uint32_t lastRotateMs;  // millis() of the last session start (dense-area auto-rotate guard)
 };
+// When a stream's per-session dedup set (MAX_SEEN) fills, unknown devices can no longer be deduped,
+// so logNewDetections() skips them (never re-logs the same MAC every cycle) and rolls the session to
+// a fresh file so capture resumes. This caps that auto-rotation to at most once per interval so a
+// dense RF drive can't thrash out many tiny files.
+static constexpr uint32_t SESS_ROTATE_MIN_MS = 5UL * 60 * 1000;  // >= 5 min between dense-area rotations
 static LogStream g_fg;  // zero-init (.bss); path set by openSession()
 static LogStream g_bg;
 static char g_streamingPath[48] = "";  // file currently being streamed to a phone (BLE); never auto-deleted
@@ -1012,9 +1018,10 @@ static void beginSessionNamed(LogStream& st, bool bg) {
   p.putULong(key, n);
   p.end();
   snprintf(st.path, sizeof(st.path), bg ? "/logs/bg-%05lu.jsonl" : "/logs/sess-%05lu.jsonl", (unsigned long)n);
-  st.named     = false;   // re-arm rename-on-sync
-  st.started   = false;   // file is created lazily on the first row (ensureLogFile)
-  st.seenCount = 0;       // fresh per-session dedup
+  st.named        = false;   // re-arm rename-on-sync
+  st.started      = false;   // file is created lazily on the first row (ensureLogFile)
+  st.seenCount    = 0;       // fresh per-session dedup
+  st.lastRotateMs = millis(); // arm the dense-area auto-rotate guard
   Serial.printf("[CYD] %s session log (created on first detection): %s\n", bg ? "bg" : "fg", st.path);
 }
 
@@ -1146,6 +1153,7 @@ static int logNewDetections() {
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
     if (seenContains(st, d)) continue;
+    if (st.seenCount >= MAX_SEEN) continue;  // dedup set full: skip (don't re-log every cycle); the rotation below resumes capture
     seenAdd(st, d);
     n++;
     if (!f && ensureLogFile(st)) f = SD.open(st.path, FILE_APPEND);
@@ -1192,6 +1200,16 @@ static int logNewDetections() {
     f.write((const uint8_t*)ln, n2);
   }
   if (f) f.close();
+  // Dense-area auto-rotate: once the dedup set is full we've stopped logging new MACs (skip above),
+  // so roll to a fresh session to resume capture — but at most once per SESS_ROTATE_MIN_MS so a
+  // dense drive can't thrash out tiny files. Follow state is per-trip (not per-file), so it is NOT
+  // reset here; the ~10 min enforceLogCap timer handles trimming.
+  if (st.seenCount >= MAX_SEEN && ms - st.lastRotateMs >= SESS_ROTATE_MIN_MS) {
+    bool bg = bgCtx();
+    beginSessionNamed(st, bg);   // fresh file + empty seen set; arms lastRotateMs
+    syncSharePath();
+    Serial.println("[CYD] dedup set full -> rotated to a fresh session (dense area)");
+  }
   return n;
 }
 
@@ -1359,6 +1377,8 @@ static void deleteSession(const char* path) {
     Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
   } else if (strcmp(path, g_fg.path) == 0 || strcmp(path, g_bg.path) == 0) {
     Serial.println("[CYD] delete refused: that's a live session");
+  } else if (g_streamingPath[0] && strcmp(path, g_streamingPath) == 0) {
+    Serial.println("[CYD] delete refused: being downloaded");   // defense-in-depth (also covered by logProtected)
   } else if (exploreHolds(path)) {
     Serial.println("[CYD] delete refused: open in the scan viewer");
   } else {
@@ -1424,6 +1444,11 @@ static void enforceLogCap() {
         total += (uint64_t)e.size();
         char full[48];
         snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
+        // Eviction order = oldest filesystem last-write time. NOTE: before the phone syncs the clock
+        // the RTC sits at the FAT epoch (2016-ish), so files written this pre-sync boot carry
+        // near-identical timestamps and their relative eviction order is arbitrary. That's benign:
+        // the cap still trims deterministically down to size, and real wall-clock times (hence a
+        // meaningful oldest-first order) apply to every file written after sync.
         time_t t = e.getLastWrite();
         if (!logProtected(full) && (!oldest[0] || t < oldT)) { oldT = t; memcpy(oldest, full, sizeof(oldest)); }
       }
