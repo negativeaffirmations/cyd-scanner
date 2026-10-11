@@ -2,7 +2,16 @@
 @use 'variables' as *;
 
 #mapDlg { width:96vw; max-width:960px; }
-#map { height:68vh; width:100%; border-radius:8px; background:$color-surface-inset; }
+// position:relative + z-index:0 gives #map its OWN stacking context, so Leaflet's internal panes /
+// controls (z-index up to ~800) are confined within the map box instead of painting over the fixed
+// bottom navbar (z-index 20). Height fills the viewport below the app bar + toolbar so the Map page
+// fits without scrolling (100dvh tracks the mobile-Chrome dynamic viewport; min-height guards short
+// screens). The ~250px budget = app bar + "Map" heading + the single tools row + status line + navbar.
+#map {
+  position:relative; z-index:0;
+  height: calc(100dvh - 250px - env(safe-area-inset-bottom, 0px));
+  min-height:220px; width:100%; border-radius:8px; background:$color-surface-inset;
+}
 
 .maptools { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:.5em 0; font-size:.85rem; }
 .maptools button { width:auto; padding:.5em .8em; margin:0; }

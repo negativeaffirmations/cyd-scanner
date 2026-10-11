@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261011a">
+<link rel="stylesheet" href="style.css?v=20261011b">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -54,7 +54,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;det-map</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;map-fit</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -120,13 +120,7 @@
         <button id="mapCurBtn" class="secondary" disabled>Current session</button>
         <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
           Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
-        <label><input type="checkbox" id="fThreats"> Threats only</label>
-        <label><input type="checkbox" id="f24" checked> 2.4</label>
-        <label><input type="checkbox" id="f5" checked> 5G</label>
-        <label><input type="checkbox" id="fble" checked> BLE</label>
-        <label><input type="checkbox" id="fprb" checked> PRB</label>
-        <label><input type="checkbox" id="f154" checked> 15.4</label>
-        <label><input type="checkbox" id="fEvents" checked> Events</label>
+        <button id="mapFiltBtn" class="secondary">Filters</button>
       </div>
       <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
       <div id="map"></div>
@@ -284,6 +278,24 @@
       <label><input type="checkbox" id="lfprb" checked> PRB</label>
       <label><input type="checkbox" id="lf154" checked> 15.4</label>
       <label><input type="checkbox" id="lfThreats"> Threats only</label>
+    </div>
+  </dialog>
+
+  <!-- Map filters (moved off the Map toolbar so it fits one row): same ids map.js reads -->
+  <dialog id="mapFiltDlg">
+    <div class="modalhdr">
+      <strong>Map filters</strong>
+      <button id="mapFiltClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub" style="margin-bottom:.4em">Filter the plotted detections (does not change the loaded log).</div>
+    <div class="maptools" style="flex-wrap:wrap">
+      <label><input type="checkbox" id="f24" checked> 2.4</label>
+      <label><input type="checkbox" id="f5" checked> 5G</label>
+      <label><input type="checkbox" id="fble" checked> BLE</label>
+      <label><input type="checkbox" id="fprb" checked> PRB</label>
+      <label><input type="checkbox" id="f154" checked> 15.4</label>
+      <label><input type="checkbox" id="fThreats"> Threats only</label>
+      <label><input type="checkbox" id="fEvents" checked> Events</label>
     </div>
   </dialog>
 

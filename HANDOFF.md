@@ -45,6 +45,21 @@ change, no CSS change (so no `style.css` recompile / `?v=` bump). ES-module-synt
 import cycle (categories.js → detail.js is one-way). **Static-verified only — needs an Android-Chrome
 GPS-walk smoke test** (rolls into the redesign's one open test item).
 
+## Done — Map page fits without scroll + Leaflet-over-navbar fix (2026-10-11, webapp-only)
+Two Map-page bugs the user hit:
+- **Leaflet painted over the fixed bottom navbar.** Root cause: `#map` had no stacking context, so
+  Leaflet's internal panes/controls (z-index up to ~800) were compared against the ROOT context where
+  the navbar sits at z-index 20 → map on top. Fix: `#map { position:relative; z-index:0 }` (`_map.scss`)
+  confines them to the map box.
+- **Page needed scrolling to reach the navbar.** Consolidated the 7 inline source/threats/events filter
+  checkboxes into a **Filters modal** (`#mapFiltDlg`) opened by a new **Filters** button in the toolbar
+  row (beside Current-session / Load), so the toolbar is one line; and changed `#map` height from
+  `68vh` to `calc(100dvh − 250px − safe-area)` (min 220px) so the page fits in one viewport. The
+  checkboxes kept their ids (`f24`/`f5`/`fble`/`fprb`/`f154`/`fThreats`/`fEvents`), so `map.js
+  renderMap()` and the `main.js` change-wiring work unchanged; added open/close wiring for `#mapFiltDlg`
+  (mirrors the Scanner `#filtersDlg`). Recompiled `style.css`, bumped `?v=20261011b` + `#uiver` →
+  `map-fit`. No firmware change.
+
 ## Webapp cache / deploy-propagation (updated 2026-10-11)
 **GitHub Pages serves EVERY asset — `index.html` included — with `cache-control: max-age=600` (verified
 via `curl -D-`), and that real HTTP header overrides the `<meta http-equiv="Cache-Control" no-cache>`

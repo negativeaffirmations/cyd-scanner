@@ -989,7 +989,10 @@ body {
 }
 
 #map {
-  height: 68vh;
+  position: relative;
+  z-index: 0;
+  height: calc(100dvh - 250px - env(safe-area-inset-bottom, 0px));
+  min-height: 220px;
   width: 100%;
   border-radius: 8px;
   background: #0b0e13;

@@ -94,6 +94,9 @@ $("wlAddBtn").onclick = addWhitelistRule;
 $("mapBtn").onclick = openMap;   // retired hidden button -> Map page (openMap sizes Leaflet)
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;
+$("mapFiltBtn").onclick = ()=> $("mapFiltDlg").showModal();
+$("mapFiltClose").onclick = ()=> $("mapFiltDlg").close();
+$("mapFiltDlg").addEventListener("click", e=>{ if(e.target === $("mapFiltDlg")) $("mapFiltDlg").close(); });
 ["fThreats","f24","f5","fble","fprb","f154","fEvents"].forEach(id=>$(id).addEventListener("change", ()=> renderMap()));
 $("mapFile").addEventListener("change", e=>{
   const f=e.target.files[0]; if(!f) return;
