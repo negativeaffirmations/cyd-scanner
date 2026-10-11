@@ -29,6 +29,24 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — webapp BLE download naming fixes (2026-10-10, webapp-only, NOT yet Pages-deployed)
+Two bugs in the BLE "download current session" (`downloadLog`, `webapp/js/ble/download.js`), both
+**client-side only** — the device was fine:
+- **`.jsonl` download got `.txt` appended** (→ `scanlog.jsonl.txt`): the reassembled `Blob` had no MIME
+  type, so Android Chrome sniffed it as text and appended `.txt` (`.jsonl` isn't a known text ext).
+  Fixed: `new Blob(chunks, {type:"application/octet-stream"})` → saved as named.
+- **Download name wasn't the timestamped session name**: `downloadLog()` hardcoded `name:"scanlog.jsonl"`.
+  The DEVICE-side rename-on-time-sync (`renameStreamOnSync`, main.cpp — `sess-NNNNN.jsonl` →
+  `YYYYMMDD-HHMMSS.jsonl`) is intact and WORKS in the jsonl era (verified: the downloaded rows carried
+  real epochs, so time synced and the on-SD file was renamed). The BLE download just ignored it. Fixed:
+  name the saved file after STATUS `sess=` (the `Session:` label), e.g. `20261010-HHMMSS.jsonl`, with a
+  `scanlog.jsonl` fallback before time sync. (`downloadFiltered` already used the session name; the
+  Wi-Fi `/dl`,`/dlf`,`/scanlog.jsonl` paths already set Content-Disposition filename + `application/
+  x-ndjson`, so they were never affected.)
+- The user's existing `scanlogs/scanlog.jsonl.txt` is valid NDJSON with a wrong extension — just rename
+  to `.jsonl`. **Not in-browser tested** (needs Android Chrome + Web Bluetooth). Commit the JS + push →
+  Pages redeploys.
+
 ## Done — 5 GHz promiscuous sweep (2026-10-10, C5-only, FLASHED + bench-verified)
 Added a second promiscuous sub-phase so associated **5 GHz** cameras are caught (previously 2.4-only).
 - New `PH_PROMISC5` phase runs right after the 2.4 `PH_PROMISC` window (same radio, BLE stays paused —

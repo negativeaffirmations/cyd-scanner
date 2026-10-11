@@ -35,7 +35,9 @@ export function onLogData(ev){
   }
   state.dl.chunks.push(new Uint8Array(v)); state.dl.got += v.length;
   if (state.dl.got >= state.dl.expect) {
-    const blob = new Blob(state.dl.chunks);
+    // octet-stream, not the default empty/text type: otherwise Android Chrome sniffs the content as
+    // text and appends ".txt" to the .jsonl download name. octet-stream = "save the bytes as named".
+    const blob = new Blob(state.dl.chunks, { type: "application/octet-stream" });
     if (state.dl.mode==="file") {
       if (state.dl.sink==="map") { blob.text().then(t=>plotCsvText(t, state.dl.name)); }
       else if (state.dl.sink==="explore") { const nm=state.dl.name; blob.text().then(t=>loadedExplore(parseScanLog(t), nm)); }
@@ -53,8 +55,13 @@ export function onLogData(ev){
   }
 }
 export async function downloadLog(){
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"scanlog.jsonl",sink:"save"};
-    await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session…"); }
+  // Name the saved file after the device's CURRENT session (STATUS `sess=`, shown in the label),
+  // which is the timestamped name (YYYYMMDD-HHMMSS) once the phone has synced time — not a fixed
+  // "scanlog.jsonl". Falls back to scanlog.jsonl before any session name is known.
+  const sess=($("sessName").textContent.replace(/^Session:\s*/,"").trim())||"scanlog";
+  const fname=sess.endsWith(".jsonl")?sess:sess+".jsonl";
+  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save"};
+    await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session ("+fname+")…"); }
   catch(e){ log("Download failed: "+e.message); }
 }
 // --- Time-filtered export. The CYD filters on the device and streams only the matching lines:
