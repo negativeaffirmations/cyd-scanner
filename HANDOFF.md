@@ -46,6 +46,14 @@ Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-
   untouched. New SCSS `_nav.scss` (@use'd in `main.scss`); **recompiled `style.css` via
   `npx sass@1.105.1`** (node_modules isn't installed here; normal flow is `npm run sass:build`).
   Statically verified only — **NOT in-browser tested** (needs Android Chrome); Pages redeploys on push.
+- **Phase 1.5 (DONE): Home cosmetic pass + per-category color system.** `index.html` Home cards
+  regrouped: the 4 scan types in one `.scantypes` card (each tile grays via `.off` when its source is
+  off in Scan Settings — driven by STATUS `src`, wired in `status.js`), then rows Probe|Unique,
+  Suspect|Likely|Confirmed, Time|GPS|DB (new `.grid.grid3`). **New `CAT_COL` palette** (`js/config.js`,
+  1..12 = Flock..Skim) — the Home threat section now renders the FULL 12-category taxonomy as cards
+  (`.tgrid`/`.tcard`, `features/categories.js`), 3/row like the CYD: outline always the category hue
+  (even at 0), grey fill at 0, tinted when >0, tap→category modal. **Reuse `CAT_COL` everywhere
+  categories appear** (consistency directive). Recompiled `style.css`; all 128 JS ids verified.
 - **Phases remaining:** 2 = Scanner page (rows ≥3× taller, top controls+filters+counter row, tap→
   CYD-style modal: details+map + whitelist add/remove; fold Explore in). 3 = Home cards + CYD threat
   counters section. 4 = Map as a real inline page (promote `#mapDlg`, handle `invalidateSize`).

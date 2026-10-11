@@ -36,8 +36,11 @@ export function onStatus(ev){
   }
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ state.scanning = kv.scan==="1"; updateScanBtn(); }
-  if("src" in kv && !$("scanSetDlg").open){ const m=+kv.src;
-    $("sBle").checked=!!(m&2); $("s24").checked=!!(m&1); $("s5").checked=!!(m&16); $("s154").checked=!!(m&4); }
+  if("src" in kv){ const m=+kv.src;
+    if(!$("scanSetDlg").open){ $("sBle").checked=!!(m&2); $("s24").checked=!!(m&1); $("s5").checked=!!(m&16); $("s154").checked=!!(m&4); }
+    // Gray the scan-type tiles that aren't being collected under the current config (MASK bits).
+    $("st24").classList.toggle("off", !(m&1));  $("st5").classList.toggle("off", !(m&16));
+    $("stble").classList.toggle("off", !(m&2)); $("st154").classList.toggle("off", !(m&4)); }
   if("bri" in kv){ $("briVal").textContent = kv.bri;
     if(document.activeElement !== $("briSlider")) $("briSlider").value = kv.bri; }
 }

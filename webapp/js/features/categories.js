@@ -4,7 +4,7 @@
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
 import { tierNum, flagBadges } from '../util/format.js';
-import { TIER_COL, TIER_NAMES, FLAG_BADGES } from '../config.js';
+import { TIER_COL, TIER_NAMES, FLAG_BADGES, CAT_COL } from '../config.js';
 
 // DETS v5 category id -> name (must match the CYD's Category enum order).
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -26,22 +26,30 @@ const CAT_DESC = ["",
 
 const rowTier = r => typeof r.tier === "number" ? r.tier : tierNum(r.tier);
 
+// Threat categories shown as cards: the full fixed taxonomy Flock..Skim (ids 1..12), always, 3 per
+// row — exactly like the CYD HOME readout (Other=13 is not carded). Each card's outline is its
+// category colour at ALL times (so the user associates a hue with each threat before ever seeing
+// one); the fill is grey at 0 and a tint of that colour when the count is > 0.
+const CAT_SHOWN = 12;
 export function renderCatChips(rows){
   const el = $("catChips"); if (!el) return;
-  const cnt = {}, worst = {};
-  rows.forEach(r=>{
+  const cnt = {};
+  (rows||[]).forEach(r=>{
     const tn = rowTier(r), c = r.cat||0;
-    if (r.muted || tn < 1 || !c) return;          // threats only, categorized, not whitelisted
-    cnt[c] = (cnt[c]||0) + 1; worst[c] = Math.max(worst[c]||0, tn);
+    if (r.muted || tn < 1 || !c || c > CAT_SHOWN) return;   // threats only, categorized, not whitelisted
+    cnt[c] = (cnt[c]||0) + 1;
   });
-  const cats = Object.keys(cnt).map(Number).sort((a,b)=> (worst[b]-worst[a]) || (cnt[b]-cnt[a]));
-  if (!cats.length){ el.innerHTML = ""; el.style.display = "none"; return; }
-  el.style.display = "";
-  el.innerHTML = '<span class="catlbl">Threats</span>' + cats.map(c=>
-    `<button class="catchip" data-cat="${c}" style="border-color:${TIER_COL[worst[c]]}">`+
-    `<span class="cn">${esc(CAT_NAMES[c]||"?")}</span>`+
-    `<span class="cc" style="color:${TIER_COL[worst[c]]}">${cnt[c]}</span></button>`).join("");
-  el.querySelectorAll(".catchip").forEach(b=>{ b.onclick = ()=> openCatModal(+b.dataset.cat); });
+  let html = "";
+  for (let c = 1; c <= CAT_SHOWN; c++){
+    const n = cnt[c]||0, col = CAT_COL[c]||"#8b949e", hot = n > 0;
+    html += `<button class="tcard${hot?" hot":""}" data-cat="${c}" `+
+      `style="border-color:${col};${hot?`background:${col}22;`:""}">`+
+      `<span class="tn">${esc(CAT_NAMES[c]||"?")}</span>`+
+      `<span class="tc" style="color:${hot?col:""}">${n}</span></button>`;
+  }
+  el.style.display = "grid";
+  el.innerHTML = html;
+  el.querySelectorAll(".tcard").forEach(b=>{ b.onclick = ()=> openCatModal(+b.dataset.cat); });
 }
 function catRows(catId){
   return state.lastDetRows.filter(r=> (r.cat||0)===catId && !r.muted && rowTier(r)>=1)

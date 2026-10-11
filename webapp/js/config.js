@@ -23,3 +23,21 @@ export const FLAG_BADGES = [[8,"iB","iBeacon"],[16,"FM","Find My"],[32,"PWN","Pw
 // Threat-tier colors / names (index = none / suspect / likely / confirmed).
 export const TIER_COL = ["#3388ff","#e3b341","#db8b2a","#f85149"];
 export const TIER_NAMES = ["none","suspect","likely","confirmed"];
+
+// Per-threat-category colors. Index = the DETS `cat` id (1..12 = Flock..Skim, matching the CYD
+// Category enum order); 13 = Other is not shown as a card (same as the CYD HOME readout). The app
+// colors each category consistently so the user learns to associate a hue with each threat type —
+// reuse CAT_COL anywhere categories are shown, per the project's consistency directive.
+export const CAT_COL = ["",
+  "#f85149", // Flock
+  "#ff9800", // Axon
+  "#ffd33d", // ALPR
+  "#58a6ff", // Cam
+  "#79c0ff", // Ring
+  "#a371f7", // Raven
+  "#db61b7", // Glass
+  "#39c5cf", // Tracker
+  "#3fb950", // Drone
+  "#ff7b72", // Deauth
+  "#ffa657", // Flipper
+  "#e3b341"];// Skim

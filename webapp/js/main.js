@@ -12,6 +12,7 @@ import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
 import { openFollowList } from './features/followers.js';
 import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
+import { renderCatChips } from './features/categories.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -22,6 +23,7 @@ $("navScanner").onclick  = () => showPage('scanner');
 $("navMap").onclick      = openMap;
 $("navSettings").onclick = () => $("settingsDlg").showModal();
 showPage('home');   // initial page
+renderCatChips([]); // show the full threat taxonomy (all 0) from the start, so the colours are learnable
 
 // Whitelist "kind" select -> pattern length rules (+ initial pass).
 $("wlKind").addEventListener("change", wlKindChanged);
