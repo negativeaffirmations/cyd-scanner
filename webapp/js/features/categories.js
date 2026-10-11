@@ -34,8 +34,6 @@ const rowTier = r => typeof r.tier === "number" ? r.tier : tierNum(r.tier);
 // category colour at ALL times (so the user associates a hue with each threat before ever seeing
 // one); the fill is grey at 0 and a tint of that colour when the count is > 0.
 const CAT_SHOWN = 12;
-// Shorter labels for the narrow 4-per-row Home threat cards (CSS uppercases them -> TRACK / FLIP).
-const CAT_CARD_LABEL = { Tracker:"Track", Flipper:"Flip" };
 export function renderCatChips(rows){
   const el = $("catChips"); if (!el) return;
   const cnt = {};
@@ -49,7 +47,7 @@ export function renderCatChips(rows){
     const n = cnt[c]||0, col = CAT_COL[c]||"#8b949e", hot = n > 0;
     html += `<button class="tcard${hot?" hot":""}" data-cat="${c}" `+
       `style="border-color:${col};${hot?`background:${col}22;`:""}">`+
-      `<span class="tn">${esc(CAT_CARD_LABEL[CAT_NAMES[c]]||CAT_NAMES[c]||"?")}</span>`+
+      `<span class="tn">${esc(CAT_NAMES[c]||"?")}</span>`+
       `<span class="tc" style="color:${hot?col:""}">${n}</span></button>`;
   }
   el.style.display = "grid";

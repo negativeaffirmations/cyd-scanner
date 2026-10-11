@@ -33,6 +33,15 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — webapp Home Threats: 3/row × 4 rows + full category labels (2026-10-11, webapp-only, pushed)
+Cosmetic alignment with the CYD HOME readout (user request), on `main` after the Remote-ID merge:
+- **3 cards/row × 4 rows** (was 4/row × 3): `_detections.scss` `.tgrid` `repeat(4,1fr)`→`repeat(3,1fr)`,
+  recompiled `style.css`, `style.css?v=20261011g`. There was vertical room for the 4th row, no scroll.
+- **Full category labels restored** now the cards are wider: removed `CAT_CARD_LABEL` (Tracker→Track /
+  Flipper→Flip) in `features/categories.js` so every card shows its full name like the CYD (JS-only).
+- `#uiver` bumped (`threats-3col` → `cat-fullnames`). No firmware change. Static-verified; the Pages
+  ~10-min cache applies (footer flip = live).
+
 ## Done — Remote-ID increment 4: DETS RID block + web-app map (2026-10-11, branch `remoteid-ui`, CYD FLASHED COM14; webapp static-verified)
 Final Remote-ID increment — carries the CYD's decoded RID (`g_rids[]`) to the phone and plots it.
 **No link `PROTOCOL_VERSION` bump, no C5 change** (`src/c5/` + `lib/link_protocol/` untouched, still v8);
