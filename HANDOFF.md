@@ -29,6 +29,14 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — brightness slider fix (2026-10-10, CYD-only, FLASHED)
+The brightness setting did nothing: `initCommon()` called `ledcAttach(TFT_BL_PIN,…)` BEFORE
+`tft.init()`, but TFT_eSPI is built with `TFT_BL=21`/`TFT_BACKLIGHT_ON=HIGH`, so `tft.init()` then
+drove GPIO21 as a plain HIGH output — detaching the LEDC PWM and leaving the backlight stuck full on
+(so `applyBrightness()`'s `ledcWrite` hit a non-PWM pin). Fix: move the `ledcAttach`+`ledcWrite` to
+AFTER `tft.init()`/`setRotation()` so the PWM claim wins. Brightness now dims (slider + web `B:` both
+map 0–100 → duty 20–255, floored so never fully dark). CYD-only, no protocol bump, flashed COM14.
+
 ## Done — screen wake lock (webapp) + bag-safe touch lock (CYD) (2026-10-10)
 Addressing the screen-off-kills-GPS finding + a request for a bag lock.
 - **Webapp Screen Wake Lock** (`webapp/js/wakelock.js`, new): `acquireWake()` on BLE connect,

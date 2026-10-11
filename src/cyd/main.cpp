@@ -59,10 +59,15 @@ static void initCommon() {
   pinMode(LED_G_PIN, OUTPUT);
   pinMode(LED_B_PIN, OUTPUT);
   setLed(false, false, false);
-  ledcAttach(TFT_BL_PIN, 5000, 8);   // backlight on PWM (8-bit) for brightness control
-  ledcWrite(TFT_BL_PIN, 255);        // full brightness until a saved level is applied
   tft.init();
   tft.setRotation(UI_ROTATION);
+  // Claim the backlight for PWM AFTER tft.init(): TFT_eSPI is built with TFT_BL=21/TFT_BACKLIGHT_ON,
+  // so init() drives GPIO21 as a plain HIGH digital output — doing this before init() leaves the pin
+  // detached from LEDC and the backlight stuck at full (brightness slider did nothing). Attaching
+  // here re-takes the pin as an 8-bit PWM channel so applyBrightness() actually dims it.
+  ledcAttach(TFT_BL_PIN, 5000, 8);
+  ledcWrite(TFT_BL_PIN, 255);        // full brightness until the saved level is applied
+
   LinkSerial.setRxBufferSize(2048);
   LinkSerial.begin(LINK_BAUD, SERIAL_8N1, LINK_RX_PIN, LINK_TX_PIN);
 }
