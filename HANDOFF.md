@@ -45,6 +45,16 @@ change, no CSS change (so no `style.css` recompile / `?v=` bump). ES-module-synt
 import cycle (categories.js → detail.js is one-way). **Static-verified only — needs an Android-Chrome
 GPS-walk smoke test** (rolls into the redesign's one open test item).
 
+## Done — follower RPA false-positive guard (2026-10-11, CYD FLASHED COM14)
+`computeFollowScores()` (`src/cyd/main.cpp`) no longer escalates a **benign BLE Resolvable Private
+Address** to FOLLOWING. New `macIsBleRpa()` = MAC MSB top two bits `0b01` (the privacy-rotating address
+phones/watches advertise; the own-phone `peerMac` self-filter misses it because a phone's GATT address
+differs from its advertised RPA). An RPA group with **no sigdb tier and no notable flag** caps at
+PERSISTENT — out of the follow alert, magenta LED, `CAT_TRACKER`, and STATUS `fol`. A planted
+AirTag/tracker is **exempt** (it carries a Find-My/tracker flag or tier). Build SUCCESS, flashed COM14.
+No protocol bump (C5 untouched). Resolves outstanding #6; see it for the trade-off + Wi-Fi-random
+follow-up. [[phase5-followme-direction]]
+
 ## Done — web lock/unlock CYD display + Settings regroup (2026-10-11, CYD FLASHED COM14)
 Settings page split into two cards — **CYD device** (brightness + a new Lock/Unlock-display button) and
 **Data & sync** (Sync time & GPS, Reload DB, Whitelist). The Lock button drives the **bag-safe touch
@@ -462,8 +472,18 @@ drift — identify by VID:PID. **A field re-test near a known active camera is t
    Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/map
    list (another coordinated both-board flash). Heaviest remaining feature; BLE-extended-scan
    coexistence risk — check against the BLE/15.4 coexistence rule. Backlogged (user: leave it).
-6. **Phase-5 follow-up:** the rotating-RPA phone self-filter guard (a rotating-random-address phone,
-   now shown by MAC rather than `<hidden>`, still gets flagged as a follower).
+6. **~~Phase-5 rotating-RPA follower false-positive~~ — HEURISTIC GUARD DONE (2026-10-11, CYD FLASHED).**
+   `computeFollowScores()` now refuses to escalate a **benign BLE Resolvable Private Address** to
+   FOLLOWING: `macIsBleRpa()` tests the MAC's top two bits (`0b01` = RPA, the privacy-rotating address
+   phones/watches use — the own-phone `peerMac` filter misses it because the GATT address ≠ the
+   advertised RPA). An RPA group with **no sigdb tier and no notable flag** caps at PERSISTENT (never
+   ftier 2), so it drops out of the follow alert / magenta LED / `CAT_TRACKER` / STATUS `fol`. A planted
+   AirTag/tracker is **exempt** — it carries a Find-My/tracker flag or tier, so it still flags.
+   Trade-off: a signature-less RPA tracker that genuinely follows won't raise FOLLOWING (acceptable;
+   the proper fix is IRK/bonding resolution — still backlogged). CYD-only, no protocol bump; flashed
+   COM14. **Field-verify** on a walk that your own phone no longer trips the follower banner. The
+   analogous **Wi-Fi randomized-MAC** case (locally-administered probe MACs) is a cheap follow-up if it
+   shows up in the field — not done yet. See [[phase5-followme-direction]].
 7. **P3 log follow-ups:** bg-stream rotation min-interval/min-rows guard (dense-drive thrash);
    pre-time-sync `enforceLogCap` eviction order comment; `deleteSession` could also check
    `g_streamingPath` (defense-in-depth).

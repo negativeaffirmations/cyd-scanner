@@ -314,6 +314,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   Suspect tier floor on the live list — only the category tile is gated.) The live scan
   screen shows a **red deauth/evil-twin alert banner** (+ LED) when a flood or evil-twin AP is
   detected, alongside the follow-me banner.
+  **Follow false-positive guard (`computeFollowScores`):** a **benign BLE Resolvable Private Address**
+  — `macIsBleRpa(mac)` = MAC MSB top two bits `0b01`, the privacy-rotating address phones/watches
+  advertise — with **no sigdb tier and no notable flag** never escalates to FOLLOWING (caps at
+  PERSISTENT), so your own/companion phone stops tripping the follower alert/LED/`CAT_TRACKER`/STATUS
+  `fol`. A planted Find-My/tracker device is exempt (it carries a flag/tier). CYD-only, no protocol
+  bump. Proper long-term fix for signature-less RPA trackers is IRK/bonding (backlogged).
   **Scan** opens a **Scan menu** (`SCR_SCANMENU`: Start Scan / Explore Scan / Scan Settings) —
   the scan-flow redesign; the live scanner, the SD-log Explore Viewer (pick/filter/sort/detail),
   per-band Scan Settings, the Phase-5 follow-me drill-down, and the whitelist manager are all

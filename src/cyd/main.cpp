@@ -904,6 +904,15 @@ static void updateFollowState() {
   }
 }
 
+// BLE Resolvable Private Address: the most-significant address byte's top two bits are 0b01. RPAs
+// are privacy-rotating addresses used by phones, watches and other personal gear. A device we're
+// "tracking" by a fixed RPA is almost always our own/companion phone within a single rotation
+// window (the classic follow false-positive, and the one the own-phone peerMac filter misses
+// because a phone's GATT address differs from its advertised RPA) — and it can't be tracked past
+// the next rotation anyway. A genuinely planted AirTag/tracker surfaces through its Find-My/tracker
+// signature (a notable flag or a sigdb tier), which exempts it from this guard below.
+static inline bool macIsBleRpa(const uint8_t* mac) { return (mac[0] & 0xC0) == 0x40; }
+
 static void computeFollowScores() {
   g_followN = 0;
   for (int i = 0; i < g_followCount; i++) {
@@ -916,19 +925,27 @@ static void computeFollowScores() {
            + FOLLOW_W_SPAN    * ((span >= FOLLOW_SPAN_B1) + (span >= FOLLOW_SPAN_B2) + (span >= FOLLOW_SPAN_B3))
            + FOLLOW_W_FIXES   * ((fixes >= FOLLOW_FIXES_B1) + (fixes >= FOLLOW_FIXES_B2) + (fixes >= FOLLOW_FIXES_B3));
     if (span >= FOLLOW_SPAN_MIN && (f.rssiMax - f.rssiMin) <= FOLLOW_RSSI_SPREAD) sc += FOLLOW_W_STABLE;
-    // Threat boost: this MAC's group tier (sigdb) above None. Also capture whitelist state.
+    // Look up this MAC's group: threat boost (sigdb tier above None), whitelist state, and the
+    // data the RPA false-positive guard needs (source + flags + tier).
     bool whitelisted = false;
+    uint8_t  grpSrcMask = 0, grpTier = (uint8_t)sigdb::Tier::None;
+    uint16_t grpFlags = 0;
     for (int k = 0; k < g_groupCount; k++)
       if (memcmp(g_groups[k].mac, f.mac, 6) == 0) {
         if (g_groups[k].tier != (int)sigdb::Tier::None) sc += FOLLOW_W_THREAT;
         whitelisted = g_groups[k].whitelisted;
+        grpSrcMask = g_groups[k].srcMask; grpFlags = g_groups[k].flags; grpTier = (uint8_t)g_groups[k].tier;
         break;
       }
     // Whitelisted (known) devices never raise the follow alert or the magenta LED.
     if (whitelisted) { f.score = 0; f.ftier = 0; continue; }
     f.score = (uint8_t)min(sc, 100);
+    // Follow false-positive guard: a benign BLE RPA (privacy-rotating phone/wearable with no threat
+    // signature and no notable flag) never escalates to FOLLOWING — it can only reach PERSISTENT.
+    bool benignRpa = (grpSrcMask & MASK_BLE) && macIsBleRpa(f.mac) &&
+                     grpTier == (uint8_t)sigdb::Tier::None && (grpFlags & FLAGS_NOTABLE) == 0;
     // PERSISTENT is time-only and capped: only GPS movement can reach FOLLOWING.
-    if (gpsOk && span >= FOLLOW_SPAN_M && fixes >= FOLLOW_FIXES && pers >= FOLLOW_PERSIST_FOLLOW) f.ftier = 2;
+    if (gpsOk && span >= FOLLOW_SPAN_M && fixes >= FOLLOW_FIXES && pers >= FOLLOW_PERSIST_FOLLOW && !benignRpa) f.ftier = 2;
     else if (pers >= FOLLOW_PERSIST_ONLY) f.ftier = 1;
     else f.ftier = 0;
     if (f.ftier == 2) g_followN++;
