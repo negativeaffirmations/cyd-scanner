@@ -39,13 +39,23 @@ button:disabled { opacity: .45; }
 .card { background:$color-surface; border:1px solid $color-border; border-radius:10px; padding:10px; }
 .card .k { color:$color-text-muted; font-size:.75rem; } .card .v { font-size:1.2rem; font-weight:600; }
 
-// Scan-types card: the 4 radio sources in one card; a tile grays out when its source is disabled.
-.scantypes { display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; margin:12px 0; }
-.scantypes .st { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
-.scantypes .st .k { color:$color-text-muted; font-size:.75rem; }
-.scantypes .st .v { font-size:1.15rem; font-weight:600; }
-.scantypes .st.off { opacity:.3; }                    // not collected under the current config
-.scantypes .st.off .v { color:$color-text-muted; }
+// Stat cell = a centered column (title over count). Reused by the scan-types card + the counts card.
+.st { display:flex; flex-direction:column; align-items:center; text-align:center; gap:2px; }
+.st .k { color:$color-text-muted; font-size:.72rem; }
+.st .v { font-size:1.2rem; font-weight:600; }
+.st.off { opacity:.3; }                                // scan source not collected under the current config
+.st.off .v { color:$color-text-muted; }
+
+.scantypes { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0; }
+.statcard  { display:flex; flex-direction:column; gap:10px; margin:12px 0; }     // 2-over-3 counts/tiers
+.strow2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.strow3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+
+// Device-status row: small icons, white when active / gray when not.
+.statusicons { display:flex; justify-content:center; gap:30px; margin:10px 0; }
+.si { display:flex; flex-direction:column; align-items:center; gap:1px; color:$color-text-muted; font-size:.6rem; }
+.si .material-symbols-outlined { font-size:24px; color:$color-text-muted; }
+.si.on, .si.on .material-symbols-outlined { color:$color-text; }
 
 #log {
   background:$color-surface-inset; border:1px solid $color-border; border-radius:10px; padding:8px;

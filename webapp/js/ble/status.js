@@ -13,16 +13,16 @@ export function onStatus(ev){
   if("prb" in kv) $("prb").textContent = kv.prb;
   if("z"   in kv) $("z154").textContent = kv.z;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
-  if("time"in kv) $("timeState").textContent = kv.time==="1"?"yes":"no";
-  if("gps" in kv) $("gpsState").textContent  = kv.gps==="1"?"yes":"no";
+  if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
+  if("gps" in kv) $("gpsState").classList.toggle("on", kv.gps==="1");
   // Gray the sync button once both time and GPS are synced.
-  const bothSynced = ($("timeState").textContent==="yes" && $("gpsState").textContent==="yes");
+  const bothSynced = $("timeState").classList.contains("on") && $("gpsState").classList.contains("on");
   $("syncBtn").disabled = !state.connected || bothSynced;
   if("susp"in kv) $("susp").textContent = kv.susp;
   if("lk"  in kv) $("lk").textContent   = kv.lk;
   if("conf"in kv){ $("conf").textContent = kv.conf;
     $("conf").style.color = (+kv.conf>0) ? "#f85149" : ""; }
-  if("db"  in kv) $("db").textContent = kv.db==="1"?"loaded":"fallback";
+  if("db"  in kv) $("db").classList.toggle("on", kv.db==="1");   // DB loaded -> white icon
   if("wl"  in kv){ $("wlCnt").textContent = kv.wl; $("wlCnt2").textContent = kv.wl; $("wlHdr").textContent = kv.wl; }
   if("muted"in kv) $("wlMuted").textContent = kv.muted;
   if("fol"in kv){ const nf = +kv.fol||0;

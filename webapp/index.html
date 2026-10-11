@@ -22,35 +22,36 @@
     <!-- ============================ HOME ============================ -->
     <section class="page visible" id="page-home">
       <button id="connectBtn">Connect to scanner</button>
-      <div class="sub">Counter-surveillance scanner &middot; phone control over Bluetooth</div>
 
-      <!-- Scan types in one card; each tile grays out when that source is off in Scan Settings -->
+      <!-- Scan types: 4 centered columns (title over count); a column grays out when its source is off -->
       <div class="card scantypes">
-        <div class="st" id="st24"><span class="k">Wi-Fi 2.4</span><span class="v" id="w24">–</span></div>
-        <div class="st" id="st5"><span class="k">Wi-Fi 5G</span><span class="v" id="w5">–</span></div>
+        <div class="st" id="st24"><span class="k">2.4</span><span class="v" id="w24">–</span></div>
+        <div class="st" id="st5"><span class="k">5G</span><span class="v" id="w5">–</span></div>
         <div class="st" id="stble"><span class="k">BLE</span><span class="v" id="ble">–</span></div>
         <div class="st" id="st154"><span class="k">15.4</span><span class="v" id="z154">–</span></div>
       </div>
 
-      <div class="grid">
-        <div class="card"><div class="k">Probe reqs</div><div class="v" id="prb">–</div></div>
-        <div class="card"><div class="k">Unique logged</div><div class="v" id="uniq">–</div></div>
+      <!-- Counts + tiers in one card: 2 columns over 3, all centered (title over count) -->
+      <div class="card statcard">
+        <div class="strow2">
+          <div class="st"><span class="k">Probe reqs</span><span class="v" id="prb">–</span></div>
+          <div class="st"><span class="k">Unique</span><span class="v" id="uniq">–</span></div>
+        </div>
+        <div class="strow3">
+          <div class="st"><span class="k">Suspect</span><span class="v" id="susp">–</span></div>
+          <div class="st"><span class="k">Likely</span><span class="v" id="lk">–</span></div>
+          <div class="st"><span class="k">Confirmed</span><span class="v" id="conf">–</span></div>
+        </div>
       </div>
 
-      <div class="grid grid3">
-        <div class="card"><div class="k">Suspect</div><div class="v" id="susp">–</div></div>
-        <div class="card"><div class="k">Likely</div><div class="v" id="lk">–</div></div>
-        <div class="card"><div class="k">Confirmed</div><div class="v" id="conf">–</div></div>
+      <!-- Device status: small icons, white when active / gray when not -->
+      <div class="statusicons">
+        <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span><span class="sil">Time</span></span>
+        <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span><span class="sil">GPS</span></span>
+        <span class="si" id="db" title="Signature DB loaded"><span class="material-symbols-outlined">database</span><span class="sil">DB</span></span>
       </div>
 
-      <div class="grid grid3">
-        <div class="card"><div class="k">Time synced</div><div class="v" id="timeState">–</div></div>
-        <div class="card"><div class="k">GPS fix</div><div class="v" id="gpsState">–</div></div>
-        <div class="card"><div class="k">Signature DB</div><div class="v" id="db">–</div></div>
-      </div>
-
-      <h3 style="margin:.6em 0 .3em">Threats on device
-        <span class="sub" style="font-weight:400">— category counts from the live scan</span></h3>
+      <h3 style="margin:.5em 0 .3em">Threats</h3>
       <div id="catChips" class="tgrid"></div>
 
       <h3 style="margin-bottom:.3em">Activity</h3>
