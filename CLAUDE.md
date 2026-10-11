@@ -394,8 +394,9 @@ back (5 GHz included). Things that matter, learned the hard way:
       droneid) lines — from the current scan, a picked session, or a locally-loaded `.jsonl`/`.csv`
       (offline; the parser sniffs `{` for NDJSON vs legacy CSV). `openMap()` runs Leaflet
       `invalidateSize` on page-show (the div was display:none). The source/threats/events filters live
-      in a **Filters modal** (`#mapFiltDlg`, opened from the toolbar row beside Current-session / Load)
-      so the toolbar stays one line and the whole page fits without scrolling; `#map` height is
+      in a **Filters modal** (`#mapFiltDlg`). The toolbar is a Scanner-style `.iconrow` of three
+      `.iconbtn`s — **Map current session** (`radar`), **Load file** (`file_open`), **Filters**
+      (`filter_alt`) — so it stays one line and the whole page fits without scrolling; `#map` height is
       `calc(100dvh − chrome)`. **`#map` sets `position:relative; z-index:0`** to make its own stacking
       context — otherwise Leaflet's internal panes/controls (z-index up to ~800) paint OVER the fixed
       bottom navbar (z-index 20).

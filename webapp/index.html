@@ -54,7 +54,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;map-fit</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;map-icons</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -116,11 +116,10 @@
     <!-- ============================ MAP ============================ -->
     <section class="page" id="page-map">
       <h3 style="margin:.4em 0 .3em">Map</h3>
-      <div class="maptools">
-        <button id="mapCurBtn" class="secondary" disabled>Current session</button>
-        <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
-          Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
-        <button id="mapFiltBtn" class="secondary">Filters</button>
+      <div class="iconrow">
+        <button id="mapCurBtn" class="iconbtn" disabled title="Map current session" aria-label="Map current session"><span class="material-symbols-outlined">radar</span></button>
+        <label class="iconbtn" style="cursor:pointer" title="Load a .jsonl / .csv log file" aria-label="Load a .jsonl or .csv log file"><span class="material-symbols-outlined">file_open</span><input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
+        <button id="mapFiltBtn" class="iconbtn" title="Map filters" aria-label="Map filters"><span class="material-symbols-outlined">filter_alt</span></button>
       </div>
       <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
       <div id="map"></div>
