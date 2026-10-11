@@ -333,18 +333,22 @@ select {
 .conn {
   display: inline-flex;
   align-items: center;
+  background: none;
+  padding: 0;
+  border: 0;
 }
 
 .conn .material-symbols-outlined {
   font-size: 20px;
+  background: none;
 }
 
 .conn.up .material-symbols-outlined {
-  color: #58a6ff;
+  color: #e6edf3;
 }
 
 .conn.wait .material-symbols-outlined {
-  color: #d29922;
+  color: #f2cc60;
 }
 
 .conn.down .material-symbols-outlined {

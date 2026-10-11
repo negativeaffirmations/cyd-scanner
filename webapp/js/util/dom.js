@@ -10,8 +10,8 @@ export function log(msg){
 
 export function setConn(s){
   const p = $("conn");
-  // Bluetooth icon in the app bar: connected (blue) / searching (amber) / disabled (gray).
-  const icon = s === "connected" ? "bluetooth_connected" : s === "connecting" ? "bluetooth_searching" : "bluetooth_disabled";
+  // Bluetooth icon in the app bar: connected (white) / searching (yellow) / disabled (gray).
+  const icon = s === "connected" ? "bluetooth" : s === "connecting" ? "bluetooth_searching" : "bluetooth_disabled";
   p.className = "conn " + (s === "connected" ? "up" : s === "connecting" ? "wait" : "down");
   p.title = s;
   p.innerHTML = '<span class="material-symbols-outlined">' + icon + '</span>';
