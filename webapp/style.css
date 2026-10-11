@@ -418,6 +418,32 @@ body {
   background: rgba(230, 237, 243, 0.04);
 }
 
+.totop {
+  position: fixed;
+  right: 14px;
+  z-index: 25;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 14px);
+  border-radius: 50%;
+  background: #30363d;
+  color: #e6edf3;
+  opacity: 0.92;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+.totop .material-symbols-outlined {
+  font-size: 28px;
+}
+
+.totop[hidden] {
+  display: none;
+}
+
 .dets {
   background: #0b0e13;
   border: 1px solid #30363d;
@@ -630,7 +656,8 @@ body {
 }
 
 .dets.tall {
-  max-height: 72vh;
+  max-height: none;
+  overflow: visible;
   margin-inline: -16px;
   border-left: 0;
   border-right: 0;

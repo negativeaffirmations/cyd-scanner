@@ -25,6 +25,13 @@ $("navMap").onclick      = openMap;
 $("navData").onclick     = () => showPage('data');
 $("navSettings").onclick = () => showPage('settings');
 showPage('home');   // initial page
+
+// Jump-to-top: appears bottom-right on the Scanner page once scrolled down a bit.
+function updateToTop(){
+  $("toTop").hidden = !(window.scrollY > 200 && $("page-scanner").classList.contains("visible"));
+}
+window.addEventListener("scroll", updateToTop, { passive:true });
+$("toTop").onclick = ()=> window.scrollTo({ top:0, behavior:"smooth" });
 renderCatChips([]); // show the full threat taxonomy (all 0) from the start, so the colours are learnable
 renderScanCounts([]); // the Scanner threat strip starts populated (all dim) and tappable
 

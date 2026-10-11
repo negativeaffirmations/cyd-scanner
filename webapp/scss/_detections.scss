@@ -61,7 +61,7 @@
 // Full-bleed to the screen edges on mobile: cancel the body's 16px side padding and drop the side
 // border/radius so the list spans the full width (bigger, edge-to-edge rows).
 .dets.tall {
-  max-height:72vh;
+  max-height:none; overflow:visible;        // part of the page scroll, not its own pane
   margin-inline:-16px; border-left:0; border-right:0; border-radius:0;
 }
 .detrow {

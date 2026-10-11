@@ -108,7 +108,7 @@
           <input type="range" id="efT1" min="0" max="0" step="1" value="0" disabled>
           <input type="text" id="efText" placeholder="Name or MAC contains…" autocomplete="off" style="margin-top:.5em">
         </div>
-        <div id="scanViewer" class="dets tall" style="max-height:60vh"></div>
+        <div id="scanViewer" class="dets tall"></div>
       </div>
 
     </section>
@@ -286,6 +286,9 @@
       <label><input type="checkbox" id="lfThreats"> Threats only</label>
     </div>
   </dialog>
+
+  <!-- Jump-to-top: floats bottom-right on the Scanner page once scrolled down a bit -->
+  <button id="toTop" class="totop" aria-label="Jump to top" hidden><span class="material-symbols-outlined">keyboard_arrow_up</span></button>
 
   <!-- ============================ STICKY BOTTOM NAVBAR ============================ -->
   <nav class="navbar" aria-label="Primary">

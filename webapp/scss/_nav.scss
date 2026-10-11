@@ -48,3 +48,13 @@ body { padding-bottom: calc(#{$nav-h} + env(safe-area-inset-bottom, 0px) + 12px)
   background:rgba($color-accent, .22); border-radius:999px; padding:2px 14px;
 }
 .navbtn:active { background:rgba($color-text, .04); }
+
+// Floating jump-to-top button (just above the navbar, bottom-right).
+.totop {
+  position:fixed; right:14px; z-index:25; width:44px; height:44px; margin:0; padding:0;
+  bottom: calc(#{$nav-h} + env(safe-area-inset-bottom, 0px) + 14px);
+  border-radius:50%; background:$color-border; color:$color-text; opacity:.92;
+  display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,.45);
+  .material-symbols-outlined { font-size:28px; }
+}
+.totop[hidden] { display:none; }   // beats the display:flex above when the hidden attr is set
