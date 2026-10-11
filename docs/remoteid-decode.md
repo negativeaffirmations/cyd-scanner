@@ -63,9 +63,13 @@ per advert.
    `0x0D` legacy framing), accumulate per emitter MAC in a small bounded table (TTL-expired),
    and print decoded fields to the USB console. Bench-testable with an ODID transmitter/sim
    (e.g. opendroneid/transmitter-linux, or a drone) — no CYD/link change, safe to flash C5 alone.
-2. **Link frame + CYD store (protocol v8).** Add `Reply::RemoteId = 0x91` + a `RemoteId` struct
-   (below); the C5 emits one per active emitter in its scan-dump burst; the CYD keys it to the
-   matching `Detection` by MAC. **Bumps PROTOCOL_VERSION to 8 → both boards flash together.**
+2. **Link frame + CYD store (protocol v8). — DONE (2026-10-11, both boards flashed + validated).**
+   Added `Reply::RemoteId = 0x91` + the `RemoteId` struct (below); the C5 emits one per active emitter
+   in its scan-dump burst (mutex-guarded `remoteid::snapshot()`); the CYD keys it to the matching
+   `Detection` by MAC (`g_rids[8]`) + a temporary serial `[RID]` readout. **Bumped PROTOCOL_VERSION to
+   8 → both boards flashed together.** Validated end-to-end against `tools/odid-tx/` (a spare ESP32-S3
+   broadcasting synthetic ODID): the transmitted flight values round-trip to matching C5 + CYD `[RID]`
+   serial lines. The temporary CYD readout is replaced by increment 3's real UI.
 3. **CYD UI + NDJSON log.** A Remote-ID detail block (UAS ID, drone + operator lat/lon, height,
    speed) on the device detail screen; an NDJSON `rid` line shape; feed the web app.
 4. **Web app map.** Plot the drone + operator positions (and a line between them) on the Map

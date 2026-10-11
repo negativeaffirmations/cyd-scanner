@@ -33,9 +33,15 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
-## Done — Remote-ID increment 2: link frame + CYD store (2026-10-11, branch `remoteid-decode`, BUILT + REVIEWED, NOT YET FLASHED)
+## Done — Remote-ID increment 2: link frame + CYD store (2026-10-11, branch `remoteid-decode`, BOTH BOARDS FLASHED v8 + VALIDATED END-TO-END)
 Increment 2 of the ASTM F3411 decode (HANDOFF outstanding #5; plan in
 [docs/remoteid-decode.md](docs/remoteid-decode.md)). The decoded Remote-ID now crosses the link.
+**Validated 2026-10-11 against a live OTA broadcast** from the new `tools/odid-tx/` bench transmitter
+(a spare ESP32-S3 impersonating a drone): the C5 prints `[RID] … LOC lat=40.712800 lon=-74.006000
+h=50m alt=120m spd=500cm/s hdg=45` (increment-1 decode) AND the **CYD** prints
+`[RID] A4:CB:8F:DA:45:B1 uas=TEST-DRONE-0001 lat=40.712800 lon=-74.006000` — proving the whole chain
+(S3 broadcast → C5 decode → `Reply::RemoteId` v8 frame → CYD store keyed by MAC), with the `uasId`
+string + int32 coords round-tripping intact.
 - **Protocol → v8** (`lib/link_protocol/link_protocol.h`): `Reply::RemoteId = 0x91` + a packed
   **75-byte `RemoteId` struct** (mac/have/idType/uaType, drone + operator lat-lon int32·1e7,
   height/altGeo int16 m, speed cm/s + heading deg, uasId[21], operatorId[21]) with a
@@ -62,8 +68,16 @@ Increment 2 of the ASTM F3411 decode (HANDOFF outstanding #5; plan in
 - **Builds clean both envs** (tester): CYD Flash 44.7% / RAM 33.2%; C5 Flash 45.8% / RAM 24.0%
   (+~1.6 KB flash, +24 B RAM, +~600 B transient loop stack for `ridBuf[8]`). Reviewer: mergeable, no
   blockers (packing/assert, version consistency, 0x91 no collision, sync contract, store bounds-safe;
-  worst-case burst ~<1 s, inside the CYD's 5 s timeout). **Nothing flashed — flash both boards to v8
-  together at the bench, then watch the CYD + C5 serial for `[RID]` lines to confirm end-to-end.**
+  worst-case burst ~<1 s, inside the CYD's 5 s timeout). **BOTH BOARDS FLASHED v8 2026-10-11** (C5
+  COM18 `303A:1001`, CYD COM14 `1A86:7523`, battery/5V off during flash) and validated end-to-end
+  (above). The temporary CYD `[RID]` serial line stays until increment 3's real UI replaces it.
+- **Bench transmitter added — `tools/odid-tx/` (new, committed).** A standalone PlatformIO project
+  (own env, NOT in the root `platformio.ini`) that makes a **spare ESP32-S3** broadcast BLE4 legacy
+  ODID adverts (`0xFFFA` service data, `[0x0D][counter][25-byte msg]` framing, one message/advert,
+  rotating BasicID→Location→System→OperatorID under one stable MAC). Clean-room; no attribution
+  needed. Flash the S3 via its NATIVE USB (`303A:1001`) — **identify by chip type first** (shares
+  VID:PID with the C5 native port; `esptool chip-id` → ESP32-S3; the test rig's S3 was COM12).
+  `pio run -d tools/odid-tx -t upload --upload-port COMxx`. See its README.
 - **Next:** increment 3 (CYD detail UI + NDJSON `rid` line — can consume the snapshot with no further
   locking) then increment 4 (web Map drone + operator plotting).
 
@@ -471,22 +485,25 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **both FLASHED boards are still on protocol v7** and interoperate. **Source on branch
-`remoteid-decode` is now v8** (Remote-ID increment 2 landed — `Reply::RemoteId`), but nothing v8 has
-been flashed yet, so the running boards stay wire-compatible. **The next flash must do BOTH boards
-together** (a v8 board rejects a v7 peer).
-**Latest flashes (2026-10-11 this session):** CYD (COM14) was reflashed several times on `main` —
-web lock/unlock (`K1`/`K0` + STATUS `lock=`), the follower RPA false-positive guard, and the P3 log
-hardening (dense-area rotate guard + two defensive tweaks). C5 (COM18) was flashed on branch
-`remoteid-decode` with **Remote-ID ASTM F3411 decode increment 1** (serial `[RID] …` readout; no
-protocol change). Earlier 2026-10-10 flashes: CYD camera OUIs + HOME readout tweaks (`DB_GEN` 3);
-C5 associated-client data-frame capture + BLE-pause starvation fix + 2.4 ch 1–11 + 5 GHz promiscuous
-sweep. Ports: CYD = CH340 `1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (flash); C5 UART bridge
-`2E3C:5740` = COM8 (does NOT flash) — ports drift, identify by VID:PID.
+Device state: **both boards FLASHED to protocol v8** (2026-10-11, Remote-ID increment 2 — `Reply::RemoteId`)
+and validated end-to-end against the `tools/odid-tx/` S3 transmitter. They interoperate on v8; a v8
+board rejects a v7 peer, so keep them in lockstep on future protocol bumps. The spare ESP32-S3
+(COM12, MAC `a4:cb:8f:da:45:b0`) now runs the ODID bench transmitter.
+**Latest flashes (2026-10-11 this session):** **BOTH boards flashed to protocol v8** on branch
+`remoteid-decode` — Remote-ID increment 2 (C5 COM18 `303A:1001`, CYD COM14 `1A86:7523`, battery/5V
+off), validated end-to-end against the `tools/odid-tx/` S3 transmitter. Also flashed the spare
+**ESP32-S3 (COM12 `303A:1001`)** with the ODID bench transmitter. Earlier on `main`: CYD web
+lock/unlock + follower RPA guard + P3 log hardening; C5 Remote-ID decode increment 1. 2026-10-10:
+CYD camera OUIs + HOME readout (`DB_GEN` 3); C5 associated-client capture + BLE-pause starvation fix
++ 2.4 ch 1–11 + 5 GHz promiscuous sweep. Ports THIS session: CYD = CH340 `1A86:7523` = COM14; C5
+native = `303A:1001` = COM18 (flash); C5 UART bridge `2E3C:5740` = COM8 (does NOT flash); spare S3
+native = `303A:1001` = COM12 (shares VID:PID with the C5 native — disambiguate by `esptool chip-id`).
+Ports drift; always identify by VID:PID + chip type.
 **Pending field validation:** (a) ~~Wi-Fi client/camera capture~~ — DONE, user-confirmed on a walk
 (#0); (b) the follower RPA guard — confirm your own phone no longer trips the follower banner (#6);
-(c) Remote-ID decode — point an ODID transmitter/sim at the C5 and watch the `[RID]` serial lines on
-BOTH boards once v8 is flashed (increment 2 now carries RID over the link to the CYD too) (#5).
+(c) ~~Remote-ID decode~~ — DONE: validated at the bench against `tools/odid-tx/` (C5 + CYD `[RID]`
+lines match the transmitted flight values). Field test with a real drone/ODID broadcast is a nice-to-
+have (#5).
 
 ## PICK UP HERE — outstanding
 
@@ -525,13 +542,13 @@ BOTH boards once v8 is flashed (increment 2 now carries RID over the link to the
      in the scan callback; accumulates per emitter MAC in a bounded TTL table and **prints decoded
      UAS ID + drone/operator lat-lon + height/speed to the C5 USB console** (`[RID] …`). Link stays
      **v7** (both boards interoperate) — bench-test with an ODID transmitter/sim and watch the serial.
-   - **Increment 2 DONE (2026-10-11, BUILT + REVIEWED, NOT YET FLASHED):** `Reply::RemoteId` (0x91) +
-     a 75-byte `RemoteId` struct → **PROTOCOL_VERSION bumped 7→8 (both boards must flash together)**;
+   - **Increment 2 DONE (2026-10-11, BOTH BOARDS FLASHED v8 + VALIDATED):** `Reply::RemoteId` (0x91) +
+     a 75-byte `RemoteId` struct → **PROTOCOL_VERSION bumped 7→8 (both boards flashed together)**;
      the C5 emits one per emitter inside its scan-dump burst (mutex-guarded `remoteid::snapshot()` — a
      cross-task race introduced by the emit loop was found + fixed), the CYD stores it keyed to the
-     Detection by MAC (`g_rids[8]`) with a temporary serial `[RID]` readout to verify the link. Both
-     envs build clean. See the "Done — Remote-ID increment 2" entry above. **TO DO: flash both boards
-     to v8 together, then confirm `[RID]` lines on the CYD + C5 serial.**
+     Detection by MAC (`g_rids[8]`) with a temporary serial `[RID]` readout. Confirmed end-to-end
+     against the new `tools/odid-tx/` S3 transmitter: C5 + CYD both print matching `[RID]` lines. See
+     the "Done — Remote-ID increment 2" entry above.
    - **Increment 3 (next):** CYD detail UI + NDJSON `rid` log line (can consume the snapshot with no
      further locking). Then (4) web-app Map plotting of drone + operator positions. BLE-extended-scan
      (BT5 packs) coexistence risk stays a later, measured change — check against the BLE/15.4
