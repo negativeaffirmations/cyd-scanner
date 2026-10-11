@@ -42,8 +42,13 @@ where the view freezes on `g_frozenRows` while the scan continues. **Client-side
 (unlike Start/Stop's `G`/`X`). `state.paused` gates the list render in `renderDets()`; `togglePause()`
 + `resetPause()` (detections.js); wired in `main.js`; added to the connect/disconnect enable lists +
 reset on disconnect (connection.js). SCSS `#pauseBtn.paused` highlight → recompiled `style.css`,
-`style.css?v=20261011h`, `#uiver → scan-pause`. Static-verified (node --check clean); in-browser check
-pending like the rest of the webapp.
+`style.css?v=20261011h`, `#uiver → scan-pause`. **Confirmed working in-browser (user, 2026-10-11).**
+First-load "greyed out, can't use it" report was the usual **JS cache skew** — the phone had the new
+`index.html` (button visible) but still-cached old `connection.js`/`main.js` (never enabled/wired it,
+so it stayed `disabled`). Resolved by clearing the site's cached data / a fresh JS fetch after the
+~10-min Pages revalidation (server was verified correct via `curl` the whole time). Reminder: a
+new-HTML-but-stale-JS gap is expected for ~10 min after any webapp deploy — see "Webapp cache /
+deploy-propagation".
 
 ## Done — webapp Home Threats: 3/row × 4 rows + full category labels (2026-10-11, webapp-only, pushed)
 Cosmetic alignment with the CYD HOME readout (user request), on `main` after the Remote-ID merge:
