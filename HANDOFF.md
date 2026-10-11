@@ -1,4 +1,4 @@
-# Handoff — 2026-10-10 (single-branch: everything on `main`; phase5-dev retired)
+# Handoff — 2026-10-11 (single-branch: everything on `main`; phase5-dev retired)
 
 ## Branches / deploy
 - **2026-10-09: `phase5-dev` is RETIRED.** `main` was fast-forwarded to `f44df6a` (picking up the
@@ -36,8 +36,15 @@ file. The HTML itself is `no-cache`, so it re-reads the new URL. (Diagnosed when
 `.dets.tall { overflow:visible }` rule wasn't taking effect on the phone — it was serving old CSS.)
 JS modules aren't versioned (no build step); they've been refreshing in practice.
 
-## In progress — webapp redesign (Material bottom-nav), PHASE 1 done (2026-10-10, webapp-only)
+## Done — webapp redesign (Material bottom-nav), ALL PHASES COMPLETE (2026-10-11, webapp-only, pushed + Pages-deployed)
 Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-component-reuse]].
+**Current state:** the full redesign (phases 1 → final polish, commits `5020070`..`bdd38d9`) is committed
+on `main`, **pushed, and live on GitHub Pages** (build `built` @ 2026-10-11T04:08Z). The navbar is now
+**5 pages** — Home / Scanner / Map / **Data** / Settings (`nav.js` `PAGES`). CLAUDE.md's "Phone link +
+web app" section describes the finished 5-page UI. **The whole redesign is still STATICALLY-verified only
+— NOT in-browser tested** (needs Android Chrome + Web Bluetooth); that smoke test is the one open item for
+the webapp (see outstanding). The phase-by-phase log below is kept as history; the final-polish entry
+records what landed after Phase 4.
 - **Phase 1 (DONE): sticky bottom navbar + page scaffolding.** `index.html` restructured into a
   persistent top app bar (title + `#conn`) + a `<main id="pages">` with **Home** and **Scanner**
   `<section class="page">` views, plus a fixed **Material** bottom navbar (Home/Scanner/Map/Settings,
@@ -94,7 +101,26 @@ Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-
   Scanner). Removed the now-dead `settingsClose`/`mapClose` handlers + the disconnect `settingsDlg.close()`
   and `sessions.js` `mapDlg.open` check (both would have thrown). Retired hidden buttons stay for the
   connect/disconnect enable-lists. No SCSS change (`#map` is fixed 68vh). JS parses, no dead refs/dup
-  ids. **NOT in-browser tested. All redesign phases (1, 1.5, 2, 2.5, 4) done.**
+  ids. **NOT in-browser tested.**
+- **Final polish (DONE 2026-10-11, commits `458e742`..`bdd38d9`): Data page + app-bar + list-flow.**
+  - `458e742` **Home compaction** — regrouped the Home cards so the 12-category Threats readout fits
+    without scrolling.
+  - `337fbcc` **status icons → the app bar** — the small **time / GPS / DB** status icons moved into the
+    persistent top app bar (white when active, gray when not); the old connection "pill" became a
+    **Bluetooth icon**.
+  - `fca96a6` **connection icon = plain Bluetooth** — gray `bluetooth_disabled` / yellow searching /
+    white connected, no background chip.
+  - `9a8ef3c` **new Data nav page (5th page)** — the download / Wi-Fi-mode / time-range-export / session-
+    logs controls moved off the Scanner page into their own **Data** page; **Sync time & GPS + Reload DB
+    moved to Settings**. `nav.js` `PAGES` is now `home/scanner/map/data/settings` (navbar is 5 items).
+  - `3ba4ee1` **Scanner list flows with the page** — the live detection list is no longer an inner
+    scroll pane; its rows flow with the page scroll, and a **jump-to-top** button appears bottom-right
+    once scrolled.
+  - `bdd38d9` **cache-bust `style.css`** — `index.html` now links `style.css?v=<token>`; bump the token
+    on every CSS change (see the "Webapp cache-busting" section above). Fixed phones serving a stale CSS
+    that made the list a separate-scroll pane.
+  All webapp-only, `style.css` recompiled, pushed, Pages-deployed. **Static verification only — the
+  in-browser smoke test (Android Chrome) is still pending for the whole redesign.**
 - **Optional polish left:** further group the Scanner controls/filters; a one-tap un-whitelist firmware
   CMD (`E:mac,<MAC>`) for true remove-from-modal; tidy the now-dead `#mapDlg` CSS in `_map.scss`.
 
@@ -370,10 +396,12 @@ drift — identify by VID:PID. **A field re-test near a known active camera is t
    looks low; no evidence of a gap now.
 
 ### Other outstanding
-4. **Pages deploy pending a GitHub incident.** The SCSS/split-webapp + `.nojekyll` commits are on
-   `main`, but a Pages build was queued behind **GitHub Actions `degraded_performance`** (2026-10-05).
-   The live webapp keeps serving the last-good version until it clears; verify with
-   `gh api repos/.../pages/builds/latest --jq .status` and `curl .../webapp/style.css` (expect 200).
+4. **~~Pages deploy pending a GitHub incident~~ — RESOLVED.** The 2026-10-05 **GitHub Actions
+   `degraded_performance`** backlog has cleared; the latest build is `built` (2026-10-11T04:08Z, the
+   webapp-redesign push) and the live webapp serves current. **Open webapp item instead: an in-browser
+   smoke test** of the redesigned 5-page UI on **Android Chrome** (Web Bluetooth + geolocation) — the
+   entire redesign was statically verified only. Re-verify a deploy anytime with
+   `gh api repos/negativeaffirmations/cyd-scanner/pages/builds/latest --jq .status`.
 5. **Remote-ID DECODE (ASTM F3411)** — the OpenDroneID/Remote-ID feature's *own* "phase 2" (NOT the
    signature-matching Phase 2, which shipped). Today the C5 only flags *presence* (`FLAG_BLE_ODID`).
    Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/map

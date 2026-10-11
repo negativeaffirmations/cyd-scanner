@@ -352,49 +352,63 @@ back (5 GHz included). Things that matter, learned the hard way:
     (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges, **`cat`** = threat-category id
     (matches the CYD `Category` enum) driving the web category breakdown. Fields were appended across
     versions (follow in v3, `flags` in v4, `cat` in v5); older parsers reading the earlier fixed
-    fields ignore the extras. The web app renders it as a live, tier-colored table with follow + flag
-    markers, plus a tappable per-category threat breakdown.
+    fields ignore the extras. The web app renders it as the Scanner page's **tall, tappable live list**
+    (tier-colored, follow + flag markers; tap a row → device modal) + the threat strip/breakdown.
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app
     filters by **service UUID** (not name). Without this the phone finds nothing.
 - **Web app** `webapp/index.html` — hosted at
-  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). **Styles are
-  SCSS** under `webapp/scss/` (theme colors in `_variables.scss`; partials `_base`/`_detections`/
-  `_banners`/`_map`), compiled to `webapp/style.css` by Dart Sass (`npm run sass:build`, or the
-  auto-starting "Sass: watch" VS Code task — see `.vscode/tasks.json`). **Edit the SCSS, not
-  `style.css`** (generated, but committed since Pages doesn't run Sass; `node_modules/` is
-  git-ignored). **The JS is split into native ES modules** under `webapp/js/` — **no build step,
-  no bundler**: `index.html` loads `<script type="module" src="js/main.js">` and the browser
-  resolves the imports directly (Pages serves them as-is). Layout: `config.js` (UUIDs + shared
-  constants), `state.js` (the single cross-module mutable-state object — anything two modules both
-  read and write lives here, since ESM exports are read-only live bindings), `util/` (`dom.js`,
-  `format.js`), `ble/` (`connection.js`, `status.js`, `commands.js`, `download.js`), `gps.js`,
-  `data/parse.js`, `features/` (`detections.js`, `categories.js`, `followers.js`, `explore.js`,
-  `sessions.js`, `whitelist.js`, `map.js`, `detail.js`), and `main.js` (wires every DOM event
-  listener). Imports form a DAG; module-private state (`detState`, `lmap`, `detMap`, …) stays local
-  to its module. **No inline `onclick=` handlers in the HTML** — module scope isn't global, so all
-  wiring is `addEventListener` in `main.js`. MUST be
-  HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
-  (no iOS Safari). On connect it takes a **Screen Wake Lock** (`js/wakelock.js`, re-acquired on
-  `visibilitychange`, released on disconnect) so the page stays foreground and keeps pushing GPS —
-  Android Chrome freezes a screen-off/backgrounded page, which otherwise silently stops GPS updates
-  mid-walk. Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
-  a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
-  the scan, downloads the current session log, **lists past sessions and downloads/deletes/maps
-  a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), a
-  **"following me" UI** (a magenta follower banner from STATUS `fol`; per-row follow markers +
-  muted dimming; a flagged-device modal; a follower-detail modal with the DETS follow fields
-  plus a Leaflet track map from a loaded session), a **red deauth/evil-twin alert banner** (from
-  STATUS `deauth`/`evil`) with **behavioral-flag badges** on detection rows (from the DETS v4
-  `flags` field), a **threat-category breakdown** mirroring the device HOME readout (chips above the
-  live list from the DETS v5 `cat` field → category device modal → device detail modal, each with a
-  signature-type blurb), a **time-range export** control (since boot / past 24 h / custom
-  days-hours-min, over BLE `T:` or Wi-Fi `/dlf`), and a
-  **wardriving Map** (Leaflet/OSM) that plots a session's GPS'd detections — grouped by fix,
-  colored by threat tier, filterable by source/threats, with **event pins** for `evt`
-  (deauth/eviltwin/droneid) lines — from the current scan, a picked session, or a locally-loaded
-  `.jsonl`/`.csv` file (works offline; the parser sniffs `{` for NDJSON vs legacy CSV).
+  **https://negativeaffirmations.github.io/cyd-scanner/webapp/** (GitHub Pages). **Material-styled,
+  framework-free, no build step.** The UI is a **sticky bottom navbar** (Material Symbols icons) over
+  five in-page views — they're show/hide `.page` sections (toggled by `js/nav.js` `showPage()` via a
+  `.visible` class), **not** navigations, so the BLE link stays up when switching. A persistent top
+  **app bar** holds the title, the **time / GPS / DB status icons** (small; white when active, gray
+  when not), and the **Bluetooth connection icon** (gray `bluetooth_disabled` / yellow searching /
+  white connected). The five pages:
+    - **Home** — scan-type counts (4 centered columns; a column grays when its source is off in Scan
+      Settings), a counts/tiers card (Probe + Unique over Suspect/Likely/Confirmed), and the
+      **Threats** readout: the full 12-category taxonomy as color-coded cards (3/row, like the CYD) —
+      each card's **outline is its category colour at all times** (per-category palette **`CAT_COL`**
+      in `js/config.js`; **reuse it everywhere categories appear**), grey fill at 0, tinted when >0;
+      tap a card → that category's device modal.
+    - **Scanner** — a Material **icon control row** (Start/Stop ● `fiber_manual_record`↔`stop`,
+      Filters, New session `note_add`, Explore `find_in_page`, Scan settings); a compact **threat
+      strip** (one `CAT_COL` pill per category — tap the row → a breakdown modal of all categories +
+      counts, active first); a "Scan" title + mode icon (`radar` live / `description` loaded); then
+      the **live detection list** — **tall, full-width, tappable rows that flow with the page scroll**
+      (not an inner pane; a jump-to-top button appears bottom-right once scrolled). Tap a row → a
+      **device modal** (all info, per-source RSSI; + a GPS mini-map for loaded-log rows) with an **Add
+      to whitelist** action (`A:mac,…`; a whitelisted device links to the Whitelist manager). The
+      **Explore** viewer (pick a past session → filter/sort → same tall rows) also lives here; the
+      **Filters** modal narrows the live list by source/threats.
+    - **Map** — wardriving map (Leaflet/OSM): a session's GPS'd detections grouped by fix, colored by
+      threat tier, filterable by source/threats, with **event pins** for `evt` (deauth/eviltwin/
+      droneid) lines — from the current scan, a picked session, or a locally-loaded `.jsonl`/`.csv`
+      (offline; the parser sniffs `{` for NDJSON vs legacy CSV). `openMap()` runs Leaflet
+      `invalidateSize` on page-show (the div was display:none).
+    - **Data** — download current session (BLE `L`), Wi-Fi download mode, **time-range export** (since
+      boot / 24 h / custom, BLE `T:` or Wi-Fi `/dlf`), and the session-logs list (download/delete/
+      map/wipe).
+    - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager.
+  Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
+  follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS
+  `deauth`/`evil`) + behavioral-flag badges on rows. On connect it takes a **Screen Wake Lock**
+  (`js/wakelock.js`, re-acquired on `visibilitychange`) so the page stays foreground and keeps pushing
+  GPS — Android Chrome freezes a screen-off page, silently stopping GPS mid-walk. MUST be HTTPS; **Chrome
+  on Android only** (Web Bluetooth + geolocation; no iOS Safari).
+  **Styling: SCSS** under `webapp/scss/` (theme in `_variables`; partials `_base`/`_nav`/`_detections`/
+  `_banners`/`_map`) → `webapp/style.css` via Dart Sass (`npm run sass:build` or the "Sass: watch" VS
+  Code task). **Edit the SCSS**, not the generated-but-committed `style.css` (Pages doesn't run Sass;
+  `node_modules/` git-ignored). **`index.html` links `style.css?v=<token>` — BUMP the token whenever
+  `style.css` changes** so phones (which can't hard-refresh) fetch fresh CSS; the HTML is `no-cache` so
+  it re-reads the versioned URL. **JS = native ES modules** (`<script type="module" src="js/main.js">`,
+  no bundler): `config.js`, `state.js` (the one cross-module mutable-state object — ESM exports are
+  read-only live bindings), `nav.js`, `wakelock.js`, `util/` (`dom`,`format`), `ble/` (`connection`,
+  `status`,`commands`,`download`), `gps.js`, `data/parse.js`, `features/` (`detections`,`categories`,
+  `followers`,`explore`,`sessions`,`whitelist`,`map`,`detail`), `main.js` (**all** DOM wiring via
+  `addEventListener` — no inline `onclick=`, since module scope isn't global). Module-private state
+  stays local; imports form a DAG.
 - **Log download — BLE (default):** `L` → the CYD streams `/scanlog.jsonl` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
