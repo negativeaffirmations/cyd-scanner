@@ -12,6 +12,14 @@ $nav-h: 60px;
 }
 .appbar-title { font-size:1.15rem; font-weight:600; }
 
+// Right-side status cluster in the app bar: time/GPS/DB icons + the Bluetooth connection icon.
+.appbar-status { display:flex; align-items:center; gap:9px; }
+.conn { display:inline-flex; align-items:center; }
+.conn .material-symbols-outlined { font-size:20px; }
+.conn.up   .material-symbols-outlined { color:#58a6ff; }            // connected (bluetooth) = blue
+.conn.wait .material-symbols-outlined { color:$color-warn; }        // connecting = amber
+.conn.down .material-symbols-outlined { color:$color-text-muted; }  // no connection = gray
+
 // Pages: only the .visible one shows. Class-based (not the [hidden] attribute) so a CSS
 // `display` rule can never override the hide.
 .page { display:none; }

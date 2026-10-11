@@ -15,7 +15,12 @@
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
   <header class="appbar">
     <span class="appbar-title">CYD Scanner</span>
-    <span id="conn" class="pill down">disconnected</span>
+    <span class="appbar-status">
+      <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span></span>
+      <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span></span>
+      <span class="si" id="db" title="Signature DB loaded"><span class="material-symbols-outlined">database</span></span>
+      <span id="conn" class="conn down" title="disconnected"><span class="material-symbols-outlined">bluetooth_disabled</span></span>
+    </span>
   </header>
 
   <main id="pages">
@@ -42,13 +47,6 @@
           <div class="st"><span class="k">Likely</span><span class="v" id="lk">–</span></div>
           <div class="st"><span class="k">Confirmed</span><span class="v" id="conf">–</span></div>
         </div>
-      </div>
-
-      <!-- Device status: small icons, white when active / gray when not -->
-      <div class="statusicons">
-        <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span><span class="sil">Time</span></span>
-        <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span><span class="sil">GPS</span></span>
-        <span class="si" id="db" title="Signature DB loaded"><span class="material-symbols-outlined">database</span><span class="sil">DB</span></span>
       </div>
 
       <h3 style="margin:.5em 0 .3em">Threats</h3>

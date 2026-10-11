@@ -180,24 +180,14 @@ button:disabled {
   gap: 8px;
 }
 
-.statusicons {
-  display: flex;
-  justify-content: center;
-  gap: 30px;
-  margin: 10px 0;
-}
-
 .si {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
-  gap: 1px;
   color: #8b949e;
-  font-size: 0.6rem;
 }
 
 .si .material-symbols-outlined {
-  font-size: 24px;
+  font-size: 18px;
   color: #8b949e;
 }
 
@@ -332,6 +322,33 @@ select {
 .appbar-title {
   font-size: 1.15rem;
   font-weight: 600;
+}
+
+.appbar-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.conn .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.conn.up .material-symbols-outlined {
+  color: #58a6ff;
+}
+
+.conn.wait .material-symbols-outlined {
+  color: #d29922;
+}
+
+.conn.down .material-symbols-outlined {
+  color: #8b949e;
 }
 
 .page {

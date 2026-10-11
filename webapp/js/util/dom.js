@@ -10,8 +10,11 @@ export function log(msg){
 
 export function setConn(s){
   const p = $("conn");
-  p.textContent = s;
-  p.className = "pill " + (s === "connected" ? "up" : s === "connecting" ? "wait" : "down");
+  // Bluetooth icon in the app bar: connected (blue) / searching (amber) / disabled (gray).
+  const icon = s === "connected" ? "bluetooth_connected" : s === "connecting" ? "bluetooth_searching" : "bluetooth_disabled";
+  p.className = "conn " + (s === "connected" ? "up" : s === "connecting" ? "wait" : "down");
+  p.title = s;
+  p.innerHTML = '<span class="material-symbols-outlined">' + icon + '</span>';
 }
 
 // HTML-escape for text interpolated into innerHTML.

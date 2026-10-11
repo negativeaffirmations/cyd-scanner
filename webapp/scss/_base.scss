@@ -51,10 +51,9 @@ button:disabled { opacity: .45; }
 .strow2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .strow3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
 
-// Device-status row: small icons, white when active / gray when not.
-.statusicons { display:flex; justify-content:center; gap:30px; margin:10px 0; }
-.si { display:flex; flex-direction:column; align-items:center; gap:1px; color:$color-text-muted; font-size:.6rem; }
-.si .material-symbols-outlined { font-size:24px; color:$color-text-muted; }
+// App-bar status icons (time / GPS / DB): small, white when active / gray when not.
+.si { display:inline-flex; align-items:center; color:$color-text-muted; }
+.si .material-symbols-outlined { font-size:18px; color:$color-text-muted; }
 .si.on, .si.on .material-symbols-outlined { color:$color-text; }
 
 #log {
