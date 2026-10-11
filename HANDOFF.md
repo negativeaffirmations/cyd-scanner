@@ -45,6 +45,20 @@ change, no CSS change (so no `style.css` recompile / `?v=` bump). ES-module-synt
 import cycle (categories.js → detail.js is one-way). **Static-verified only — needs an Android-Chrome
 GPS-walk smoke test** (rolls into the redesign's one open test item).
 
+## Done — web lock/unlock CYD display + Settings regroup (2026-10-11, CYD FLASHED COM14)
+Settings page split into two cards — **CYD device** (brightness + a new Lock/Unlock-display button) and
+**Data & sync** (Sync time & GPS, Reload DB, Whitelist). The Lock button drives the **bag-safe touch
+lock** (`g_touchLocked`) over BLE:
+- **Firmware (CYD only):** new CMD `K1`/`K0` (`phone.cpp` parse + `lockRequested()` getter, `phone.h`);
+  `main.cpp` polls it next to brightness → sets `g_touchLocked`, repaints the padlock, pushes status.
+  STATUS gained a **`lock=0/1`** key (`g_touchLocked` moved above `pushStatus`; `s[320]`→`s[360]`).
+  **No `Detection`/`Status` struct change → no PROTOCOL_VERSION bump; C5 untouched, interop preserved.**
+  Build SUCCESS (RAM 33.1% / Flash 44.7%), **flashed COM14** (`1A86:7523`).
+- **Webapp:** `setLock()` (`commands.js`, writes `K1`/`K0`); `status.js` reflects `lock=` onto the button
+  (label flips Lock↔Unlock, `.danger` highlight while locked, `data-locked` drives the toggle);
+  `main.js` wires `#lockBtn` + adds it to the connect/disconnect enable-lists. `.cardhdr` SCSS for the
+  section headings. Recompiled; `?v=20261011f`, uiver → `cyd-lock`.
+
 ## Done — Map page fits without scroll + Leaflet-over-navbar fix (2026-10-11, webapp-only)
 Two Map-page bugs the user hit:
 - **Leaflet painted over the fixed bottom navbar.** Root cause: `#map` had no stacking context, so

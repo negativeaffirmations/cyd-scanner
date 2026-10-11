@@ -329,18 +329,19 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
     a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
-    refuses the live session) · `"B:<0-100>"` set brightness ·
+    refuses the live session) · `"B:<0-100>"` set brightness · `"K1"/"K0"` lock / unlock the CYD
+    display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
   - `…0004` STATUS (read/notify) — `key=val;…`:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg`
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock`
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),
     `sess` = current session name, **`deauth`** = recent observed deauth/disassoc rate,
     **`evil`** = evil-twin SSID count, **`rid`** = Remote-ID emitters seen, **`bg`** = background
-    scan on/off)
+    scan on/off, **`lock`** = display/touch lock state 0/1)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v5 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows

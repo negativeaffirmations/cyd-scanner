@@ -1570,20 +1570,24 @@ static void sessBase(const LogStream& st, char* out, size_t cap) {
   if (dot) *dot = 0;
 }
 
+// Bag-safe touch lock (also settable from the web app via CMD "K1"/"K0"); declared here so pushStatus
+// can report it. The padlock glyph + 2-tap gesture live further down (drawLockGlyph/serviceTouchLock).
+static bool g_touchLocked = false;
+
 static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
-  char s[320];
+  char s[360];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
-           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount);
+           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0);
   phone::setStatus(String(s));
 }
 
@@ -1666,7 +1670,6 @@ static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
 // (touch + BOOT) is ignored except that same 2-tap gesture, so the device can ride in a bag without
 // walking the menus. Discrete taps (not a hold/swipe) resist the constant pressure of a bag. The
 // background scan keeps running the whole time. No physical button needed.
-static bool g_touchLocked = false;
 static int  lockCx()      { return tft.width() - 52; }     // padlock glyph center (clear of phone icon/dot/GPS)
 static constexpr int      LOCK_TAPS         = 2;            // taps to toggle (2: resistive touch merges fast taps)
 static constexpr uint32_t LOCK_TAP_WINDOW_MS = 1500;       // ...that must land within rolling windows this wide
@@ -3907,6 +3910,11 @@ void loop() {
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
       g_brightness = (uint8_t)constrain(b, 10, 100);
       applyBrightness(); saveBrightness();
+    } }
+  { bool lk; if (phone::lockRequested(&lk)) {              // web-app lock / unlock the display
+      g_touchLocked = lk;
+      drawStatusBar();                                     // repaint the padlock immediately
+      pushStatus();                                        // reflect lock= back to the phone
     } }
   { uint8_t m; if (phone::srcMaskRequested(&m) && m != 0) {  // web-app source toggles (ignore all-off)
       g_srcMask = m; saveSrcMask();

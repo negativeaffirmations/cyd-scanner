@@ -43,4 +43,8 @@ export function onStatus(ev){
     $("stble").classList.toggle("off", !(m&2)); $("st154").classList.toggle("off", !(m&4)); }
   if("bri" in kv){ $("briVal").textContent = kv.bri;
     if(document.activeElement !== $("briSlider")) $("briSlider").value = kv.bri; }
+  if("lock"in kv){ const locked = kv.lock==="1"; const b = $("lockBtn");
+    b.dataset.locked = locked ? "1" : "0";
+    b.textContent = locked ? "Unlock display" : "Lock display";
+    b.classList.toggle("danger", locked); }   // highlight while locked
 }

@@ -37,6 +37,7 @@ button:disabled { opacity: .45; }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:12px 0; }
 .grid.grid3 { grid-template-columns:1fr 1fr 1fr; }
 .card { background:$color-surface; border:1px solid $color-border; border-radius:10px; padding:10px; }
+.cardhdr { display:block; color:$color-text-muted; font-size:.8rem; text-transform:uppercase; letter-spacing:.03em; margin-bottom:.1em; }
 .card .k { color:$color-text-muted; font-size:.75rem; } .card .v { font-size:1.2rem; font-weight:600; }
 
 // Stat cell = a centered column (title over count). Reused by the scan-types card + the counts card.

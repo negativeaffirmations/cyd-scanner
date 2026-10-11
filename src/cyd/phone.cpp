@@ -36,6 +36,8 @@ bool     g_delReq     = false;
 char     g_delFile[48]= {0};
 bool     g_briReq     = false;
 int      g_briVal     = 100;
+bool     g_lockReq    = false;
+bool     g_lockVal    = false;
 bool     g_wlReload   = false;
 bool     g_wlList     = false;
 bool     g_wlAdd      = false;
@@ -140,6 +142,10 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_briReq = true;
           Serial.printf("[phone] cmd brightness %d\n", g_briVal);
         }
+      } else if (c0 == 'K' || c0 == 'k') {           // "K1"/"K0" lock / unlock the CYD display
+        g_lockVal = (val.size() > 1 && val[1] == '1');
+        g_lockReq = true;
+        Serial.printf("[phone] cmd display %s\n", g_lockVal ? "LOCK" : "unlock");
       } else if (c0 == 'S' || c0 == 's') {           // "S:<n>" scan-source mask
         size_t colon = val.find(':');
         if (colon != std::string::npos) {
@@ -323,6 +329,13 @@ bool brightnessRequested(int* outPct) {
   if (!g_briReq) return false;
   g_briReq = false;
   *outPct = g_briVal;
+  return true;
+}
+
+bool lockRequested(bool* outLock) {
+  if (!g_lockReq) return false;
+  g_lockReq = false;
+  *outLock = g_lockVal;
   return true;
 }
 

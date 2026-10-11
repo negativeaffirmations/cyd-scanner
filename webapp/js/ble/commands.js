@@ -51,6 +51,13 @@ export async function setBrightness(v){
   catch(e){ log("Brightness failed: "+e.message); }
 }
 
+// Lock / unlock the CYD touchscreen (K1/K0). Authoritative lock state comes back via STATUS lock=.
+export async function setLock(lock){
+  try{ await state.chars.cmd.writeValue(enc.encode(lock ? "K1" : "K0"));
+    log(lock ? "Lock display requested." : "Unlock display requested."); }
+  catch(e){ log("Lock command failed: "+e.message); }
+}
+
 // Scan-source mask: BLE=2, Wi-Fi 2.4G = WIFI24(1)+PROBE(8), Wi-Fi 5G=16, 802.15.4=4.
 export async function sendSrcMask(){
   const m = ($("sBle").checked?2:0) | ($("s24").checked?9:0) | ($("s5").checked?16:0) | ($("s154").checked?4:0);

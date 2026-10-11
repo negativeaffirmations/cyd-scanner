@@ -72,6 +72,9 @@ bool exportRequested(int* mode, int* minutes, char* path, size_t cap);
 // True once if the app set a brightness ("B:<0-100>"); fills the percent value.
 bool brightnessRequested(int* outPct);
 
+// True once if the app asked to lock/unlock the CYD display ("K1"/"K0"); fills the desired state.
+bool lockRequested(bool* outLock);
+
 // True once if the app set the scan-source mask ("S:<decimal SourceMask>"); fills `out`.
 bool srcMaskRequested(uint8_t* out);
 

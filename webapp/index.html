@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261011e">
+<link rel="stylesheet" href="style.css?v=20261011f">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -53,7 +53,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;home-card</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;cyd-lock</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -160,11 +160,22 @@
     <!-- ============================ SETTINGS ============================ -->
     <section class="page" id="page-settings">
       <h3 style="margin:.4em 0 .3em">Settings</h3>
-      <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
-      <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
-      <label class="k" for="briSlider" style="display:block;margin-top:.6em">Brightness: <span id="briVal">–</span>%</label>
-      <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
-      <button id="wlBtn" class="secondary" disabled style="margin-top:1em">Whitelist (<span id="wlCnt">–</span>)</button>
+
+      <!-- CYD device: physical-display controls -->
+      <div class="card">
+        <strong class="cardhdr">CYD device</strong>
+        <label class="k" for="briSlider" style="display:block;margin-top:.5em">Brightness: <span id="briVal">–</span>%</label>
+        <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
+        <button id="lockBtn" class="secondary" disabled data-locked="0" style="margin-top:.6em">Lock display</button>
+      </div>
+
+      <!-- Data & sync -->
+      <div class="card" style="margin-top:12px">
+        <strong class="cardhdr">Data &amp; sync</strong>
+        <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
+        <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
+        <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
+      </div>
     </section>
   </main>
 
