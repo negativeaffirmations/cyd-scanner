@@ -288,9 +288,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   likely=orange, confirmed=red).
 - **Input: BOOT button + a touch overlay.** A short **tap** moves the highlight / selects a
   touched item; a long **hold** selects / returns toward the menu. A **bag-safe touch lock** rides in
-  the status bar: a small padlock glyph (yellow=locked, grey=unlocked) that **3 quick taps toggle**
-  (`serviceTouchLock()` in `main.cpp`, gated right after `buttonEvent()`); while locked, **all input
-  (touch + BOOT) is swallowed** except that same 3-tap gesture, so a bagged device can't navigate
+  the status bar: a small padlock glyph (yellow=locked, grey=unlocked) that **2 quick taps toggle**
+  (`serviceTouchLock()` in `main.cpp`, gated right after `buttonEvent()`; `LOCK_TAPS`/
+  `LOCK_TAP_WINDOW_MS` tune the gesture); while locked, **all input (touch + BOOT) is swallowed**
+  except that same 2-tap gesture, so a bagged device can't navigate
   itself — the background/live scan keeps running + logging throughout (discrete taps, not a hold, so
   bag pressure can't false-toggle). The HOME screen has **one list
   button, Scan**, plus two **title-bar icon buttons** on the `HOME` line: a **cog (Settings)** upper-

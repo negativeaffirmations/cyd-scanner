@@ -48,9 +48,11 @@ Addressing the screen-off-kills-GPS finding + a request for a bag lock.
   only web way to keep GPS alive; true screen-off GPS needs onboard GPS (outstanding) or a native app.
 - **CYD bag-safe touch lock** (`src/cyd/main.cpp`, FLASHED COM14): a status-bar **padlock glyph**
   (yellow=locked / dim grey=unlocked) at `lockCx()` = W−52 (clear of the GPS text/phone icon/link dot,
-  and above the y24 "< BACK" bar — no overlap on any screen). **3 taps in the padlock region within
-  1.2 s toggle** it (`serviceTouchLock()`, gated right after `buttonEvent()` in `loop()`); while
-  locked, ALL touch + BOOT is swallowed except that 3-tap gesture. Discrete rising-edge taps (not a
+  and above the y24 "< BACK" bar — no overlap on any screen). **2 taps in the padlock region within
+  1.5 s toggle** it (`serviceTouchLock()`, `LOCK_TAPS`/`LOCK_TAP_WINDOW_MS`; gated right after
+  `buttonEvent()` in `loop()`); while locked, ALL touch + BOOT is swallowed except that 2-tap gesture.
+  (Was 3 taps/1.2 s — lowered 2026-10-10 because resistive touch merges fast taps, making 3 hard to
+  register.) Discrete rising-edge taps (not a
   hold/swipe) so constant bag pressure = 1 edge, can't rack up a toggle. **Scanning keeps running
   while locked**: the bg-scan block already covers non-SCR_SCAN screens, and the gate re-runs the
   SCR_SCAN cycle itself so a bagged live scan keeps capturing + logging. No physical button needed.

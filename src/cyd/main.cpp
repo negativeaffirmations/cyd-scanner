@@ -1662,13 +1662,14 @@ static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
 }
 
 // ---- Touch lock (bag-safe input lock) ----------------------------------------------------------
-// A small padlock in the status bar; 3 quick taps on it toggle the lock. While locked, ALL input
-// (touch + BOOT) is ignored except that same 3-tap gesture, so the device can ride in a bag without
+// A small padlock in the status bar; 2 quick taps on it toggle the lock. While locked, ALL input
+// (touch + BOOT) is ignored except that same 2-tap gesture, so the device can ride in a bag without
 // walking the menus. Discrete taps (not a hold/swipe) resist the constant pressure of a bag. The
 // background scan keeps running the whole time. No physical button needed.
 static bool g_touchLocked = false;
 static int  lockCx()      { return tft.width() - 52; }     // padlock glyph center (clear of phone icon/dot/GPS)
-static constexpr uint32_t LOCK_TAP_WINDOW_MS = 1200;        // 3 taps must land within rolling windows this wide
+static constexpr int      LOCK_TAPS         = 2;            // taps to toggle (2: resistive touch merges fast taps)
+static constexpr uint32_t LOCK_TAP_WINDOW_MS = 1500;       // ...that must land within rolling windows this wide
 
 static void drawLockGlyph(bool locked) {
   int cx = lockCx(), top = 3;
@@ -1711,9 +1712,9 @@ static void drawStatusBar() {
 
 // Input-lock gate: returns true when input should be swallowed this iteration (i.e. the device is
 // locked, or this touch was part of the lock toggle). Call it right after buttonEvent(), before the
-// per-screen switch, and `return` from loop() when it's true. 3 rising-edge taps in the padlock
-// region (within rolling LOCK_TAP_WINDOW_MS windows) flip g_touchLocked; a held/continuous press is
-// a single edge, so bag pressure can't rack up a count.
+// per-screen switch, and `return` from loop() when it's true. LOCK_TAPS rising-edge taps in the
+// padlock region (within rolling LOCK_TAP_WINDOW_MS windows) flip g_touchLocked; a held/continuous
+// press is a single edge, so bag pressure can't rack up a count.
 static bool serviceTouchLock() {
   static bool     prev = false;
   static int      taps = 0;
@@ -1723,18 +1724,18 @@ static bool serviceTouchLock() {
   if (now && !prev) {                 // rising edge only
     int16_t sx, sy, z;
     if (g_touch.getScreen(tft, sx, sy, z) &&
-        sx >= lockCx() - 14 && sx <= lockCx() + 14 && sy >= 0 && sy <= 21) regionTap = true;
+        sx >= lockCx() - 16 && sx <= lockCx() + 16 && sy >= 0 && sy <= 21) regionTap = true;
   }
   prev = now;
   if (regionTap) {
     uint32_t t = millis();
     if (t - lastTap > LOCK_TAP_WINDOW_MS) taps = 0;  // stale: restart the count
     lastTap = t;
-    if (++taps >= 3) {
+    if (++taps >= LOCK_TAPS) {
       taps = 0;
       g_touchLocked = !g_touchLocked;
       drawStatusBar();                 // repaint the padlock in its new state (immediate feedback)
-      Serial.printf("[CYD] touch %s\n", g_touchLocked ? "LOCKED (3-tap to unlock)" : "unlocked");
+      Serial.printf("[CYD] touch %s\n", g_touchLocked ? "LOCKED (2-tap to unlock)" : "unlocked");
     }
     return true;                       // consume the toggle tap (never passes to the screen)
   }
@@ -3990,7 +3991,7 @@ void loop() {
 
   BtnEv ev = buttonEvent();
 
-  // Bag-safe input lock: 3 taps on the status-bar padlock toggle it; while locked, swallow all
+  // Bag-safe input lock: 2 taps on the status-bar padlock toggle it; while locked, swallow all
   // input (touch + BOOT) so a bagged device can't navigate itself. The background scan already ran
   // above for non-SCR_SCAN screens; keep the live SCAN screen polling too so a bagged scan keeps
   // capturing + logging (its cycle normally runs inside the SCR_SCAN case, which we now skip).
