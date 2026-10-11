@@ -67,6 +67,18 @@ Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-
   `#dets`/`#scanViewer` got `.dets.tall` (max-height 72vh). SCSS `_detections.scss` + recompiled css;
   JS parses, ids resolve (only the dynamically-created `#detWlBtn` isn't static — expected). **NOT
   in-browser tested.**
+- **Phase 2.5 (DONE, except 1 pending icon): Scanner controls → Material icon row + threat modal.**
+  `#scanPanel` is now a 5-button `.iconrow` of Material Symbols icon buttons: Start/Stop
+  (`fiber_manual_record`↔`stop`, via `updateScanBtn`), **Filters** (`filter_alt`, NEW), New session
+  (`note_add`), Explore (`find_in_page`), Scan settings (`settings`). **Filters** opens `#filtersDlg`
+  (source checkboxes + threats-only) that filters the LIVE list via `applyLiveFilter`/`liveFilter`
+  (counts/strip still reflect all). `#scanCounts` is now a `.threatstrip` of small CAT_COL pills for
+  ALL 12 categories (count when >0, dim at 0); the whole row taps → `#threatsDlg` breakdown (vertical
+  list, active-first, tap a row → its device modal via `openCatModal`). Removed the "Live detections"
+  instructions; title is now **"Scan" + `#scanModeIcon`** that `setScanMode(live)` toggles (live on
+  `renderDets`, loaded on `applyExplore`). **PENDING USER CHOICE:** the live/loaded title icons — currently
+  PLACEHOLDERS `sensors` (live) / `folder_open` (loaded); asked the user to pick. Webapp-only; recompiled;
+  JS parses, ids resolve (only dynamic `#detWlBtn`). NOT in-browser tested.
 - **Phases remaining:** 3 = Home already has cards + CYD threat counters (done in Phase 1.5) — mostly
   covered; revisit if more Home work wanted. 4 = Map as a real inline page (promote `#mapDlg`, handle
   Leaflet `invalidateSize` on page-show) + Settings as an inline page. Possible polish: top

@@ -94,18 +94,40 @@ export function openLiveDetail(r){
   $("detDlg").showModal();
 }
 
-// Compact threat-counter strip for the Scanner page: one chip per category with a live threat,
-// severity-sorted, colored per CAT_COL (same hues as the Home cards). Tap -> category device modal.
-export function renderScanCounts(rows){
-  const el = $("scanCounts"); if (!el) return;
+function countCats(rows){
   const cnt = {};
   (rows||[]).forEach(r=>{ const tn = rowTier(r), c = r.cat||0;
     if (r.muted || tn < 1 || !c || c > CAT_SHOWN) return; cnt[c] = (cnt[c]||0) + 1; });
-  const cats = Object.keys(cnt).map(Number).sort((a,b)=> cnt[b]-cnt[a]);
-  if (!cats.length){ el.innerHTML = '<span class="sub" style="padding:3px 4px">No threats in range</span>'; return; }
-  el.innerHTML = cats.map(c=>{ const col = CAT_COL[c]||"#8b949e";
-    return `<button class="tchip" data-cat="${c}" style="border-color:${col};background:${col}22">`+
-      `<span class="tn">${esc(CAT_NAMES[c])}</span><span class="tc" style="color:${col}">${cnt[c]}</span></button>`;
+  return cnt;
+}
+// Compact Scanner threat strip: a small color-coded pill for EVERY category (count shown when >0, dim
+// at 0), in one horizontally-scrollable row. The whole row is one tap target -> the breakdown modal.
+export function renderScanCounts(rows){
+  const el = $("scanCounts"); if (!el) return;
+  const cnt = countCats(rows);
+  let html = "";
+  for (let c = 1; c <= CAT_SHOWN; c++){ const n = cnt[c]||0, col = CAT_COL[c]||"#8b949e", hot = n>0;
+    html += `<span class="tpill${hot?" hot":""}" title="${esc(CAT_NAMES[c])}: ${n}" `+
+      `style="border-color:${col};${hot?`background:${col}33;color:${col}`:""}">${hot?n:""}</span>`;
+  }
+  el.innerHTML = html;
+  el.onclick = openThreatsModal;
+}
+// Threats breakdown modal: every category as a row (color swatch + name + count), active (count>0)
+// first then enum order; tap a row -> that category's device list.
+export function openThreatsModal(){
+  const cnt = countCats(state.lastDetRows);
+  const order = [];
+  for (let c = 1; c <= CAT_SHOWN; c++) order.push(c);
+  order.sort((a,b)=> (cnt[b]||0)-(cnt[a]||0) || a-b);   // active first, then enum order
+  $("threatsList").innerHTML = order.map(c=>{ const n = cnt[c]||0, col = CAT_COL[c]||"#8b949e";
+    return `<div class="det clk" data-cat="${c}">`+
+      `<span class="tiercol"><span class="swatch" style="background:${col}"></span></span>`+
+      `<span class="nm"${n?"":' style="opacity:.55"'}>${esc(CAT_NAMES[c])}</span>`+
+      `<span class="rssi"${n?` style="color:${col};font-weight:700"`:""}>${n}</span></div>`;
   }).join("");
-  el.querySelectorAll(".tchip").forEach(b=>{ b.onclick = ()=> openCatModal(+b.dataset.cat); });
+  $("threatsList").querySelectorAll(".det[data-cat]").forEach(d=>{
+    d.onclick = ()=>{ $("threatsDlg").close(); openCatModal(+d.dataset.cat); };
+  });
+  $("threatsDlg").showModal();
 }

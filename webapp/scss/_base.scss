@@ -21,6 +21,16 @@ button.secondary { background: $color-border; }
 button.danger { background: $color-danger; }
 button:disabled { opacity: .45; }
 
+// Icon button row (Scanner controls): equal-width square-ish icon buttons.
+.iconrow { display:flex; gap:8px; margin:.5em 0; }
+.iconbtn {
+  flex:1 1 0; width:auto; margin:0; padding:.55em 0; background:$color-border;
+  display:flex; align-items:center; justify-content:center;
+  .material-symbols-outlined { font-size:26px; line-height:1; }
+}
+#scanBtn.rec      { background:$color-accent; }   // idle -> tap to start (record)
+#scanBtn.scanning { background:$color-danger; }   // scanning -> tap to stop
+
 .pill { display:inline-block; padding:.15em .6em; border-radius:999px; font-size:.8rem; }
 .up { background:$color-pill-up; } .down { background:$color-pill-down; } .wait { background:$color-pill-wait; }
 

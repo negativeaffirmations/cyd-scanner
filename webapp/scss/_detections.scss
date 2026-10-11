@@ -95,6 +95,19 @@
 // Whitelist action button inside the detail modal.
 #detActions { margin:.5em 0 .2em; }
 
+// Scanner threat strip: a small color-coded pill per category (all 12), one tap-target row.
+.threatstrip { display:flex; gap:5px; overflow-x:auto; padding:3px 0 8px; cursor:pointer; -webkit-overflow-scrolling:touch; }
+.tpill {
+  flex:0 0 auto; min-width:22px; height:20px; padding:0 6px; border-radius:999px;
+  border:1.5px solid $color-border; background:$color-surface-inset; color:$color-text-muted;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-family:ui-monospace,monospace; font-size:.68rem; font-weight:700;
+}
+// Color swatch + "Scan" title mode icon.
+.swatch { width:12px; height:12px; border-radius:3px; display:inline-block; }
+.scanttl { display:flex; align-items:center; gap:.4em; }
+.scanmode { font-size:20px; color:$color-text-muted; }
+
 // Key/value rows in the detail modals.
 .kv { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid $color-border-subtle; font-size:.88rem; }
 .kv .k { flex:0 0 7em; } .kv .vv { flex:1 1 auto; min-width:0; word-break:break-word; }

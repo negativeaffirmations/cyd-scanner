@@ -6,8 +6,11 @@ import { $, log } from '../util/dom.js';
 
 export function updateScanBtn(){
   const b = $("scanBtn");
-  b.textContent = state.scanning ? "⏹ Stop Scan" : "▶ Start Scan";
-  b.classList.toggle("danger", state.scanning);
+  // Rec (●) when idle -> tap to start; Stop (■) while scanning. Icon-only button.
+  b.innerHTML = '<span class="material-symbols-outlined">' + (state.scanning ? "stop" : "fiber_manual_record") + '</span>';
+  b.title = state.scanning ? "Stop scan" : "Start scan";
+  b.classList.toggle("scanning", state.scanning);
+  b.classList.toggle("rec", !state.scanning);
 }
 export async function toggleScan(){
   const want = !state.scanning;                 // authoritative state comes back via status

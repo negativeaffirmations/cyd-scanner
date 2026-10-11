@@ -12,7 +12,8 @@ import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
 import { openFollowList } from './features/followers.js';
 import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
-import { renderCatChips } from './features/categories.js';
+import { renderCatChips, renderScanCounts } from './features/categories.js';
+import { applyLiveFilter } from './features/detections.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -24,6 +25,7 @@ $("navMap").onclick      = openMap;
 $("navSettings").onclick = () => $("settingsDlg").showModal();
 showPage('home');   // initial page
 renderCatChips([]); // show the full threat taxonomy (all 0) from the start, so the colours are learnable
+renderScanCounts([]); // the Scanner threat strip starts populated (all dim) and tappable
 
 // Whitelist "kind" select -> pattern length rules (+ initial pass).
 $("wlKind").addEventListener("change", wlKindChanged);
@@ -51,6 +53,12 @@ $("folDlg").addEventListener("click", e=>{ if(e.target === $("folDlg")) $("folDl
 $("folDetClose").onclick = ()=> $("folDetDlg").close();
 $("folDetDlg").addEventListener("click", e=>{ if(e.target === $("folDetDlg")) $("folDetDlg").close(); });
 $("scanSetBtn").onclick = ()=> $("scanSetDlg").showModal();
+$("filterBtn").onclick = ()=> $("filtersDlg").showModal();
+$("filtersClose").onclick = ()=> $("filtersDlg").close();
+$("filtersDlg").addEventListener("click", e=>{ if(e.target === $("filtersDlg")) $("filtersDlg").close(); });
+["lf24","lf5","lfble","lfprb","lf154","lfThreats"].forEach(id=> $(id).addEventListener("change", applyLiveFilter));
+$("threatsClose").onclick = ()=> $("threatsDlg").close();
+$("threatsDlg").addEventListener("click", e=>{ if(e.target === $("threatsDlg")) $("threatsDlg").close(); });
 $("scanSetClose").onclick = ()=> $("scanSetDlg").close();
 $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) $("scanSetDlg").close(); });
 ["sBle","s24","s5","s154"].forEach(id=>$(id).addEventListener("change", sendSrcMask));

@@ -52,6 +52,35 @@ button:disabled {
   opacity: 0.45;
 }
 
+.iconrow {
+  display: flex;
+  gap: 8px;
+  margin: 0.5em 0;
+}
+
+.iconbtn {
+  flex: 1 1 0;
+  width: auto;
+  margin: 0;
+  padding: 0.55em 0;
+  background: #30363d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.iconbtn .material-symbols-outlined {
+  font-size: 26px;
+  line-height: 1;
+}
+
+#scanBtn.rec {
+  background: #238636;
+}
+
+#scanBtn.scanning {
+  background: #a1222b;
+}
+
 .pill {
   display: inline-block;
   padding: 0.15em 0.6em;
@@ -667,6 +696,50 @@ body {
 
 #detActions {
   margin: 0.5em 0 0.2em;
+}
+
+.threatstrip {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 3px 0 8px;
+  cursor: pointer;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tpill {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1.5px solid #30363d;
+  background: #0b0e13;
+  color: #8b949e;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: ui-monospace, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.scanttl {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+
+.scanmode {
+  font-size: 20px;
+  color: #8b949e;
 }
 
 .kv {

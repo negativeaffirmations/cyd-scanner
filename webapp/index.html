@@ -62,20 +62,21 @@
     <section class="page" id="page-scanner">
       <div id="sessName" class="sub" style="margin-bottom:.5em">Session: &mdash;</div>
       <!-- scanPanel is always visible on this page now (the old "Scan" toggle button is retired) -->
-      <div id="scanPanel">
-        <button id="scanBtn" disabled>&#9654; Start Scan</button>
-        <button id="newSessBtn" class="secondary" disabled>New Session</button>
-        <button id="exploreBtn" class="secondary">Explore a saved log</button>
-        <button id="scanSetBtn" class="secondary">Scan Settings</button>
+      <div id="scanPanel" class="iconrow">
+        <button id="scanBtn" class="iconbtn rec" disabled title="Start / stop scan" aria-label="Start or stop scan"><span class="material-symbols-outlined">fiber_manual_record</span></button>
+        <button id="filterBtn" class="iconbtn" title="Filters" aria-label="Filters"><span class="material-symbols-outlined">filter_alt</span></button>
+        <button id="newSessBtn" class="iconbtn" disabled title="New session" aria-label="New session"><span class="material-symbols-outlined">note_add</span></button>
+        <button id="exploreBtn" class="iconbtn" title="Explore a saved log" aria-label="Explore a saved log"><span class="material-symbols-outlined">find_in_page</span></button>
+        <button id="scanSetBtn" class="iconbtn" title="Scan settings" aria-label="Scan settings"><span class="material-symbols-outlined">settings</span></button>
       </div>
 
       <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
       <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
 
-      <div id="scanCounts" class="scancounts"></div>
+      <div id="scanCounts" class="threatstrip" title="Tap for the threat breakdown" role="button" tabindex="0"></div>
 
-      <h3 style="margin:.6em 0 .3em">Live detections
-        <span class="sub" style="font-weight:400">— tap a row for details · row colored by strongest signal</span></h3>
+      <h3 class="scanttl" style="margin:.6em 0 .3em">Scan
+        <span class="material-symbols-outlined scanmode" id="scanModeIcon" title="Live scan">sensors</span></h3>
       <div id="dets" class="dets tall"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
       <div id="exploreView" style="display:none">
@@ -260,6 +261,31 @@
     </div>
     <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
     <div id="map"></div>
+  </dialog>
+
+  <dialog id="threatsDlg">
+    <div class="modalhdr">
+      <strong>Threats</strong>
+      <button id="threatsClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub" style="margin-bottom:.4em">Threat categories and live counts — active first. Tap one for its devices.</div>
+    <div id="threatsList" class="dets" style="max-height:66vh"></div>
+  </dialog>
+
+  <dialog id="filtersDlg">
+    <div class="modalhdr">
+      <strong>Filters</strong>
+      <button id="filtersClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="sub" style="margin-bottom:.4em">Filter the live detections list (does not change what's logged).</div>
+    <div class="maptools" style="flex-wrap:wrap">
+      <label><input type="checkbox" id="lf24" checked> 2.4</label>
+      <label><input type="checkbox" id="lf5" checked> 5G</label>
+      <label><input type="checkbox" id="lfble" checked> BLE</label>
+      <label><input type="checkbox" id="lfprb" checked> PRB</label>
+      <label><input type="checkbox" id="lf154" checked> 15.4</label>
+      <label><input type="checkbox" id="lfThreats"> Threats only</label>
+    </div>
   </dialog>
 
   <!-- ============================ STICKY BOTTOM NAVBAR ============================ -->

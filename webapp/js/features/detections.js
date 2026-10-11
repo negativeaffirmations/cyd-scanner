@@ -87,9 +87,36 @@ export function renderDetList(el, rows, opts){
   }).join("");
   el.querySelectorAll(".detrow[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick && opts.onRowClick(rows[+d.dataset.ri]); });
 }
+// Live-list filter (from the Filters modal): keep rows whose tier/source pass. Counts + threat strip
+// still reflect ALL detections — only the on-screen list is filtered.
+function liveFilter(rows){
+  const f = state.liveFilter; if (!f) return rows;
+  return rows.filter(r=>{
+    if (f.threats && (typeof r.tier==="number" ? r.tier : tierNum(r.tier)) < 1) return false;
+    const tags = (r.sources||[]).map(s=>s.tag);
+    if (tags.length && !tags.some(t=> f.src[t] !== false)) return false;
+    return true;
+  });
+}
+export function applyLiveFilter(){   // called when a Filters-modal control changes
+  state.liveFilter = { threats: $("lfThreats").checked, src: {
+    "2.4":$("lf24").checked, "5G":$("lf5").checked, "BLE":$("lfble").checked,
+    "PRB":$("lfprb").checked, "154":$("lf154").checked } };
+  renderDets(state.lastDetRows || []);
+}
+// Scan title indicator: live vs a loaded log. NOTE: the two icon names below are PLACEHOLDERS
+// pending the user's choice from the options offered.
+export function setScanMode(live){
+  const el = $("scanModeIcon"); if (!el) return;
+  el.textContent = live ? "sensors" : "folder_open";
+  el.title = live ? "Live scan" : "Loaded log";
+}
 export function renderDets(rows){   // live view
   state.lastDetRows = rows;
-  renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…", onRowClick: openLiveDetail});
-  renderCatChips(rows);
-  renderScanCounts(rows);   // the Scanner page's compact threat-counter strip
+  setScanMode(true);
+  const shown = liveFilter(rows);
+  renderDetList($("dets"), shown, {mode:"live", onRowClick: openLiveDetail,
+    empty: rows.length ? "No devices match the filters…" : "No devices in range yet…"});
+  renderCatChips(rows);       // counts + strip reflect ALL detections, not the filtered subset
+  renderScanCounts(rows);
 }

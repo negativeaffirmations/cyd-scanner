@@ -3,7 +3,7 @@ import { state } from '../state.js';
 import { $ } from '../util/dom.js';
 import { tierNum, fmtEpoch } from '../util/format.js';
 import { refreshSessions } from './sessions.js';
-import { renderDetList } from './detections.js';
+import { renderDetList, setScanMode } from './detections.js';
 import { openDetail } from './detail.js';
 
 export function openExplore(){
@@ -50,5 +50,6 @@ export function applyExplore(){   // filter -> sort -> render (no re-download)
   }[$("expSort").value]||byIdx;
   rows=rows.slice().sort(cmp);
   $("expMsg").textContent = expName ? expName+": "+rows.length+" of "+state.expAll.length+" detections. Tap a row for details." : "";
+  setScanMode(false);   // viewing a loaded log, not the live scan
   renderDetList($("scanViewer"), rows, {mode:"viewer", empty:"No detections match.", onRowClick:openDetail});
 }
