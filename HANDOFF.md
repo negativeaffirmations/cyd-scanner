@@ -475,11 +475,19 @@ drift — identify by VID:PID. **A field re-test near a known active camera is t
    smoke test** of the redesigned 5-page UI on **Android Chrome** (Web Bluetooth + geolocation) — the
    entire redesign was statically verified only. Re-verify a deploy anytime with
    `gh api repos/negativeaffirmations/cyd-scanner/pages/builds/latest --jq .status`.
-5. **Remote-ID DECODE (ASTM F3411)** — the OpenDroneID/Remote-ID feature's *own* "phase 2" (NOT the
-   signature-matching Phase 2, which shipped). Today the C5 only flags *presence* (`FLAG_BLE_ODID`).
-   Full decode = operator/drone lat-lon + UAS ID via a new `Reply::RemoteId` frame + a CYD event/map
-   list (another coordinated both-board flash). Heaviest remaining feature; BLE-extended-scan
-   coexistence risk — check against the BLE/15.4 coexistence rule. Backlogged (user: leave it).
+5. **Remote-ID DECODE (ASTM F3411) — IN PROGRESS on branch `remoteid-decode`.** Design +
+   increment plan in [docs/remoteid-decode.md](docs/remoteid-decode.md).
+   - **Increment 1 DONE (2026-10-11, C5 FLASHED COM18, no protocol change):** `src/c5/remoteid.*`
+     clean-room decodes the OpenDroneID messages (Basic ID / Location / System / Operator ID, incl.
+     Message Pack + the BLE `0x0D` legacy framing) from the `0xFFFA` BLE service data already captured
+     in the scan callback; accumulates per emitter MAC in a bounded TTL table and **prints decoded
+     UAS ID + drone/operator lat-lon + height/speed to the C5 USB console** (`[RID] …`). Link stays
+     **v7** (both boards interoperate) — bench-test with an ODID transmitter/sim and watch the serial.
+   - **Increment 2 (next):** `Reply::RemoteId` frame + `RemoteId` struct → **PROTOCOL_VERSION 8, both
+     boards flash together**; the C5 emits one per emitter in its scan-dump burst; the CYD keys it to
+     the Detection by MAC. Then (3) CYD detail UI + NDJSON `rid` log line, (4) web-app Map plotting of
+     drone + operator positions. BLE-extended-scan (BT5 packs) coexistence risk stays a later, measured
+     change — check against the BLE/15.4 coexistence rule.
 6. **~~Phase-5 rotating-RPA follower false-positive~~ — HEURISTIC GUARD DONE (2026-10-11, CYD FLASHED).**
    `computeFollowScores()` now refuses to escalate a **benign BLE Resolvable Private Address** to
    FOLLOWING: `macIsBleRpa()` tests the MAC's top two bits (`0b01` = RPA, the privacy-rotating address
