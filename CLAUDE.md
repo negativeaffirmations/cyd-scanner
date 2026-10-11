@@ -287,7 +287,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow,
   likely=orange, confirmed=red).
 - **Input: BOOT button + a touch overlay.** A short **tap** moves the highlight / selects a
-  touched item; a long **hold** selects / returns toward the menu. The HOME screen has **one list
+  touched item; a long **hold** selects / returns toward the menu. A **bag-safe touch lock** rides in
+  the status bar: a small padlock glyph (yellow=locked, grey=unlocked) that **3 quick taps toggle**
+  (`serviceTouchLock()` in `main.cpp`, gated right after `buttonEvent()`); while locked, **all input
+  (touch + BOOT) is swallowed** except that same 3-tap gesture, so a bagged device can't navigate
+  itself — the background/live scan keeps running + logging throughout (discrete taps, not a hold, so
+  bag pressure can't false-toggle). The HOME screen has **one list
   button, Scan**, plus two **title-bar icon buttons** on the `HOME` line: a **cog (Settings)** upper-
   left and a **phone (Phone Link)** upper-right — the phone icon is **grey when no phone is on the GATT
   link, green when connected**, and tapping it opens the full-screen web-app QR (`< BACK` top bar).
@@ -370,7 +375,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   to its module. **No inline `onclick=` handlers in the HTML** — module scope isn't global, so all
   wiring is `addEventListener` in `main.js`. MUST be
   HTTPS (Web Bluetooth + geolocation need a secure context); **Chrome on Android only**
-  (no iOS Safari). Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
+  (no iOS Safari). On connect it takes a **Screen Wake Lock** (`js/wakelock.js`, re-acquired on
+  `visibilitychange`, released on disconnect) so the page stays foreground and keeps pushing GPS —
+  Android Chrome freezes a screen-off/backgrounded page, which otherwise silently stops GPS updates
+  mid-walk. Connects over BLE, syncs time+GPS, shows live counts/threat tiers +
   a **live detection list** (mirrors the device screen, rows tinted by source), starts/stops
   the scan, downloads the current session log, **lists past sessions and downloads/deletes/maps
   a chosen one**, reloads the DB, has a **Settings** modal (brightness slider; extensible), a

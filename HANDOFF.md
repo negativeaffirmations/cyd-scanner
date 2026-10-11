@@ -29,6 +29,26 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — screen wake lock (webapp) + bag-safe touch lock (CYD) (2026-10-10)
+Addressing the screen-off-kills-GPS finding + a request for a bag lock.
+- **Webapp Screen Wake Lock** (`webapp/js/wakelock.js`, new): `acquireWake()` on BLE connect,
+  `releaseWake()` on disconnect, `reacquireWake()` on `visibilitychange` (the OS drops the lock when
+  the page hides). Keeps the phone page foreground so `watchPosition` keeps pushing GPS — the root
+  cause of the screen-off walk logging only one fix. Best-effort/feature-detected (battery saver can
+  refuse; non-fatal). Wired in `ble/connection.js` + `main.js`. **Webapp-only; Pages redeploys on
+  push; not in-browser tested** (needs Android Chrome). NOTE: the screen stays ON (dimmable) — the
+  only web way to keep GPS alive; true screen-off GPS needs onboard GPS (outstanding) or a native app.
+- **CYD bag-safe touch lock** (`src/cyd/main.cpp`, FLASHED COM14): a status-bar **padlock glyph**
+  (yellow=locked / dim grey=unlocked) at `lockCx()` = W−52 (clear of the GPS text/phone icon/link dot,
+  and above the y24 "< BACK" bar — no overlap on any screen). **3 taps in the padlock region within
+  1.2 s toggle** it (`serviceTouchLock()`, gated right after `buttonEvent()` in `loop()`); while
+  locked, ALL touch + BOOT is swallowed except that 3-tap gesture. Discrete rising-edge taps (not a
+  hold/swipe) so constant bag pressure = 1 edge, can't rack up a toggle. **Scanning keeps running
+  while locked**: the bg-scan block already covers non-SCR_SCAN screens, and the gate re-runs the
+  SCR_SCAN cycle itself so a bagged live scan keeps capturing + logging. No physical button needed.
+  Research found no canonical CYD screen-lock (we're TFT_eSPI + XPT2046, not LVGL); discrete-tap was
+  confirmed the bag-robust choice. CYD-only, no protocol bump.
+
 ## Done — webapp BLE download naming fixes (2026-10-10, webapp-only, NOT yet Pages-deployed)
 Two bugs in the BLE "download current session" (`downloadLog`, `webapp/js/ble/download.js`), both
 **client-side only** — the device was fine:
@@ -288,6 +308,15 @@ drift — identify by VID:PID. **A field re-test near a known active camera is t
 8. Older backlog: 802.15.4 opt-in polish, phone/desktop SQLite import, CYD Scan Viewer window caching.
    (The "strict BLE passivity" item is **dropped** — the passive-only directive was removed; active
    scanning is sanctioned, and its extra UUIDs are captured + matched as of v7.)
+9. **Battery %/charge status-bar indicator (PROPOSED, awaiting user sign-off + a hardware mod).** No
+   software-only path — the boost feeds the CYD a constant 5 V, so the cell voltage must be tapped.
+   Plan: a **100 kΩ/100 kΩ divider** from the switched battery rail (TP4056 OUT+/boost input) → **GPIO35**
+   (P3/IO1, ADC1_CH7, Wi-Fi-safe); `analogReadMilliVolts(35)`×2 → LiPo voltage→% curve. Optional charge
+   icon: TP4056 **CHRG** pad → **GPIO26** (audio header) as digital `INPUT_PULLUP` (LOW=charging).
+   **Uses the CYD's last two free GPIOs (35+26).** Firmware = a small `power` module + a status-bar glyph
+   (CYD-only, no protocol bump); optional `bat=`/`chg=` STATUS keys for the web app. A MAX17048 I2C
+   fuel gauge would be more accurate but its I2C pins (22/27) are the C5 link. User adds the divider at
+   the bench, then I implement + add the GPIO35/26 assignment to PINOUT.md. See [[battery-indicator-plan]].
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.

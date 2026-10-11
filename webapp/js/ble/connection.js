@@ -8,6 +8,7 @@ import { startGps } from '../gps.js';
 import { onStatus } from './status.js';
 import { onLogData } from './download.js';
 import { onDets } from '../features/detections.js';
+import { acquireWake, releaseWake } from '../wakelock.js';
 
 export async function connect(){
   if(!navigator.bluetooth){ log("Web Bluetooth not available. Use Chrome on Android."); return; }
@@ -44,6 +45,7 @@ export async function connect(){
       .forEach(id=>$(id).disabled=false);
     $("wlBtn").disabled=false;
     log("Connected.");
+    acquireWake();   // keep the screen on so GPS keeps flowing (see wakelock.js)
     await syncTime();
     startGps();
   }catch(e){ setConn("disconnected"); log("Connect failed: "+e.message); }
@@ -64,4 +66,5 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   state.lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
-  if(state.gpsWatch!==null){ navigator.geolocation.clearWatch(state.gpsWatch); state.gpsWatch=null; } }
+  if(state.gpsWatch!==null){ navigator.geolocation.clearWatch(state.gpsWatch); state.gpsWatch=null; }
+  releaseWake(); }

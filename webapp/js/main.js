@@ -10,6 +10,10 @@ import { openExplore, applyExplore } from './features/explore.js';
 import { openWhitelist, wlCmd, refreshWhitelist, addWhitelistRule, wlKindChanged } from './features/whitelist.js';
 import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
 import { openFollowList } from './features/followers.js';
+import { reacquireWake } from './wakelock.js';
+
+// The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
+document.addEventListener("visibilitychange", reacquireWake);
 
 // Whitelist "kind" select -> pattern length rules (+ initial pass).
 $("wlKind").addEventListener("change", wlKindChanged);

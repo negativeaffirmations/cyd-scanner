@@ -1656,6 +1656,25 @@ static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
   tft.drawLine(cx - 4, cy - 4, cx + 4, cy + 4, c);
 }
 
+// ---- Touch lock (bag-safe input lock) ----------------------------------------------------------
+// A small padlock in the status bar; 3 quick taps on it toggle the lock. While locked, ALL input
+// (touch + BOOT) is ignored except that same 3-tap gesture, so the device can ride in a bag without
+// walking the menus. Discrete taps (not a hold/swipe) resist the constant pressure of a bag. The
+// background scan keeps running the whole time. No physical button needed.
+static bool g_touchLocked = false;
+static int  lockCx()      { return tft.width() - 52; }     // padlock glyph center (clear of phone icon/dot/GPS)
+static constexpr uint32_t LOCK_TAP_WINDOW_MS = 1200;        // 3 taps must land within rolling windows this wide
+
+static void drawLockGlyph(bool locked) {
+  int cx = lockCx(), top = 3;
+  uint16_t c = locked ? TFT_YELLOW : 0x4208;  // yellow when locked, dim grey when not
+  tft.drawFastHLine(cx - 3, top, 6, c);        // shackle arch
+  tft.drawFastVLine(cx - 3, top, 4, c);
+  tft.drawFastVLine(cx + 2, top, 4, c);
+  tft.fillRect(cx - 5, top + 4, 10, 7, c);     // body
+  tft.drawPixel(cx, top + 7, TFT_BLACK);       // keyhole
+}
+
 static void drawStatusBar() {
   int W = tft.width();
   tft.fillRect(0, 0, W, 21, TFT_BLACK);
@@ -1681,7 +1700,40 @@ static void drawStatusBar() {
   else if (phone::connected()) iconBle(ix + 2, 3, TFT_BLUE);
   else                         iconNoConn(ix, 3, TFT_DARKGREY);
   tft.fillCircle(W - 8, 10, 4, g_linkOk ? TFT_GREEN : TFT_RED);  // C5 link up/down
+  drawLockGlyph(g_touchLocked);                                 // padlock (3-tap toggle)
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
+}
+
+// Input-lock gate: returns true when input should be swallowed this iteration (i.e. the device is
+// locked, or this touch was part of the lock toggle). Call it right after buttonEvent(), before the
+// per-screen switch, and `return` from loop() when it's true. 3 rising-edge taps in the padlock
+// region (within rolling LOCK_TAP_WINDOW_MS windows) flip g_touchLocked; a held/continuous press is
+// a single edge, so bag pressure can't rack up a count.
+static bool serviceTouchLock() {
+  static bool     prev = false;
+  static int      taps = 0;
+  static uint32_t lastTap = 0;
+  bool now = g_touchOk && g_touch.touched();
+  bool regionTap = false;
+  if (now && !prev) {                 // rising edge only
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z) &&
+        sx >= lockCx() - 14 && sx <= lockCx() + 14 && sy >= 0 && sy <= 21) regionTap = true;
+  }
+  prev = now;
+  if (regionTap) {
+    uint32_t t = millis();
+    if (t - lastTap > LOCK_TAP_WINDOW_MS) taps = 0;  // stale: restart the count
+    lastTap = t;
+    if (++taps >= 3) {
+      taps = 0;
+      g_touchLocked = !g_touchLocked;
+      drawStatusBar();                 // repaint the padlock in its new state (immediate feedback)
+      Serial.printf("[CYD] touch %s\n", g_touchLocked ? "LOCKED (3-tap to unlock)" : "unlocked");
+    }
+    return true;                       // consume the toggle tap (never passes to the screen)
+  }
+  return g_touchLocked;                 // while locked, swallow every other touch + BOOT event
 }
 
 // --- shared scrolling list: geometry, icons, touch (live scan, scan viewer, detail,
@@ -3932,6 +3984,19 @@ void loop() {
   }
 
   BtnEv ev = buttonEvent();
+
+  // Bag-safe input lock: 3 taps on the status-bar padlock toggle it; while locked, swallow all
+  // input (touch + BOOT) so a bagged device can't navigate itself. The background scan already ran
+  // above for non-SCR_SCAN screens; keep the live SCAN screen polling too so a bagged scan keeps
+  // capturing + logging (its cycle normally runs inside the SCR_SCAN case, which we now skip).
+  if (serviceTouchLock()) {
+    if (g_screen == SCR_SCAN && g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
+      g_lastCycleMs = millis();
+      runScanCycle();
+    }
+    delay(10);
+    return;
+  }
 
   switch (g_screen) {
     case SCR_MENU: {
