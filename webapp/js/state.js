@@ -22,6 +22,7 @@ export const state = {
 
   // --- live detections / explore ---
   lastDetRows: [],      // latest live DETS snapshot, for the follower + category modals
-  expAll: [],           // raw parsed rows of the loaded Explore session (never mutated in place)
+  rids: {},             // live Remote-ID by lowercase MAC, replaced each snapshot (DETS v6 R: block)
+  expAll: [],         // raw parsed rows of the loaded Explore session (never mutated in place)
   exploreWant: false,   // populateSessions auto-loads the newest session when set
 };

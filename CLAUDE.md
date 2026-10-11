@@ -201,10 +201,16 @@ back (5 GHz included). Things that matter, learned the hard way:
   `Reply::RemoteId` (0x91) + a 75-byte `RemoteId` struct → **protocol bumped to v8** (both boards flash
   together); the C5 emits one frame per active emitter inside its scan-dump burst (mutex-guarded
   `remoteid::snapshot()`), the CYD stores it keyed to a `Detection` by MAC (`g_rids[8]`) with a
-  temporary serial `[RID]` readout. Validated against the `tools/odid-tx/` bench transmitter (a spare
-  ESP32-S3 broadcasting ODID; see its README). **Still to come:** increment 3 = CYD detail UI + NDJSON
-  `rid` log line; increment 4 = web-app Map plotting of drone + operator positions. Plan:
-  [docs/remoteid-decode.md](docs/remoteid-decode.md).
+  serial `[RID]` readout. Validated against the `tools/odid-tx/` bench transmitter (a spare ESP32-S3
+  broadcasting ODID; see its README). **Increment 3 (DONE — CYD detail UI + NDJSON `rid` line):** the
+  device-detail screen shows a `-- Remote-ID --` block (drone ID, drone + operator lat/lon, height,
+  geo-alt, speed, heading — reused by the scanner detail AND the category drill-down), and a per-emitter
+  `"evt":"rid"` NDJSON line is logged; the temporary serial readout was removed. CYD-only, no protocol
+  bump. **Increment 4 (DONE — DETS RID block + web-app map):** the CYD appends a RID block to the DETS
+  phone stream (v6, CYD→phone — no link bump), and the web app shows a Remote-ID section + plots the
+  drone + operator positions (green drone marker, operator marker, connecting line) on the device-modal
+  map and the Map page (live from the stream, and from logged `"evt":"rid"` lines). **Remote-ID decode
+  is now complete (increments 1–4).** Plan: [docs/remoteid-decode.md](docs/remoteid-decode.md).
   It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
   a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,
   `rid_count`. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
@@ -240,7 +246,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   is a `+`-joined list of behavioral-detector hits (`ibeacon`/`findmy`/`pwnagotchi`/`eviltwin`/`droneid`,
   omitted when none). Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
   rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N}`
-  and `{…,"evt":"eviltwin","count":N}`. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
+  and `{…,"evt":"eviltwin","count":N}`. **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
+  ~once/30 s per emitter MAC, Remote-ID increment 3):
+  `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"rid","mac":"…","uas":"…","dlat":…,"dlon":…,"h":…,"alt":…,"spd":…,"hdg":…,"olat":…,"olon":…,"oid":"…"}`
+  — `lat`/`lon` = the scanner's own phone-GPS fix; `dlat`/`dlon` the drone position, `olat`/`olon` the
+  operator position (deg), `h`/`alt` height/geo-alt (m), `spd` m/s, `hdg` deg, `uas`/`oid` the UAS ID /
+  operator ID (JSON-escaped); unknown fields omitted. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
   once GPS is sent; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
   **Why NDJSON:** append-only (a torn write loses only the trailing line), self-describing (schema
   grows without breaking old parsers), JSON escaping kills the comma/formula-injection bug class.
@@ -309,9 +320,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   link, green when connected**, and tapping it opens the full-screen web-app QR (`< BACK` top bar).
   Both icons stay in the BOOT nav (order: Scan → cog → phone → threat tiles) so Settings/touch-cal is
   never touch-only. The HOME screen also shows a **background-scan threat readout** at the bottom: the
-  fixed **category taxonomy** as `NAME: n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
+  fixed **category taxonomy** as `NAME:n` tiles (Flock/Axon/ALPR/Cam/Ring/Raven/Glass/Tracker/
   Drone/Deauth/Flipper/Skim — **12 tiles, 4 rows; the `Other` catch-all is NOT tiled**), always shown
-  (dim at 0, tier-coloured + outlined when >0; refreshed on the 2 s idle cadence). **Tapping a tile**
+  (dim grey at 0; when >0 each tile is **coloured by its category hue** — the `kCatColor[]` RGB565
+  palette approximating the web app's `CAT_COL`, so the readout matches the phone — plus a
+  **tier-coloured threat-score badge** on the right showing the sigdb score, or the tier level 1-3 when
+  the DB gave no score, so severity survives the category-hue switch; refreshed on the 2 s idle
+  cadence). **Tapping a tile**
   (or BOOT-selecting it) opens that category's **device list** (`SCR_MENUCAT`, with a one-line "what
   signatures match" blurb) → a device → **detail** (`SCR_MENUCATDETAIL`, the scanner detail reused via
   `buildDeviceDetail`/`showDeviceDetail`). Categories are derived on the CYD (`categoryOf()` —
@@ -360,17 +375,24 @@ back (5 GHz included). Things that matter, learned the hard way:
     scan on/off, **`lock`** = display/touch lock state 0/1)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
-    scan cycle. **v5 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
+    scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
     `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
     at 12). `name` is the advertised name, or the device's **MAC as text** when it has none (so
     nameless devices stay distinguishable — see `groupName()`). `ftier` = follow tier (0 none /
     1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
     score, `muted` = 1 when whitelisted, **`flags`** = decimal OR of the device's `DetFlags` bits
     (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges, **`cat`** = threat-category id
-    (matches the CYD `Category` enum) driving the web category breakdown. Fields were appended across
-    versions (follow in v3, `flags` in v4, `cat` in v5); older parsers reading the earlier fixed
-    fields ignore the extras. The web app renders it as the Scanner page's **tall, tappable live list**
-    (tier-colored, follow + flag markers; tap a row → device modal) + the threat strip/breakdown.
+    (matches the CYD `Category` enum) driving the web category breakdown. **v6 appends a Remote-ID
+    sub-block** after the detection rows, ONLY when ≥1 RID is held: a `R:<ridCount>` header then one
+    row per emitter `mac\tuas\tdlat\tdlon\tolat\tolon\th\talt\tspd\thdg\toid` (drone + operator
+    lat/lon decimal deg, height/geo-alt m, speed m/s, heading deg, UAS ID / operator ID; unknown
+    fields empty) — the web app plots the drone + operator on the device-modal map and the Map page.
+    Fields/blocks were appended across versions (follow in v3, `flags` in v4, `cat` in v5, the RID
+    block in v6); older parsers read the fixed detection fields / `count` rows and ignore the extras,
+    and the web parser skips any unrecognized line. The web app renders the rows as the Scanner page's
+    **tall, tappable live list** (tier-colored, follow + flag markers; tap a row → device modal) + the
+    threat strip/breakdown. (DETS versioning is the CYD→phone stream's own; it is NOT the CYD↔C5 link
+    `PROTOCOL_VERSION`.)
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app

@@ -204,6 +204,16 @@ int                g_detCount = 0;
 static constexpr int MAX_RID = 8;
 RemoteId           g_rids[MAX_RID];
 int                g_ridStoreCount = 0;
+// "Unknown" sentinels in RemoteId fields (match the C5 decoder's values; tested by VALUE, not `have`).
+constexpr int32_t  RID_LL_UNK  = 0;      // lat/lon 0 = unknown
+constexpr int16_t  RID_ALT_UNK = -1000;  // height / geodetic altitude -1000 = unknown
+constexpr uint16_t RID_HDG_UNK = 361;    // heading 361 = unknown
+constexpr size_t   LOG_ID_ESC  = 128;    // escaped uas/operator ID buffer (20 chars x up to 6x escape + NUL)
+static const RemoteId* ridByMac(const uint8_t* mac) {
+  for (int i = 0; i < g_ridStoreCount; i++)
+    if (memcmp(g_rids[i].mac, mac, 6) == 0) return &g_rids[i];
+  return nullptr;
+}
 bool               g_linkOk   = false;
 
 Touch    g_touch;
@@ -511,6 +521,26 @@ static const char* const kCatName[CAT_N] = {
   "", "Flock", "Axon", "ALPR", "Cam", "Ring", "Raven",
   "Glass", "Tracker", "Drone", "Deauth", "Flipper", "Skim", "Other"
 };
+// Per-category tile colours (RGB565), approximating the web app's CAT_COL palette (webapp/js/config.js)
+// so the HOME threat readout reads the same hue per category on both the device and the phone — the
+// project's "reuse CAT_COL anywhere categories appear" consistency directive. The TFT's 16-bit gamut
+// can't match the sRGB hex exactly; these are the nearest RGB565. Index = Category enum.
+static const uint16_t kCatColor[CAT_N] = {
+  0x0000,  // NONE (unused)
+  0xFA89,  // Flock   #f85149
+  0xFCC0,  // Axon    #ff9800
+  0xFE87,  // ALPR    #ffd33d
+  0x5D3F,  // Cam     #58a6ff
+  0x7E1F,  // Ring    #79c0ff
+  0xA39E,  // Raven   #a371f7
+  0xDB16,  // Glass   #db61b7
+  0x3E39,  // Tracker #39c5cf
+  0x3DCA,  // Drone   #3fb950
+  0xFBCE,  // Deauth  #ff7b72
+  0xFD2A,  // Flipper #ffa657
+  0xE588,  // Skim    #e3b341
+  0x8410,  // Other   (grey; not tiled)
+};
 // One-line "what signatures match this category" blurb, shown atop the category device list.
 static const char* catDescription(int c) {
   switch (c) {
@@ -632,6 +662,7 @@ static int buildSorted(int* idx) {
 struct DevGroup {
   uint8_t  mac[6];
   int      tier;      // max tier across members
+  int      score;     // max member sigdb score (0-100); drives the HOME tile threat-score badge
   int      bestRssi;  // strongest member RSSI
   int      rep;       // g_dets index of the strongest member (colour/source hint)
   int      nameIdx;   // g_dets index of the first member with a name, else -1
@@ -707,11 +738,12 @@ static int buildGroups() {
       gi = n++;
       DevGroup& g = g_groups[gi];
       memcpy(g.mac, d.mac, 6);
-      g.tier = (int)g_score[i].tier; g.bestRssi = d.rssi; g.rep = i;
+      g.tier = (int)g_score[i].tier; g.score = g_score[i].score; g.bestRssi = d.rssi; g.rep = i;
       g.nameIdx = -1; g.ie = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0;
     }
     DevGroup& g = g_groups[gi];
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
+    if ((int)g_score[i].score > g.score) g.score = (int)g_score[i].score;
     if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
     if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
@@ -790,8 +822,8 @@ static Category groupCategory(const DevGroup& g) {
 // Per-category live threat tally over the device groups. Counts only non-whitelisted devices at
 // tier >= Suspect (same alarm basis as countTiers); records the worst tier seen per category so
 // the readout can colour each chip. Returns the total threat devices.
-static int countCategories(int cnt[CAT_N], int worstTier[CAT_N]) {
-  for (int c = 0; c < CAT_N; c++) { cnt[c] = 0; worstTier[c] = 0; }
+static int countCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N]) {
+  for (int c = 0; c < CAT_N; c++) { cnt[c] = 0; worstTier[c] = 0; scoreMax[c] = 0; }
   int total = 0;
   for (int k = 0; k < g_groupCount; k++) {
     const DevGroup& g = g_groups[k];
@@ -799,6 +831,7 @@ static int countCategories(int cnt[CAT_N], int worstTier[CAT_N]) {
     Category c = groupCategory(g);
     cnt[c]++;
     if (g.tier > worstTier[c]) worstTier[c] = g.tier;
+    if (g.score > scoreMax[c]) scoreMax[c] = g.score;
     total++;
   }
   return total;
@@ -1259,6 +1292,61 @@ static void updateEvents() {
   }
 }
 
+// Log one "rid" event line per Remote-ID emitter, rate-limited per MAC to once per EVENT_LOG_GAP_MS.
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"rid","mac":"..",["uas":..,"dlat":..,"dlon":..,"h":..,
+//    "alt":..,"spd":..,"hdg":..,"olat":..,"olon":..,"oid":..]}  (unknown fields omitted)
+// Worst case (two 20-char strings escaping to ~120 B each) stays inside LOG_LINE; lnAppend is overflow-safe.
+static void logRidEvents() {
+  static uint8_t  ringMac[MAX_RID][6];
+  static uint32_t ringLast[MAX_RID];
+  static bool     ringUsed[MAX_RID];
+  static int      ringNext = 0;
+  uint32_t now = millis();
+  for (int i = 0; i < g_ridStoreCount; i++) {
+    const RemoteId& r = g_rids[i];
+    int slot = -1;
+    for (int k = 0; k < MAX_RID; k++)
+      if (ringUsed[k] && memcmp(ringMac[k], r.mac, 6) == 0) { slot = k; break; }
+    if (slot >= 0 && now - ringLast[slot] < EVENT_LOG_GAP_MS) continue;
+    if (slot < 0) {  // first sighting: take the next ring slot (round-robin eviction)
+      slot = ringNext; ringNext = (ringNext + 1) % MAX_RID;
+      memcpy(ringMac[slot], r.mac, 6); ringUsed[slot] = true;
+    }
+    ringLast[slot] = now;
+
+    LogStream& st = activeStream();
+    if (bgCtx() && !st.path[0]) openBgSession();
+    if (!ensureLogFile(st)) return;
+    File f = SD.open(st.path, FILE_APPEND);
+    if (!f) return;
+    char uas[LOG_ID_ESC], oid[LOG_ID_ESC];
+    jsonEscape(uas, sizeof(uas), r.uasId);
+    jsonEscape(oid, sizeof(oid), r.operatorId);
+    char ln[LOG_LINE];
+    int n = 0;
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
+    if (phone::hasGps() && isfinite(phone::lat()) && isfinite(phone::lon()))
+      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+    lnAppend(ln, n, ",\"evt\":\"rid\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
+             r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
+    if (uas[0]) lnAppend(ln, n, ",\"uas\":\"%s\"", uas);
+    if (r.droneLat != RID_LL_UNK || r.droneLon != RID_LL_UNK)
+      lnAppend(ln, n, ",\"dlat\":%.6f,\"dlon\":%.6f", r.droneLat / 1e7, r.droneLon / 1e7);
+    if (r.heightM != RID_ALT_UNK) lnAppend(ln, n, ",\"h\":%d", r.heightM);
+    if (r.altGeoM != RID_ALT_UNK) lnAppend(ln, n, ",\"alt\":%d", r.altGeoM);
+    if (r.headingDeg != RID_HDG_UNK)
+      lnAppend(ln, n, ",\"spd\":%.1f,\"hdg\":%u", r.speedCms / 100.0, (unsigned)r.headingDeg);
+    if (r.operatorLat != RID_LL_UNK || r.operatorLon != RID_LL_UNK)
+      lnAppend(ln, n, ",\"olat\":%.6f,\"olon\":%.6f", r.operatorLat / 1e7, r.operatorLon / 1e7);
+    if (oid[0]) lnAppend(ln, n, ",\"oid\":\"%s\"", oid);
+    if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
+      lnAppend(ln, n, "}\n");
+      if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+    }
+    f.close();
+  }
+}
+
 // Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
 // chunks. The web app reassembles and saves it (no Wi-Fi needed).
 static void streamFileOverBle(const char* path) {
@@ -1606,10 +1694,6 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
           else slot = 0;  // full: overwrite index 0 (store is rebuilt every poll, so rarely hit)
         }
         memcpy(&g_rids[slot], r, sizeof(RemoteId));
-        // TEMPORARY increment-2 verification aid; increment 3 replaces this with real UI.
-        Serial.printf("[RID] %02X:%02X:%02X:%02X:%02X:%02X uas=%s lat=%.6f lon=%.6f\n",
-                      r->mac[0], r->mac[1], r->mac[2], r->mac[3], r->mac[4], r->mac[5],
-                      r->uasId, r->droneLat / 1e7, r->droneLon / 1e7);
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
@@ -1665,6 +1749,11 @@ static void pushStatus() {
 // field, <flags>: the decimal DetFlags bits (FLAGS_NOTABLE only: iBeacon 8 / Find My 16 /
 // Pwnagotchi 32 / Evil Twin 64 / Drone RID 128) OR'd across the device's members, 0 if none.
 // Older parsers read fields 0..9 and ignore it.
+// v6 appends a trailing RID block AFTER the n detection rows, only while a Remote-ID emitter is
+// held: an "R:<ridCount>" header then ridCount rows of 11 tab-separated fields (always 11 columns,
+// unknown = empty): mac uas dlat dlon olat olon h alt spd hdg oid (lat/lon %.6f deg, h/alt m,
+// spd m/s, hdg deg; spd+hdg are both empty when heading is unknown). Older parsers read exactly n
+// rows then wait for the next "D:" header, so the appended block does not affect them.
 // The app drops rows whose seq != the current header's and swaps the list in only when
 // the snapshot is complete. Fallbacks considered and held in reserve if this proves
 // lossy: (a) a length-prefixed blob like the log download, (b) a polled READ
@@ -1701,6 +1790,51 @@ static void pushDetections() {
     snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)groupCategory(g));  // v5 trailing: category id
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
+  }
+
+  // v6 trailing RID block (only while a Remote-ID emitter is held): "R:<n>" then n 11-field rows.
+  if (g_ridStoreCount >= 1) {
+    int ridCount = min(g_ridStoreCount, MAX_RID);
+    char ridHdr[16];
+    snprintf(ridHdr, sizeof(ridHdr), "R:%d", ridCount);
+    phone::detsNotify(String(ridHdr));
+    for (int i = 0; i < ridCount; i++) {
+      const RemoteId& r = g_rids[i];
+      char uas[24], oid[24];
+      sanitizeField(uas, sizeof(uas), r.uasId);
+      sanitizeField(oid, sizeof(oid), r.operatorId);
+      char row[256];
+      int len = snprintf(row, sizeof(row), "%02X:%02X:%02X:%02X:%02X:%02X\t%s\t",
+                         r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5], uas);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      // Each unknown field is emitted EMPTY (separators always present -> always 11 columns).
+      if (r.droneLat != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.droneLat / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.droneLon != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.droneLon / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.operatorLat != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.operatorLat / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.operatorLon != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.operatorLon / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.heightM != RID_ALT_UNK) len += snprintf(row + len, sizeof(row) - len, "%d", (int)r.heightM);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.altGeoM != RID_ALT_UNK) len += snprintf(row + len, sizeof(row) - len, "%d", (int)r.altGeoM);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.headingDeg != RID_HDG_UNK)  // speed + heading are gated together
+        len += snprintf(row + len, sizeof(row) - len, "%.1f\t%u\t", r.speedCms / 100.0, (unsigned)r.headingDeg);
+      else
+        len += snprintf(row + len, sizeof(row) - len, "\t\t");
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      snprintf(row + len, sizeof(row) - len, "%s", oid);
+      phone::detsNotify(String(row));
+      delay(6);
+    }
   }
 }
 
@@ -2282,8 +2416,8 @@ static void chipRect(int i, int n, int& x, int& y, int& w) {
 }
 
 static void drawMenuThreats() {
-  int cnt[CAT_N], worst[CAT_N];
-  countCategories(cnt, worst);
+  int cnt[CAT_N], worst[CAT_N], scoreMax[CAT_N];
+  countCategories(cnt, worst, scoreMax);
   g_menuCatN = 0;                                   // every category except OTHER (the catch-all is not tiled)
   for (int c = 1; c < CAT_N; c++) if (c != CAT_OTHER) g_menuCat[g_menuCatN++] = (uint8_t)c;
   if (g_menuSel >= MENU_CHIP0 + g_menuCatN) g_menuSel = 0;
@@ -2297,14 +2431,27 @@ static void drawMenuThreats() {
     int c = g_menuCat[i], x, y, w; chipRect(i, g_menuCatN, x, y, w);
     bool sel = (g_menuSel == MENU_CHIP0 + i);
     bool hot = cnt[c] > 0;
-    uint16_t fg = hot ? tierColor(worst[c], 0, 0) : TFT_DARKGREY;
-    tft.drawRoundRect(x + 1, y, w - 2, CHIP_H, 3, sel ? TFT_CYAN : (hot ? fg : 0x2104));
+    // Outline + label take the per-category hue (matches the web app's CAT_COL). A non-zero tile
+    // also shows a tier-coloured threat-score badge (max sigdb score) on the right, so severity is
+    // still visible now that the tile hue encodes category rather than tier.
+    uint16_t catCol  = hot ? kCatColor[c] : TFT_DARKGREY;
+    uint16_t outline = sel ? TFT_CYAN : (hot ? catCol : 0x2104);
+    tft.drawRoundRect(x + 1, y, w - 2, CHIP_H, 3, outline);
     char b[20];
-    snprintf(b, sizeof(b), "%s: %d", kCatName[c], cnt[c]);
-    for (char* p = b; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;  // FLOCK: 0 style
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(fg, TFT_BLACK);
-    tft.drawString(b, x + w / 2, y + CHIP_H / 2, 1);
+    snprintf(b, sizeof(b), "%s:%d", kCatName[c], cnt[c]);
+    for (char* p = b; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;  // FLOCK:0 style
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(catCol, TFT_BLACK);
+    tft.drawString(b, x + 5, y + CHIP_H / 2, 1);
+    if (hot) {                                       // tier-coloured threat score, right-aligned:
+      // the signature score when the DB scored it, else the tier level (1-3) so a behavioral-flag-only
+      // threat (e.g. an OpenDroneID emitter with no OUI/name/UUID match) reads its tier, not 0.
+      int sv = scoreMax[c] > 0 ? min(scoreMax[c], 99) : worst[c];
+      char sb[4]; snprintf(sb, sizeof(sb), "%d", sv);
+      tft.setTextDatum(MR_DATUM);
+      tft.setTextColor(tierColor(worst[c], 0, 0), TFT_BLACK);
+      tft.drawString(sb, x + w - 4, y + CHIP_H / 2, 1);
+    }
   }
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
@@ -3447,6 +3594,29 @@ static void buildDeviceDetail(const uint8_t* mac) {
         o += snprintf(u + o, sizeof(u) - o, k ? " %04X" : "%04X", more[k]);
       addField("More UUIDs", u);
     }
+    const RemoteId* rid = ridByMac(mac);
+    if (rid) {
+      addField("-- Remote-ID --", "", TFT_ORANGE);
+      if (rid->uasId[0]) addField("Drone ID", rid->uasId);
+      if (rid->droneLat != RID_LL_UNK || rid->droneLon != RID_LL_UNK) {
+        // Separate lat/lon rows: a combined "lat, lon" (~21 chars) overflows addField's 19-char line.
+        snprintf(b, sizeof(b), "%.6f", rid->droneLat / 1e7); addField("Drone lat", b);
+        snprintf(b, sizeof(b), "%.6f", rid->droneLon / 1e7); addField("Drone lon", b);
+      }
+      if (rid->heightM != RID_ALT_UNK) { snprintf(b, sizeof(b), "%d m", rid->heightM); addField("Height", b); }
+      if (rid->altGeoM != RID_ALT_UNK) { snprintf(b, sizeof(b), "%d m", rid->altGeoM); addField("Geo alt", b); }
+      if (rid->headingDeg != RID_HDG_UNK) {  // speed + heading both come from the Location message
+        snprintf(b, sizeof(b), "%.1f m/s", rid->speedCms / 100.0);
+        addField("Speed", b);
+        snprintf(b, sizeof(b), "%u deg", (unsigned)rid->headingDeg);  // plain text: glyph not guaranteed in the font
+        addField("Heading", b);
+      }
+      if (rid->operatorId[0]) addField("Operator", rid->operatorId);
+      if (rid->operatorLat != RID_LL_UNK || rid->operatorLon != RID_LL_UNK) {
+        snprintf(b, sizeof(b), "%.6f", rid->operatorLat / 1e7); addField("Oper lat", b);
+        snprintf(b, sizeof(b), "%.6f", rid->operatorLon / 1e7); addField("Oper lon", b);
+      }
+    }
   }
 }
 
@@ -3888,6 +4058,7 @@ static void runScanCycle() {
     enforceLogCap();
   }
   int newCount = logNewDetections();
+  logRidEvents();   // rate-limited per-MAC Remote-ID event lines
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",

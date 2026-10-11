@@ -92,6 +92,15 @@ export function openLiveDetail(r){
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
   if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);
   if (r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint", r.ie]);
+  const rid = (state.rids||{})[String(r.mac||"").toLowerCase()];   // DETS v6 Remote-ID, if this MAC is an emitter
+  if (rid){
+    if (rid.uas) rowsKv.push(["Remote-ID · UAS ID", rid.uas]);
+    if (rid.oid) rowsKv.push(["Remote-ID · Operator ID", rid.oid]);
+    if (rid.h != null) rowsKv.push(["Remote-ID · Height", rid.h + " m"]);
+    if (rid.alt != null) rowsKv.push(["Remote-ID · Geo alt", rid.alt + " m"]);
+    if (rid.spd != null) rowsKv.push(["Remote-ID · Speed", rid.spd.toFixed(1) + " m/s"]);
+    if (rid.hdg != null) rowsKv.push(["Remote-ID · Heading", rid.hdg + "°"]);
+  }
   $("detInfo").innerHTML = rowsKv.map(([k,v])=>
     `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
   fillDetailWhitelist(r.mac, r.muted);
@@ -99,7 +108,7 @@ export function openLiveDetail(r){
   const msg = pts.length ? "" : (haveAnyFix()
     ? "No GPS-tagged sightings yet — move while scanning to map where this device is seen."
     : "Enable GPS (Sync time & GPS in Settings) to map where devices are seen.");
-  renderDetailMap(pts, msg);
+  renderDetailMap(pts, msg, rid ? {dlat:rid.dlat, dlon:rid.dlon, olat:rid.olat, olon:rid.olon} : undefined);
   $("detDlg").showModal();
 }
 

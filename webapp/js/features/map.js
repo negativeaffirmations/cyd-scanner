@@ -1,13 +1,13 @@
 // Wardriving map (Leaflet). Owns the main map instance; also exports newMap() so the detail
 // and follower mini-maps share one Leaflet setup. `L` is the global from the Leaflet CDN script.
 import { state } from '../state.js';
-import { enc, TIER_COL } from '../config.js';
+import { enc, TIER_COL, CAT_COL } from '../config.js';
 import { $, log, esc } from '../util/dom.js';
 import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
 import { parseScanLog, parseScanEvents } from '../data/parse.js';
 import { showPage } from '../nav.js';
 
-let lmap=null, mapLayer=null, mapDets=[], mapEvents=[];
+let lmap=null, mapLayer=null, mapDets=[], mapEvents=[], mapRidEvents=[];
 
 export function newMap(id){   // shared Leaflet setup (wardriving map + detail mini-map)
   const m=L.map(id);
@@ -34,13 +34,28 @@ const EVT_STYLE={deauth:{col:"#f85149",ch:"D",name:"Deauth flood"}, eviltwin:{co
 // Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
 export function plotCsvText(text, label){
   const all=parseScanLog(text);
-  mapEvents=parseScanEvents(text).filter(hasGps);
-  if(!all.length && !mapEvents.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
+  const evs=parseScanEvents(text);
+  mapEvents=evs.filter(e=>e.evt!=="rid" && hasGps(e));
+  mapRidEvents=evs.filter(e=>e.evt==="rid");   // positions come from the drone/operator fix, not the phone's
+  if(!all.length && !mapEvents.length && !mapRidEvents.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
   mapDets=all.filter(hasGps);
   openMap();   // switch to the Map page, ensure Leaflet is sized, and render
   const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
   $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points"+
     (mapEvents.length?", "+mapEvents.length+" event pin(s).":".");
+}
+
+// Draw one Remote-ID emitter's drone + operator markers (+ link line when both known) on mapLayer;
+// unknown/NaN coordinates are skipped. Pushes plotted points onto `pts` for fitBounds.
+function plotRid(r,pts){
+  const ok=(a,b)=>a!=null&&b!=null&&isFinite(a)&&isFinite(b)&&!(a===0&&b===0);
+  const d=ok(r.dlat,r.dlon)?[r.dlat,r.dlon]:null, o=ok(r.olat,r.olon)?[r.olat,r.olon]:null;
+  const col=CAT_COL[9], id=esc(r.uas||r.mac||"");
+  if(d){ L.circleMarker(d,{radius:8,color:col,weight:2,fillColor:col,fillOpacity:.8}).addTo(mapLayer)
+      .bindPopup("<b>Drone</b>"+(id?"<br>"+id:"")+"<br>"+d[0].toFixed(5)+", "+d[1].toFixed(5)); pts.push(d); }
+  if(o){ L.circleMarker(o,{radius:6,color:"#ffffff",weight:3,fillColor:col,fillOpacity:.5}).addTo(mapLayer)
+      .bindPopup("<b>Operator</b>"+(id?"<br>"+id:"")+"<br>"+o[0].toFixed(5)+", "+o[1].toFixed(5)); pts.push(o); }
+  if(d&&o) L.polyline([d,o],{color:col,weight:2,opacity:.8}).addTo(mapLayer);
 }
 
 // Group filtered detections by GPS fix and draw one marker per location.
@@ -80,6 +95,11 @@ export function renderMap(){
     m.bindPopup("<b>"+esc(st.name)+"</b><br>count "+e.count+"<br>"+(e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+
       "<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5));
     m.addTo(mapLayer); pts.push([e.lat,e.lon]);
+  }
+  if($("fEvents").checked){   // Remote-ID positions: logged rid events + live emitters (drone, operator, link)
+    const ridSrc=mapRidEvents.slice();
+    for(const r of Object.values(state.rids||{})) ridSrc.push(r);
+    for(const r of ridSrc) plotRid(r,pts);
   }
   if(pts.length) lmap.fitBounds(pts,{padding:[30,30]});
 }

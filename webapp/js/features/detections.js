@@ -6,6 +6,7 @@
 // v4 appended the decimal flag bits (iBeacon 8, Find My 16, Pwnagotchi 32, Evil Twin 64, Drone RID 128);
 // the ftier/fscore/muted three (follow tier 0/1/2, follow score, muted flag) were added in v3;
 // v5 appended the category id. Rows from older firmware have only the first 7 fields and parse fine.
+// v6 appends a trailing "R:<n>" Remote-ID block (n rows: mac uas dlat dlon olat olon h alt spd hdg oid).
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
 import { tierNum, fmtTimecode, flagBadges } from '../util/format.js';
@@ -23,10 +24,31 @@ function flushPendingDets(){
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;
   }
 }
+// DETS v6 Remote-ID block ("R:<n>" + n 11-field rows, after the detection rows). Staged until complete,
+// then swapped into state.rids atomically. ridDone = the current snapshot delivered a complete block; a
+// snapshot that doesn't (emitter gone) clears state.rids when the next "D:" header arrives.
+let ridExpect = 0, ridStage = null, ridDone = false;
+const rnum = s => { const v = parseFloat(s); return Number.isFinite(v) ? v : null; };
+function onRidRow(p){
+  if (!ridStage || p.length < 11) return;
+  const mac = p[0];
+  ridStage[mac.toLowerCase()] = { mac, uas:p[1], dlat:rnum(p[2]), dlon:rnum(p[3]), olat:rnum(p[4]), olon:rnum(p[5]),
+                                  h:rnum(p[6]), alt:rnum(p[7]), spd:rnum(p[8]), hdg:rnum(p[9]), oid:p[10] };
+  if (Object.keys(ridStage).length >= ridExpect) {  // complete batch -> atomic replace
+    state.rids = ridStage; ridStage = null; ridExpect = 0; ridDone = true;
+  }
+}
 export function onDets(ev){
   const txt = new TextDecoder().decode(ev.target.value);
+  if (txt.startsWith("R:")) {                       // Remote-ID block header: R:<n>
+    ridExpect = parseInt(txt.slice(2),10) || 0;
+    ridStage = ridExpect > 0 ? {} : null;
+    return;
+  }
   if (txt.startsWith("D:")) {                       // new snapshot header: D:<seq>:<n>
     const h = txt.slice(2).split(":");
+    if (!ridDone) state.rids = {};                  // prior snapshot carried no (complete) RID block -> no stale RIDs
+    ridDone = false; ridStage = null; ridExpect = 0;
     flushPendingDets();                             // render prior partial before starting fresh
     curSeq = parseInt(h[0],10);
     detState = { expect: parseInt(h[1],10) || 0, rows:[], rendered:false };
@@ -34,6 +56,10 @@ export function onDets(ev){
     return;
   }
   const p = txt.split("\t");                        // seq tier mac rssi ie name srcList
+  if (!Number.isFinite(+p[0])) {                    // not a detection row (seq is numeric): a RID row (MAC first)
+    if (ridStage) onRidRow(p);                      // ...else its R: header was lost -> ignore
+    return;
+  }
   if (p.length < 7) return;                         // malformed/truncated
   const seq = +p[0];
   if (seq !== curSeq) {                             // header was lost -> rows start the snapshot
