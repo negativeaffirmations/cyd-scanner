@@ -1,0 +1,42 @@
+// _nav.scss — top app bar, page containers, and the sticky bottom navbar (Material style).
+@use 'variables' as *;
+
+$nav-h: 60px;
+
+// Full-bleed top app bar (title + connection pill) shown on every page.
+.appbar {
+  display:flex; align-items:center; justify-content:space-between; gap:.6em;
+  margin:-16px -16px 14px;            // bleed over the body's 16px padding to the screen edges
+  padding:12px 16px;
+  background:$color-surface; border-bottom:1px solid $color-border;
+}
+.appbar-title { font-size:1.15rem; font-weight:600; }
+
+// Pages: only the .visible one shows. Class-based (not the [hidden] attribute) so a CSS
+// `display` rule can never override the hide.
+.page { display:none; }
+.page.visible { display:block; }
+
+// Keep content clear of the fixed navbar (plus the phone's home-indicator inset).
+body { padding-bottom: calc(#{$nav-h} + env(safe-area-inset-bottom, 0px) + 12px); }
+
+.navbar {
+  position:fixed; left:0; right:0; bottom:0; z-index:20;
+  display:flex; justify-content:space-around; align-items:stretch;
+  background:$color-surface; border-top:1px solid $color-border;
+  height: calc(#{$nav-h} + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.navbtn {
+  flex:1 1 0; width:auto; margin:0; border:0; border-radius:0; background:transparent;
+  color:$color-text-muted; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  font-size:.7rem; padding:6px 0;
+
+  .material-symbols-outlined { font-size:24px; line-height:1; }
+}
+.navbtn.active { color:$color-text; }
+.navbtn.active .material-symbols-outlined {      // Material "selected" pill behind the icon
+  background:rgba($color-accent, .22); border-radius:999px; padding:2px 14px;
+}
+.navbtn:active { background:rgba($color-text, .04); }

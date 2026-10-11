@@ -29,6 +29,27 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## In progress — webapp redesign (Material bottom-nav), PHASE 1 done (2026-10-10, webapp-only)
+Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-component-reuse]].
+- **Phase 1 (DONE): sticky bottom navbar + page scaffolding.** `index.html` restructured into a
+  persistent top app bar (title + `#conn`) + a `<main id="pages">` with **Home** and **Scanner**
+  `<section class="page">` views, plus a fixed **Material** bottom navbar (Home/Scanner/Map/Settings,
+  Material Symbols icons via Google Fonts — no bundler/framework, honoring the no-build rule). New
+  `js/nav.js` `showPage()` toggles a `.visible` class (class-based, not `[hidden]`, so CSS can't
+  override); wired in `main.js`. **Home** = connect + status card grids + "Threats on device"
+  (`#catChips`) + Activity log. **Scanner** = session + scan controls + follower/alert banners + live
+  `#dets` + the Explore/Scan-Viewer + the data/transfer controls + whitelist. **Map & Settings nav
+  items open their existing dialogs for now** (become full inline pages in later phases — Map needs
+  Leaflet `invalidateSize`-on-show, deferred). Risk kept low: **every element id preserved** (verified
+  all 124 JS-referenced ids still present), the 3 retired nav buttons (`#scanNavBtn/#mapBtn/
+  #settingsBtn`) are just `hidden` so their handlers + connect/disconnect enable-lists keep working
+  untouched. New SCSS `_nav.scss` (@use'd in `main.scss`); **recompiled `style.css` via
+  `npx sass@1.105.1`** (node_modules isn't installed here; normal flow is `npm run sass:build`).
+  Statically verified only — **NOT in-browser tested** (needs Android Chrome); Pages redeploys on push.
+- **Phases remaining:** 2 = Scanner page (rows ≥3× taller, top controls+filters+counter row, tap→
+  CYD-style modal: details+map + whitelist add/remove; fold Explore in). 3 = Home cards + CYD threat
+  counters section. 4 = Map as a real inline page (promote `#mapDlg`, handle `invalidateSize`).
+
 ## Done — brightness slider fix (2026-10-10, CYD-only, FLASHED)
 The brightness setting did nothing: `initCommon()` called `ledcAttach(TFT_BL_PIN,…)` BEFORE
 `tft.init()`, but TFT_eSPI is built with `TFT_BL=21`/`TFT_BACKLIGHT_ON=HIGH`, so `tft.init()` then

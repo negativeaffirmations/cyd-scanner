@@ -8,117 +8,146 @@
 <title>CYD Scanner Control</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>CYD Scanner <span id="conn" class="pill down">disconnected</span></h1>
-  <div class="sub">Counter-surveillance scanner &middot; phone control over Bluetooth</div>
+  <!-- Persistent top app bar: title + connection pill (shown on every page) -->
+  <header class="appbar">
+    <span class="appbar-title">CYD Scanner</span>
+    <span id="conn" class="pill down">disconnected</span>
+  </header>
 
-  <button id="connectBtn">Connect to scanner</button>
-  <button id="scanNavBtn" disabled>&#128225; Scan</button>
-  <div id="scanPanel" style="display:none">
-    <div id="sessName" class="sub" style="margin-bottom:.5em">Session: &mdash;</div>
-    <button id="scanBtn" disabled>&#9654; Start Scan</button>
-    <button id="newSessBtn" class="secondary" disabled>New Session</button>
-    <button id="exploreBtn" class="secondary">Explore Scan</button>
-    <button id="scanSetBtn" class="secondary">Scan Settings</button>
-  </div>
-  <div id="exploreView" style="display:none">
-    <h3 style="margin:.6em 0 .2em">Scan Viewer</h3>
-    <select id="expSel" disabled><option>— loading sessions… —</option></select>
-    <div id="expMsg" class="sub"></div>
-    <div id="expCtl" class="maptools" style="display:block">
-      <select id="expSort" style="margin:0 0 .4em">
-        <option value="old">Sort: Oldest first</option>
-        <option value="new">Sort: Newest first</option>
-        <option value="typeNew">Sort: Type, newest</option>
-        <option value="typeOld">Sort: Type, oldest</option>
-        <option value="close">Sort: Closest</option>
-        <option value="far">Sort: Farthest</option>
-        <option value="az">Sort: Name A-Z</option>
-        <option value="za">Sort: Name Z-A</option>
-      </select>
-      <div class="maptools" style="margin:.2em 0">
-        <label><input type="checkbox" id="ef24" checked> 2.4</label>
-        <label><input type="checkbox" id="ef5" checked> 5G</label>
-        <label><input type="checkbox" id="efble" checked> BLE</label>
-        <label><input type="checkbox" id="efprb" checked> PRB</label>
-        <label><input type="checkbox" id="ef154" checked> 15.4</label>
-        <label><input type="checkbox" id="efThreats"> Threats only</label>
+  <main id="pages">
+    <!-- ============================ HOME ============================ -->
+    <section class="page visible" id="page-home">
+      <button id="connectBtn">Connect to scanner</button>
+      <div class="sub">Counter-surveillance scanner &middot; phone control over Bluetooth</div>
+
+      <div class="grid">
+        <div class="card"><div class="k">Wi-Fi 2.4</div><div class="v" id="w24">–</div></div>
+        <div class="card"><div class="k">Wi-Fi 5 GHz</div><div class="v" id="w5">–</div></div>
+        <div class="card"><div class="k">BLE</div><div class="v" id="ble">–</div></div>
+        <div class="card"><div class="k">Probe reqs</div><div class="v" id="prb">–</div></div>
+        <div class="card"><div class="k">15.4 / Zigbee</div><div class="v" id="z154">–</div></div>
+        <div class="card"><div class="k">Unique logged</div><div class="v" id="uniq">–</div></div>
       </div>
-      <label class="k" for="efDist">Max distance: <span id="efDistVal"></span></label>
-      <input type="range" id="efDist" min="-100" max="-30" step="1" value="-100">
-      <label class="k" for="efT0">Time: <span id="efTVal">–</span></label>
-      <input type="range" id="efT0" min="0" max="0" step="1" value="0" disabled>
-      <input type="range" id="efT1" min="0" max="0" step="1" value="0" disabled>
-      <input type="text" id="efText" placeholder="Name or MAC contains…" autocomplete="off" style="margin-top:.5em">
-    </div>
-    <div id="scanViewer" class="dets" style="max-height:60vh"></div>
-  </div>
-  <button id="mapBtn" class="secondary">&#128506; Map</button>
 
-  <div class="grid">
-    <div class="card"><div class="k">Wi-Fi 2.4</div><div class="v" id="w24">–</div></div>
-    <div class="card"><div class="k">Wi-Fi 5 GHz</div><div class="v" id="w5">–</div></div>
-    <div class="card"><div class="k">BLE</div><div class="v" id="ble">–</div></div>
-    <div class="card"><div class="k">Probe reqs</div><div class="v" id="prb">–</div></div>
-    <div class="card"><div class="k">15.4 / Zigbee</div><div class="v" id="z154">–</div></div>
-    <div class="card"><div class="k">Unique logged</div><div class="v" id="uniq">–</div></div>
-  </div>
+      <div class="grid">
+        <div class="card"><div class="k">Time synced</div><div class="v" id="timeState">–</div></div>
+        <div class="card"><div class="k">GPS fix</div><div class="v" id="gpsState">–</div></div>
+      </div>
 
-  <div class="grid">
-    <div class="card"><div class="k">Time synced</div><div class="v" id="timeState">–</div></div>
-    <div class="card"><div class="k">GPS fix</div><div class="v" id="gpsState">–</div></div>
-  </div>
+      <div class="grid">
+        <div class="card"><div class="k">Suspect</div><div class="v" id="susp">–</div></div>
+        <div class="card"><div class="k">Likely</div><div class="v" id="lk">–</div></div>
+        <div class="card"><div class="k">Confirmed</div><div class="v" id="conf">–</div></div>
+        <div class="card"><div class="k">Signature DB</div><div class="v" id="db">–</div></div>
+      </div>
 
-  <div class="grid">
-    <div class="card"><div class="k">Suspect</div><div class="v" id="susp">–</div></div>
-    <div class="card"><div class="k">Likely</div><div class="v" id="lk">–</div></div>
-    <div class="card"><div class="k">Confirmed</div><div class="v" id="conf">–</div></div>
-    <div class="card"><div class="k">Signature DB</div><div class="v" id="db">–</div></div>
-  </div>
+      <h3 style="margin:.6em 0 .3em">Threats on device
+        <span class="sub" style="font-weight:400">— category counts from the live scan</span></h3>
+      <div id="catChips" class="catchips" style="display:none"></div>
 
-  <h3 style="margin:.6em 0 .3em">Live detections
-    <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
-  <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
-  <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
-  <div id="catChips" class="catchips" style="display:none"></div>
-  <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
+      <h3 style="margin-bottom:.3em">Activity</h3>
+      <div id="log"></div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-10</div>
+    </section>
 
-  <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
-  <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
-  <button id="dlBtn" disabled>Download current session</button>
-  <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
-  <details id="filterBox">
-    <summary>Download a time range (filtered on the device)</summary>
-    <select id="expRange">
-      <option value="0">Since boot (whole session)</option>
-      <option value="1">Past 24 hours</option>
-      <option value="2">Custom&hellip;</option>
-    </select>
-    <div id="expCustom" class="maptools" style="display:none">
-      <label>Days <input type="number" id="expD" min="0" max="365" value="0"></label>
-      <label>Hours <input type="number" id="expH" min="0" max="23" value="1"></label>
-      <label>Minutes <input type="number" id="expM" min="0" max="59" value="0"></label>
-    </div>
-    <button id="dlfBleBtn" disabled>Download filtered &mdash; current session (BLE)</button>
-    <button id="dlfWifiBtn" class="secondary">Download filtered over Wi-Fi (join the device AP first)</button>
-  </details>
+    <!-- ============================ SCANNER ============================ -->
+    <section class="page" id="page-scanner">
+      <div id="sessName" class="sub" style="margin-bottom:.5em">Session: &mdash;</div>
+      <!-- scanPanel is always visible on this page now (the old "Scan" toggle button is retired) -->
+      <div id="scanPanel">
+        <button id="scanBtn" disabled>&#9654; Start Scan</button>
+        <button id="newSessBtn" class="secondary" disabled>New Session</button>
+        <button id="exploreBtn" class="secondary">Explore a saved log</button>
+        <button id="scanSetBtn" class="secondary">Scan Settings</button>
+      </div>
 
-  <details id="sessionsBox">
-    <summary>Session logs</summary>
-    <button id="listBtn" class="secondary" disabled>Refresh session list</button>
-    <select id="sessSel" disabled><option>— connect and refresh —</option></select>
-    <button id="sessDlBtn" disabled>Download selected session</button>
-    <button id="sessDlfBtn" class="secondary" disabled>Download selected &mdash; time range (see above)</button>
-    <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
-    <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
-    <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
-  </details>
+      <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
+      <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
 
-  <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
-  <button id="settingsBtn" class="secondary" disabled>Settings</button>
+      <h3 style="margin:.6em 0 .3em">Live detections
+        <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
+      <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
+      <div id="exploreView" style="display:none">
+        <h3 style="margin:.6em 0 .2em">Scan Viewer</h3>
+        <select id="expSel" disabled><option>— loading sessions… —</option></select>
+        <div id="expMsg" class="sub"></div>
+        <div id="expCtl" class="maptools" style="display:block">
+          <select id="expSort" style="margin:0 0 .4em">
+            <option value="old">Sort: Oldest first</option>
+            <option value="new">Sort: Newest first</option>
+            <option value="typeNew">Sort: Type, newest</option>
+            <option value="typeOld">Sort: Type, oldest</option>
+            <option value="close">Sort: Closest</option>
+            <option value="far">Sort: Farthest</option>
+            <option value="az">Sort: Name A-Z</option>
+            <option value="za">Sort: Name Z-A</option>
+          </select>
+          <div class="maptools" style="margin:.2em 0">
+            <label><input type="checkbox" id="ef24" checked> 2.4</label>
+            <label><input type="checkbox" id="ef5" checked> 5G</label>
+            <label><input type="checkbox" id="efble" checked> BLE</label>
+            <label><input type="checkbox" id="efprb" checked> PRB</label>
+            <label><input type="checkbox" id="ef154" checked> 15.4</label>
+            <label><input type="checkbox" id="efThreats"> Threats only</label>
+          </div>
+          <label class="k" for="efDist">Max distance: <span id="efDistVal"></span></label>
+          <input type="range" id="efDist" min="-100" max="-30" step="1" value="-100">
+          <label class="k" for="efT0">Time: <span id="efTVal">–</span></label>
+          <input type="range" id="efT0" min="0" max="0" step="1" value="0" disabled>
+          <input type="range" id="efT1" min="0" max="0" step="1" value="0" disabled>
+          <input type="text" id="efText" placeholder="Name or MAC contains…" autocomplete="off" style="margin-top:.5em">
+        </div>
+        <div id="scanViewer" class="dets" style="max-height:60vh"></div>
+      </div>
+
+      <h3 style="margin:.8em 0 .3em">Data</h3>
+      <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
+      <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
+      <button id="dlBtn" disabled>Download current session</button>
+      <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
+      <details id="filterBox">
+        <summary>Download a time range (filtered on the device)</summary>
+        <select id="expRange">
+          <option value="0">Since boot (whole session)</option>
+          <option value="1">Past 24 hours</option>
+          <option value="2">Custom&hellip;</option>
+        </select>
+        <div id="expCustom" class="maptools" style="display:none">
+          <label>Days <input type="number" id="expD" min="0" max="365" value="0"></label>
+          <label>Hours <input type="number" id="expH" min="0" max="23" value="1"></label>
+          <label>Minutes <input type="number" id="expM" min="0" max="59" value="0"></label>
+        </div>
+        <button id="dlfBleBtn" disabled>Download filtered &mdash; current session (BLE)</button>
+        <button id="dlfWifiBtn" class="secondary">Download filtered over Wi-Fi (join the device AP first)</button>
+      </details>
+
+      <details id="sessionsBox">
+        <summary>Session logs</summary>
+        <button id="listBtn" class="secondary" disabled>Refresh session list</button>
+        <select id="sessSel" disabled><option>— connect and refresh —</option></select>
+        <button id="sessDlBtn" disabled>Download selected session</button>
+        <button id="sessDlfBtn" class="secondary" disabled>Download selected &mdash; time range (see above)</button>
+        <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
+        <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
+        <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
+      </details>
+
+      <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
+    </section>
+  </main>
+
+  <!-- Retired top-level nav buttons (replaced by the bottom navbar); kept hidden so their
+       existing handlers + connect/disconnect enable lists keep working untouched. -->
+  <button id="scanNavBtn" hidden disabled>Scan</button>
+  <button id="mapBtn" hidden class="secondary">Map</button>
+  <button id="settingsBtn" hidden class="secondary" disabled>Settings</button>
+
+  <!-- ============================ DIALOGS (action-triggered popups) ============================ -->
   <dialog id="wlDlg">
     <div class="modalhdr">
       <strong>Whitelist &mdash; <span id="wlHdr">–</span> rule(s), <span id="wlMuted">–</span> muted now</strong>
@@ -226,10 +255,17 @@
     <div id="map"></div>
   </dialog>
 
-  <h3 style="margin-bottom:.3em">Activity</h3>
-  <div id="log"></div>
-
-  <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-04b</div>
+  <!-- ============================ STICKY BOTTOM NAVBAR ============================ -->
+  <nav class="navbar" aria-label="Primary">
+    <button class="navbtn active" id="navHome" data-page="home">
+      <span class="material-symbols-outlined">home</span><span class="navlbl">Home</span></button>
+    <button class="navbtn" id="navScanner" data-page="scanner">
+      <span class="material-symbols-outlined">radar</span><span class="navlbl">Scanner</span></button>
+    <button class="navbtn" id="navMap" data-page="map">
+      <span class="material-symbols-outlined">map</span><span class="navlbl">Map</span></button>
+    <button class="navbtn" id="navSettings" data-page="settings">
+      <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
+  </nav>
 
 <script type="module" src="js/main.js"></script>
 </body>

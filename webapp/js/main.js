@@ -11,9 +11,17 @@ import { openWhitelist, wlCmd, refreshWhitelist, addWhitelistRule, wlKindChanged
 import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
 import { openFollowList } from './features/followers.js';
 import { reacquireWake } from './wakelock.js';
+import { showPage } from './nav.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
+
+// Bottom navbar: Home/Scanner switch pages; Map/Settings open their existing dialogs for now.
+$("navHome").onclick     = () => showPage('home');
+$("navScanner").onclick  = () => showPage('scanner');
+$("navMap").onclick      = openMap;
+$("navSettings").onclick = () => $("settingsDlg").showModal();
+showPage('home');   // initial page
 
 // Whitelist "kind" select -> pattern length rules (+ initial pass).
 $("wlKind").addEventListener("change", wlKindChanged);
