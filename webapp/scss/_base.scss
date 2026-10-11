@@ -47,9 +47,7 @@ button:disabled { opacity: .45; }
 .st.off .v { color:$color-text-muted; }
 
 .scantypes { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0; }
-.statcard  { display:flex; flex-direction:column; gap:10px; margin:12px 0; }     // 2-over-3 counts/tiers
-.strow2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.strow3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+.statcard  { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin:12px 0; }  // Probe/Unique/Suspect/Likely/Confirmed, one equal-width row
 
 // App-bar status icons (time / GPS / DB): small, white when active / gray when not.
 .si { display:inline-flex; align-items:center; color:$color-text-muted; }
