@@ -42,7 +42,7 @@ export async function fetchSession(sink){
   catch(e){ log("Download failed: "+e.message); }
 }
 export function downloadSession(){ fetchSession("save"); }
-export function mapSelectedSession(){ if(!$("mapDlg").open) openMap(); fetchSession("map"); }
+export function mapSelectedSession(){ openMap(); fetchSession("map"); }
 export async function deleteSession(){
   const path=$("sessSel").value;
   if(!path || path.startsWith("—")) return;

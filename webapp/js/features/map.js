@@ -5,6 +5,7 @@ import { enc, TIER_COL } from '../config.js';
 import { $, log, esc } from '../util/dom.js';
 import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
 import { parseScanLog, parseScanEvents } from '../data/parse.js';
+import { showPage } from '../nav.js';
 
 let lmap=null, mapLayer=null, mapDets=[], mapEvents=[];
 
@@ -21,9 +22,9 @@ function ensureMap(){
   mapLayer=L.layerGroup().addTo(lmap);
 }
 export function openMap(){
-  $("mapDlg").showModal();
+  showPage('map');                 // the Map is its own nav page now (not a dialog)
   ensureMap();
-  setTimeout(()=>{ lmap.invalidateSize(); renderMap(); }, 80);
+  setTimeout(()=>{ lmap.invalidateSize(); renderMap(); }, 80);   // the div is now visible + sized
   if(!mapDets.length && state.connected) mapCurrent();   // default view = the current scan
 }
 
@@ -36,7 +37,7 @@ export function plotCsvText(text, label){
   mapEvents=parseScanEvents(text).filter(hasGps);
   if(!all.length && !mapEvents.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
   mapDets=all.filter(hasGps);
-  if(!$("mapDlg").open) openMap(); else renderMap();
+  openMap();   // switch to the Map page, ensure Leaflet is sized, and render
   const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
   $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points"+
     (mapEvents.length?", "+mapEvents.length+" event pin(s).":".");

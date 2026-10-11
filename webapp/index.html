@@ -144,7 +144,33 @@
         <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
       </details>
 
-      <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
+    </section>
+
+    <!-- ============================ MAP ============================ -->
+    <section class="page" id="page-map">
+      <h3 style="margin:.4em 0 .3em">Map</h3>
+      <div class="maptools">
+        <button id="mapCurBtn" class="secondary" disabled>Current session</button>
+        <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
+          Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
+        <label><input type="checkbox" id="fThreats"> Threats only</label>
+        <label><input type="checkbox" id="f24" checked> 2.4</label>
+        <label><input type="checkbox" id="f5" checked> 5G</label>
+        <label><input type="checkbox" id="fble" checked> BLE</label>
+        <label><input type="checkbox" id="fprb" checked> PRB</label>
+        <label><input type="checkbox" id="f154" checked> 15.4</label>
+        <label><input type="checkbox" id="fEvents" checked> Events</label>
+      </div>
+      <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
+      <div id="map"></div>
+    </section>
+
+    <!-- ============================ SETTINGS ============================ -->
+    <section class="page" id="page-settings">
+      <h3 style="margin:.4em 0 .3em">Settings</h3>
+      <label class="k" for="briSlider">Brightness: <span id="briVal">–</span>%</label>
+      <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
+      <button id="wlBtn" class="secondary" disabled style="margin-top:1em">Whitelist (<span id="wlCnt">–</span>)</button>
     </section>
   </main>
 
@@ -175,15 +201,6 @@
     </select>
     <input type="text" id="wlLabel" placeholder="label (max 15 chars)" maxlength="15">
     <button id="wlAddBtn">Add</button>
-  </dialog>
-
-  <dialog id="settingsDlg">
-    <div class="modalhdr">
-      <strong>Settings</strong>
-      <button id="settingsClose" class="xbtn" aria-label="Close">&times;</button>
-    </div>
-    <label class="k" for="briSlider">Brightness: <span id="briVal">–</span>%</label>
-    <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
   </dialog>
 
   <dialog id="scanSetDlg">
@@ -242,26 +259,6 @@
     <div id="folDetMap"></div>
   </dialog>
 
-  <dialog id="mapDlg">
-    <div class="modalhdr">
-      <strong>Wardriving map</strong>
-      <button id="mapClose" class="xbtn" aria-label="Close">&times;</button>
-    </div>
-    <div class="maptools">
-      <button id="mapCurBtn" class="secondary" disabled>Current session</button>
-      <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
-        Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
-      <label><input type="checkbox" id="fThreats"> Threats only</label>
-      <label><input type="checkbox" id="f24" checked> 2.4</label>
-      <label><input type="checkbox" id="f5" checked> 5G</label>
-      <label><input type="checkbox" id="fble" checked> BLE</label>
-      <label><input type="checkbox" id="fprb" checked> PRB</label>
-      <label><input type="checkbox" id="f154" checked> 15.4</label>
-      <label><input type="checkbox" id="fEvents" checked> Events</label>
-    </div>
-    <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
-    <div id="map"></div>
-  </dialog>
 
   <dialog id="threatsDlg">
     <div class="modalhdr">

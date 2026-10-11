@@ -79,10 +79,17 @@ Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-
   `renderDets`, loaded on `applyExplore`). **PENDING USER CHOICE:** the live/loaded title icons — currently
   PLACEHOLDERS `sensors` (live) / `folder_open` (loaded); asked the user to pick. Webapp-only; recompiled;
   JS parses, ids resolve (only dynamic `#detWlBtn`). NOT in-browser tested.
-- **Phases remaining:** 3 = Home already has cards + CYD threat counters (done in Phase 1.5) — mostly
-  covered; revisit if more Home work wanted. 4 = Map as a real inline page (promote `#mapDlg`, handle
-  Leaflet `invalidateSize` on page-show) + Settings as an inline page. Possible polish: top
-  controls/filters grouping on Scanner; true remove-by-MAC firmware CMD for one-tap un-whitelist.
+- **Phase 4 (DONE): Map + Settings are real nav pages.** `#mapDlg`/`#settingsDlg` dialogs removed; their
+  content moved into `<section class="page" id="page-map">` / `id="page-settings">`. `nav.js` `PAGES` =
+  home/scanner/map/settings. `openMap()` now `showPage('map')` + `invalidateSize`+`renderMap` on an
+  80 ms timeout (fixes Leaflet-in-hidden-container sizing); `navMap`→`openMap`,
+  `navSettings`→`showPage('settings')`. Settings page = brightness + the Whitelist button (moved off
+  Scanner). Removed the now-dead `settingsClose`/`mapClose` handlers + the disconnect `settingsDlg.close()`
+  and `sessions.js` `mapDlg.open` check (both would have thrown). Retired hidden buttons stay for the
+  connect/disconnect enable-lists. No SCSS change (`#map` is fixed 68vh). JS parses, no dead refs/dup
+  ids. **NOT in-browser tested. All redesign phases (1, 1.5, 2, 2.5, 4) done.**
+- **Optional polish left:** further group the Scanner controls/filters; a one-tap un-whitelist firmware
+  CMD (`E:mac,<MAC>`) for true remove-from-modal; tidy the now-dead `#mapDlg` CSS in `_map.scss`.
 
 ## Done — brightness slider fix (2026-10-10, CYD-only, FLASHED)
 The brightness setting did nothing: `initCommon()` called `ledcAttach(TFT_BL_PIN,…)` BEFORE

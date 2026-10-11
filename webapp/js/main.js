@@ -18,11 +18,11 @@ import { applyLiveFilter } from './features/detections.js';
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
 
-// Bottom navbar: Home/Scanner switch pages; Map/Settings open their existing dialogs for now.
+// Bottom navbar: Home/Scanner/Settings switch pages; Map via openMap (shows the page + sizes Leaflet).
 $("navHome").onclick     = () => showPage('home');
 $("navScanner").onclick  = () => showPage('scanner');
 $("navMap").onclick      = openMap;
-$("navSettings").onclick = () => $("settingsDlg").showModal();
+$("navSettings").onclick = () => showPage('settings');
 showPage('home');   // initial page
 renderCatChips([]); // show the full threat taxonomy (all 0) from the start, so the colours are learnable
 renderScanCounts([]); // the Scanner threat strip starts populated (all dim) and tappable
@@ -76,17 +76,14 @@ $("sessDelBtn").onclick = deleteSession;
 $("sessWipeBtn").onclick = wipeAllLogs;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
-$("settingsBtn").onclick = ()=> $("settingsDlg").showModal();
+$("settingsBtn").onclick = ()=> showPage('settings');   // retired hidden button -> Settings page
 $("wlBtn").onclick = openWhitelist;
 $("scanSetWlBtn").onclick = openWhitelist;
 $("wlClose").onclick = ()=> $("wlDlg").close();
 $("wlDlg").addEventListener("click", e=>{ if(e.target === $("wlDlg")) $("wlDlg").close(); });
 $("wlReloadBtn").onclick = async()=>{ await wlCmd("W","Reloading whitelist…"); setTimeout(refreshWhitelist,300); };
 $("wlAddBtn").onclick = addWhitelistRule;
-$("settingsClose").onclick = ()=> $("settingsDlg").close();
-$("settingsDlg").addEventListener("click", e=>{ if(e.target === $("settingsDlg")) $("settingsDlg").close(); });
-$("mapBtn").onclick = openMap;
-$("mapClose").onclick = ()=> $("mapDlg").close();
+$("mapBtn").onclick = openMap;   // retired hidden button -> Map page (openMap sizes Leaflet)
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;
 ["fThreats","f24","f5","fble","fprb","f154","fEvents"].forEach(id=>$(id).addEventListener("change", ()=> renderMap()));

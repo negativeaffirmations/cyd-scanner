@@ -57,7 +57,6 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   $("connectBtn").style.display = "";
   ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
     .forEach(id=>$(id).disabled=true);
-  if($("settingsDlg").open) $("settingsDlg").close();
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
   state.wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
