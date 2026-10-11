@@ -111,9 +111,30 @@
         <div id="scanViewer" class="dets tall" style="max-height:60vh"></div>
       </div>
 
-      <h3 style="margin:.8em 0 .3em">Data</h3>
-      <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
-      <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
+    </section>
+
+    <!-- ============================ MAP ============================ -->
+    <section class="page" id="page-map">
+      <h3 style="margin:.4em 0 .3em">Map</h3>
+      <div class="maptools">
+        <button id="mapCurBtn" class="secondary" disabled>Current session</button>
+        <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
+          Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
+        <label><input type="checkbox" id="fThreats"> Threats only</label>
+        <label><input type="checkbox" id="f24" checked> 2.4</label>
+        <label><input type="checkbox" id="f5" checked> 5G</label>
+        <label><input type="checkbox" id="fble" checked> BLE</label>
+        <label><input type="checkbox" id="fprb" checked> PRB</label>
+        <label><input type="checkbox" id="f154" checked> 15.4</label>
+        <label><input type="checkbox" id="fEvents" checked> Events</label>
+      </div>
+      <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
+      <div id="map"></div>
+    </section>
+
+    <!-- ============================ DATA ============================ -->
+    <section class="page" id="page-data">
+      <h3 style="margin:.4em 0 .3em">Data</h3>
       <button id="dlBtn" disabled>Download current session</button>
       <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
       <details id="filterBox">
@@ -142,32 +163,14 @@
         <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
         <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
       </details>
-
-    </section>
-
-    <!-- ============================ MAP ============================ -->
-    <section class="page" id="page-map">
-      <h3 style="margin:.4em 0 .3em">Map</h3>
-      <div class="maptools">
-        <button id="mapCurBtn" class="secondary" disabled>Current session</button>
-        <label class="secondary" style="background:#30363d;border-radius:8px;padding:.5em .8em;cursor:pointer">
-          Load .jsonl/.csv<input type="file" id="mapFile" accept=".jsonl,.ndjson,.csv,text/csv,application/x-ndjson" hidden></label>
-        <label><input type="checkbox" id="fThreats"> Threats only</label>
-        <label><input type="checkbox" id="f24" checked> 2.4</label>
-        <label><input type="checkbox" id="f5" checked> 5G</label>
-        <label><input type="checkbox" id="fble" checked> BLE</label>
-        <label><input type="checkbox" id="fprb" checked> PRB</label>
-        <label><input type="checkbox" id="f154" checked> 15.4</label>
-        <label><input type="checkbox" id="fEvents" checked> Events</label>
-      </div>
-      <div id="mapMsg">Load the current session, pick one from Session logs, or open a .jsonl/.csv file.</div>
-      <div id="map"></div>
     </section>
 
     <!-- ============================ SETTINGS ============================ -->
     <section class="page" id="page-settings">
       <h3 style="margin:.4em 0 .3em">Settings</h3>
-      <label class="k" for="briSlider">Brightness: <span id="briVal">–</span>%</label>
+      <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
+      <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
+      <label class="k" for="briSlider" style="display:block;margin-top:.6em">Brightness: <span id="briVal">–</span>%</label>
       <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
       <button id="wlBtn" class="secondary" disabled style="margin-top:1em">Whitelist (<span id="wlCnt">–</span>)</button>
     </section>
@@ -292,6 +295,8 @@
       <span class="material-symbols-outlined">radar</span><span class="navlbl">Scanner</span></button>
     <button class="navbtn" id="navMap" data-page="map">
       <span class="material-symbols-outlined">map</span><span class="navlbl">Map</span></button>
+    <button class="navbtn" id="navData" data-page="data">
+      <span class="material-symbols-outlined">download</span><span class="navlbl">Data</span></button>
     <button class="navbtn" id="navSettings" data-page="settings">
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>

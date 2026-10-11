@@ -22,6 +22,7 @@ document.addEventListener("visibilitychange", reacquireWake);
 $("navHome").onclick     = () => showPage('home');
 $("navScanner").onclick  = () => showPage('scanner');
 $("navMap").onclick      = openMap;
+$("navData").onclick     = () => showPage('data');
 $("navSettings").onclick = () => showPage('settings');
 showPage('home');   // initial page
 renderCatChips([]); // show the full threat taxonomy (all 0) from the start, so the colours are learnable

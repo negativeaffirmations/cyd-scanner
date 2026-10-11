@@ -4,7 +4,7 @@
 // others call showPage() directly. Wiring lives in main.js (addEventListener convention).
 import { $ } from './util/dom.js';
 
-const PAGES = ['home', 'scanner', 'map', 'settings'];   // real page sections, id="page-<name>"
+const PAGES = ['home', 'scanner', 'map', 'data', 'settings'];   // real page sections, id="page-<name>"
 
 export function showPage(p){
   if (!PAGES.includes(p)) return;
