@@ -368,10 +368,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   white connected). The five pages:
     - **Home** — scan-type counts (4 centered columns; a column grays when its source is off in Scan
       Settings), a counts/tiers card (Probe + Unique over Suspect/Likely/Confirmed), and the
-      **Threats** readout: the full 12-category taxonomy as color-coded cards (3/row, like the CYD) —
+      **Threats** readout: the full 12-category taxonomy as color-coded cards (**4/row** on web) —
       each card's **outline is its category colour at all times** (per-category palette **`CAT_COL`**
       in `js/config.js`; **reuse it everywhere categories appear**), grey fill at 0, tinted when >0;
-      tap a card → that category's device modal.
+      tap a card → that category's device modal. The narrow cards abbreviate two labels
+      (`CAT_CARD_LABEL` in `categories.js`: Tracker→TRACK, Flipper→FLIP).
     - **Scanner** — a Material **icon control row** (Start/Stop ● `fiber_manual_record`↔`stop`,
       Filters, New session `note_add`, Explore `find_in_page`, Scan settings); a compact **threat
       strip** (one `CAT_COL` pill per category — tap the row → a breakdown modal of all categories +
