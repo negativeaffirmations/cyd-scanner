@@ -199,6 +199,11 @@ static constexpr int MAX_SEEN = 400;
 Detection          g_dets[MAX_DET];
 sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 int                g_detCount = 0;
+// Decoded Remote-ID broadcasts (Reply::RemoteId), keyed by emitter MAC. Same lifecycle as g_dets:
+// reset at the top of each requestScan() so it mirrors the current burst.
+static constexpr int MAX_RID = 8;
+RemoteId           g_rids[MAX_RID];
+int                g_ridStoreCount = 0;
 bool               g_linkOk   = false;
 
 Touch    g_touch;
@@ -1564,6 +1569,7 @@ static bool isSelfDet(const Detection& d) {
 // desync the next poll. This does NOT touch g_linkOk -- the caller owns link state (sticky).
 static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
   g_detCount = 0;
+  g_ridStoreCount = 0;
   bool sawStart = false, done = false, anyByte = false;
   uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
   while (LinkSerial.available()) LinkSerial.read();
@@ -1589,6 +1595,21 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
                          memcmp(nd.mac, peer, 6) == 0;
           if (!isSelfDet(nd) && !isPhone) g_detCount++;  // drop our own + the paired phone
         }
+      } else if (t == (uint8_t)Reply::RemoteId && parser.length() >= sizeof(RemoteId)) {
+        // Non-terminating (like Detection): rides inside the Status(1)..Status(0) burst.
+        const RemoteId* r = reinterpret_cast<const RemoteId*>(parser.payload());
+        int slot = -1;
+        for (int k = 0; k < g_ridStoreCount; k++)
+          if (memcmp(g_rids[k].mac, r->mac, 6) == 0) { slot = k; break; }  // replace on MAC match
+        if (slot < 0) {
+          if (g_ridStoreCount < MAX_RID) slot = g_ridStoreCount++;
+          else slot = 0;  // full: overwrite index 0 (store is rebuilt every poll, so rarely hit)
+        }
+        memcpy(&g_rids[slot], r, sizeof(RemoteId));
+        // TEMPORARY increment-2 verification aid; increment 3 replaces this with real UI.
+        Serial.printf("[RID] %02X:%02X:%02X:%02X:%02X:%02X uas=%s lat=%.6f lon=%.6f\n",
+                      r->mac[0], r->mac[1], r->mac[2], r->mac[3], r->mac[4], r->mac[5],
+                      r->uasId, r->droneLat / 1e7, r->droneLon / 1e7);
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;

@@ -16,6 +16,7 @@
 #include "link_protocol.h"
 #include "promisc.h"
 #include "ieee154.h"
+#include "remoteid.h"
 
 using namespace link_protocol;
 
@@ -273,9 +274,15 @@ class ScanCB : public NimBLEScanCallbacks {
       if (t == 0x02 && l == 0x15) d.flags |= FLAG_BLE_IBEACON;
       else if (t == 0x12 || t == 0x07) d.flags |= FLAG_BLE_FINDMY;
     }
-    // OpenDroneID rides service data under 16-bit UUID 0xFFFA (presence only).
+    // OpenDroneID rides service data under 16-bit UUID 0xFFFA: flag presence AND decode the
+    // ASTM F3411 broadcast (UAS ID / drone + operator position) from the same advert (receive-only).
     for (uint8_t i = 0, n = dev->getServiceDataCount(); i < n; i++) {
-      if (dev->getServiceDataUUID(i) == NimBLEUUID((uint16_t)0xFFFA)) { d.flags |= FLAG_BLE_ODID; break; }
+      if (dev->getServiceDataUUID(i) == NimBLEUUID((uint16_t)0xFFFA)) {
+        d.flags |= FLAG_BLE_ODID;
+        std::string sd = dev->getServiceData(i);
+        remoteid::ingest(d.mac, (const uint8_t*)sd.data(), sd.size());
+        break;
+      }
     }
 
     // Advertised service UUIDs. The primary (first) is stored full 128-bit big-endian in svc[]
@@ -538,6 +545,14 @@ static void streamTable() {
   sendStatus(1, cnt);
   for (int i = 0; i < cnt; i++) {
     sendFrame((uint8_t)Reply::Detection, &g_streamBuf[i], sizeof(Detection));
+    delay(2);
+  }
+  // Remote-ID decodes ride inside the same burst (before the closing Status). The RID table is
+  // written on the NimBLE task, so copy it under remoteid's own mutex and stream outside it.
+  link_protocol::RemoteId ridBuf[8];
+  int ridCnt = remoteid::snapshot(ridBuf, 8);
+  for (int i = 0; i < ridCnt; i++) {
+    sendFrame((uint8_t)Reply::RemoteId, &ridBuf[i], sizeof(ridBuf[i]));
     delay(2);
   }
   sendStatus(0, cnt);
