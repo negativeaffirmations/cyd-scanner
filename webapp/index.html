@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261011d">
+<link rel="stylesheet" href="style.css?v=20261011e">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -28,21 +28,24 @@
     <section class="page visible" id="page-home">
       <button id="connectBtn">Connect to scanner</button>
 
-      <!-- Scan types: 4 centered columns (title over count); a column grays out when its source is off -->
-      <div class="card scantypes">
-        <div class="st" id="st24"><span class="k">2.4</span><span class="v" id="w24">–</span></div>
-        <div class="st" id="st5"><span class="k">5G</span><span class="v" id="w5">–</span></div>
-        <div class="st" id="stble"><span class="k">BLE</span><span class="v" id="ble">–</span></div>
-        <div class="st" id="st154"><span class="k">15.4</span><span class="v" id="z154">–</span></div>
-      </div>
-
-      <!-- Counts + tiers in one card: all 5 in a single row of equal-width columns (title over count) -->
-      <div class="card statcard">
-        <div class="st"><span class="k">Probe reqs</span><span class="v" id="prb">–</span></div>
-        <div class="st"><span class="k">Unique</span><span class="v" id="uniq">–</span></div>
-        <div class="st"><span class="k">Suspect</span><span class="v" id="susp">–</span></div>
-        <div class="st"><span class="k">Likely</span><span class="v" id="lk">–</span></div>
-        <div class="st"><span class="k">Confirmed</span><span class="v" id="conf">–</span></div>
+      <!-- One summary card: device counts (4 cols) above a divider, then probe/unique + threat tiers (5 cols) -->
+      <div class="card hometop">
+        <!-- Scan types: 4 centered columns (title over count); a column grays out when its source is off -->
+        <div class="scantypes">
+          <div class="st" id="st24"><span class="k">2.4</span><span class="v" id="w24">–</span></div>
+          <div class="st" id="st5"><span class="k">5G</span><span class="v" id="w5">–</span></div>
+          <div class="st" id="stble"><span class="k">BLE</span><span class="v" id="ble">–</span></div>
+          <div class="st" id="st154"><span class="k">15.4</span><span class="v" id="z154">–</span></div>
+        </div>
+        <div class="hrule"></div>
+        <!-- Probe/Unique + threat tiers: all 5 in a single row of equal-width columns -->
+        <div class="statcard">
+          <div class="st"><span class="k">Probe reqs</span><span class="v" id="prb">–</span></div>
+          <div class="st"><span class="k">Unique</span><span class="v" id="uniq">–</span></div>
+          <div class="st"><span class="k">Suspect</span><span class="v" id="susp">–</span></div>
+          <div class="st"><span class="k">Likely</span><span class="v" id="lk">–</span></div>
+          <div class="st"><span class="k">Confirmed</span><span class="v" id="conf">–</span></div>
+        </div>
       </div>
 
       <h3 style="margin:.5em 0 .3em">Threats</h3>
@@ -50,7 +53,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;threats-4</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;home-card</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->

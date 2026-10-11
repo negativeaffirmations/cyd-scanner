@@ -46,8 +46,10 @@ button:disabled { opacity: .45; }
 .st.off { opacity:.3; }                                // scan source not collected under the current config
 .st.off .v { color:$color-text-muted; }
 
-.scantypes { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:12px 0; }
-.statcard  { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin:12px 0; }  // Probe/Unique/Suspect/Likely/Confirmed, one equal-width row
+.scantypes { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.statcard  { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }  // Probe/Unique/Suspect/Likely/Confirmed, one equal-width row
+.hometop { margin:12px 0; }                                     // merged top summary card
+.hometop .hrule { border-top:1px solid $color-border; margin:10px 0; }   // divider: device counts | the rest
 
 // App-bar status icons (time / GPS / DB): small, white when active / gray when not.
 .si { display:inline-flex; align-items:center; color:$color-text-muted; }

@@ -158,14 +158,21 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
-  margin: 12px 0;
 }
 
 .statcard {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 8px;
+}
+
+.hometop {
   margin: 12px 0;
+}
+
+.hometop .hrule {
+  border-top: 1px solid #30363d;
+  margin: 10px 0;
 }
 
 .si {
