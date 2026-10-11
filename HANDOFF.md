@@ -29,6 +29,22 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — device-detail sighting-trail map (2026-10-11, webapp-only, pushed + Pages-deployed)
+The Scanner-page device-detail modal (`openLiveDetail`) now shows a **map at the bottom** of where a
+device was seen. The live DETS stream carries **no per-detection GPS**, so this is a webapp-side
+**sighting trail**: new `webapp/js/features/sightings.js` logs the phone's **own** current GPS fix
+(`state.lastGps`) for every seen MAC on each snapshot (~8 m move threshold so a stationary phone
+refreshes one point instead of piling duplicates; capped 240 pts/MAC, 500 MACs; in-memory, cleared on
+disconnect). Same wardriving model as the Map page. Refactored the modal map into a shared
+`renderDetailMap(points,msg)` in `features/detail.js` that owns the single Leaflet instance on
+`#detMap` (two maps on one div would throw) — Explore detail now passes its one logged fix through it;
+live detail passes the trail (dashed connector, newest marker highlighted, popup = RSSI + time).
+Wired: `detections.js renderDets → recordSightings`, `connection.js onDisconnect → clearSightings`.
+**Only fills while GPS is active + the user moves**; otherwise a context hint. No firmware/protocol
+change, no CSS change (so no `style.css` recompile / `?v=` bump). ES-module-syntax verified + no
+import cycle (categories.js → detail.js is one-way). **Static-verified only — needs an Android-Chrome
+GPS-walk smoke test** (rolls into the redesign's one open test item).
+
 ## Webapp cache-busting (2026-10-11)
 `webapp/index.html` links the stylesheet as `style.css?v=<token>` — **bump the `?v=` token whenever
 `style.css` changes** so phones (which can't hard-refresh and keep a stale cached CSS) fetch the new

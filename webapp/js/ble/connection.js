@@ -8,6 +8,7 @@ import { startGps } from '../gps.js';
 import { onStatus } from './status.js';
 import { onLogData } from './download.js';
 import { onDets } from '../features/detections.js';
+import { clearSightings } from '../features/sightings.js';
 import { acquireWake, releaseWake } from '../wakelock.js';
 
 export async function connect(){
@@ -52,6 +53,7 @@ export async function connect(){
 }
 
 export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); state.connected=false;
+  clearSightings();   // drop the in-memory per-device sighting trails for this session
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; state.lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";

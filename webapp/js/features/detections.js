@@ -10,6 +10,7 @@ import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
 import { tierNum, fmtTimecode, flagBadges } from '../util/format.js';
 import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
+import { recordSightings } from './sightings.js';
 
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
@@ -112,6 +113,7 @@ export function setScanMode(live){
 }
 export function renderDets(rows){   // live view
   state.lastDetRows = rows;
+  recordSightings(rows);   // log each seen MAC at the phone's current GPS fix (for the detail-modal trail)
   setScanMode(true);
   const shown = liveFilter(rows);
   renderDetList($("dets"), shown, {mode:"live", onRowClick: openLiveDetail,

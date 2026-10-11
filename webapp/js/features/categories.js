@@ -6,6 +6,8 @@ import { $, esc } from '../util/dom.js';
 import { tierNum, flagBadges } from '../util/format.js';
 import { TIER_COL, TIER_NAMES, FLAG_BADGES, CAT_COL } from '../config.js';
 import { fillDetailWhitelist } from './whitelist.js';
+import { renderDetailMap } from './detail.js';
+import { getSightings, haveAnyFix } from './sightings.js';
 
 // DETS v5 category id -> name (must match the CYD's Category enum order).
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -74,8 +76,10 @@ export function openCatModal(catId){
   }
   $("catDlg").showModal();
 }
-// Live-detection detail (reuses the detDlg modal; no per-detection GPS in the live stream). Shown
-// when a live row OR a category-modal row is tapped; carries the whitelist add/manage action.
+// Live-detection detail (reuses the detDlg modal). The live DETS stream carries no per-detection
+// GPS, so the map plots this device's SIGHTING TRAIL — the phone's own positions each time the MAC
+// was seen this session (see sightings.js). Shown when a live row OR a category-modal row is tapped;
+// carries the whitelist add/manage action.
 export function openLiveDetail(r){
   const tn = rowTier(r);
   const sig = (r.sources||[]).slice().sort((a,b)=>b.rssi-a.rssi).map(s=>s.tag+" "+s.rssi+" dBm").join(", ") || "?";
@@ -89,8 +93,11 @@ export function openLiveDetail(r){
   $("detInfo").innerHTML = rowsKv.map(([k,v])=>
     `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
   fillDetailWhitelist(r.mac, r.muted);
-  $("detMap").style.display = "none";
-  $("detMapMsg").style.display = ""; $("detMapMsg").textContent = "Live detection — open the Map or a session for GPS.";
+  const pts = getSightings(r.mac);
+  const msg = pts.length ? "" : (haveAnyFix()
+    ? "No GPS-tagged sightings yet — move while scanning to map where this device is seen."
+    : "Enable GPS (Sync time & GPS in Settings) to map where devices are seen.");
+  renderDetailMap(pts, msg);
   $("detDlg").showModal();
 }
 

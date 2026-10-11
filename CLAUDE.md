@@ -380,6 +380,13 @@ back (5 GHz included). Things that matter, learned the hard way:
       (not an inner pane; a jump-to-top button appears bottom-right once scrolled). Tap a row → a
       **device modal** (all info, per-source RSSI; + a GPS mini-map for loaded-log rows) with an **Add
       to whitelist** action (`A:mac,…`; a whitelisted device links to the Whitelist manager). The
+      device modal also shows a **map at the bottom** of **where the device was seen**: for a live row
+      this is a **sighting trail** computed in the webapp (`features/sightings.js`) — the DETS stream
+      carries NO per-detection GPS, so each snapshot logs the **phone's own** current fix for every
+      seen MAC (the same wardriving model as the Map page), plotted as a dashed trail (newest marker
+      highlighted); it only fills while GPS is active and you move, and is in-memory/cleared on
+      disconnect. For a loaded-log (Explore) row it's the single logged fix. The shared map renderer
+      (`renderDetailMap` in `features/detail.js`) owns the one Leaflet instance on `#detMap`. The
       **Explore** viewer (pick a past session → filter/sort → same tall rows) also lives here; the
       **Filters** modal narrows the live list by source/threats.
     - **Map** — wardriving map (Leaflet/OSM): a session's GPS'd detections grouped by fix, colored by
