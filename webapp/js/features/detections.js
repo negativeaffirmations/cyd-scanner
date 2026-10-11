@@ -104,11 +104,10 @@ export function applyLiveFilter(){   // called when a Filters-modal control chan
     "PRB":$("lfprb").checked, "154":$("lf154").checked } };
   renderDets(state.lastDetRows || []);
 }
-// Scan title indicator: live vs a loaded log. NOTE: the two icon names below are PLACEHOLDERS
-// pending the user's choice from the options offered.
+// Scan title indicator: 'radar' (live scan, sweeping) vs 'description' (a loaded log file).
 export function setScanMode(live){
   const el = $("scanModeIcon"); if (!el) return;
-  el.textContent = live ? "sensors" : "folder_open";
+  el.textContent = live ? "radar" : "description";
   el.title = live ? "Live scan" : "Loaded log";
 }
 export function renderDets(rows){   // live view
