@@ -206,8 +206,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   device-detail screen shows a `-- Remote-ID --` block (drone ID, drone + operator lat/lon, height,
   geo-alt, speed, heading — reused by the scanner detail AND the category drill-down), and a per-emitter
   `"evt":"rid"` NDJSON line is logged; the temporary serial readout was removed. CYD-only, no protocol
-  bump. **Still to come:** increment 4 = web-app Map plotting of drone + operator positions. Plan:
-  [docs/remoteid-decode.md](docs/remoteid-decode.md).
+  bump. **Increment 4 (DONE — DETS RID block + web-app map):** the CYD appends a RID block to the DETS
+  phone stream (v6, CYD→phone — no link bump), and the web app shows a Remote-ID section + plots the
+  drone + operator positions (green drone marker, operator marker, connecting line) on the device-modal
+  map and the Map page (live from the stream, and from logged `"evt":"rid"` lines). **Remote-ID decode
+  is now complete (increments 1–4).** Plan: [docs/remoteid-decode.md](docs/remoteid-decode.md).
   It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
   a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,
   `rid_count`. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
@@ -372,17 +375,24 @@ back (5 GHz included). Things that matter, learned the hard way:
     scan on/off, **`lock`** = display/touch lock state 0/1)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
-    scan cycle. **v5 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
+    scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
     `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
     at 12). `name` is the advertised name, or the device's **MAC as text** when it has none (so
     nameless devices stay distinguishable — see `groupName()`). `ftier` = follow tier (0 none /
     1 PERSISTENT / 2 FOLLOWING), `fscore` = 0..100 follow
     score, `muted` = 1 when whitelisted, **`flags`** = decimal OR of the device's `DetFlags` bits
     (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) for the web badges, **`cat`** = threat-category id
-    (matches the CYD `Category` enum) driving the web category breakdown. Fields were appended across
-    versions (follow in v3, `flags` in v4, `cat` in v5); older parsers reading the earlier fixed
-    fields ignore the extras. The web app renders it as the Scanner page's **tall, tappable live list**
-    (tier-colored, follow + flag markers; tap a row → device modal) + the threat strip/breakdown.
+    (matches the CYD `Category` enum) driving the web category breakdown. **v6 appends a Remote-ID
+    sub-block** after the detection rows, ONLY when ≥1 RID is held: a `R:<ridCount>` header then one
+    row per emitter `mac\tuas\tdlat\tdlon\tolat\tolon\th\talt\tspd\thdg\toid` (drone + operator
+    lat/lon decimal deg, height/geo-alt m, speed m/s, heading deg, UAS ID / operator ID; unknown
+    fields empty) — the web app plots the drone + operator on the device-modal map and the Map page.
+    Fields/blocks were appended across versions (follow in v3, `flags` in v4, `cat` in v5, the RID
+    block in v6); older parsers read the fixed detection fields / `count` rows and ignore the extras,
+    and the web parser skips any unrecognized line. The web app renders the rows as the Scanner page's
+    **tall, tappable live list** (tier-colored, follow + flag markers; tap a row → device modal) + the
+    threat strip/breakdown. (DETS versioning is the CYD→phone stream's own; it is NOT the CYD↔C5 link
+    `PROTOCOL_VERSION`.)
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app

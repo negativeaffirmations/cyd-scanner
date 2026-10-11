@@ -1,7 +1,7 @@
 // Detection detail modal (info + GPS mini-map). Used by the Explore Scan Viewer rows.
 import { $, esc } from '../util/dom.js';
 import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
-import { TIER_COL } from '../config.js';
+import { TIER_COL, CAT_COL } from '../config.js';
 import { newMap } from './map.js';
 import { fillDetailWhitelist } from './whitelist.js';
 
@@ -11,9 +11,14 @@ const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"
 // Shared detDlg mini-map renderer — OWNS the single Leaflet instance on #detMap, so both the Explore
 // detail (one point) and the live detail (a sighting trail) reuse it (two Leaflet maps on one div
 // would throw). `points` = [{lat,lon,tier,rssi,t}] oldest-first; pass [] to hide the map and show `msg`.
-export function renderDetailMap(points, msg){
+// Optional `rid` = {dlat,dlon,olat,olon} (any null/NaN) adds absolute Remote-ID drone/operator markers
+// (+ a link line when both are known), independent of the sighting-trail points.
+export function renderDetailMap(points, msg, rid){
   const pts = (points||[]).filter(p=>isFinite(p.lat)&&isFinite(p.lon)&&!(p.lat===0&&p.lon===0));
-  const has = pts.length > 0;
+  const okLL = (a,b)=> a!=null && b!=null && isFinite(a) && isFinite(b) && !(a===0&&b===0);
+  const drone = rid && okLL(rid.dlat,rid.dlon) ? [rid.dlat,rid.dlon] : null;
+  const oper  = rid && okLL(rid.olat,rid.olon) ? [rid.olat,rid.olon] : null;
+  const has = pts.length > 0 || !!drone || !!oper;
   $("detMap").style.display = has ? "" : "none";
   $("detMapMsg").style.display = has ? "none" : "";
   $("detMapMsg").textContent = msg || "No GPS fix for this detection.";
@@ -31,8 +36,17 @@ export function renderDetailMap(points, msg){
       L.circleMarker([p.lat,p.lon],{radius:last?9:5,color:col,weight:2,fillColor:col,
         fillOpacity:last?.8:.5}).addTo(detLayer).bindPopup(pop);
     });
-    if(pts.length>1) detMap.fitBounds(L.latLngBounds(latlngs).pad(0.3));
-    else detMap.setView(latlngs[0],17);
+    const all = latlngs.slice();
+    if(drone){ all.push(drone);
+      L.circleMarker(drone,{radius:9,color:CAT_COL[9],weight:2,fillColor:CAT_COL[9],fillOpacity:.8})
+        .addTo(detLayer).bindPopup("Drone"); }
+    if(oper){ all.push(oper);
+      L.circleMarker(oper,{radius:6,color:"#ffffff",weight:3,fillColor:CAT_COL[9],fillOpacity:.5})
+        .addTo(detLayer).bindPopup("Operator"); }
+    if(drone && oper)
+      L.polyline([drone,oper],{color:CAT_COL[9],weight:2,opacity:.8}).addTo(detLayer);
+    if(all.length>1) detMap.fitBounds(L.latLngBounds(all).pad(0.3));
+    else detMap.setView(all[0],17);
   }, 80);
 }
 export function openDetail(r){

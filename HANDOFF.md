@@ -33,6 +33,29 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — Remote-ID increment 4: DETS RID block + web-app map (2026-10-11, branch `remoteid-ui`, CYD FLASHED COM14; webapp static-verified)
+Final Remote-ID increment — carries the CYD's decoded RID (`g_rids[]`) to the phone and plots it.
+**No link `PROTOCOL_VERSION` bump, no C5 change** (`src/c5/` + `lib/link_protocol/` untouched, still v8);
+DETS is the CYD→phone BLE stream, versioned separately (now **v6**).
+- **CYD** (`pushDetections`, `src/cyd/main.cpp`): after the `n` detection rows, when `g_ridStoreCount≥1`,
+  appends a `R:<ridCount>` header + one 11-col tab row per emitter
+  `mac\tuas\tdlat\tdlon\tolat\tolon\th\talt\tspd\thdg\toid` (coords `%.6f` empty at sentinel, h/alt m,
+  spd m/s, hdg deg; `uas`/`oid` via `sanitizeField`; `row[256]`, `detsNotify`+`delay(6)` pacing). Block
+  is appended (old parsers read `n` rows then wait for the next `D:` → unaffected).
+- **Webapp** (JS-only, no CSS/SCSS change): `state.rids` (by lowercase MAC, atomic per-snapshot swap);
+  `detections.js` parses the `R:` block + skips unrecognized lines; `detail.js`
+  `renderDetailMap(points,msg,rid)` adds a drone (`CAT_COL[9]` green) + operator marker + connecting
+  line; `categories.js openLiveDetail` adds a Remote-ID kv section; `data/parse.js` extracts `evt:"rid"`
+  fields (+ a latent fix: `parseScanNdjson` now skips `evt` lines, which carry a `mac` and were being
+  mis-parsed as detections — reviewer confirmed no real detections dropped); `map.js plotRid()` plots
+  logged + live RID (separate `mapRidEvents` list so the drone/operator GPS bypasses the phone-fix
+  filter), gated by the events filter. **`#uiver` → `ui 2026-10-11 · rid-map`** (JS-only, so `style.css?v=`
+  untouched — note JS rides the 10-min Pages revalidation; the `#uiver` flip signals the new build).
+- **Builds** SUCCESS both envs (CYD Flash 44.9% / RAM 33.4%; c5 sanity SUCCESS). Reviewer: no blockers
+  (row buffer safe, backward-compat both directions, atomic RID update/self-heal, single `#detMap`
+  Leaflet instance, clean import DAG). **CYD FLASHED COM14.** **Webapp static-verified only — in-browser
+  (Android Chrome + a live RID over the phone link, or a loaded `evt:rid` log) still TODO.**
+
 ## Done — HOME threat tiles: per-category colours + threat-score badge (2026-10-11, branch `remoteid-ui`, CYD FLASHED COM14)
 User-requested consistency fix: the CYD HOME category tiles were coloured by **tier** while the web app
 colours the same categories by **category hue** (`CAT_COL`). Aligned the CYD to the web app:
@@ -527,8 +550,10 @@ board rejects a v7 peer, so keep them in lockstep on future protocol bumps. The 
 (COM12, MAC `a4:cb:8f:da:45:b0`) now runs the ODID bench transmitter.
 **Latest flashes (2026-10-11 this session):** **BOTH boards flashed to protocol v8** on branch
 `remoteid-decode` — Remote-ID increment 2 (C5 COM18 `303A:1001`, CYD COM14 `1A86:7523`, battery/5V
-off), validated end-to-end against the `tools/odid-tx/` S3 transmitter. Also flashed the spare
-**ESP32-S3 (COM12 `303A:1001`)** with the ODID bench transmitter. Earlier on `main`: CYD web
+off), validated end-to-end against the `tools/odid-tx/` S3 transmitter. Then on branch `remoteid-ui`
+the **CYD was reflashed (COM14) several more times — Remote-ID increment 3, the HOME per-category tile
+colours + score badge, and increment 4 (DETS v6 RID block)** — all CYD-only, protocol still v8 (C5 not
+reflashed). Also flashed the spare **ESP32-S3 (COM12 `303A:1001`)** with the ODID bench transmitter. Earlier on `main`: CYD web
 lock/unlock + follower RPA guard + P3 log hardening; C5 Remote-ID decode increment 1. 2026-10-10:
 CYD camera OUIs + HOME readout (`DB_GEN` 3); C5 associated-client capture + BLE-pause starvation fix
 + 2.4 ch 1–11 + 5 GHz promiscuous sweep. Ports THIS session: CYD = CH340 `1A86:7523` = COM14; C5
@@ -570,8 +595,14 @@ have (#5).
    phone and reported it **working** (no unpushed webapp version outstanding). Treat the redesign as
    field-confirmed; file a fresh item only if a specific page/control misbehaves. Re-verify a deploy
    anytime with `gh api repos/negativeaffirmations/cyd-scanner/pages/builds/latest --jq .status`.
-5. **Remote-ID DECODE (ASTM F3411) — IN PROGRESS on branch `remoteid-decode`.** Design +
-   increment plan in [docs/remoteid-decode.md](docs/remoteid-decode.md).
+5. **~~Remote-ID DECODE (ASTM F3411)~~ — COMPLETE (increments 1–4, 2026-10-11).** Landed across
+   branches `remoteid-decode` (inc 1–2, merged to `main` `487fd96`) and `remoteid-ui` (inc 3–4). Full
+   end-to-end: C5 decodes → v8 link frame → CYD store + detail UI + NDJSON `rid` → DETS v6 → web-app
+   map (drone + operator plotting). Validated inc 1–2 on the bench vs `tools/odid-tx`; inc 3 confirmed
+   on-device by the user; inc 4 webapp map is **static-verified, pending an Android-Chrome in-browser
+   check**. Only residual idea: **BT5 extended-scan (Long-Range ODID packs)** — a later, measured
+   change (check the BLE/15.4 coexistence rule first). Design + increment log in
+   [docs/remoteid-decode.md](docs/remoteid-decode.md).
    - **Increment 1 DONE (2026-10-11, C5 FLASHED COM18, no protocol change):** `src/c5/remoteid.*`
      clean-room decodes the OpenDroneID messages (Basic ID / Location / System / Operator ID, incl.
      Message Pack + the BLE `0x0D` legacy framing) from the `0xFFFA` BLE service data already captured
@@ -585,10 +616,11 @@ have (#5).
      Detection by MAC (`g_rids[8]`) with a temporary serial `[RID]` readout. Confirmed end-to-end
      against the new `tools/odid-tx/` S3 transmitter: C5 + CYD both print matching `[RID]` lines. See
      the "Done — Remote-ID increment 2" entry above.
-   - **Increment 3 (next):** CYD detail UI + NDJSON `rid` log line (can consume the snapshot with no
-     further locking). Then (4) web-app Map plotting of drone + operator positions. BLE-extended-scan
-     (BT5 packs) coexistence risk stays a later, measured change — check against the BLE/15.4
-     coexistence rule.
+   - **Increment 3 DONE (2026-10-11, CYD FLASHED, user-confirmed on-device):** `-- Remote-ID --` block
+     on the device-detail screen + per-emitter `"evt":"rid"` NDJSON line; temp serial readout removed.
+   - **Increment 4 DONE (2026-10-11, CYD FLASHED; webapp static-verified):** DETS v6 RID block
+     (CYD→phone) + web-app Remote-ID section and drone/operator map plotting (live + logged). See the
+     two "Done — Remote-ID increment 3/4" entries above.
 6. **~~Phase-5 rotating-RPA follower false-positive~~ — HEURISTIC GUARD DONE (2026-10-11, CYD FLASHED).**
    `computeFollowScores()` now refuses to escalate a **benign BLE Resolvable Private Address** to
    FOLLOWING: `macIsBleRpa()` tests the MAC's top two bits (`0b01` = RPA, the privacy-rotating address

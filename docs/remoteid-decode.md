@@ -74,8 +74,11 @@ per advert.
    ID, drone + operator lat/lon, height, geo-alt, speed, heading) on the device-detail screen (reused
    by the scanner detail + category drill-down), shown per value-sentinel; a per-emitter `"evt":"rid"`
    NDJSON line (rate-limited ~once/30 s); temporary serial readout removed. CYD-only, no protocol bump.
-4. **Web app map.** Plot the drone + operator positions (and a line between them) on the Map
-   page from the decoded fields / log, like the event pins.
+4. **Web app map. — DONE (2026-10-11).** The CYD appends a RID block to the DETS phone stream
+   (`R:<ridCount>` + one row per emitter; DETS v6, CYD→phone, no link bump). The web app plots the
+   drone + operator positions (green drone marker, operator marker, connecting line) on the
+   device-modal map and the Map page — live from the stream and from logged `"evt":"rid"` lines —
+   and shows a Remote-ID section in the device modal. **Remote-ID decode complete (increments 1–4).**
 
 ### Planned `RemoteId` link struct (increment 2)
 

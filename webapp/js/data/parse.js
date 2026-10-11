@@ -30,7 +30,7 @@ export function parseScanNdjson(text){
   for(const ln of (text||"").split(/\r?\n/)){
     if(!ln.trim()) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
-    if(!o || typeof o!=="object" || !o.mac) continue;
+    if(!o || typeof o!=="object" || !o.mac || o.evt) continue;   // evt lines (incl. "rid", which carries a mac) are events, not rows
     const s=v=>v==null?"":String(v);
     rows.push({epoch:parseInt(o.epoch,10)||0, ms:parseInt(o.ms,10)||0,
       lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon),
@@ -54,8 +54,14 @@ export function parseScanEvents(text){
     if(ln[0]!=="{" || !ln.includes('"evt"')) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
     if(!o || !o.evt) continue;
-    out.push({evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
-      ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)});
+    const ev={evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
+      ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)};
+    if(ev.evt==="rid"){   // Remote-ID decode: absolute drone/operator fix + telemetry (absent -> NaN / "")
+      const f=v=>v==null?NaN:parseFloat(v), n=v=>v==null?NaN:parseInt(v,10), s=v=>v==null?"":String(v);
+      Object.assign(ev,{dlat:f(o.dlat), dlon:f(o.dlon), olat:f(o.olat), olon:f(o.olon),
+        h:n(o.h), alt:n(o.alt), spd:f(o.spd), hdg:n(o.hdg), uas:s(o.uas), oid:s(o.oid), mac:s(o.mac)});
+    }
+    out.push(ev);
   }
   return out;
 }

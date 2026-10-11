@@ -1749,6 +1749,11 @@ static void pushStatus() {
 // field, <flags>: the decimal DetFlags bits (FLAGS_NOTABLE only: iBeacon 8 / Find My 16 /
 // Pwnagotchi 32 / Evil Twin 64 / Drone RID 128) OR'd across the device's members, 0 if none.
 // Older parsers read fields 0..9 and ignore it.
+// v6 appends a trailing RID block AFTER the n detection rows, only while a Remote-ID emitter is
+// held: an "R:<ridCount>" header then ridCount rows of 11 tab-separated fields (always 11 columns,
+// unknown = empty): mac uas dlat dlon olat olon h alt spd hdg oid (lat/lon %.6f deg, h/alt m,
+// spd m/s, hdg deg; spd+hdg are both empty when heading is unknown). Older parsers read exactly n
+// rows then wait for the next "D:" header, so the appended block does not affect them.
 // The app drops rows whose seq != the current header's and swaps the list in only when
 // the snapshot is complete. Fallbacks considered and held in reserve if this proves
 // lossy: (a) a length-prefixed blob like the log download, (b) a polled READ
@@ -1785,6 +1790,51 @@ static void pushDetections() {
     snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)groupCategory(g));  // v5 trailing: category id
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
+  }
+
+  // v6 trailing RID block (only while a Remote-ID emitter is held): "R:<n>" then n 11-field rows.
+  if (g_ridStoreCount >= 1) {
+    int ridCount = min(g_ridStoreCount, MAX_RID);
+    char ridHdr[16];
+    snprintf(ridHdr, sizeof(ridHdr), "R:%d", ridCount);
+    phone::detsNotify(String(ridHdr));
+    for (int i = 0; i < ridCount; i++) {
+      const RemoteId& r = g_rids[i];
+      char uas[24], oid[24];
+      sanitizeField(uas, sizeof(uas), r.uasId);
+      sanitizeField(oid, sizeof(oid), r.operatorId);
+      char row[256];
+      int len = snprintf(row, sizeof(row), "%02X:%02X:%02X:%02X:%02X:%02X\t%s\t",
+                         r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5], uas);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      // Each unknown field is emitted EMPTY (separators always present -> always 11 columns).
+      if (r.droneLat != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.droneLat / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.droneLon != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.droneLon / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.operatorLat != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.operatorLat / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.operatorLon != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.operatorLon / 1e7);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.heightM != RID_ALT_UNK) len += snprintf(row + len, sizeof(row) - len, "%d", (int)r.heightM);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.altGeoM != RID_ALT_UNK) len += snprintf(row + len, sizeof(row) - len, "%d", (int)r.altGeoM);
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      len += snprintf(row + len, sizeof(row) - len, "\t");
+      if (r.headingDeg != RID_HDG_UNK)  // speed + heading are gated together
+        len += snprintf(row + len, sizeof(row) - len, "%.1f\t%u\t", r.speedCms / 100.0, (unsigned)r.headingDeg);
+      else
+        len += snprintf(row + len, sizeof(row) - len, "\t\t");
+      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+      snprintf(row + len, sizeof(row) - len, "%s", oid);
+      phone::detsNotify(String(row));
+      delay(6);
+    }
   }
 }
 
