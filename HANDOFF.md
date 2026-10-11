@@ -45,12 +45,22 @@ change, no CSS change (so no `style.css` recompile / `?v=` bump). ES-module-synt
 import cycle (categories.js → detail.js is one-way). **Static-verified only — needs an Android-Chrome
 GPS-walk smoke test** (rolls into the redesign's one open test item).
 
-## Webapp cache-busting (2026-10-11)
-`webapp/index.html` links the stylesheet as `style.css?v=<token>` — **bump the `?v=` token whenever
-`style.css` changes** so phones (which can't hard-refresh and keep a stale cached CSS) fetch the new
-file. The HTML itself is `no-cache`, so it re-reads the new URL. (Diagnosed when a correct
-`.dets.tall { overflow:visible }` rule wasn't taking effect on the phone — it was serving old CSS.)
-JS modules aren't versioned (no build step); they've been refreshing in practice.
+## Webapp cache / deploy-propagation (updated 2026-10-11)
+**GitHub Pages serves EVERY asset — `index.html` included — with `cache-control: max-age=600` (verified
+via `curl -D-`), and that real HTTP header overrides the `<meta http-equiv="Cache-Control" no-cache>`
+in the HTML (browsers largely ignore the meta for caching).** So after a push, an already-loaded /
+recently-loaded phone keeps serving the **cached old HTML + old JS for up to ~10 min**; Pages is not
+configurable to change this and there's no no-build way around it. This is why a fresh deploy can look
+unchanged on the phone for several minutes. Practical signals/levers:
+- **`#uiver` footer** (bottom of `index.html`, e.g. `ui 2026-10-11 · det-map`) — **bump it on EVERY
+  webapp deploy** (it's the human "is the new build live?" readout). Once the footer flips to the new
+  value the HTML has refreshed, and since all assets share the same deploy time + max-age the matching
+  JS is live too. It had been stale at `2026-10-10` through the whole redesign — keep it current.
+- **`style.css?v=<token>`** — **bump the token whenever `style.css` changes** so the (eventually
+  refreshed) HTML points at a new CSS URL. (JS modules can't be token-versioned without a build step —
+  static-import URLs are fixed — so they ride the 10-min max-age revalidation.)
+- To force-fresh on the phone now: wait ~10 min after the Pages build, then fully reload (reopen the
+  tab / clear site data). A soft refresh within the window still serves cache.
 
 ## Done — webapp redesign (Material bottom-nav), ALL PHASES COMPLETE (2026-10-11, webapp-only, pushed + Pages-deployed)
 Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-component-reuse]].

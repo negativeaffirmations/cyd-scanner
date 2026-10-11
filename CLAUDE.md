@@ -407,9 +407,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   **Styling: SCSS** under `webapp/scss/` (theme in `_variables`; partials `_base`/`_nav`/`_detections`/
   `_banners`/`_map`) → `webapp/style.css` via Dart Sass (`npm run sass:build` or the "Sass: watch" VS
   Code task). **Edit the SCSS**, not the generated-but-committed `style.css` (Pages doesn't run Sass;
-  `node_modules/` git-ignored). **`index.html` links `style.css?v=<token>` — BUMP the token whenever
-  `style.css` changes** so phones (which can't hard-refresh) fetch fresh CSS; the HTML is `no-cache` so
-  it re-reads the versioned URL. **JS = native ES modules** (`<script type="module" src="js/main.js">`,
+  `node_modules/` git-ignored). **Deploy caching:** GitHub Pages serves every asset (HTML included)
+  with `cache-control: max-age=600`, which overrides the HTML's `<meta http-equiv>` no-cache — so a
+  fresh push can look unchanged on an already-loaded phone for ~10 min. **BUMP `style.css?v=<token>`
+  whenever `style.css` changes, and BUMP the `#uiver` footer string on EVERY webapp deploy** (the
+  human "is the new build live?" readout; once it flips, that deploy's JS is live too). JS modules
+  can't be token-versioned (no build step) — they ride the 10-min revalidation. See HANDOFF "Webapp
+  cache / deploy-propagation". **JS = native ES modules** (`<script type="module" src="js/main.js">`,
   no bundler): `config.js`, `state.js` (the one cross-module mutable-state object — ESM exports are
   read-only live bindings), `nav.js`, `wakelock.js`, `util/` (`dom`,`format`), `ble/` (`connection`,
   `status`,`commands`,`download`), `gps.js`, `data/parse.js`, `features/` (`detections`,`categories`,
