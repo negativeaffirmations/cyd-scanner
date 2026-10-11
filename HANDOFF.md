@@ -33,6 +33,27 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — Remote-ID increment 3: CYD detail UI + NDJSON `rid` line (2026-10-11, branch `remoteid-ui`, CYD FLASHED COM14)
+Surfaces the decoded Remote-ID the CYD already stores in `g_rids[]` (from increment 2). **CYD-only, no
+protocol/C5/DETS/web change** (`git diff --stat` = only `src/cyd/main.cpp`; PROTOCOL_VERSION still 8).
+- **Detail UI** (`buildDeviceDetail()`): after "More UUIDs", when a stored `RemoteId` matches the MAC
+  (`ridByMac()`), an orange `-- Remote-ID --` block — Drone ID, **Drone lat / Drone lon** (split rows:
+  a combined "lat, lon" overflows `addField`'s 19-char line — my follow-up tweak), Height, Geo alt,
+  Speed, Heading, Operator, **Oper lat / Oper lon**; each shown only when known (value sentinels:
+  lat/lon 0, alt/height -1000, heading 361, empty string — NOT the `have` bits, which live in the
+  C5-only `remoteid.h`). Reused by the scanner detail AND the category drill-down.
+- **NDJSON `rid` line** (`logRidEvents()`, called after `logNewDetections()`): per-emitter,
+  rate-limited ~once/30 s (reuses `EVENT_LOG_GAP_MS` + a MAX_RID-slot ring):
+  `{"epoch","ms"[,"lat","lon"],"evt":"rid","mac"[,"uas"][,"dlat","dlon"][,"h"][,"alt"][,"spd","hdg"][,"olat","olon"][,"oid"]}`
+  — overflow-safe `lnAppend` into a 512 B line; `uas`/`oid` JSON-escaped; unknown fields omitted.
+- **Removed** the temporary `Serial.printf("[RID]…")` from `requestScan()` (store branch intact).
+- **Build** SUCCESS (CYD Flash 44.8% / RAM 33.3%; c5 sanity build also SUCCESS). Reviewer: no blockers
+  (bounds/format/escape/ring/sentinel all pass; CYD-loop-task only, no race). **CYD FLASHED COM14.**
+- **On-device verify still TODO** (I can't drive the touchscreen or read the SD remotely): with the
+  `tools/odid-tx` S3 still transmitting, open the drone's detail on the CYD to see the `-- Remote-ID --`
+  block, and download a session (web app) to confirm `"evt":"rid"` lines. **Not committed/pushed yet.**
+- **Next:** increment 4 — DETS stream RID fields + web-app Map drone/operator plotting.
+
 ## Done — Remote-ID increment 2: link frame + CYD store (2026-10-11, branch `remoteid-decode`, BOTH BOARDS FLASHED v8 + VALIDATED END-TO-END)
 Increment 2 of the ASTM F3411 decode (HANDOFF outstanding #5; plan in
 [docs/remoteid-decode.md](docs/remoteid-decode.md)). The decoded Remote-ID now crosses the link.

@@ -204,6 +204,16 @@ int                g_detCount = 0;
 static constexpr int MAX_RID = 8;
 RemoteId           g_rids[MAX_RID];
 int                g_ridStoreCount = 0;
+// "Unknown" sentinels in RemoteId fields (match the C5 decoder's values; tested by VALUE, not `have`).
+constexpr int32_t  RID_LL_UNK  = 0;      // lat/lon 0 = unknown
+constexpr int16_t  RID_ALT_UNK = -1000;  // height / geodetic altitude -1000 = unknown
+constexpr uint16_t RID_HDG_UNK = 361;    // heading 361 = unknown
+constexpr size_t   LOG_ID_ESC  = 128;    // escaped uas/operator ID buffer (20 chars x up to 6x escape + NUL)
+static const RemoteId* ridByMac(const uint8_t* mac) {
+  for (int i = 0; i < g_ridStoreCount; i++)
+    if (memcmp(g_rids[i].mac, mac, 6) == 0) return &g_rids[i];
+  return nullptr;
+}
 bool               g_linkOk   = false;
 
 Touch    g_touch;
@@ -1259,6 +1269,61 @@ static void updateEvents() {
   }
 }
 
+// Log one "rid" event line per Remote-ID emitter, rate-limited per MAC to once per EVENT_LOG_GAP_MS.
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"rid","mac":"..",["uas":..,"dlat":..,"dlon":..,"h":..,
+//    "alt":..,"spd":..,"hdg":..,"olat":..,"olon":..,"oid":..]}  (unknown fields omitted)
+// Worst case (two 20-char strings escaping to ~120 B each) stays inside LOG_LINE; lnAppend is overflow-safe.
+static void logRidEvents() {
+  static uint8_t  ringMac[MAX_RID][6];
+  static uint32_t ringLast[MAX_RID];
+  static bool     ringUsed[MAX_RID];
+  static int      ringNext = 0;
+  uint32_t now = millis();
+  for (int i = 0; i < g_ridStoreCount; i++) {
+    const RemoteId& r = g_rids[i];
+    int slot = -1;
+    for (int k = 0; k < MAX_RID; k++)
+      if (ringUsed[k] && memcmp(ringMac[k], r.mac, 6) == 0) { slot = k; break; }
+    if (slot >= 0 && now - ringLast[slot] < EVENT_LOG_GAP_MS) continue;
+    if (slot < 0) {  // first sighting: take the next ring slot (round-robin eviction)
+      slot = ringNext; ringNext = (ringNext + 1) % MAX_RID;
+      memcpy(ringMac[slot], r.mac, 6); ringUsed[slot] = true;
+    }
+    ringLast[slot] = now;
+
+    LogStream& st = activeStream();
+    if (bgCtx() && !st.path[0]) openBgSession();
+    if (!ensureLogFile(st)) return;
+    File f = SD.open(st.path, FILE_APPEND);
+    if (!f) return;
+    char uas[LOG_ID_ESC], oid[LOG_ID_ESC];
+    jsonEscape(uas, sizeof(uas), r.uasId);
+    jsonEscape(oid, sizeof(oid), r.operatorId);
+    char ln[LOG_LINE];
+    int n = 0;
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
+    if (phone::hasGps() && isfinite(phone::lat()) && isfinite(phone::lon()))
+      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+    lnAppend(ln, n, ",\"evt\":\"rid\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
+             r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
+    if (uas[0]) lnAppend(ln, n, ",\"uas\":\"%s\"", uas);
+    if (r.droneLat != RID_LL_UNK || r.droneLon != RID_LL_UNK)
+      lnAppend(ln, n, ",\"dlat\":%.6f,\"dlon\":%.6f", r.droneLat / 1e7, r.droneLon / 1e7);
+    if (r.heightM != RID_ALT_UNK) lnAppend(ln, n, ",\"h\":%d", r.heightM);
+    if (r.altGeoM != RID_ALT_UNK) lnAppend(ln, n, ",\"alt\":%d", r.altGeoM);
+    if (r.headingDeg != RID_HDG_UNK)
+      lnAppend(ln, n, ",\"spd\":%.1f,\"hdg\":%u", r.speedCms / 100.0, (unsigned)r.headingDeg);
+    if (r.operatorLat != RID_LL_UNK || r.operatorLon != RID_LL_UNK)
+      lnAppend(ln, n, ",\"olat\":%.6f,\"olon\":%.6f", r.operatorLat / 1e7, r.operatorLon / 1e7);
+    if (oid[0]) lnAppend(ln, n, ",\"oid\":\"%s\"", oid);
+    if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
+      lnAppend(ln, n, "}\n");
+      if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+    }
+    f.close();
+  }
+}
+
 // Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
 // chunks. The web app reassembles and saves it (no Wi-Fi needed).
 static void streamFileOverBle(const char* path) {
@@ -1606,10 +1671,6 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
           else slot = 0;  // full: overwrite index 0 (store is rebuilt every poll, so rarely hit)
         }
         memcpy(&g_rids[slot], r, sizeof(RemoteId));
-        // TEMPORARY increment-2 verification aid; increment 3 replaces this with real UI.
-        Serial.printf("[RID] %02X:%02X:%02X:%02X:%02X:%02X uas=%s lat=%.6f lon=%.6f\n",
-                      r->mac[0], r->mac[1], r->mac[2], r->mac[3], r->mac[4], r->mac[5],
-                      r->uasId, r->droneLat / 1e7, r->droneLon / 1e7);
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
@@ -3447,6 +3508,29 @@ static void buildDeviceDetail(const uint8_t* mac) {
         o += snprintf(u + o, sizeof(u) - o, k ? " %04X" : "%04X", more[k]);
       addField("More UUIDs", u);
     }
+    const RemoteId* rid = ridByMac(mac);
+    if (rid) {
+      addField("-- Remote-ID --", "", TFT_ORANGE);
+      if (rid->uasId[0]) addField("Drone ID", rid->uasId);
+      if (rid->droneLat != RID_LL_UNK || rid->droneLon != RID_LL_UNK) {
+        // Separate lat/lon rows: a combined "lat, lon" (~21 chars) overflows addField's 19-char line.
+        snprintf(b, sizeof(b), "%.6f", rid->droneLat / 1e7); addField("Drone lat", b);
+        snprintf(b, sizeof(b), "%.6f", rid->droneLon / 1e7); addField("Drone lon", b);
+      }
+      if (rid->heightM != RID_ALT_UNK) { snprintf(b, sizeof(b), "%d m", rid->heightM); addField("Height", b); }
+      if (rid->altGeoM != RID_ALT_UNK) { snprintf(b, sizeof(b), "%d m", rid->altGeoM); addField("Geo alt", b); }
+      if (rid->headingDeg != RID_HDG_UNK) {  // speed + heading both come from the Location message
+        snprintf(b, sizeof(b), "%.1f m/s", rid->speedCms / 100.0);
+        addField("Speed", b);
+        snprintf(b, sizeof(b), "%u deg", (unsigned)rid->headingDeg);  // plain text: glyph not guaranteed in the font
+        addField("Heading", b);
+      }
+      if (rid->operatorId[0]) addField("Operator", rid->operatorId);
+      if (rid->operatorLat != RID_LL_UNK || rid->operatorLon != RID_LL_UNK) {
+        snprintf(b, sizeof(b), "%.6f", rid->operatorLat / 1e7); addField("Oper lat", b);
+        snprintf(b, sizeof(b), "%.6f", rid->operatorLon / 1e7); addField("Oper lon", b);
+      }
+    }
   }
 }
 
@@ -3888,6 +3972,7 @@ static void runScanCycle() {
     enforceLogCap();
   }
   int newCount = logNewDetections();
+  logRidEvents();   // rate-limited per-MAC Remote-ID event lines
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
