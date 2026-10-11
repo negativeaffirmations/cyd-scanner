@@ -536,13 +536,17 @@ body {
 
 .dets.tall {
   max-height: 72vh;
+  margin-inline: -16px;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
 }
 
 .detrow {
   display: flex;
   align-items: stretch;
   gap: 8px;
-  padding: 9px 8px;
+  padding: 10px 14px;
   width: 100%;
   min-height: 74px;
   border-bottom: 1px solid #161b22;

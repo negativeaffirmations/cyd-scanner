@@ -58,9 +58,14 @@
 // --- Tall, tappable detection rows (live scanner + Explore viewer) -------------------------------
 // Two lines (name + RSSI, then source pills + MAC/channel/time), a big tap target that opens the
 // device modal. Left-barred + tinted by the strongest source (reusing the .srcN classes).
-.dets.tall { max-height:72vh; }
+// Full-bleed to the screen edges on mobile: cancel the body's 16px side padding and drop the side
+// border/radius so the list spans the full width (bigger, edge-to-edge rows).
+.dets.tall {
+  max-height:72vh;
+  margin-inline:-16px; border-left:0; border-right:0; border-radius:0;
+}
 .detrow {
-  display:flex; align-items:stretch; gap:8px; padding:9px 8px; width:100%; min-height:74px;
+  display:flex; align-items:stretch; gap:8px; padding:10px 14px; width:100%; min-height:74px;
   border-bottom:1px solid $color-row-sep; cursor:pointer;
 }
 .detrow:last-child { border-bottom:0; }
