@@ -13,7 +13,7 @@ import { openFollowList } from './features/followers.js';
 import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
 import { renderCatChips, renderScanCounts } from './features/categories.js';
-import { applyLiveFilter } from './features/detections.js';
+import { applyLiveFilter, togglePause } from './features/detections.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -41,6 +41,7 @@ wlKindChanged();
 
 $("connectBtn").onclick = connect;
 $("scanBtn").onclick = toggleScan;
+$("pauseBtn").onclick = togglePause;
 $("newSessBtn").onclick = newSession;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
 $("exploreBtn").onclick = openExplore;

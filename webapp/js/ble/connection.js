@@ -7,7 +7,7 @@ import { updateScanBtn, syncTime } from './commands.js';
 import { startGps } from '../gps.js';
 import { onStatus } from './status.js';
 import { onLogData } from './download.js';
-import { onDets } from '../features/detections.js';
+import { onDets, resetPause } from '../features/detections.js';
 import { clearSightings } from '../features/sightings.js';
 import { acquireWake, releaseWake } from '../wakelock.js';
 
@@ -42,7 +42,7 @@ export async function connect(){
     setConn("connected");
     state.connected = true;
     $("connectBtn").style.display = "none";
-    ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
+    ["scanNavBtn","scanBtn","pauseBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
       .forEach(id=>$(id).disabled=false);
     $("wlBtn").disabled=false;
     log("Connected.");
@@ -57,12 +57,12 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; state.lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
+  ["scanNavBtn","scanBtn","pauseBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
     .forEach(id=>$(id).disabled=true);
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
   state.wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
-  state.scanning=false; updateScanBtn();
+  state.scanning=false; updateScanBtn(); resetPause();
   $("scanPanel").style.display="none"; $("exploreView").style.display="none";
   if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';

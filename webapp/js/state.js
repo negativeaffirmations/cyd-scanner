@@ -12,6 +12,7 @@ export const state = {
   connected: false,
   wifiOn: false,        // Wi-Fi download mode toggle
   scanning: false,      // authoritative value comes back via STATUS scan=
+  paused: false,        // live-list view frozen (counts/scanning keep running) — mirrors the CYD PAUSE
 
   // --- LOGDATA download/stream reassembly (see ble/download.js) ---
   dl: { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" },

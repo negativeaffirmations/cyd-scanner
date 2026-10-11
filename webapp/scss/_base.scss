@@ -30,6 +30,7 @@ button:disabled { opacity: .45; }
 }
 #scanBtn.rec      { background:$color-accent; }   // idle -> tap to start (record)
 #scanBtn.scanning { background:$color-danger; }   // scanning -> tap to stop
+#pauseBtn.paused  { background:$color-accent; }   // live list frozen -> tap to resume
 
 .pill { display:inline-block; padding:.15em .6em; border-radius:999px; font-size:.8rem; }
 .up { background:$color-pill-up; } .down { background:$color-pill-down; } .wait { background:$color-pill-wait; }

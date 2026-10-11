@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261011g">
+<link rel="stylesheet" href="style.css?v=20261011h">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -53,7 +53,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;cat-fullnames</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;scan-pause</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -62,6 +62,7 @@
       <!-- scanPanel is always visible on this page now (the old "Scan" toggle button is retired) -->
       <div id="scanPanel" class="iconrow">
         <button id="scanBtn" class="iconbtn rec" disabled title="Start / stop scan" aria-label="Start or stop scan"><span class="material-symbols-outlined">fiber_manual_record</span></button>
+        <button id="pauseBtn" class="iconbtn" disabled title="Pause the live list" aria-label="Pause the live list"><span class="material-symbols-outlined">pause</span></button>
         <button id="filterBtn" class="iconbtn" title="Filters" aria-label="Filters"><span class="material-symbols-outlined">filter_alt</span></button>
         <button id="newSessBtn" class="iconbtn" disabled title="New session" aria-label="New session"><span class="material-symbols-outlined">note_add</span></button>
         <button id="exploreBtn" class="iconbtn" title="Explore a saved log" aria-label="Explore a saved log"><span class="material-symbols-outlined">find_in_page</span></button>

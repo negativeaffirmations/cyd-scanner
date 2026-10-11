@@ -141,9 +141,28 @@ export function renderDets(rows){   // live view
   state.lastDetRows = rows;
   recordSightings(rows);   // log each seen MAC at the phone's current GPS fix (for the detail-modal trail)
   setScanMode(true);
+  renderCatChips(rows);       // counts + strip reflect ALL detections, not the filtered subset
+  renderScanCounts(rows);
+  // PAUSE (mirrors the CYD g_viewFrozen): freeze only the list on the snapshot at pause time; the
+  // counts/strip, sightings trail, and scanning/logging all keep running above.
+  if (state.paused) return;
   const shown = liveFilter(rows);
   renderDetList($("dets"), shown, {mode:"live", onRowClick: openLiveDetail,
     empty: rows.length ? "No devices match the filters…" : "No devices in range yet…"});
-  renderCatChips(rows);       // counts + strip reflect ALL detections, not the filtered subset
-  renderScanCounts(rows);
+}
+// Pause/resume the live list view (CYD PAUSE). Freezes the on-screen rows while the scan keeps
+// running; resume re-renders from the latest snapshot. Counts/strip/sightings never pause.
+export function togglePause(){
+  state.paused = !state.paused;
+  paintPauseBtn();
+  if (!state.paused) renderDets(state.lastDetRows || []);   // resume -> refresh to current data
+}
+export function resetPause(){ state.paused = false; paintPauseBtn(); }   // called on disconnect
+function paintPauseBtn(){
+  const b = $("pauseBtn"); if (!b) return;
+  b.classList.toggle("paused", state.paused);
+  const ic = b.querySelector(".material-symbols-outlined");
+  if (ic) ic.textContent = state.paused ? "play_arrow" : "pause";
+  b.title = state.paused ? "Resume the live list" : "Pause the live list";
+  b.setAttribute("aria-label", b.title);
 }

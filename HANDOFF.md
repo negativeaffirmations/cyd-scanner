@@ -33,6 +33,18 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — webapp Scanner PAUSE button (2026-10-11, webapp-only, pushed)
+User request: a pause control on the Scanner page matching the CYD's PAUSE (`g_viewFrozen`). Added
+`#pauseBtn` to the `#scanPanel` icon row, right after Start/Stop (`pause`↔`play_arrow` icon, accent
+highlight while paused). It **freezes only the live detection list** on the snapshot at pause time; the
+threat counts/strip, the sighting trail, and scanning/logging all keep running — identical to the CYD,
+where the view freezes on `g_frozenRows` while the scan continues. **Client-side only, no CMD/firmware**
+(unlike Start/Stop's `G`/`X`). `state.paused` gates the list render in `renderDets()`; `togglePause()`
++ `resetPause()` (detections.js); wired in `main.js`; added to the connect/disconnect enable lists +
+reset on disconnect (connection.js). SCSS `#pauseBtn.paused` highlight → recompiled `style.css`,
+`style.css?v=20261011h`, `#uiver → scan-pause`. Static-verified (node --check clean); in-browser check
+pending like the rest of the webapp.
+
 ## Done — webapp Home Threats: 3/row × 4 rows + full category labels (2026-10-11, webapp-only, pushed)
 Cosmetic alignment with the CYD HOME readout (user request), on `main` after the Remote-ID merge:
 - **3 cards/row × 4 rows** (was 4/row × 3): `_detections.scss` `.tgrid` `repeat(4,1fr)`→`repeat(3,1fr)`,
