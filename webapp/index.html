@@ -72,9 +72,11 @@
       <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
       <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
 
+      <div id="scanCounts" class="scancounts"></div>
+
       <h3 style="margin:.6em 0 .3em">Live detections
-        <span class="sub" style="font-weight:400">— ⚠ = threat tier · row colored by strongest signal</span></h3>
-      <div id="dets" class="dets"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
+        <span class="sub" style="font-weight:400">— tap a row for details · row colored by strongest signal</span></h3>
+      <div id="dets" class="dets tall"><div class="sub" style="padding:6px">Connect to see live results…</div></div>
 
       <div id="exploreView" style="display:none">
         <h3 style="margin:.6em 0 .2em">Scan Viewer</h3>
@@ -106,7 +108,7 @@
           <input type="range" id="efT1" min="0" max="0" step="1" value="0" disabled>
           <input type="text" id="efText" placeholder="Name or MAC contains…" autocomplete="off" style="margin-top:.5em">
         </div>
-        <div id="scanViewer" class="dets" style="max-height:60vh"></div>
+        <div id="scanViewer" class="dets tall" style="max-height:60vh"></div>
       </div>
 
       <h3 style="margin:.8em 0 .3em">Data</h3>
@@ -205,6 +207,7 @@
       <button id="detClose" class="xbtn" aria-label="Close">&times;</button>
     </div>
     <div id="detInfo"></div>
+    <div id="detActions"></div>
     <div id="detMapMsg" class="sub" style="display:none;margin-top:.7em"></div>
     <div id="detMap"></div>
   </dialog>

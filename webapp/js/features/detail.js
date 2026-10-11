@@ -3,6 +3,7 @@ import { $, esc } from '../util/dom.js';
 import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
 import { TIER_COL } from '../config.js';
 import { newMap } from './map.js';
+import { fillDetailWhitelist } from './whitelist.js';
 
 let detMap=null, detLayer=null;
 const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"Probe request","154":"802.15.4 (Zigbee/Thread)"};
@@ -21,6 +22,7 @@ export function openDetail(r){
   rowsKv.push(["Time", r.epoch>0 ? fmtEpoch(r.epoch) : "unsynced (+"+Math.round(r.ms/1000)+"s since boot)"]);
   rowsKv.push(["GPS", hasGps(r) ? r.lat.toFixed(6)+", "+r.lon.toFixed(6) : "none"]);
   $("detInfo").innerHTML=rowsKv.map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  fillDetailWhitelist(r.mac, !!r.wl);
   const gps=hasGps(r);
   $("detMap").style.display=gps?"":"none";
   $("detMapMsg").style.display=gps?"none":"";

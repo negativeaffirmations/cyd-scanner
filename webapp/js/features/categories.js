@@ -5,6 +5,7 @@ import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
 import { tierNum, flagBadges } from '../util/format.js';
 import { TIER_COL, TIER_NAMES, FLAG_BADGES, CAT_COL } from '../config.js';
+import { fillDetailWhitelist } from './whitelist.js';
 
 // DETS v5 category id -> name (must match the CYD's Category enum order).
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -69,23 +70,42 @@ export function openCatModal(catId){
              `<span class="nm t${tn}">${nm}${flagBadges(r.flags||0)}</span>`+
              `<span class="rssi">${r.rssi} dBm</span></div>`;
     }).join("");
-    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> openCatDevice(rows[+d.dataset.ri]); });
+    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> openLiveDetail(rows[+d.dataset.ri]); });
   }
   $("catDlg").showModal();
 }
-// Live-detection detail (reuses the detDlg modal; no per-detection GPS in the live stream).
-function openCatDevice(r){
+// Live-detection detail (reuses the detDlg modal; no per-detection GPS in the live stream). Shown
+// when a live row OR a category-modal row is tapped; carries the whitelist add/manage action.
+export function openLiveDetail(r){
   const tn = rowTier(r);
+  const sig = (r.sources||[]).slice().sort((a,b)=>b.rssi-a.rssi).map(s=>s.tag+" "+s.rssi+" dBm").join(", ") || "?";
   const rowsKv = [["Name", r.name||r.mac||"<hidden>"], ["MAC", r.mac],
     ["Category", CAT_NAMES[r.cat||0] || "Other"],
-    ["Signals", (r.sources||[]).map(s=>s.tag).join(", ") || "?"],
-    ["RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
+    ["Signals", sig],
+    ["Strongest RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
   if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);
   if (r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint", r.ie]);
   $("detInfo").innerHTML = rowsKv.map(([k,v])=>
     `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  fillDetailWhitelist(r.mac, r.muted);
   $("detMap").style.display = "none";
   $("detMapMsg").style.display = ""; $("detMapMsg").textContent = "Live detection — open the Map or a session for GPS.";
   $("detDlg").showModal();
+}
+
+// Compact threat-counter strip for the Scanner page: one chip per category with a live threat,
+// severity-sorted, colored per CAT_COL (same hues as the Home cards). Tap -> category device modal.
+export function renderScanCounts(rows){
+  const el = $("scanCounts"); if (!el) return;
+  const cnt = {};
+  (rows||[]).forEach(r=>{ const tn = rowTier(r), c = r.cat||0;
+    if (r.muted || tn < 1 || !c || c > CAT_SHOWN) return; cnt[c] = (cnt[c]||0) + 1; });
+  const cats = Object.keys(cnt).map(Number).sort((a,b)=> cnt[b]-cnt[a]);
+  if (!cats.length){ el.innerHTML = '<span class="sub" style="padding:3px 4px">No threats in range</span>'; return; }
+  el.innerHTML = cats.map(c=>{ const col = CAT_COL[c]||"#8b949e";
+    return `<button class="tchip" data-cat="${c}" style="border-color:${col};background:${col}22">`+
+      `<span class="tn">${esc(CAT_NAMES[c])}</span><span class="tc" style="color:${col}">${cnt[c]}</span></button>`;
+  }).join("");
+  el.querySelectorAll(".tchip").forEach(b=>{ b.onclick = ()=> openCatModal(+b.dataset.cat); });
 }

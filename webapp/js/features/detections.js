@@ -9,12 +9,11 @@
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
 import { tierNum, fmtTimecode, flagBadges } from '../util/format.js';
-import { renderCatChips } from './categories.js';
+import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
 
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
 let emptyStreak = 0;
-const expandedMacs = new Set();   // carat state survives snapshot re-renders
 
 // If the current snapshot accumulated rows but never reached its expected count
 // (a row or the header was lost over BLE), show what we have instead of dropping it.
@@ -58,65 +57,39 @@ export function onDets(ev){
 
 const srcClass  = {"2.4":"src24", "5G":"src5", "BLE":"srcble", "PRB":"srcprb", "154":"src154"};  // row tint
 const pillClass = {"2.4":"p24",   "5G":"p5",  "BLE":"pble",   "PRB":"pprb",   "154":"p154"};    // band pill
-const detHeadLive =
-  '<div class="dethead"><span class="tiercol" title="Threat tier">⚠</span>'+
-  '<span class="sigcol">Signals</span><span class="hnm">Device</span>'+
-  '<span class="rssi">RSSI</span><span class="caret"></span></div>';
-const detHeadViewer =
-  '<div class="dethead"><span class="tiercol" title="Threat tier">⚠</span>'+
-  '<span class="sigcol">Source</span><span class="hnm">Device</span>'+
-  '<span class="rssi">RSSI</span><span class="tcol">Time</span></div>';
-// Shared detection-row renderer. opts.mode "live": rows = {tier,mac,rssi,ie,name,sources[]},
-// multi-source pills + expand caret. "viewer": rows = parseScanCsv rows, single source pill +
-// timecode, whole-row click -> opts.onRowClick(row). Same .det/.sp/.badge/.srcN styling for both.
+
+// Shared detection-row renderer (live list + Explore viewer): TALL, 2-line, whole-row tappable ->
+// opts.onRowClick(row). Line 1 = name (+ follow/flag markers) and strongest RSSI; line 2 = source
+// pills + MAC (+ channel / timecode for viewer rows). Same .detrow styling for both so the two lists
+// look identical (ui-component-reuse). Row is tinted + left-barred by its strongest source.
 export function renderDetList(el, rows, opts){
   const viewer = opts.mode === "viewer";
-  const head = viewer ? detHeadViewer : detHeadLive;
-  if (!rows.length){
-    if (!viewer) expandedMacs.clear();
-    el.innerHTML = head + '<div class="sub" style="padding:6px">'+opts.empty+'</div>'; return; }
-  if (!viewer) for (const m of [...expandedMacs]) if (!rows.some(r => r.mac === m)) expandedMacs.delete(m);  // keep the Set bounded
-  el.innerHTML = head + rows.map((r,ri)=>{
+  if (!rows.length){ el.innerHTML = '<div class="sub" style="padding:8px">'+opts.empty+'</div>'; return; }
+  el.innerHTML = rows.map((r,ri)=>{
     const tn = typeof r.tier === "number" ? r.tier : tierNum(r.tier);
     const ft = viewer ? 0 : (r.ftier||0);                 // follow tier (live rows only)
     const muted = !viewer && r.muted;
     const fmk = ft>=1 ? `<span class="fmark f${ft}" title="${ft===2?'Possible follower':'Persistent'}">${ft===2?'⚑':'•'}</span> ` : "";
     const nm = fmk + (esc(r.name) || esc(r.mac) || "&lt;hidden&gt;") + (viewer ? "" : flagBadges(r.flags||0));
-    const title = "MAC "+r.mac + (r.ie && r.ie!=="00000000" ? "  IE "+r.ie : "");
-    const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : r.sources).slice().sort((a,b)=>b.rssi-a.rssi);
+    const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : (r.sources||[])).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
     const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
-    const multi = !viewer && srcs.length > 1;      // only multi-source live devices get an expander
-    const open = multi && expandedMacs.has(r.mac);
-    const sub = multi ? srcs.map(s=>`<div class="sub1 ${srcClass[s.tag]||""}">${esc(s.tag)}  ${s.rssi} dBm</div>`).join("") : "";
-    const ch = viewer && r.channel ? `<span class="chn">ch${esc(r.channel)}</span>` : "";
-    return `<div class="det ${sc}${viewer?" clk":""}${muted?" muted":""}${ft===2?" following":""}" title="${title}"${viewer?` data-ri="${ri}"`:""}><span class="tiercol"><span class="badge b${tn}"></span></span>`+
-           `<span class="sigcol">${pills}</span>`+
-           `<span class="nm t${tn}">${nm}${ch}</span>`+
-           `<span class="rssi">${r.rssi} dBm</span>`+
-           (viewer ? `<span class="tcol">${fmtTimecode(r)}</span>`
-                   : multi ? `<span class="caret" data-mac="${esc(r.mac)}" data-ri="${ri}">${open?"▾":"▸"}</span>`
-                           : `<span class="caret"></span>`)+
-           `</div>`+
-           (multi ? `<div class="detsub" id="dsub${ri}" style="display:${open?"block":"none"}">${sub}</div>` : "");
+    const extra = [esc(r.mac || "")];
+    if (viewer && r.channel) extra.push("ch"+esc(r.channel));
+    if (viewer) extra.push(fmtTimecode(r));
+    return `<div class="detrow clk ${sc}${muted?" muted":""}${ft===2?" following":""}" data-ri="${ri}">`+
+           `<span class="tiercol"><span class="badge b${tn}"></span></span>`+
+           `<div class="detmain">`+
+             `<div class="r1"><span class="nm t${tn}">${nm}</span><span class="rssi">${r.rssi} dBm</span></div>`+
+             `<div class="r2"><span class="sigcol">${pills}</span><span class="r2sub">${extra.filter(Boolean).join("  ·  ")}</span></div>`+
+           `</div></div>`;
   }).join("");
-  if (viewer) {
-    el.querySelectorAll(".det[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick(rows[+d.dataset.ri]); });
-    return;
-  }
-  el.querySelectorAll(".caret[data-mac]").forEach(c=>{
-    c.onclick = ()=>{
-      const sub = $("dsub"+c.dataset.ri), mac = c.dataset.mac;
-      const show = sub.style.display === "none";
-      sub.style.display = show ? "block" : "none";
-      c.textContent = show ? "▾" : "▸";
-      if (show) expandedMacs.add(mac); else expandedMacs.delete(mac);
-    };
-  });
+  el.querySelectorAll(".detrow[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick && opts.onRowClick(rows[+d.dataset.ri]); });
 }
 export function renderDets(rows){   // live view
   state.lastDetRows = rows;
-  renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…"});
+  renderDetList($("dets"), rows, {mode:"live", empty:"No devices in range yet…", onRowClick: openLiveDetail});
   renderCatChips(rows);
+  renderScanCounts(rows);   // the Scanner page's compact threat-counter strip
 }

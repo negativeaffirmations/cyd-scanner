@@ -54,9 +54,23 @@ Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-
   (`.tgrid`/`.tcard`, `features/categories.js`), 3/row like the CYD: outline always the category hue
   (even at 0), grey fill at 0, tinted when >0, tap→category modal. **Reuse `CAT_COL` everywhere
   categories appear** (consistency directive). Recompiled `style.css`; all 128 JS ids verified.
-- **Phases remaining:** 2 = Scanner page (rows ≥3× taller, top controls+filters+counter row, tap→
-  CYD-style modal: details+map + whitelist add/remove; fold Explore in). 3 = Home cards + CYD threat
-  counters section. 4 = Map as a real inline page (promote `#mapDlg`, handle `invalidateSize`).
+- **Phase 2 (DONE): Scanner page — tall tappable rows + device modal + threat strip.** `renderDetList`
+  (`features/detections.js`) rewritten to **tall 2-line rows** (`.detrow`, min-height 74px ≈ 3×; line1
+  name+RSSI, line2 source pills+MAC[+ch/time]), **whole row tappable → modal**, used by BOTH the live
+  list and the Explore viewer (unified; dropped the old multi-source caret-expand). Live tap →
+  `openLiveDetail` (renamed from `openCatDevice`, now exported); Explore tap → `openDetail` (has the
+  GPS mini-map). Both modals carry a **whitelist action** via new `fillDetailWhitelist(mac,muted)` in
+  `whitelist.js` (slot `#detActions` in `detDlg`): **Add** = one tap `A:mac,<MAC>,A,`; a whitelisted
+  device links to the Whitelist manager (removal is index/rule-based — true remove-by-MAC would need a
+  small firmware CMD, noted as optional). Shown only while connected. New **`#scanCounts`** strip atop
+  the Scanner = compact CAT_COL-colored chips for in-range threat categories (`renderScanCounts`).
+  `#dets`/`#scanViewer` got `.dets.tall` (max-height 72vh). SCSS `_detections.scss` + recompiled css;
+  JS parses, ids resolve (only the dynamically-created `#detWlBtn` isn't static — expected). **NOT
+  in-browser tested.**
+- **Phases remaining:** 3 = Home already has cards + CYD threat counters (done in Phase 1.5) — mostly
+  covered; revisit if more Home work wanted. 4 = Map as a real inline page (promote `#mapDlg`, handle
+  Leaflet `invalidateSize` on page-show) + Settings as an inline page. Possible polish: top
+  controls/filters grouping on Scanner; true remove-by-MAC firmware CMD for one-tap un-whitelist.
 
 ## Done — brightness slider fix (2026-10-10, CYD-only, FLASHED)
 The brightness setting did nothing: `initCommon()` called `ledcAttach(TFT_BL_PIN,…)` BEFORE

@@ -43,3 +43,21 @@ export function wlKindChanged(){   // name rules match only the first 23 chars o
   if(nm && $("wlPat").value.length>23) $("wlPat").value=$("wlPat").value.slice(0,23);
 }
 export function openWhitelist(){ $("wlDlg").showModal(); refreshWhitelist(); }
+
+// Fill the detail modal's action slot with a whitelist control for `mac`. Add is one tap
+// (A:mac,<MAC>,A); removal is rule/index-based (a device may be matched by a prefix/name rule), so a
+// whitelisted device links to the Whitelist manager instead. Only shown while connected (needs CMD).
+export function fillDetailWhitelist(mac, muted){
+  const el = $("detActions"); if (!el) return;
+  if (!mac || !state.connected){ el.innerHTML = ""; return; }
+  if (muted){
+    el.innerHTML = '<button class="secondary" id="detWlBtn">✓ Whitelisted — manage rules</button>';
+    $("detWlBtn").onclick = ()=>{ $("detDlg").close(); openWhitelist(); };
+  } else {
+    el.innerHTML = '<button class="secondary" id="detWlBtn">+ Add to whitelist</button>';
+    $("detWlBtn").onclick = async ()=>{
+      await wlCmd("A:mac," + mac + ",A,", "Whitelisting " + mac + "…");
+      $("detDlg").close(); setTimeout(refreshWhitelist, 300);
+    };
+  }
+}
