@@ -253,9 +253,17 @@ back (5 GHz included). Things that matter, learned the hard way:
   operator position (deg), `h`/`alt` height/geo-alt (m), `spd` m/s, `hdg` deg, `uas`/`oid` the UAS ID /
   operator ID (JSON-escaped); unknown fields omitted. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
   once GPS is sent; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
+  **Time backfill — `{"epoch":…,"ms":…,"evt":"timesync"}` anchor.** Rows logged before the phone syncs
+  the clock carry `epoch:0` (only `ms`, ms-since-boot, is meaningful). When the phone sets the time,
+  `renameStreamOnSync` appends ONE `timesync` anchor line (the sync epoch + its `ms`) to any stream that
+  already holds pre-sync rows, then renames the file. The stored pre-sync rows are NOT rewritten (stays
+  append-only); instead **readers backfill** their real time from the anchor: `epoch = sync.epoch +
+  (row.ms − sync.ms)/1000` (same formula `phone::epochNow()` uses; one-boot-valid). The web app's
+  `parse.js` does this in `parseScanNdjson`/`parseScanEvents` (`backfillEpoch`), so Explore/Map show
+  real clock times for boot-scan rows. GPS can't be backfilled (no position existed pre-connection).
   **Why NDJSON:** append-only (a torn write loses only the trailing line), self-describing (schema
   grows without breaking old parsers), JSON escaping kills the comma/formula-injection bug class.
-  Old `.csv` sessions still list/read (readers branch by extension).
+  Old `.csv` sessions still list/read (readers branch by extension; no timesync backfill for legacy CSV).
 - **Log retention — 512 MB cap with auto-rotation.** `enforceLogCap()` keeps total `/logs/` size
   under `LOG_CAP_BYTES` (512 MB) by deleting the **oldest** files (by FS timestamp), never the live
   fg/bg/Explore-held/currently-streaming file. Runs at boot, on each session rotation, and on a

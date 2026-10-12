@@ -1123,10 +1123,21 @@ static void renameStreamOnSync(LogStream& st, bool bg) {
     strncpy(st.path, nn, sizeof(st.path) - 1);
     st.path[sizeof(st.path) - 1] = 0;
     Serial.printf("[CYD] session log will use %s\n", st.path);
-  } else if (SD.rename(st.path, nn)) {
-    Serial.printf("[CYD] session log renamed %s -> %s\n", st.path, nn);
-    strncpy(st.path, nn, sizeof(st.path) - 1);
-    st.path[sizeof(st.path) - 1] = 0;
+  } else {
+    // This file already holds pre-sync rows (epoch:0, ms = ms-since-boot). Append a one-line
+    // timesync ANCHOR so a reader can backfill their real time: epoch = sync.epoch +
+    // (row.ms - sync.ms)/1000 (same formula epochNow() uses; valid because it's one boot).
+    File mf = SD.open(st.path, FILE_APPEND);
+    if (mf) {
+      mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
+                (unsigned long)phone::epochNow(), (unsigned long)millis());
+      mf.close();
+    }
+    if (SD.rename(st.path, nn)) {
+      Serial.printf("[CYD] session log renamed %s -> %s\n", st.path, nn);
+      strncpy(st.path, nn, sizeof(st.path) - 1);
+      st.path[sizeof(st.path) - 1] = 0;
+    }
   }
   st.named = true;
 }

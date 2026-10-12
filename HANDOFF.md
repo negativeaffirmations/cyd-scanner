@@ -33,6 +33,23 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — pre-sync time backfill (timesync anchor + reader backfill) (2026-10-11, CYD FLASHED COM14 + webapp, pushed)
+User request: rows logged by the boot/background scan BEFORE a phone connects are written with
+`epoch:0` (only `ms`-since-boot is meaningful); make their real time recoverable without rewriting the
+append-only log. Chose the **sync-marker + reader-backfill** approach (option A), not on-device rewrite.
+- **CYD** (`renameStreamOnSync`, `src/cyd/main.cpp`): when the phone sets the clock, append ONE
+  `{"epoch":<syncEpoch>,"ms":<syncMs>,"evt":"timesync"}` anchor line to each stream that already holds
+  pre-sync rows (the `started` branch), THEN rename the file. Pre-sync rows are left untouched
+  (append-only preserved). CYD-only, no protocol/C5 change. Built + **flashed COM14**.
+- **Webapp** (`data/parse.js`): new `backfillEpoch(items, sync)`; `parseScanNdjson` + `parseScanEvents`
+  capture the `timesync` anchor in-pass and, after parsing, set `epoch = sync.epoch + round((ms −
+  sync.ms)/1000)` for any `epoch:0` row/event. So Explore/Map show real clock times for boot-scan rows.
+  `timesync` is excluded from map event pins. Legacy CSV unaffected (no anchor). `#uiver → timesync-backfill`
+  (JS-only, `style.css?v=` unchanged). **Verified** with a node harness: pre-sync rows/events backfill to
+  the right epochs, post-sync rows unchanged, timesync excluded. Static-verified; in-browser pending.
+- **GPS is NOT backfilled** — no position existed before the phone's GPS stream started (onboard GPS is
+  the backlogged hardware item); only time is reconstructable (linear ms→epoch offset).
+
 ## Done — webapp Scanner PAUSE button (2026-10-11, webapp-only, pushed)
 User request: a pause control on the Scanner page matching the CYD's PAUSE (`g_viewFrozen`). Added
 `#pauseBtn` to the `#scanPanel` icon row, right after Start/Stop (`pause`↔`play_arrow` icon, accent

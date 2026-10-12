@@ -26,10 +26,11 @@ export function parseScanCsv(text){
 // uuid pan name score tier sig wl; blank/inapplicable keys are omitted). Normalized to the SAME
 // row shape parseScanCsv returns. Bad lines are skipped.
 export function parseScanNdjson(text){
-  const rows=[];
+  const rows=[]; let sync=null;
   for(const ln of (text||"").split(/\r?\n/)){
     if(!ln.trim()) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
+    if(o && o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }
     if(!o || typeof o!=="object" || !o.mac || o.evt) continue;   // evt lines (incl. "rid", which carries a mac) are events, not rows
     const s=v=>v==null?"":String(v);
     rows.push({epoch:parseInt(o.epoch,10)||0, ms:parseInt(o.ms,10)||0,
@@ -39,7 +40,15 @@ export function parseScanNdjson(text){
       score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig),
       flags:s(o.flags), wl:(o.wl==1||o.wl===true)});
   }
+  backfillEpoch(rows, sync);   // pre-sync rows (epoch:0) -> real time from their ms + the timesync anchor
   return rows;
+}
+// Pre-sync rows/events carry epoch:0 + ms-since-boot; the CYD appends one {"evt":"timesync"} anchor
+// when the phone sets the clock. Recover their real time in place: epoch = sync.epoch + (ms - sync.ms)/1000
+// (the anchor usually appears AFTER the pre-sync rows, so this is applied after the full parse pass).
+function backfillEpoch(items, sync){
+  if(!sync) return;
+  for(const it of items) if(!it.epoch) it.epoch = sync.epoch + Math.round((it.ms - sync.ms)/1000);
 }
 // Detect the log format: first non-empty char "{" = NDJSON, else legacy CSV.
 export function parseScanLog(text){
@@ -49,11 +58,12 @@ export function parseScanLog(text){
 // Event lines (NDJSON objects with an "evt" key: deauth / eviltwin / droneid, no "mac") are skipped by
 // the row parser above; this collects the geolocated ones for the map's event pins.
 export function parseScanEvents(text){
-  const out=[];
+  const out=[]; let sync=null;
   for(const ln of (text||"").split(/\r?\n/)){
     if(ln[0]!=="{" || !ln.includes('"evt"')) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
     if(!o || !o.evt) continue;
+    if(o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }  // anchor, not a map pin
     const ev={evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
       ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)};
     if(ev.evt==="rid"){   // Remote-ID decode: absolute drone/operator fix + telemetry (absent -> NaN / "")
@@ -63,5 +73,6 @@ export function parseScanEvents(text){
     }
     out.push(ev);
   }
+  backfillEpoch(out, sync);   // pre-sync events (epoch:0) -> real time from the timesync anchor
   return out;
 }
