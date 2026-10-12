@@ -232,3 +232,50 @@ into the CYD** (no battery, no separate cable to the C5):
   CYD's USB-C into a car charger / power bank rated **≥1 A**.
 - Same "feed 5 V only / one source at a time" rules apply — don't combine this with the battery
   boost output live at the same time.
+
+---
+
+## 5. PROPOSED add-ons — NOT BUILT (battery monitor + GPS)
+
+> ⚠️ **PROPOSED / NOT WIRED. These pins are NOT in use.** Nothing below is on the hardware yet and
+> no firmware uses these pins. This section is a design reference only — the live pin assignments are
+> in §1–§4 above. Full wiring, divider math, and part notes: **[addon-wiring.md](addon-wiring.md)**.
+>
+> 🚫 **Do NOT change the link protocol for this yet.** Build C's GPS-over-link forwarding needs a
+> `PROTOCOL_VERSION` bump (8 → 9) — **leave `lib/link_protocol/link_protocol.h` and the GPS firmware
+> alone until the owner explicitly says to build this.** Until then, phone GPS (over BLE) remains the
+> only position source, and these pins stay free.
+
+**Chosen layout (Build C):** the full battery monitor on the CYD; the GPS on the C5 (which has the
+spare GPIO), forwarded to the CYD over the existing link.
+
+### 5a. CYD — battery monitor (PROPOSED)
+
+| Signal          | CYD pin   | Wiring (proposed)                                              |
+|-----------------|-----------|---------------------------------------------------------------|
+| Battery voltage | **GPIO35**| 100 kΩ/100 kΩ divider midpoint off **switched Vbat**; `analogReadMilliVolts(35)×2`. Only free ADC1 pin. |
+| Charge status   | **GPIO26**| TP4056 **CHRG** pad, `INPUT_PULLUP` (LOW = charging)          |
+
+CYD-only; **no protocol/C5 change** for the battery side.
+
+### 5b. C5 — GY-NEO6MV2 GPS (PROPOSED)
+
+| GY-NEO6MV2 | C5 pin                | Wiring (proposed)                                              |
+|------------|-----------------------|---------------------------------------------------------------|
+| VCC        | **5V0** (or 3V3)      | breakout has its own 3.3 V LDO                                 |
+| GND        | **GND**               | common ground (shared with the link / boost)                  |
+| TXD        | **GPIO15** (UART1 RX) | the NMEA data wire (9600 8N1); 3.3 V logic                    |
+| RXD        | *unconnected* (GPIO23)| only to configure the module — omit for read-only            |
+
+GPIO15/23 are plain, broken-out C5 right-header pins, clear of the link (4/5), console (11/12),
+USB-JTAG (13/14), strapping (8/9), RGB LED (27), BOOT (28), and the unverified 25/26. Alternates:
+6, 7, 10, 24. **Forwarding the fix CYD-ward is a future protocol-v9 change — not to be started until
+told (see the warning above).**
+
+### Pin-budget note
+
+After the display/touch/SD and the C5 link, the CYD has only **two** free GPIO — **GPIO35**
+(input-only, the only free ADC1 pin → must carry battery voltage) and **GPIO26**. Putting GPS on the
+C5 (Build C) is what lets the CYD keep BOTH battery pins. (Alternatives A/B in
+[addon-wiring.md](addon-wiring.md) put GPS on the CYD GPIO26 instead, trading away the charge-status
+pin.)
