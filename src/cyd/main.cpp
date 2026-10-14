@@ -2583,6 +2583,12 @@ static int homeIconTapped() {
 // Settings are the two title-bar icons (phone right, cog left); the list holds just Scan.
 static void drawMenu() {
   drawListMenu("COINTEL-FLO", kMenuItems, MENU_N, g_menuSel);
+  // Recolor the HOME title to the logo magenta (#AA00AA); overdrawn at the same pos/font so the
+  // opaque-background redraw cleanly replaces drawListMenu's default cyan. HOME only.
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(tft.color565(0xAA, 0x00, 0xAA), TFT_BLACK);
+  tft.drawString("COINTEL-FLO", tft.width() / 2, 32, 4);
+  tft.setTextDatum(TL_DATUM);
   drawHomeIcons();  // cog (Settings) left + phone (Phone Link) right, on the HOME line
   // Two-line hint (the single line overran 240 px); kept just below the threat readout.
   tft.setTextDatum(TL_DATUM);
