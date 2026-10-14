@@ -7,6 +7,19 @@ protocol v10**, interoperating (link verified `table=55` dual-band). Ports this 
 MAC `d0:cf:13:e4:6a:74`); spare S3 odid-tx = `303A:1001` = COM12 (MAC `a4:cb:8f:da:45:b0`). Identify
 by chip, not COM.
 
+- **Evil-twin event names the suspect SSID/BSSIDs + click-to-detail (`60db663`, CYD FLASHED + webapp
+  pushed).** The map's `evt:eviltwin` pin was count+time only; the suspect addresses lived only on the
+  individual AP detections. Now the CYD's `evt:eviltwin` NDJSON line also carries `"ssid"` + `"macs"`
+  (suspect SSID + up to 8 comma-joined BSSIDs, from the live detections carrying `FLAG_WIFI_EVILTWIN`;
+  `logEvent` buffer widened to `LOG_LINE`). Deauth stays count-only (the C5 reports a frame count, no
+  per-AP address). Web app: `parse.js` reads `ssid`/`macs`; the Map event-pin popup lists the SSID +
+  each BSSID, and **each BSSID is clickable → opens that device's full detail modal** (map builds a
+  MAC→row lookup; click handlers attach on `popupopen` because Leaflet stops click propagation;
+  `openDetail` via a deferred `import('./detail.js')` to avoid a static map↔detail cycle). New
+  `.evmac`/`.evhint` SCSS; `style.css?v=20261014e`, `#uiver → eviltwin-addr`. CYD-only, no protocol
+  bump. **Applies to NEWLY-logged events** (enrichment is at log time); old sessions keep count-only
+  lines. Context: the owner hit an evil-twin alert likely from their own router's **guest Wi-Fi**
+  (same/similar SSID, open vs WPA2 = the open-vs-secured mismatch the detector flags; benign).
 - **HOME touch-lock readout fix (`be50c4a`, CYD FLASHED).** The bag-safe touch lock early-returns from
   `loop()` before the per-screen switch, so the HOME threat tiles (repainted only in the `SCR_MENU`
   idle branch) **froze on screen while locked** — scanning/logging kept running (bg cycle is before
@@ -737,7 +750,8 @@ MAC `a4:cb:8f:da:45:b0`) runs the ODID bench transmitter.
 **Latest flashes (2026-10-14 this session, all on `main`):** **BOTH boards flashed to protocol v10**
 (onboard-GPS time fallback clock — C5 COM18 `303A:1001` chip-id-confirmed ESP32-C5, CYD COM14
 `1A86:7523`). The **CYD was reflashed several more times** afterward (all CYD-only, protocol stays
-v10): STATUS `tsrc`, and the HOME touch-lock readout fix. Earlier in the same session (CYD-only, no
+v10): STATUS `tsrc`, the HOME touch-lock readout fix, and the evil-twin SSID/BSSID event enrichment.
+Earlier in the same session (CYD-only, no
 protocol change): the COINTEL-FLO rebrand + boot splash, the GPS status-bar glyph + tap modal, the
 status-bar icon spacing, and the magenta `#AA00AA` accent. History: v8 (Remote-ID inc 2, 2026-10-11),
 v7 (multi-UUID), earlier CYD camera OUIs + C5 promiscuous fixes (2026-10-10). Ports THIS session: CYD
