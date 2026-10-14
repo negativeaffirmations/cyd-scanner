@@ -9,11 +9,12 @@
 namespace gps {
 
 struct Fix {
-  int32_t lat;     // deg * 1e7, 0 = no fix
-  int32_t lon;     // deg * 1e7, 0 = no fix
-  int16_t altM;    // metres MSL, -1000 = unknown
-  uint8_t sats;    // satellites in use (0 if no fix)
-  uint8_t fix;     // 0 = no fix, 1 = 2D, 2 = 3D
+  int32_t  lat;     // deg * 1e7, 0 = no fix
+  int32_t  lon;     // deg * 1e7, 0 = no fix
+  int16_t  altM;    // metres MSL, -1000 = unknown
+  uint8_t  sats;    // satellites in use (0 if no fix)
+  uint8_t  fix;     // 0 = no fix, 1 = 2D, 2 = 3D
+  uint32_t epochUtc;// UTC epoch secs from the last valid RMC date+time (0 = unknown)
 };
 
 void begin();               // open UART0 @ 9600 and init

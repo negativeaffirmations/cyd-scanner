@@ -22,7 +22,8 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 9;       // v9: Status gains onboard C5 GPS fix (NEO-6M) - gpsLat/gpsLon (deg*1e7) + alt/sats/fix; phone GPS preferred, onboard is fallback
+static constexpr uint8_t  PROTOCOL_VERSION = 10;      // v10: Status gains gpsEpoch (UTC secs from NEO-6M RMC) so the CYD can keep time with no phone
+                                                      // v9: Status gains onboard C5 GPS fix (NEO-6M) - gpsLat/gpsLon (deg*1e7) + alt/sats/fix; phone GPS preferred, onboard is fallback
                                                           // (v8: Reply::RemoteId frame + RemoteId struct - decoded Remote-ID (ASTM F3411)
                                                           //     broadcast keyed to a Detection by MAC)
                                                           // (v7: Detection.svc16[] - up to 4 extra 16-bit BLE service
@@ -148,6 +149,8 @@ struct Status {
   int16_t  gpsAltM;       // metres MSL, -1000 = unknown
   uint8_t  gpsSats;       // satellites in use (0 if no fix)
   uint8_t  gpsFix;        // 0 = no fix, 1 = 2D, 2 = 3D
+  uint32_t gpsEpoch;      // v10: UTC epoch seconds from the NEO-6M RMC date+time (0 = unknown). The
+                          // CYD uses it as a fallback wall-clock when no phone has synced the time.
 };
 
 // Fixed header prepended to every frame's payload on the wire.
@@ -162,7 +165,7 @@ struct FrameHeader {
 
 static_assert(sizeof(Detection) == 75, "Detection wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(RemoteId)  == 75, "RemoteId wire size changed - bump PROTOCOL_VERSION");
-static_assert(sizeof(Status)    == 24, "Status wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(Status)    == 28, "Status wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.
 inline uint8_t checksum(const uint8_t* data, uint16_t len) {

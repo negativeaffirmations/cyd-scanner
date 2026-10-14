@@ -530,6 +530,7 @@ static void sendStatus(uint8_t scanning, uint16_t total) {
   gps::Fix gf; gps::snapshot(gf);  // v9: onboard GPS fix (sentinels when none)
   st.gpsLat = gf.lat; st.gpsLon = gf.lon; st.gpsAltM = gf.altM;
   st.gpsSats = gf.sats; st.gpsFix = gf.fix;
+  st.gpsEpoch = gf.epochUtc;       // v10: UTC time from RMC (0 = unknown)
   sendFrame((uint8_t)Reply::Status, &st, sizeof(st));
 }
 

@@ -653,6 +653,25 @@ static bool  posHasFix() { return phone::hasGps() || g_onbValid; }
 static float posLat()    { return phone::hasGps() ? phone::lat() : g_onbLat; }
 static float posLon()    { return phone::hasGps() ? phone::lon() : g_onbLon; }
 static int   posSource() { return phone::hasGps() ? 1 : (g_onbValid ? 2 : 0); }  // 0 none / 1 phone / 2 onboard
+
+// Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
+// is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
+// is latched on first receipt and free-runs on the CYD's millis() (refreshed whenever a newer GPS
+// epoch arrives, correcting drift). GPS gives UTC only, so we add the last phone tz offset (persisted
+// in NVS) to show LOCAL time — matching phone::epochNow()'s local convention; 0 offset (never synced
+// to a phone) means the fallback reads UTC until the first-ever phone sync teaches it the zone.
+static uint32_t g_gpsEpochUtc = 0;   // last UTC epoch from Status.gpsEpoch (0 = never)
+static uint32_t g_gpsEpochAtMs = 0;  // millis() when it was latched
+static bool     timeHasSync() { return phone::hasTime() || g_gpsEpochUtc != 0; }
+static int      timeSource()  { return phone::hasTime() ? 1 : (g_gpsEpochUtc ? 2 : 0); }  // 0 none / 1 phone / 2 GPS
+static uint32_t epochLocal() {
+  if (phone::hasTime()) return phone::epochNow();
+  if (g_gpsEpochUtc) {
+    uint32_t utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
+    return utc - (uint32_t)(phone::tzOffsetMin() * 60);  // UTC-local offset -> local
+  }
+  return 0;
+}
 static uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
 static uint8_t  g_evilShown = 0;
 static uint32_t g_deauthUntil = 0, g_evilUntil = 0;  // millis() deadlines (0 = never raised)
@@ -1123,8 +1142,8 @@ static bool ensureLogFile(LogStream& st) {
 // (fg: YYYYMMDD-HHMMSS.jsonl, bg: bg-YYYYMMDD-HHMMSS.jsonl). Runs once per session (even if the
 // rename fails, it won't retry-spam).
 static void renameStreamOnSync(LogStream& st, bool bg) {
-  if (st.named || !st.path[0] || !g_sdOk || !phone::hasTime()) return;
-  time_t t = (time_t)phone::epochNow();
+  if (st.named || !st.path[0] || !g_sdOk || !timeHasSync()) return;
+  time_t t = (time_t)epochLocal();
   struct tm tmv;
   gmtime_r(&t, &tmv);  // epoch is stored already-localized, so gmtime gives local fields
   char nn[48];
@@ -1145,7 +1164,7 @@ static void renameStreamOnSync(LogStream& st, bool bg) {
     File mf = SD.open(st.path, FILE_APPEND);
     if (mf) {
       mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
-                (unsigned long)phone::epochNow(), (unsigned long)millis());
+                (unsigned long)epochLocal(), (unsigned long)millis());
       mf.close();
     }
     if (SD.rename(st.path, nn)) {
@@ -1212,7 +1231,7 @@ static int logNewDetections() {
   if (bgCtx() && !st.path[0]) openBgSession();
   File f;  // opened lazily on the first new detection so idle boots write no file
   uint32_t ms = millis();
-  uint32_t epoch = phone::epochNow();
+  uint32_t epoch = epochLocal();
   bool gps = posHasFix();
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
@@ -1288,7 +1307,7 @@ static void logEvent(const char* evt, int count) {
   if (!f) return;
   char ln[160];
   int n = 0;
-  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
+  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
   if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
     lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
   lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d}\n", evt, count);
@@ -1350,7 +1369,7 @@ static void logRidEvents() {
     jsonEscape(oid, sizeof(oid), r.operatorId);
     char ln[LOG_LINE];
     int n = 0;
-    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
     if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
       lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
     lnAppend(ln, n, ",\"evt\":\"rid\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
@@ -1466,7 +1485,7 @@ static void transferFiltered(int mode, int minutes, const char* pathIn) {
     snprintf(path, sizeof(path), "%s", activeStream().path);
   }
   if (mode != 1 && mode != 2) { streamFileOverBle(path); return; }
-  logfilter::Cutoff c = logfilter::make(mode, minutes < 1 ? 1 : (uint32_t)minutes, phone::epochNow(), millis());
+  logfilter::Cutoff c = logfilter::make(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis());
   streamFilteredOverBle(path, c);
 }
 
@@ -1726,6 +1745,7 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
         g_onbValid = (st->gpsFix != 0) && (st->gpsLat != 0 || st->gpsLon != 0);  // v9 onboard GPS
         g_onbSats  = st->gpsSats;  // sats-in-use, even pre-fix (useful for "is the module seeing sky?")
         if (g_onbValid) { g_onbLat = st->gpsLat / 1e7; g_onbLon = st->gpsLon / 1e7; }  // divide in double, then store
+        if (st->gpsEpoch != 0) { g_gpsEpochUtc = st->gpsEpoch; g_gpsEpochAtMs = millis(); }  // v10: latch GPS UTC clock
         if (st->scanning != 0) sawStart = true;
         else                   done     = true;
       }
@@ -1759,7 +1779,7 @@ static void pushStatus() {
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
-           phone::hasTime() ? 1 : 0, posHasFix() ? 1 : 0,
+           timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
@@ -1970,12 +1990,12 @@ static void drawStatusBar() {
   int W = tft.width();
   tft.fillRect(0, 0, W, 21, TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
-  // time (left) — local, from the phone's timezone
+  // time (left) — local (phone tz). White = phone-synced, cyan = kept by the onboard GPS clock.
   char t[8];
-  if (phone::hasTime()) {
-    uint32_t e = phone::epochNow();
+  if (timeHasSync()) {
+    uint32_t e = epochLocal();
     snprintf(t, sizeof(t), "%02u:%02u", (unsigned)((e / 3600) % 24), (unsigned)((e / 60) % 60));
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextColor(timeSource() == 2 ? TFT_CYAN : TFT_WHITE, TFT_BLACK);
   } else { strcpy(t, "00:00"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
   tft.drawString(t, 4, 4, 2);
   // phone connection icon (right) + C5-link status dot to its right
@@ -3431,8 +3451,8 @@ static void openFollowDetail() {
   uint32_t nowMs = millis();
   for (int k = 0; k < 2; k++) {
     uint32_t ms = k ? f.lastMs : f.firstMs;
-    if (phone::hasTime()) {
-      time_t t = (time_t)(phone::epochNow() - (nowMs - ms) / 1000);
+    if (timeHasSync()) {
+      time_t t = (time_t)(epochLocal() - (nowMs - ms) / 1000);
       struct tm tmv;
       gmtime_r(&t, &tmv);
       snprintf(b, sizeof(b), "%04d-%02d-%02d %02d:%02d:%02d", tmv.tm_year + 1900, tmv.tm_mon + 1,
@@ -4185,7 +4205,7 @@ static void activateMenu() {
 // Boot splash: the COINTEL-FLO wordmark (baked from resources/logo/logo.png into logo.h as an
 // RGB565 blit — the TFT has no PNG decoder) over black, with a one-line tagline. Shown while the
 // rest of setup() initialises; setup() holds it for a minimum SPLASH_MS before the home menu.
-static constexpr uint32_t SPLASH_MS = 2000;
+static constexpr uint32_t SPLASH_MS = 3000;
 static void drawSplash() {
   tft.fillScreen(TFT_BLACK);
   int y = (tft.height() - LOGO_H) / 2 - 12;            // wordmark a touch above centre

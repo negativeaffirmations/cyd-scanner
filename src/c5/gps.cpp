@@ -10,7 +10,7 @@ namespace gps {
 
 static HardwareSerial GpsSerial(0);          // UART0 (console is USB-CDC, so it's free)
 static SemaphoreHandle_t s_mux = nullptr;
-static Fix      s_fix = {0, 0, -1000, 0, 0};  // latest good fix (mutex-guarded)
+static Fix      s_fix = {0, 0, -1000, 0, 0, 0};  // latest good fix (mutex-guarded)
 static uint32_t s_fixMs = 0;                  // millis() of the last good sentence
 static constexpr uint32_t FIX_STALE_MS = 5000;  // drop the fix if no valid sentence for this long
 
@@ -31,6 +31,33 @@ static int hexVal(char c) {
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
   return -1;
+}
+
+// Two ASCII decimal digits -> 0..99, or -1 if either isn't a digit.
+static int twoDigit(const char* p) {
+  if (p[0] < '0' || p[0] > '9' || p[1] < '0' || p[1] > '9') return -1;
+  return (p[0] - '0') * 10 + (p[1] - '0');
+}
+
+// Days since 1970-01-01 for a proleptic-Gregorian y/m/d (Howard Hinnant's days_from_civil).
+static int32_t daysFromCivil(int y, int m, int d) {
+  y -= m <= 2;
+  int era = (y >= 0 ? y : y - 399) / 400;
+  int yoe = y - era * 400;                                   // [0, 399]
+  int doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1; // [0, 365]
+  int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;           // [0, 146096]
+  return (int32_t)(era * 146097 + doe - 719468);
+}
+
+// RMC time "hhmmss(.sss)" + date "ddmmyy" -> UTC epoch secs, or 0 if malformed.
+static uint32_t rmcEpoch(const char* tf, const char* df) {
+  if (strlen(tf) < 6 || strlen(df) < 6) return 0;
+  int hh = twoDigit(tf), mm = twoDigit(tf + 2), ss = twoDigit(tf + 4);
+  int dd = twoDigit(df), mo = twoDigit(df + 2), yy = twoDigit(df + 4);
+  if (hh < 0 || mm < 0 || ss < 0 || dd < 1 || mo < 1 || yy < 0) return 0;
+  if (hh > 23 || mm > 59 || ss > 60 || dd > 31 || mo > 12) return 0;  // ss 60 = leap second
+  int32_t days = daysFromCivil(2000 + yy, mo, dd);
+  return (uint32_t)(days * 86400 + hh * 3600 + mm * 60 + ss);
 }
 
 // ddmm.mmmm (lat) / dddmm.mmmm (lon) + hemisphere -> deg*1e7. Returns false if malformed.
@@ -72,13 +99,15 @@ static void parseLine(char* s) {
   const char* type = id + 2;        // talker-agnostic (GP / GN / ...)
 
   if (!strcmp(type, "RMC") && nf >= 7) {
-    // time,status,lat,N/S,lon,E/W,...
+    // time,status,lat,N/S,lon,E/W,speed,track,date,...
     if (f[2][0] != 'A') return;     // not valid
     int32_t lat, lon;
     if (!parseCoord(f[3], f[4][0], lat) || !parseCoord(f[5], f[6][0], lon)) return;
+    uint32_t ep = (nf >= 10) ? rmcEpoch(f[1], f[9]) : 0;  // RMC carries both date (f[9]) and time (f[1])
     xSemaphoreTake(s_mux, portMAX_DELAY);
     s_fix.lat = lat; s_fix.lon = lon;
     if (s_fix.fix == 0) { s_fix.fix = 1; s_fix.altM = -1000; s_fix.sats = 0; }  // RMC-only: 2D, no alt
+    if (ep) s_fix.epochUtc = ep;    // only RMC has the date; GGA (time-only) can't set it
     s_fixMs = millis();
     xSemaphoreGive(s_mux);
   } else if (!strcmp(type, "GGA") && nf >= 10) {
@@ -86,7 +115,7 @@ static void parseLine(char* s) {
     int q = atoi(f[6]);
     xSemaphoreTake(s_mux, portMAX_DELAY);
     if (q <= 0) {
-      s_fix = Fix{0, 0, -1000, 0, 0};
+      s_fix = Fix{0, 0, -1000, 0, 0, 0};
     } else {
       int32_t lat, lon;
       if (parseCoord(f[2], f[3][0], lat) && parseCoord(f[4], f[5][0], lon)) {
@@ -129,7 +158,7 @@ void poll() {
 
 void snapshot(Fix& out) {
   xSemaphoreTake(s_mux, portMAX_DELAY);
-  if (s_fix.fix && millis() - s_fixMs > FIX_STALE_MS) s_fix = Fix{0, 0, -1000, 0, 0};  // lost signal
+  if (s_fix.fix && millis() - s_fixMs > FIX_STALE_MS) s_fix = Fix{0, 0, -1000, 0, 0, 0};  // lost signal
   out = s_fix;
   xSemaphoreGive(s_mux);
 }

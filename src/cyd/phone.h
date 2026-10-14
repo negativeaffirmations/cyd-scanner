@@ -33,7 +33,9 @@ bool     peerMac(uint8_t out[6]);
 
 // Time sync
 bool     hasTime();
-uint32_t epochNow();  // current UTC epoch seconds, or 0 if never synced
+uint32_t epochNow();  // current LOCAL epoch seconds, or 0 if never synced
+int      tzOffsetMin();  // last phone tz offset (UTC-local minutes, JS getTimezoneOffset); persisted
+                         // in NVS so a GPS-only (phone-less) boot can still show local time. 0 until set.
 
 // GPS
 bool  hasGps();

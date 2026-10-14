@@ -1,6 +1,7 @@
 // phone.cpp — see phone.h.
 #include "phone.h"
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include <math.h>
 
 namespace {
@@ -21,6 +22,7 @@ bool     g_connected  = false;
 uint32_t g_epochBase  = 0;   // epoch secs at g_baseMillis
 uint32_t g_baseMillis = 0;
 bool     g_haveTime   = false;
+int      g_tzOffMin   = 0;   // UTC-local offset (min); loaded from NVS at begin(), updated on sync
 float    g_lat = 0, g_lon = 0;
 bool     g_haveGps    = false;
 bool     g_download   = false;
@@ -88,6 +90,11 @@ class WriteCB : public NimBLECharacteristicCallbacks {
         g_epochBase = (uint32_t)(utc - offMin * 60);
         g_baseMillis = millis();
         g_haveTime = true;
+        if (n >= 2 && (int)offMin != g_tzOffMin) {   // remember the tz so a phone-less GPS boot reads local
+          g_tzOffMin = (int)offMin;
+          Preferences p;
+          if (p.begin("cydscan", false)) { p.putInt("tzoff", g_tzOffMin); p.end(); }
+        }
         Serial.printf("[phone] time sync: utc=%ld offMin=%ld -> local base %lu\n",
                       utc, offMin, (unsigned long)g_epochBase);
       }
@@ -206,6 +213,8 @@ WriteCB  g_writeCB;
 namespace phone {
 
 void begin(const char* devName) {
+  { Preferences p;                       // restore the last known tz (for phone-less GPS local time)
+    if (p.begin("cydscan", true)) { g_tzOffMin = p.getInt("tzoff", 0); p.end(); } }
   NimBLEDevice::init(devName);
   NimBLEServer* server = NimBLEDevice::createServer();
   server->setCallbacks(&g_serverCB);
@@ -263,6 +272,7 @@ void setStatus(const String& s) {
 bool     connected()        { return g_connected; }
 bool     hasTime()          { return g_haveTime; }
 uint32_t epochNow()         { return g_haveTime ? g_epochBase + (millis() - g_baseMillis) / 1000 : 0; }
+int      tzOffsetMin()      { return g_tzOffMin; }
 bool     hasGps()           { return g_haveGps; }
 float    lat()              { return g_lat; }
 float    lon()              { return g_lon; }
