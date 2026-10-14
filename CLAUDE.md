@@ -260,7 +260,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   is a `+`-joined list of behavioral-detector hits (`ibeacon`/`findmy`/`pwnagotchi`/`eviltwin`/`droneid`,
   omitted when none). Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
   rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N}`
-  and `{…,"evt":"eviltwin","count":N}`. **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
+  and `{…,"evt":"eviltwin","count":N[,"ssid":"…","macs":"aa:bb:…,cc:dd:…"]}` (eviltwin also names the
+  suspect SSID + its BSSIDs — up to 8, comma-joined — from the live detections carrying
+  `FLAG_WIFI_EVILTWIN`, so the web Map's event-pin popup lists them and each BSSID opens that device's
+  detail; deauth has no per-AP address, the C5 only counts frames). **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
   ~once/30 s per emitter MAC, Remote-ID increment 3):
   `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"rid","mac":"…","uas":"…","dlat":…,"dlon":…,"h":…,"alt":…,"spd":…,"hdg":…,"olat":…,"olon":…,"oid":"…"}`
   — `lat`/`lon` = the scanner's own position fix (phone GPS preferred, onboard C5 NEO-6M as fallback);

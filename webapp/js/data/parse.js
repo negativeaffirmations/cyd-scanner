@@ -66,6 +66,10 @@ export function parseScanEvents(text){
     if(o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }  // anchor, not a map pin
     const ev={evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
       ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)};
+    if(ev.evt==="eviltwin"){   // suspect SSID + its BSSIDs (CYD enriches the line, up to 8 macs)
+      ev.ssid=o.ssid==null?"":String(o.ssid);
+      ev.macs=o.macs==null?[]:String(o.macs).split(",").filter(Boolean);
+    }
     if(ev.evt==="rid"){   // Remote-ID decode: absolute drone/operator fix + telemetry (absent -> NaN / "")
       const f=v=>v==null?NaN:parseFloat(v), n=v=>v==null?NaN:parseInt(v,10), s=v=>v==null?"":String(v);
       Object.assign(ev,{dlat:f(o.dlat), dlon:f(o.dlon), olat:f(o.olat), olon:f(o.olon),

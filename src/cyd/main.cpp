@@ -1297,20 +1297,41 @@ static int logNewDetections() {
 }
 
 // Append one event line to the current session log:
-//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N}
-// No "mac" key, so the Explore viewer's row parser skips it; the web Map renders it as an event pin.
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N[,"ssid":..,"macs":".."]}
+// For "eviltwin" we also name the suspect SSID + its BSSIDs (comma-joined, up to EVIL_MAX_BSSID),
+// pulled from the live detections that currently carry FLAG_WIFI_EVILTWIN, so the map/log identifies
+// the culprit APs instead of a bare count. (The "deauth" event has no per-AP address — the C5 only
+// counts frames.) No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
 static void logEvent(const char* evt, int count) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!ensureLogFile(st)) return;
   File f = SD.open(st.path, FILE_APPEND);
   if (!f) return;
-  char ln[160];
+  char ln[LOG_LINE];
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
   if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
     lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-  lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d}\n", evt, count);
+  lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d", evt, count);
+  if (!strcmp(evt, "eviltwin")) {
+    static constexpr int EVIL_MAX_BSSID = 8;
+    char ssid[97] = {0};
+    int emitted = 0;
+    for (int i = 0; i < g_detCount; i++) {
+      if (!(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) continue;
+      if (!ssid[0] && g_dets[i].name[0]) jsonEscape(ssid, sizeof(ssid), g_dets[i].name);
+      if (emitted >= EVIL_MAX_BSSID) continue;
+      const uint8_t* m = g_dets[i].mac;
+      if (emitted == 0) lnAppend(ln, n, ",\"macs\":\"");
+      lnAppend(ln, n, "%s%02X:%02X:%02X:%02X:%02X:%02X", emitted ? "," : "",
+               m[0], m[1], m[2], m[3], m[4], m[5]);
+      emitted++;
+    }
+    if (emitted) lnAppend(ln, n, "\"");
+    if (ssid[0]) lnAppend(ln, n, ",\"ssid\":\"%s\"", ssid);
+  }
+  lnAppend(ln, n, "}\n");
   if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
   f.close();
 }

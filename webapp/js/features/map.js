@@ -7,7 +7,11 @@ import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
 import { parseScanLog, parseScanEvents } from '../data/parse.js';
 import { showPage } from '../nav.js';
 
-let lmap=null, mapLayer=null, mapDets=[], mapEvents=[], mapRidEvents=[];
+let lmap=null, mapLayer=null, mapDets=[], mapEvents=[], mapRidEvents=[], mapByMac=new Map();
+
+// Look up a parsed detection row by MAC (lowercased) — used by the evil-twin event popup to open
+// the full device detail for a clicked BSSID. Returns undefined if that MAC isn't in the dataset.
+export function detByMac(mac){ return mapByMac.get(String(mac||"").toLowerCase()); }
 
 export function newMap(id){   // shared Leaflet setup (wardriving map + detail mini-map)
   const m=L.map(id);
@@ -34,6 +38,8 @@ const EVT_STYLE={deauth:{col:"#f85149",ch:"D",name:"Deauth flood"}, eviltwin:{co
 // Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
 export function plotCsvText(text, label){
   const all=parseScanLog(text);
+  mapByMac=new Map();                       // MAC -> row, for the evil-twin popup's clickable BSSIDs
+  for(const d of all) if(d.mac) mapByMac.set(d.mac.toLowerCase(), d);
   const evs=parseScanEvents(text);
   mapEvents=evs.filter(e=>e.evt!=="rid" && hasGps(e));
   mapRidEvents=evs.filter(e=>e.evt==="rid");   // positions come from the drone/operator fix, not the phone's
@@ -92,8 +98,25 @@ export function renderMap(){
     const st=EVT_STYLE[e.evt]||{col:"#8b949e",ch:"!",name:e.evt};
     const m=L.marker([e.lat,e.lon],{icon:L.divIcon({className:"",iconSize:[18,18],
       html:`<div class="evpin" style="background:${st.col}">${st.ch}</div>`})});
-    m.bindPopup("<b>"+esc(st.name)+"</b><br>count "+e.count+"<br>"+(e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+
-      "<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5));
+    let html="<b>"+esc(st.name)+"</b><br>count "+e.count+"<br>"+
+      (e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+"<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5);
+    const hasMacs = e.evt==="eviltwin" && e.macs && e.macs.length;
+    if(e.evt==="eviltwin"){   // name the suspect SSID + its BSSIDs; each BSSID opens the device detail
+      if(e.ssid) html+="<br><b>SSID:</b> "+esc(e.ssid);
+      if(hasMacs) html+="<br><b>BSSIDs:</b> "+
+        e.macs.map(x=>`<span class="evmac" data-mac="${esc(x)}">${esc(x)}</span>`).join(", ")+
+        '<br><span class="evhint">tap an address for details</span>';
+    }
+    m.bindPopup(html,{maxWidth:280});
+    if(hasMacs) m.on('popupopen', ev=>{   // wire clicks directly on the popup DOM (Leaflet stops click
+      ev.popup.getElement().querySelectorAll('.evmac').forEach(el=>{   // propagation, so delegation won't reach)
+        el.addEventListener('click', ()=>{
+          const row=detByMac(el.dataset.mac)||{mac:el.dataset.mac, name:e.ssid||"", source:"2.4",
+            rssi:0, tier:"likely", flags:"eviltwin"};   // minimal fallback if the AP wasn't logged as a row
+          import('./detail.js').then(d=>d.openDetail(row));   // deferred import: avoids a static map<->detail cycle
+        });
+      });
+    });
     m.addTo(mapLayer); pts.push([e.lat,e.lon]);
   }
   if($("fEvents").checked){   // Remote-ID positions: logged rid events + live emitters (drone, operator, link)

@@ -29,6 +29,13 @@
   width:18px; height:18px; line-height:18px; text-align:center; border-radius:4px; font-weight:700;
   font-size:12px; color:#fff; border:1px solid #fff;
 }
+// Clickable suspect BSSID + hint inside an evil-twin event popup (popups are light, so use the
+// brand accent as a readable link colour).
+.leaflet-popup-content .evmac {
+  color:#aa00aa; text-decoration:underline; cursor:pointer; white-space:nowrap;
+  font-family:ui-monospace,monospace;
+}
+.leaflet-popup-content .evhint { color:#6b7280; font-size:.85em; font-style:italic; }
 
 // Per-detection mini-maps inside the detail / follower modals.
 #detMap    { height:220px; width:100%; border-radius:8px; background:$color-surface-inset; margin-top:.7em; }
