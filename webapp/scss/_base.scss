@@ -70,6 +70,8 @@ button:disabled { opacity: .45; }
 .si#gpsState { gap:2px; }
 .si#gpsState.onboard, .si#gpsState.onboard .material-symbols-outlined { color:#39c0ed; }
 .si#gpsState .gpssats { font-size:11px; font-variant-numeric:tabular-nums; }
+// Time source (v10): cyan tint when the onboard GPS keeps the clock (no phone synced).
+.si#timeState.onboard, .si#timeState.onboard .material-symbols-outlined { color:#39c0ed; }
 
 #log {
   background:$color-surface-inset; border:1px solid $color-border; border-radius:10px; padding:8px;

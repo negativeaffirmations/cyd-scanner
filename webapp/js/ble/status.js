@@ -14,6 +14,11 @@ export function onStatus(ev){
   if("z"   in kv) $("z154").textContent = kv.z;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
+  if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS)
+    const ts = +kv.tsrc||0, el = $("timeState");
+    el.classList.toggle("onboard", ts===2);        // cyan tint when the onboard GPS keeps time (no phone)
+    el.title = ts===2 ? "Time: onboard GPS" : ts===1 ? "Time: phone-synced" : "Time: not set";
+  }
   if("gps" in kv) $("gpsState").classList.toggle("on", kv.gps==="1");
   if("gpssrc" in kv || "sats" in kv){            // v9: which source is live (1 phone / 2 onboard) + module sats
     const src = +kv.gpssrc||0, sats = +kv.sats||0, el = $("gpsState"), sl = $("gpsSats");

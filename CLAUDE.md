@@ -385,7 +385,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     2 = custom minutes; optional `/logs/` path; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
   - `…0004` STATUS (read/notify) — `key=val;…`:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats`
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc`
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),
@@ -393,7 +393,8 @@ back (5 GHz included). Things that matter, learned the hard way:
     **`evil`** = evil-twin SSID count, **`rid`** = Remote-ID emitters seen, **`bg`** = background
     scan on/off, **`lock`** = display/touch lock state 0/1, **`bat`** = battery % (−1 = no cell / on
     USB), **`gpssrc`** = active position source 0 none/1 phone/2 onboard, **`sats`** = onboard-GPS
-    satellites in use; `gps` = 1 when EITHER phone or onboard has a fix)
+    satellites in use, **`tsrc`** = active time source 0 none/1 phone/2 onboard GPS (v10; `time` = 1
+    when EITHER source has the clock); `gps` = 1 when EITHER phone or onboard has a fix)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows

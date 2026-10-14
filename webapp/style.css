@@ -238,6 +238,10 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.si#timeState.onboard, .si#timeState.onboard .material-symbols-outlined {
+  color: #39c0ed;
+}
+
 #log {
   background: #0b0e13;
   border: 1px solid #30363d;

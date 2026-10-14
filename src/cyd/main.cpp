@@ -1777,14 +1777,14 @@ static void pushStatus() {
   char s[416];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
            timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
            (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
-           power::percent(), posSource(), (int)g_onbSats);
+           power::percent(), posSource(), (int)g_onbSats, timeSource());
   phone::setStatus(String(s));
 }
 
