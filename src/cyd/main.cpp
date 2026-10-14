@@ -37,6 +37,9 @@ using namespace link_protocol;
 
 static constexpr uint8_t UI_ROTATION = 0;  // portrait 240x320 (90 CCW from landscape)
 static const char*       DEVICE_NAME = "COINTEL-FLO";
+// UI accent: the logo magenta #AA00AA in RGB565 ((0xAA>>3)<<11 | 0 | (0xAA>>3)). Used for selected
+// menu-item/button fills and the "< BACK" bar, replacing the old UI_ACCENT blue.
+static constexpr uint16_t UI_ACCENT = 0xA815;  // #AA00AA
 
 TFT_eSPI       tft = TFT_eSPI();
 HardwareSerial LinkSerial(1);  // UART1 on GPIO22/GPIO27
@@ -2166,9 +2169,9 @@ static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool
 // Body buttons (y76..101): START/STOP the scan · PAUSE/RESUME the list view · list FILTER · NEW session.
 static void drawScanButtons() {
   drawBodyButtonN(0, 4, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
-  drawBodyButtonN(1, 4, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : TFT_NAVY, false);
-  drawBodyButtonN(2, 4, "FILTER", TFT_NAVY, g_lvType != 0x1F || g_lvThreat);
-  drawBodyButtonN(3, 4, "NEW SES", TFT_NAVY, false);
+  drawBodyButtonN(1, 4, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : UI_ACCENT, false);
+  drawBodyButtonN(2, 4, "FILTER", UI_ACCENT, g_lvType != 0x1F || g_lvThreat);
+  drawBodyButtonN(3, 4, "NEW SES", UI_ACCENT, false);
 }
 
 // Info band (y44..BANNER_Y+BANNER_H): session + unique, per-band counts, scan state + tier counts.
@@ -2260,7 +2263,7 @@ static void render() {
 
   // Full-width back button across the top: tap to leave the scanner (asks first while a scan
   // is running; a long BOOT hold does the same).
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);
   drawScanButtons();
   drawScanInfo();
   drawScanList(false);
@@ -2312,7 +2315,7 @@ static void drawDownloadScreen() {
 static void drawAppQrScreen() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);  // full-width back (app convention)
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);  // full-width back (app convention)
   int W = tft.width();
   tft.setTextDatum(MC_DATUM);
   int ty = drawCenteredQr(APP_URL, 56) + 14;  // below the back bar (y24..42); +8px margin (QR quiet zone starts at qy-6)
@@ -2339,9 +2342,9 @@ static void drawListMenu(const char* title, const char* const* items, int n, int
   for (int i = 0; i < n; i++) {
     bool s = (i == sel);
     int  y = ROW_Y0 + i * ROW_STEP;
-    if (s) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_NAVY);
+    if (s) tft.fillRoundRect(6, y - 5, W - 12, ROW_H, 6, UI_ACCENT);
     else   tft.drawRoundRect(6, y - 5, W - 12, ROW_H, 6, TFT_DARKGREY);
-    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? TFT_NAVY : TFT_BLACK);
+    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? UI_ACCENT : TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
     tft.drawString(items[i], W / 2, y - 5 + ROW_H / 2, 4);
   }
@@ -2385,9 +2388,9 @@ static void drawFileList(const char* title, const FileItem* items, int n, int se
     const FileItem& it = items[off + i];
     bool s = (off + i == sel);
     int  rt = ROW_Y0 + i * ROW_STEP - 5;  // button top (height ROW_H, fixed)
-    if (s) tft.fillRoundRect(6, rt, W - 12, ROW_H, 6, TFT_NAVY);
+    if (s) tft.fillRoundRect(6, rt, W - 12, ROW_H, 6, UI_ACCENT);
     else   tft.drawRoundRect(6, rt, W - 12, ROW_H, 6, TFT_DARKGREY);
-    uint16_t bg = s ? TFT_NAVY : TFT_BLACK;
+    uint16_t bg = s ? UI_ACCENT : TFT_BLACK;
 
     char sz[12] = "";
     if (it.size >= 0) {
@@ -2586,7 +2589,7 @@ static void drawMenu() {
   // Recolor the HOME title to the logo magenta (#AA00AA); overdrawn at the same pos/font so the
   // opaque-background redraw cleanly replaces drawListMenu's default cyan. HOME only.
   tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(tft.color565(0xAA, 0x00, 0xAA), TFT_BLACK);
+  tft.setTextColor(UI_ACCENT, TFT_BLACK);
   tft.drawString("COINTEL-FLO", tft.width() / 2, 32, 4);
   tft.setTextDatum(TL_DATUM);
   drawHomeIcons();  // cog (Settings) left + phone (Phone Link) right, on the HOME line
@@ -2652,9 +2655,9 @@ static void drawScanSettings() {
   for (int i = 0; i < 3; i++) {
     bool s = (g_scanSetSel == 4 + i);
     int  y = SS_ROW_Y0 + i * SS_ROW_STEP;
-    if (s) tft.fillRoundRect(6, y - 5, W - 12, SS_ROW_H, 6, TFT_NAVY);
+    if (s) tft.fillRoundRect(6, y - 5, W - 12, SS_ROW_H, 6, UI_ACCENT);
     else   tft.drawRoundRect(6, y - 5, W - 12, SS_ROW_H, 6, TFT_DARKGREY);
-    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? TFT_NAVY : TFT_BLACK);
+    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? UI_ACCENT : TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
     tft.drawString(kRowLbl[i], W / 2, y - 5 + SS_ROW_H / 2, 4);
   }
@@ -3040,7 +3043,7 @@ static void drawViewerList(bool clear) {
 static void drawViewer() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);  // full-width back (app convention)
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);  // full-width back (app convention)
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString(g_viewName, 4, 44, 1);
@@ -3049,8 +3052,8 @@ static void drawViewer() {
            g_viewN, g_idxN, MAX_LOG_ROWS);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(b, 4, 54, 1);
-  drawBodyButtonN(0, 2, "Filter", TFT_NAVY, false);   // two body actions, right above the list
-  drawBodyButtonN(1, 2, "Sort",   TFT_NAVY, false);
+  drawBodyButtonN(0, 2, "Filter", UI_ACCENT, false);   // two body actions, right above the list
+  drawBodyButtonN(1, 2, "Sort",   UI_ACCENT, false);
   drawViewerList(false);
 }
 
@@ -3256,7 +3259,7 @@ static void openDetail(int viewPos) {  // position within the filtered+sorted vi
   listTouchReset();
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("BACK", UI_ACCENT, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString("DETAIL", 4, 46, 1);
@@ -3308,7 +3311,7 @@ static void drawFollowRows(bool clear) {
 static void drawFollowList() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -3418,7 +3421,7 @@ static void openFollowDetail() {
   listTouchReset();
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString("FOLLOW DETAIL", 4, 46, 1);
@@ -3683,7 +3686,7 @@ static void showDeviceDetail(const uint8_t* mac, Screen scr) {
   listTouchReset();
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString("DETAIL", 4, 46, 1);
@@ -3732,7 +3735,7 @@ static void drawMenuCatRows(bool clear) {
 static void drawMenuCat() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -3882,7 +3885,7 @@ static void drawWhitelistRows(bool clear) {
 static void drawWhitelist() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);  // full-width back (app convention)
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);  // full-width back (app convention)
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -3941,7 +3944,7 @@ static void drawWlAddRows(bool clear) {
 static void drawWlAdd() {
   tft.fillScreen(TFT_BLACK);
   drawStatusBar();
-  drawTopBar("< BACK", TFT_NAVY, TFT_CYAN);
+  drawTopBar("< BACK", UI_ACCENT, TFT_CYAN);
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);

@@ -33,7 +33,7 @@ button {
   padding: 0.8em 1em;
   border: 0;
   border-radius: 10px;
-  background: #238636;
+  background: #aa00aa;
   color: #fff;
   width: 100%;
   margin: 0.35em 0;
@@ -74,7 +74,7 @@ button:disabled {
 }
 
 #scanBtn.rec {
-  background: #238636;
+  background: #aa00aa;
 }
 
 #scanBtn.scanning {
@@ -82,7 +82,7 @@ button:disabled {
 }
 
 #pauseBtn.paused {
-  background: #238636;
+  background: #aa00aa;
 }
 
 .pill {
@@ -316,7 +316,7 @@ dialog::backdrop {
 
 input[type=range] {
   width: 100%;
-  accent-color: #238636;
+  accent-color: #aa00aa;
   margin-top: 0.4em;
 }
 
@@ -452,7 +452,7 @@ body {
 }
 
 .navbtn.active .material-symbols-outlined {
-  background: rgba(35, 134, 54, 0.22);
+  background: rgba(170, 0, 170, 0.22);
   border-radius: 999px;
   padding: 2px 14px;
 }
