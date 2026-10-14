@@ -4467,7 +4467,18 @@ void loop() {
   if (serviceTouchLock()) {
     if (g_screen == SCR_SCAN && g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
       g_lastCycleMs = millis();
-      runScanCycle();
+      runScanCycle();   // renders via updateScan()
+    } else if (g_screen == SCR_MENU) {
+      // HOME's live readout is normally repainted by the SCR_MENU idle branch, which the early
+      // return above skips while locked — so the tiles froze on screen even though the headless
+      // bg cycle kept the data current. Refresh the status bar + threat tiles on the idle cadence
+      // (the bg cycle already pushed status + rebuilt g_groups; this just repaints from them).
+      static uint32_t lastLockedHome = 0;
+      if (millis() - lastLockedHome > 2000) {
+        lastLockedHome = millis();
+        drawStatusBar();
+        drawMenuThreats();
+      }
     }
     delay(10);
     return;
