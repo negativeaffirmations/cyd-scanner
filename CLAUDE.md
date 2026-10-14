@@ -189,15 +189,19 @@ back (5 GHz included). Things that matter, learned the hard way:
   Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
   active; see the Scope section). The C5 prints a per-window `mgmt/data/dataClient` capture-health
   line to its USB console.
-- **Onboard GPS (C5, protocol v9).** A GY-NEO6MV2 NEO-6M is wired to the C5 on **UART0** (console is
-  USB-CDC, so UART0 is free; RX = GPIO15, TX = -1 → **receive-only**, 9600 8N1, XTAL clock). `src/c5/gps.*`
-  runs a clean-room checksum-verified `$GxRMC`/`$GxGGA` NMEA parser, holds the latest fix (mutex-guarded),
-  and `sendStatus()` folds `gpsLat`/`gpsLon` (deg·1e7) + alt/sats/fix into every `Status` frame. The CYD
-  routes it through a unified `posHasFix()/posLat()/posLon()` accessor used by every position consumer (log
-  NDJSON, status bar, STATUS `gps=`, follow scoring). **Phone GPS is PREFERRED** (it fuses A-GPS/cell);
-  the onboard fix is the **fallback** used only when the phone has no fix. With no module fitted the Status
-  carries `gpsFix=0`, so behaviour is identical to phone-only. (`PROTOCOL_VERSION` 8→9, `sizeof(Status)`=24;
-  both boards flash together.)
+- **Onboard GPS (C5, protocol v9 position; v10 adds time).** A GY-NEO6MV2 NEO-6M is wired to the C5 on
+  **UART0** (console is USB-CDC, so UART0 is free; RX = GPIO15, TX = -1 → **receive-only**, 9600 8N1, XTAL
+  clock). `src/c5/gps.*` runs a clean-room checksum-verified `$GxRMC`/`$GxGGA` NMEA parser, holds the latest
+  fix (mutex-guarded), and `sendStatus()` folds `gpsLat`/`gpsLon` (deg·1e7) + alt/sats/fix **+ `gpsEpoch`
+  (UTC secs from the RMC date+time, v10)** into every `Status` frame. The CYD routes position through a
+  unified `posHasFix()/posLat()/posLon()` accessor and **time through `timeHasSync()/epochLocal()/
+  timeSource()`** (log NDJSON, status bar clock, STATUS `gps=`/`time=`/`tsrc=`, follow scoring, session
+  rename). **Phone is PREFERRED for both** (it fuses A-GPS/cell); the onboard fix/clock is the **fallback**.
+  GPS time is UTC, so the CYD adds the **last phone tz offset, persisted in NVS** (`cydscan/tzoff`,
+  `phone::tzOffsetMin()`), to show LOCAL time with no phone after the first-ever sync (UTC until then); the
+  status-bar clock + web time icon are **cyan when GPS keeps time**, white when phone-synced. With no module
+  fitted the Status carries `gpsFix=0`/`gpsEpoch=0`, so behaviour is identical to phone-only.
+  (`PROTOCOL_VERSION` 9→10, `sizeof(Status)`=28; both boards flash together.)
 - **C5 behavioral detectors (added in protocol v6; link now v9 — see onboard GPS above).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
@@ -320,12 +324,16 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 ### Display / UI (portrait)
 
-- Rotation `0` (portrait 240×320). Top **status bar**: local time (left), abbreviated
-  GPS (middle), phone connection icon (Bluetooth / Wi-Fi / circle-slash) with the
-  **CYD↔C5 link dot** to its right (solid green = link up, solid red = down). Below it:
-  SD/db line, per-band counts (2.4 / 5G / BLE / PRB / unique), a threats line, then
-  detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow,
-  likely=orange, confirmed=red).
+- Rotation `0` (portrait 240×320). Top **status bar**: local time (left; **cyan when the onboard GPS
+  is keeping time**, white when phone-synced), then a right-hand icon cluster — a **GPS location-pin
+  glyph** (with a small **phone** or **chip** badge showing the fix source; **tap it for a GPS modal**
+  of source + lat/lon + sats), a **battery** glyph, the **touch-lock padlock**, the **phone connection
+  icon** (Bluetooth / Wi-Fi / circle-slash), and the **CYD↔C5 link dot** (solid green = up, red =
+  down). Below it: SD/db line, per-band counts (2.4 / 5G / BLE / PRB / unique), a threats line, then
+  detection rows sorted threat-tier-first then RSSI (tier colors: suspect=yellow, likely=orange,
+  confirmed=red). The HOME menu title is the magenta **COINTEL-FLO** wordmark, and a **boot splash**
+  shows the logo (`src/cyd/logo.h`, baked from `resources/logo/`). The selected-item/button accent is
+  the logo magenta `#AA00AA` (`UI_ACCENT`).
 - **Input: BOOT button + a touch overlay.** A short **tap** moves the highlight / selects a
   touched item; a long **hold** selects / returns toward the menu. A **bag-safe touch lock** rides in
   the status bar: a small padlock glyph (yellow=locked, grey=unlocked) that **2 quick taps toggle**
@@ -372,8 +380,9 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 ### Phone link + web app (Web Bluetooth) — working
 
-- **CYD BLE GATT peripheral** (`src/cyd/phone.*`, NimBLE) advertises as `CYD-Scanner`,
-  service `9a1e0000-…` with characteristics:
+- **CYD BLE GATT peripheral** (`src/cyd/phone.*`, NimBLE) advertises as `COINTEL-FLO`,
+  service `9a1e0000-…` with characteristics (the web app filters by **service UUID**, not name, so the
+  advert name is cosmetic):
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download

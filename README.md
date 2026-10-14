@@ -61,9 +61,11 @@ The rig is **battery-powered and portable**: a 5000 mAh 3.7 V LiPo → TP4056 Ty
 master switch (**SW1**) → 1.5 A boost converter (3.7→5 V). The 5 V output feeds the **CYD VIN
 directly** and the **C5 5V through a second switch (SW2)** so the C5 can be isolated from the
 CYD's USB 5 V while flashing. A **100 kΩ/100 kΩ divider** off the switched battery rail feeds
-**CYD GPIO35** for the **on-screen + web battery-level indicator** (voltage-only — the TP4056
-CHRG pad isn't wired). A **GY-NEO6MV2 GPS** is also wired to the C5 (GPIO15/23) but not yet read
-in firmware. Full wiring is in
+**CYD GPIO35** for the **on-screen + web battery-level indicator** (voltage-only — this TP4056
+module has no CHRG/STDBY status pad, so there's no charge-detect; GPIO26 stays free). A
+**GY-NEO6MV2 GPS** is wired to the C5 (RX = GPIO15, receive-only) and **read in firmware** (protocol
+v10): it provides a position fix **and the wall-clock time** as a fallback when no phone is connected.
+Full wiring is in
 [hardware/PINOUT.md](hardware/PINOUT.md#4-power-subsystem--on-board-battery-current-rig)
 (diagram: [`cyd-scanner_wiring_diagram_v2.png`](hardware/diagrams/cyd-scanner_wiring_diagram_v2.png)).
 

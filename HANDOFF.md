@@ -1,4 +1,73 @@
-# Handoff — 2026-10-11 (active branch: `remoteid-decode`; `main` is the trunk)
+# Handoff — 2026-10-14 (branch: `main`, clean; it is the only branch / the trunk)
+
+## Done — COINTEL-FLO rebrand + GPS time + UI polish (2026-10-14, BOTH BOARDS FLASHED v10, all pushed to `main`)
+A run of CYD/webapp changes this session (newest first). Device state at the end: **both boards on
+protocol v10**, interoperating (link verified `table=55` dual-band). Ports this session: CYD = CH340
+`1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (confirmed ESP32-C5 by `esptool chip-id`, base
+MAC `d0:cf:13:e4:6a:74`); spare S3 odid-tx = `303A:1001` = COM12 (MAC `a4:cb:8f:da:45:b0`). Identify
+by chip, not COM.
+
+- **HOME touch-lock readout fix (`be50c4a`, CYD FLASHED).** The bag-safe touch lock early-returns from
+  `loop()` before the per-screen switch, so the HOME threat tiles (repainted only in the `SCR_MENU`
+  idle branch) **froze on screen while locked** — scanning/logging kept running (bg cycle is before
+  the lock gate), only the *display* stalled. The Scan screen was fine (the locked block re-runs
+  `runScanCycle()`→`updateScan()`). Fix: in the locked branch, when on `SCR_MENU`, repaint status bar
+  + `drawMenuThreats()` on the ~2 s idle cadence. CYD-only, no protocol bump.
+- **STATUS `tsrc` + webapp time-source indicator (`d2f6de4`, CYD FLASHED + webapp pushed).** STATUS
+  gained **`tsrc`** = `timeSource()` (0 none / 1 phone / 2 onboard GPS). The web app tints the app-bar
+  **time** icon cyan (`.si#timeState.onboard`) when `tsrc===2`, with a "Time: onboard GPS / phone-synced
+  / not set" tooltip — mirrors the existing `gpssrc` handling. `style.css?v=20261014d`, `#uiver →
+  time-source`. CYD→phone only, no protocol bump.
+- **Onboard GPS time fallback clock — protocol v9 → v10 (`712fd9f`, BOTH BOARDS FLASHED v10).** The
+  NEO-6M's RMC **date+time** now feeds the CYD wall-clock so it timestamps logs with **no phone**, as
+  long as it has a fix. `Status` gained `uint32_t gpsEpoch` (UTC secs; `sizeof` 24→28; `static_assert`
+  + `PROTOCOL_VERSION` 10). C5 `gps.cpp` parses RMC `hhmmss`+`ddmmyy` via a clean-room days-from-civil
+  epoch calc, set only on a valid (`A`) fix (GGA is time-only → can't set it). CYD: unified clock
+  `timeHasSync()/epochLocal()/timeSource()` prefers the phone, else the latched GPS UTC (free-runs on
+  `millis()`, refreshed on newer epochs); **every** clock consumer routes through it (NDJSON epoch,
+  event/rid lines, session rename + timesync anchor, time-filtered export, STATUS `time=`, status-bar
+  clock, Explore detail). **Timezone:** GPS is UTC-only, so `phone.cpp` **persists the last phone tz
+  offset in NVS** (`cydscan/tzoff`, exposed via `tzOffsetMin()`) → a phone-less GPS boot reads LOCAL
+  time after the first-ever phone sync (UTC until then). Status-bar clock is **cyan when GPS keeps
+  time**, white when phone-synced. **Needs an outdoor fix (phone disconnected) to field-validate**;
+  no sky view at the bench = `gpsEpoch` 0 = identical to before.
+- **GPS status-bar glyph + tap-to-open modal (`9b8cd1c`, CYD FLASHED).** Replaced the middle GPS
+  coordinate TEXT with a **location-pin glyph** in the right-hand icon cluster (left of the battery).
+  Source badge: a small **phone handset** when the fix is from the linked phone, a little **chip/IC**
+  when it's the onboard NEO-6M; dim-grey pin / no badge when no fix (colour also white=phone /
+  cyan=module). **Tapping it opens a GPS modal** (source + lat/lon + module sat count); tap/BOOT to
+  close, `redrawScreen()` restores the screen under it. Not offered on the stateful device-detail
+  screens (no clean no-arg repaint); the scan cycle pauses while the modal is up (its list repaint
+  would paint over the popup) and resumes on dismiss.
+- **Status-bar icon spacing (`71c75de`, CYD FLASHED).** The lock↔phone gap was ~17 px vs ~7 px
+  elsewhere; `lockCx()` moved `W-52 → W-42` (the battery glyph tracks it at `lockCx-30`) so the GPS /
+  battery / lock / phone / link-dot cluster is evenly spaced.
+- **Magenta `#AA00AA` UI accent (`4585770`, CYD FLASHED + webapp pushed).** New CYD `UI_ACCENT`
+  (RGB565 `0xA815`) replaces `TFT_NAVY` for selected menu-item/button fills + the "< BACK" bar (left
+  `TFT_BLUE` for the RESUME state + BLE icon). Web app `$color-accent` `#238636` (green) → `#aa00aa`
+  (primary buttons, scan/pause record, range + nav-active chip). `style.css?v=20261014c`.
+- **COINTEL-FLO rebrand (`0ad9ec7`, `9014133`, CYD FLASHED + webapp pushed).** HOME menu title → logo
+  magenta **COINTEL-FLO**; **boot splash** of the logo (`resources/logo/logo.png` baked to
+  `src/cyd/logo.h` as a 240×32 RGB565 `pushImage` blit — the TFT has no PNG decoder; generator kept at
+  `resources/logo/gen_logo.py`), held **3 s** (was 2 s, bumped `fab...`→ this session). BLE device
+  name + on-device Wi-Fi log page `CYD-Scanner`/`CYD Scanner` → **COINTEL-FLO** (web discovery is by
+  service UUID, so the advert rename is safe). Web app `<title>` + app-bar → **COINTEL-FLO**.
+  **Can the logo HTML/Python/PNG be used directly on the CYD?** No — no browser/terminal/PNG-decoder;
+  the PNG was baked to an RGB565 array (preferred over ASCII art on a graphical TFT). The logo.html is
+  the directly-usable one for the web.
+
+### Resolved this session
+- **C5 GPS pins 15/23 — CONFIRMED.** The owner wired the NEO-6M as-is and it works; RX=GPIO15 proven
+  by a real fix, TX=GPIO23 is documentation-only (code passes `TX=-1`, receive-only). No action.
+- **Battery charge-detect — NOT FEASIBLE (dropped).** The owner inspected the TP4056 module: the two
+  extra pads are the DC **input +/−**, not a CHRG/STDBY status pad. So there's no software charge-detect
+  on this module; the **voltage-only** battery indicator is the final form and **GPIO26 stays free**.
+- **Remote-ID web-app map (increment 4) — VERIFIED working.** The owner saw the drone/operator plotted
+  on the web map against the `tools/odid-tx` bench S3. (The marker sits in NYC because the S3 broadcasts
+  **hardcoded** coords — drone 40.7128,−74.0060 / operator 40.7130,−74.0062, Lower Manhattan — NOT an
+  internet/VPN location; the S3 isn't networked and the web app plots strictly `rid.olat/olon`.) The
+  full Remote-ID chain (C5 decode → link → CYD detail/log → DETS → web map) is now end-to-end verified.
+
 
 ## Done — onboard GPS (protocol v9) — 2026-10-14
 - **What:** the GY-NEO6MV2 NEO-6M wired to the **C5** is now read in firmware and its fix is forwarded
@@ -38,21 +107,19 @@
 - **Builds:** c5 SUCCESS Flash 45.9% / RAM 24.0%; cyd SUCCESS Flash 45.2% / RAM 33.4%. Reviewer CLEAN,
   security PASS. **Committed + pushed to `main` 2026-10-14** (same commit carries the `resources/logo/*`
   edits per the owner — logo is "Updated logo. Still TBD").
-- **Open / next session:**
-  - **Sanity-check C5 GPS pins 15/23** against the physical board — pins.h firmly vouches only for the
-    link pins 4/5; GPIO15 isn't a strapping pin so it's plausible, and a correct fix came through, but
-    confirm the solder points match if anything acts up.
-  - **Battery charge-detect** still TODO: the TP4056 CHRG pad is unwired (GPIO26 free). The owner found
-    extra pads labelled **`+`** and **`D`** on the charge module and will research which (if either) is
-    CHRG — **ASK the owner what they found**; if a CHRG pad exists, wire it → CYD **GPIO26**
-    (`INPUT_PULLUP`, LOW = charging) and I'll add the charging-bolt glyph + a `chg=` STATUS key.
-  - **`resources/logo/*`** — committed as-is ("Still TBD"); the owner will finish the logo later.
+- **Open / next session (all RESOLVED 2026-10-14 — see "Resolved this session" above):**
+  - ~~Sanity-check C5 GPS pins 15/23~~ — CONFIRMED working (RX=15 proven by a real fix, TX=23 unused).
+  - ~~Battery charge-detect~~ — NOT FEASIBLE on this TP4056 (extra pads are DC input +/−, no CHRG pad);
+    voltage-only is final, GPIO26 stays free.
+  - **`resources/logo/*`** — now wired into the boot splash + rebrand; artwork still "Still TBD" per
+    the owner (finalize the logo PNG later, then re-run `resources/logo/gen_logo.py` to regenerate
+    `src/cyd/logo.h`).
 
 ## Branches / deploy
-- **2026-10-11: active feature branch `remoteid-decode`** (forked from `main` after `f88ed01`). Holds
-  the in-progress Remote-ID ASTM F3411 decode (increment 1 — see outstanding #5 + Done below). Pushed
-  to origin. Merge back to `main` when the feature lands; `main` is otherwise the trunk and everything
-  else below was committed there.
+- **2026-10-14: `main` is the only branch and the trunk; working tree clean.** The Remote-ID feature
+  branches (`remoteid-decode`/`remoteid-ui`) all merged to `main` and the whole 2026-10-14 session
+  (rebrand, GPS glyph/modal, GPS-time v10, accent, lock fix) was committed straight to `main`. Start
+  the next dev round with a fresh `git checkout -b <name>` only if you want isolation.
 - **2026-10-09: `phase5-dev` is RETIRED.** `main` was fast-forwarded to `f44df6a` (picking up the
   post-merge work that had accumulated only on phase5-dev — C5 board photos, wiring diagrams, the
   Adobe-ignore rules, and the on-board **battery power subsystem** docs) and pushed; then
@@ -663,27 +730,27 @@ Newest first:
 - `26b70ee` **signature roster** from SquachWatch (Axon/ALPR/cameras/Ring/trackers/glasses/
   Flipper/drones); `MAX_OUI` 64→96; DB_GEN 2 (reseeds `/signatures.csv` on boot).
 
-Device state: **both boards FLASHED to protocol v8** (2026-10-11, Remote-ID increment 2 — `Reply::RemoteId`)
-and validated end-to-end against the `tools/odid-tx/` S3 transmitter. They interoperate on v8; a v8
-board rejects a v7 peer, so keep them in lockstep on future protocol bumps. The spare ESP32-S3
-(COM12, MAC `a4:cb:8f:da:45:b0`) now runs the ODID bench transmitter.
-**Latest flashes (2026-10-11 this session):** **BOTH boards flashed to protocol v8** on branch
-`remoteid-decode` — Remote-ID increment 2 (C5 COM18 `303A:1001`, CYD COM14 `1A86:7523`, battery/5V
-off), validated end-to-end against the `tools/odid-tx/` S3 transmitter. Then on branch `remoteid-ui`
-the **CYD was reflashed (COM14) several more times — Remote-ID increment 3, the HOME per-category tile
-colours + score badge, and increment 4 (DETS v6 RID block)** — all CYD-only, protocol still v8 (C5 not
-reflashed). Also flashed the spare **ESP32-S3 (COM12 `303A:1001`)** with the ODID bench transmitter. Earlier on `main`: CYD web
-lock/unlock + follower RPA guard + P3 log hardening; C5 Remote-ID decode increment 1. 2026-10-10:
-CYD camera OUIs + HOME readout (`DB_GEN` 3); C5 associated-client capture + BLE-pause starvation fix
-+ 2.4 ch 1–11 + 5 GHz promiscuous sweep. Ports THIS session: CYD = CH340 `1A86:7523` = COM14; C5
-native = `303A:1001` = COM18 (flash); C5 UART bridge `2E3C:5740` = COM8 (does NOT flash); spare S3
-native = `303A:1001` = COM12 (shares VID:PID with the C5 native — disambiguate by `esptool chip-id`).
-Ports drift; always identify by VID:PID + chip type.
-**Pending field validation:** (a) ~~Wi-Fi client/camera capture~~ — DONE, user-confirmed on a walk
-(#0); (b) the follower RPA guard — confirm your own phone no longer trips the follower banner (#6);
-(c) ~~Remote-ID decode~~ — DONE: validated at the bench against `tools/odid-tx/` (C5 + CYD `[RID]`
-lines match the transmitted flight values). Field test with a real drone/ODID broadcast is a nice-to-
-have (#5).
+Device state: **both boards FLASHED to protocol v10** (2026-10-14, onboard-GPS time → `Status.gpsEpoch`;
+`sizeof(Status)`=28) and link-verified up (`table=55` dual-band). They interoperate on v10; a v10 board
+rejects any older peer, so keep them in lockstep on future protocol bumps. The spare ESP32-S3 (COM12,
+MAC `a4:cb:8f:da:45:b0`) runs the ODID bench transmitter.
+**Latest flashes (2026-10-14 this session, all on `main`):** **BOTH boards flashed to protocol v10**
+(onboard-GPS time fallback clock — C5 COM18 `303A:1001` chip-id-confirmed ESP32-C5, CYD COM14
+`1A86:7523`). The **CYD was reflashed several more times** afterward (all CYD-only, protocol stays
+v10): STATUS `tsrc`, and the HOME touch-lock readout fix. Earlier in the same session (CYD-only, no
+protocol change): the COINTEL-FLO rebrand + boot splash, the GPS status-bar glyph + tap modal, the
+status-bar icon spacing, and the magenta `#AA00AA` accent. History: v8 (Remote-ID inc 2, 2026-10-11),
+v7 (multi-UUID), earlier CYD camera OUIs + C5 promiscuous fixes (2026-10-10). Ports THIS session: CYD
+= CH340 `1A86:7523` = COM14; C5 native = `303A:1001` = COM18 (flash); C5 UART bridge `2E3C:5740` =
+COM8 (does NOT flash); spare S3 native = `303A:1001` = COM12 (shares VID:PID with the C5 native —
+disambiguate by `esptool chip-id`). Ports drift; always identify by VID:PID + chip type.
+**Pending field validation:** (a) ~~Wi-Fi client/camera capture~~ — DONE (#0); (b) the follower RPA
+guard — confirm your own phone no longer trips the follower banner, checked on the **Scan screen's
+magenta banner / LED** or the web follower count (`fol`), NOT the follow-gated HOME tracker tile (#6);
+(c) ~~Remote-ID decode + web map~~ — DONE/VERIFIED (web map plots the bench S3's hardcoded NYC
+operator fix, #5); (d) **onboard GPS time (v10)** — outdoors with the phone disconnected the status-bar
+clock should populate + turn **cyan** and logs get real epochs (NEW this session, bench can't test — no
+sky view).
 
 ## PICK UP HERE — outstanding
 
@@ -717,11 +784,12 @@ have (#5).
 5. **~~Remote-ID DECODE (ASTM F3411)~~ — COMPLETE (increments 1–4, 2026-10-11).** Landed across
    branches `remoteid-decode` (inc 1–2, merged to `main` `487fd96`) and `remoteid-ui` (inc 3–4). Full
    end-to-end: C5 decodes → v8 link frame → CYD store + detail UI + NDJSON `rid` → DETS v6 → web-app
-   map (drone + operator plotting). Validated inc 1–2 on the bench vs `tools/odid-tx`; inc 3 confirmed
-   on-device by the user; inc 4 webapp map is **static-verified, pending an Android-Chrome in-browser
-   check**. Only residual idea: **BT5 extended-scan (Long-Range ODID packs)** — a later, measured
-   change (check the BLE/15.4 coexistence rule first). Design + increment log in
-   [docs/remoteid-decode.md](docs/remoteid-decode.md).
+   map (drone + operator plotting). **FULLY VERIFIED incl. the web map (2026-10-14):** the owner saw the
+   drone/operator plotted in-browser against the bench S3 (the marker sits in NYC = the S3's hardcoded
+   test coords 40.7128,−74.0060 / 40.7130,−74.0062, NOT an internet/VPN location — the S3 isn't
+   networked and the web app plots strictly `rid.olat/olon`). Only residual idea: **BT5 extended-scan
+   (Long-Range ODID packs)** — a later, measured change (check the BLE/15.4 coexistence rule first).
+   Design + increment log in [docs/remoteid-decode.md](docs/remoteid-decode.md).
    - **Increment 1 DONE (2026-10-11, C5 FLASHED COM18, no protocol change):** `src/c5/remoteid.*`
      clean-room decodes the OpenDroneID messages (Basic ID / Location / System / Operator ID, incl.
      Message Pack + the BLE `0x0D` legacy framing) from the `0xFFFA` BLE service data already captured
@@ -763,15 +831,16 @@ have (#5).
 8. Older backlog: 802.15.4 opt-in polish, phone/desktop SQLite import, CYD Scan Viewer window caching.
    (The "strict BLE passivity" item is **dropped** — the passive-only directive was removed; active
    scanning is sanctioned, and its extra UUIDs are captured + matched as of v7.)
-9. **Battery %/charge status-bar indicator (PROPOSED, awaiting user sign-off + a hardware mod).** No
-   software-only path — the boost feeds the CYD a constant 5 V, so the cell voltage must be tapped.
-   Plan: a **100 kΩ/100 kΩ divider** from the switched battery rail (TP4056 OUT+/boost input) → **GPIO35**
-   (P3/IO1, ADC1_CH7, Wi-Fi-safe); `analogReadMilliVolts(35)`×2 → LiPo voltage→% curve. Optional charge
-   icon: TP4056 **CHRG** pad → **GPIO26** (audio header) as digital `INPUT_PULLUP` (LOW=charging).
-   **Uses the CYD's last two free GPIOs (35+26).** Firmware = a small `power` module + a status-bar glyph
-   (CYD-only, no protocol bump); optional `bat=`/`chg=` STATUS keys for the web app. A MAX17048 I2C
-   fuel gauge would be more accurate but its I2C pins (22/27) are the C5 link. User adds the divider at
-   the bench, then I implement + add the GPIO35/26 assignment to PINOUT.md. See [[battery-indicator-plan]].
+9. **~~Battery %/charge status-bar indicator~~ — BUILT (voltage) + charge-detect DROPPED.** The
+   **voltage** indicator is live (`src/cyd/power.*`, GPIO35 100k/100k divider, status-bar glyph + web
+   `bat=`; CYD-only, no protocol bump). **Charge-detect is NOT FEASIBLE** on this TP4056 module — the
+   extra pads the owner found are the DC **input +/−**, not a CHRG/STDBY status pad — so there's no
+   `chg=` key and **GPIO26 stays free**. See [[battery-indicator-plan]] / [[battery-power-subsystem]].
+10. **Onboard GPS time (v10) — FIELD-VALIDATE.** The GPS-time fallback clock is built + flashed but
+   only works with a real fix; verify outdoors with the **phone disconnected**: the status-bar clock
+   populates + turns **cyan** (web time icon cyan, `tsrc=2`), and logged rows carry real epochs instead
+   of `0`. Before any phone has *ever* synced, the fallback reads **UTC** (no tz); after the first-ever
+   phone sync the tz offset persists in NVS (`cydscan/tzoff`) and it reads LOCAL.
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.

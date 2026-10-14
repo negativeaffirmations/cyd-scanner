@@ -8,7 +8,8 @@
 - **Charge status (GPIO26 ← TP4056 CHRG)** — **NOT wired.** The TP4056 CHRG pad isn't broken out on
   this build, so there's no USB-charge-detect input and the indicator is **voltage/% only**. GPIO26
   stays free. (This is Build C minus the CHRG pin — see the table in §0.)
-- **GPS on the C5 (GPIO15/23)** — **wired, firmware pending** (protocol-v9 gated; see §4b).
+- **GPS on the C5 (GPIO15 RX, receive-only)** — **wired + read in firmware**: position (protocol v9)
+  and wall-clock time (v10) fold into `Status`; see §4b.
 - **Power:** a second switch (**SW2**) was added inline on the boost-OUT+ → **C5 5V** leg (CYD VIN is
   fed directly). It isolates the C5 so the CYD's USB 5 V can't back-feed it while flashing. See
   PINOUT.md §4.
