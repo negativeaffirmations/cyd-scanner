@@ -1934,6 +1934,38 @@ static void drawBatteryGlyph() {
   }
 }
 
+// GPS glyph, left of the battery: a map-pin plus a tiny source badge so the fix source is readable
+// at a glance — a small PHONE handset when the fix comes from the linked phone, a little CHIP (IC)
+// when it comes from the onboard NEO-6M module. Dim-grey pin with no badge when there's no fix.
+// Colour also tracks source (white = phone, cyan = module) to match the old text. Tapping it opens
+// the GPS modal (serviceGpsModal). Footprint sits ~6 px left of the battery so the right cluster
+// (GPS / battery / lock / phone / link-dot) stays evenly spaced.
+static int gpsX() { return (lockCx() - 30) - 22; }   // left edge of the GPS glyph footprint
+static void drawGpsGlyph() {
+  int xo = gpsX();
+  tft.fillRect(xo - 2, 2, 20, 17, TFT_BLACK);        // clear the footprint (source badge changes)
+  int src = posSource();                             // 0 none / 1 phone / 2 module
+  uint16_t c = src == 0 ? 0x4208 : (src == 2 ? TFT_CYAN : TFT_WHITE);
+  int cx = xo + 4, cy = 7, r = 3;                    // map-pin head + point
+  tft.fillCircle(cx, cy, r, c);
+  tft.fillTriangle(cx - r, cy + 1, cx + r, cy + 1, cx, cy + 8, c);
+  tft.fillCircle(cx, cy, 1, TFT_BLACK);              // hole
+  int sx = xo + 10;                                  // source badge, right of the pin
+  if (src == 1) {                                    // phone: upright handset
+    tft.drawRoundRect(sx, 3, 6, 12, 1, c);
+    tft.drawFastHLine(sx + 2, 5, 2, c);              // earpiece
+    tft.drawFastHLine(sx + 1, 12, 4, c);             // button divider
+  } else if (src == 2) {                             // module: little IC with legs
+    tft.fillRect(sx, 5, 7, 8, c);
+    tft.drawFastVLine(sx, 5, 8, TFT_BLACK);          // notch the left face
+    tft.drawPixel(sx + 2, 7, TFT_BLACK);             // pin-1 dot
+    for (int ly = 6; ly <= 11; ly += 2) {            // leg stubs both sides
+      tft.drawFastHLine(sx - 2, ly, 2, c);
+      tft.drawFastHLine(sx + 7, ly, 2, c);
+    }
+  }
+}
+
 static void drawStatusBar() {
   int W = tft.width();
   tft.fillRect(0, 0, W, 21, TFT_BLACK);
@@ -1946,19 +1978,13 @@ static void drawStatusBar() {
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
   } else { strcpy(t, "00:00"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
   tft.drawString(t, 4, 4, 2);
-  // GPS (middle, abbreviated)
-  char g[24];
-  if (posHasFix()) {
-    snprintf(g, sizeof(g), "%.2f,%.2f", posLat(), posLon());
-    tft.setTextColor(posSource() == 2 ? TFT_CYAN : TFT_WHITE, TFT_BLACK);  // cyan = onboard GPS, white = phone
-  } else { strcpy(g, "Lat:- Lon:-"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
-  tft.drawString(g, 66, 7, 1);
   // phone connection icon (right) + C5-link status dot to its right
   int ix = W - 30;
   if (webshare::active())      iconWifi(ix, 3, TFT_CYAN);
   else if (phone::connected()) iconBle(ix + 2, 3, TFT_BLUE);
   else                         iconNoConn(ix, 3, TFT_DARKGREY);
   tft.fillCircle(W - 8, 10, 4, g_linkOk ? TFT_GREEN : TFT_RED);  // C5 link up/down
+  drawGpsGlyph();                                              // location pin + source badge (tap -> modal)
   drawBatteryGlyph();                                           // battery level (left of padlock)
   drawLockGlyph(g_touchLocked);                                 // padlock (2-tap toggle)
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
@@ -4172,6 +4198,105 @@ static void drawSplash() {
   tft.setTextDatum(TL_DATUM);
 }
 
+// ---- GPS info modal (tap the status-bar GPS glyph) ---------------------------------------------
+static bool g_gpsModal = false;   // the GPS popup is up, overlaying the current screen
+
+// Repaint the current screen from its globals — used to restore the screen under the GPS modal on
+// dismiss. Covers every screen with a clean no-arg redraw; the stateful device-detail screens are
+// gated out of opening the modal (gpsModalAllowed) so they never reach the default here.
+static void redrawScreen() {
+  switch (g_screen) {
+    case SCR_SCAN:         render();           break;
+    case SCR_APPQR:        drawAppQrScreen();  break;
+    case SCR_SETTINGS:     drawSettings();     break;
+    case SCR_SCANMENU:     drawScanMenu();     break;
+    case SCR_SCANSETTINGS: drawScanSettings(); break;
+    case SCR_PICKLOG:      drawPickLog();      break;
+    case SCR_SCANVIEWER:   drawViewer();       break;
+    case SCR_SORT:         drawSort();         break;
+    case SCR_FILTER:       drawFilter();       break;
+    case SCR_FOLLOWLIST:   drawFollowList();   break;
+    case SCR_FOLLOWACTION: drawFollowAction(); break;
+    case SCR_WHITELIST:    drawWhitelist();    break;
+    case SCR_WLADD:        drawWlAdd();         break;
+    case SCR_WLRULE:       drawWlRule();        break;
+    case SCR_SCANROW:      drawScanRow();      break;
+    case SCR_SCANCONFIRM:  drawScanConfirm();  break;
+    case SCR_SCANFILTER:   drawScanFilter();   break;
+    case SCR_MENUCAT:      drawMenuCat();      break;
+    case SCR_MENU:
+    default:               drawMenu();         break;
+  }
+}
+
+// The device-detail screens render from transient state (an Explore row / a built field list) with
+// no clean no-arg repaint, so the GPS modal isn't offered there (the glyph tap is ignored).
+static bool gpsModalAllowed() {
+  switch (g_screen) {
+    case SCR_DETAIL: case SCR_SCANDETAIL: case SCR_FOLLOWDETAIL: case SCR_MENUCATDETAIL: return false;
+    default: return true;
+  }
+}
+
+// Centered popup: GPS source (phone / onboard module / none) + the current coordinates + sat count.
+static void drawGpsModal() {
+  const int bw = 196, bh = 124, bx = (tft.width() - bw) / 2, by = 80;
+  tft.fillRoundRect(bx, by, bw, bh, 8, TFT_BLACK);
+  tft.drawRoundRect(bx,     by,     bw,     bh,     8, UI_ACCENT);
+  tft.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 8, UI_ACCENT);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(UI_ACCENT, TFT_BLACK);
+  tft.drawString("GPS", bx + bw / 2, by + 8, 4);
+  int src = posSource();
+  const char* srcName = src == 2 ? "Module (NEO-6M)" : src == 1 ? "Phone (linked)" : "No fix";
+  uint16_t    sc      = src == 2 ? TFT_CYAN          : src == 1 ? TFT_WHITE         : TFT_DARKGREY;
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Source:", bx + 12, by + 44, 2);
+  tft.setTextColor(sc, TFT_BLACK);
+  tft.drawString(srcName, bx + 74, by + 44, 2);
+  char b[32];
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  if (posHasFix()) {
+    snprintf(b, sizeof(b), "Lat: %.6f", posLat()); tft.drawString(b, bx + 12, by + 68, 2);
+    snprintf(b, sizeof(b), "Lon: %.6f", posLon()); tft.drawString(b, bx + 12, by + 88, 2);
+    if (src == 2) { snprintf(b, sizeof(b), "Satellites: %u", (unsigned)g_onbSats);
+                    tft.drawString(b, bx + 12, by + 106, 1); }
+  } else {
+    tft.drawString("No position fix yet.", bx + 12, by + 72, 2);
+    if (g_onbSats) { snprintf(b, sizeof(b), "Module sats in view: %u", (unsigned)g_onbSats);
+                     tft.drawString(b, bx + 12, by + 94, 1); }
+  }
+  tft.setTextDatum(BC_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("tap to close", bx + bw / 2, by + bh - 4, 1);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// Open on a fresh tap of the GPS glyph; dismiss on the next tap or any BOOT event. Returns true
+// while the modal owns input (so loop() consumes the event and skips the per-screen handler). Call
+// right after serviceTouchLock() (which already swallows everything while the display is locked).
+static bool serviceGpsModal(BtnEv ev) {
+  static bool prev = false;
+  bool now  = g_touchOk && g_touch.touched();
+  bool rise = now && !prev;
+  prev = now;
+  if (g_gpsModal) {                       // open: any fresh tap or BOOT closes it
+    if (rise || ev != BTN_NONE) { g_gpsModal = false; redrawScreen(); }
+    return true;                          // own input until closed
+  }
+  if (rise && gpsModalAllowed()) {        // closed: did the tap land on the GPS glyph?
+    int16_t sx, sy, z;
+    int xo = gpsX();
+    if (g_touch.getScreen(tft, sx, sy, z) && sy >= 0 && sy <= 21 && sx >= xo - 5 && sx <= xo + 20) {
+      g_gpsModal = true;
+      drawGpsModal();
+      return true;
+    }
+  }
+  return false;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -4327,6 +4452,11 @@ void loop() {
     delay(10);
     return;
   }
+
+  // GPS info modal: tap the status-bar GPS glyph to open it, tap/BOOT to close. While it's up it
+  // owns input. The scan cycle is NOT run underneath (updateScan()'s list repaint would paint over
+  // the popup); it's a brief tap-to-peek, and capture resumes the moment it's dismissed.
+  if (serviceGpsModal(ev)) { delay(10); return; }
 
   switch (g_screen) {
     case SCR_MENU: {
