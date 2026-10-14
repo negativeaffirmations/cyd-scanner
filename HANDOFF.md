@@ -33,6 +33,34 @@
   behind a **GitHub Actions `degraded_performance`** incident at merge time — the live webapp keeps
   serving the last-good version until it clears.
 
+## Done — battery level indicator (CYD status bar + web app) + v2-build docs (2026-10-14, CYD built; NOT flashed/pushed yet)
+User updated the physical rig to match `hardware/diagrams/cyd-scanner_wiring_diagram_v2.png` (adds the
+on-C5 **GY-NEO6MV2 GPS**, the **GPIO35 battery-sense divider**, and a **second switch SW2** on the
+boost-OUT+ → C5 5V leg so the CYD's USB 5 V can't back-feed the C5 while flashing). Then asked for a
+battery indicator on both the CYD status bar and the web app. Confirmed with the user before building:
+**two switches** (SW1 master + SW2 C5-5V), **100 kΩ/100 kΩ** divider (×2), **voltage-only** (TP4056
+CHRG is **not** wired → no charge-detect; GPIO26 stays free).
+- **Docs (done):** `hardware/PINOUT.md` — diagram link → v2; §1 GPIO note (35 = battery, 26 free);
+  §2 C5 GPS note (15/23); §4 power rewritten for **two switches** (SW1 master on battery→boost, SW2 on
+  the C5 5V leg; CYD VIN direct) incl. ASCII + per-board flashing rules; §5 promoted PROPOSED→**BUILT**
+  (battery firmware live; GPS wired but firmware pending, still protocol-v9-gated). `hardware/addon-wiring.md`
+  status → BUILT (Build C minus CHRG). `README.md` Power note (SW1/SW2 + battery indicator + GPS).
+  `CLAUDE.md` key-pin-facts. `src/cyd/pins.h` (`BAT_ADC_PIN 35`, GPIO26-free note).
+- **Firmware (CYD, built OK):** new `src/cyd/power.{h,cpp}` — `analogReadMilliVolts(35)×2`, 8-sample
+  avg + EMA, LiPo resting-voltage→% curve; `percent()` −1 when Vbat<2.5 V (no cell / on USB). `main.cpp`:
+  `power::init()`+seed in `setup()`, `power::sample()` at the top of `runScanCycle()` (every ~2 s,
+  C5-independent), a **battery glyph** in `drawStatusBar()` left of the padlock (fill + colour: green
+  >50 / yellow 20–50 / red <20; hollow grey when absent), and `bat=%d` appended to the STATUS string
+  (`s[360]`→`s[384]`). **No `PROTOCOL_VERSION` bump** (STATUS is CYD→phone, not the C5 link; C5 untouched).
+  Build SUCCESS (RAM 33.4 % / Flash 45.2 %).
+- **Web app (static-verified):** app-bar battery indicator (`#battState`/`#battIcon`/`#battPct`,
+  Material battery icons by level); `ble/status.js` parses `bat=` (−1/absent → `.off`, <20 % → `.lowbat`
+  red); reset on disconnect (`ble/connection.js`); `scss/_base.scss` `.si.batt` styles → recompiled
+  `style.css`, `style.css?v=20261014a`, `#uiver → battery-indicator`.
+- **NOT yet:** CYD not flashed; nothing committed/pushed; web app not in-browser tested. On-device check:
+  battery glyph reads a plausible level (SW1 on), goes hollow-grey on USB-only (SW1 off), and the phone
+  app shows the % — then flash (SW1 off while flashing the CYD), commit, push (Pages redeploys).
+
 ## Done — pre-sync time backfill (timesync anchor + reader backfill) (2026-10-11, CYD FLASHED COM14 + webapp, pushed)
 User request: rows logged by the boot/background scan BEFORE a phone connects are written with
 `epoch:0` (only `ms`-since-boot is meaningful); make their real time recoverable without rewriting the

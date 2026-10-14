@@ -67,5 +67,7 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   state.lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
+  { const bs=$("battState"); bs.classList.add("off"); bs.classList.remove("lowbat");  // reset battery indicator
+    $("battPct").textContent=""; $("battIcon").textContent="battery_unknown"; bs.title="Battery"; }
   if(state.gpsWatch!==null){ navigator.geolocation.clearWatch(state.gpsWatch); state.gpsWatch=null; }
   releaseWake(); }

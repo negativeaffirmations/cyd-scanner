@@ -203,6 +203,28 @@ button:disabled {
   color: #e6edf3;
 }
 
+.si.batt {
+  gap: 2px;
+  color: #e6edf3;
+}
+
+.si.batt .material-symbols-outlined {
+  color: #e6edf3;
+}
+
+.si.batt .batpct {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.si.batt.off, .si.batt.off .material-symbols-outlined {
+  color: #8b949e;
+}
+
+.si.batt.lowbat, .si.batt.lowbat .material-symbols-outlined {
+  color: #f85149;
+}
+
 #log {
   background: #0b0e13;
   border: 1px solid #30363d;

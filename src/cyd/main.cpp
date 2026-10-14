@@ -27,6 +27,7 @@
 #include "whitelist.h"
 #include "touch.h"
 #include "logfilter.h"
+#include "power.h"
 
 using namespace link_protocol;
 
@@ -1736,16 +1737,17 @@ static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
-  char s[360];
+  char s[384];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
            phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
-           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0);
+           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
+           power::percent());
   phone::setStatus(String(s));
 }
 
@@ -1892,6 +1894,27 @@ static void drawLockGlyph(bool locked) {
   tft.drawPixel(cx, top + 7, TFT_BLACK);       // keyhole
 }
 
+// Battery glyph, left of the padlock: outline + level-proportional fill, coloured by charge
+// (green >50 %, yellow 20-50 %, red <20 %). Hollow dim-grey when no battery voltage is present
+// (rig on USB / battery switch off). No number here — the 240 px bar is tight; the exact % goes
+// to the phone/web app via STATUS bat=.
+static void drawBatteryGlyph() {
+  const int bw = 16, bh = 9, top = 6;
+  int bx = lockCx() - 30;                       // body left edge, clear of GPS (left) + padlock (right)
+  int pct = power::percent();
+  uint16_t c;
+  if      (pct < 0)   c = 0x4208;               // dim grey: no battery present
+  else if (pct > 50)  c = TFT_GREEN;
+  else if (pct >= 20) c = TFT_YELLOW;
+  else                c = TFT_RED;
+  tft.drawRect(bx, top, bw, bh, c);             // body outline
+  tft.fillRect(bx + bw, top + 2, 2, bh - 4, c); // + terminal nub
+  if (pct >= 0) {
+    int fillW = (bw - 2) * pct / 100;           // inner fill proportional to %
+    if (fillW > 0) tft.fillRect(bx + 1, top + 1, fillW, bh - 2, c);
+  }
+}
+
 static void drawStatusBar() {
   int W = tft.width();
   tft.fillRect(0, 0, W, 21, TFT_BLACK);
@@ -1917,7 +1940,8 @@ static void drawStatusBar() {
   else if (phone::connected()) iconBle(ix + 2, 3, TFT_BLUE);
   else                         iconNoConn(ix, 3, TFT_DARKGREY);
   tft.fillCircle(W - 8, 10, 4, g_linkOk ? TFT_GREEN : TFT_RED);  // C5 link up/down
-  drawLockGlyph(g_touchLocked);                                 // padlock (3-tap toggle)
+  drawBatteryGlyph();                                           // battery level (left of padlock)
+  drawLockGlyph(g_touchLocked);                                 // padlock (2-tap toggle)
   tft.drawFastHLine(0, 21, W, TFT_DARKGREY);
 }
 
@@ -4041,6 +4065,7 @@ static void applyScanLed() {
 
 // One scan → score → log → render cycle, also mirrored to the phone app.
 static void runScanCycle() {
+  power::sample();  // refresh the battery reading every cadence (independent of the C5 link)
   if (!requestScan()) {
     // BUSY MISS: the C5 didn't answer (it's in its Wi-Fi-scan busy window). This is not a link
     // failure. Keep the last table/view (requestScan zeroed g_detCount but we skip the pipeline, so
@@ -4111,6 +4136,8 @@ void setup() {
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
   initCommon();
+  power::init();      // battery monitor on GPIO35 (voltage-only)
+  power::sample();    // seed the reading so the status bar shows a level immediately
   loadBrightness();
   loadSrcMask();
   loadBgScan();

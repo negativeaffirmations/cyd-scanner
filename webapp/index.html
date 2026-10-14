@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261011h">
+<link rel="stylesheet" href="style.css?v=20261014a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -19,6 +19,7 @@
       <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span></span>
       <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span></span>
       <span class="si" id="db" title="Signature DB loaded"><span class="material-symbols-outlined">database</span></span>
+      <span class="si batt off" id="battState" title="Battery"><span class="material-symbols-outlined" id="battIcon">battery_unknown</span><span class="batpct" id="battPct"></span></span>
       <span id="conn" class="conn down" title="disconnected"><span class="material-symbols-outlined">bluetooth_disabled</span></span>
     </span>
   </header>
@@ -53,7 +54,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-11&nbsp;·&nbsp;timesync-backfill</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-14&nbsp;·&nbsp;battery-indicator</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->

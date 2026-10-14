@@ -58,6 +58,14 @@ button:disabled { opacity: .45; }
 .si .material-symbols-outlined { font-size:18px; color:$color-text-muted; }
 .si.on, .si.on .material-symbols-outlined { color:$color-text; }
 
+// Battery indicator: icon + small % label. White when a level is known, gray (.off) when not,
+// red (.lowbat) under 20 %.
+.si.batt { gap:2px; color:$color-text; }
+.si.batt .material-symbols-outlined { color:$color-text; }
+.si.batt .batpct { font-size:11px; font-variant-numeric:tabular-nums; }
+.si.batt.off, .si.batt.off .material-symbols-outlined { color:$color-text-muted; }
+.si.batt.lowbat, .si.batt.lowbat .material-symbols-outlined { color:#f85149; }
+
 #log {
   background:$color-surface-inset; border:1px solid $color-border; border-radius:10px; padding:8px;
   font-family: ui-monospace, monospace; font-size:.75rem; height:130px; overflow:auto;

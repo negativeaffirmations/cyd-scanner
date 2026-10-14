@@ -47,4 +47,20 @@ export function onStatus(ev){
     b.dataset.locked = locked ? "1" : "0";
     b.textContent = locked ? "Unlock display" : "Lock display";
     b.classList.toggle("danger", locked); }   // highlight while locked
+  if("bat"in kv){ const p = +kv.bat;           // battery % from the CYD divider (-1 = no cell / on USB)
+    const el = $("battState"), ic = $("battIcon"), pc = $("battPct");
+    if(Number.isFinite(p) && p >= 0){
+      el.classList.remove("off");
+      pc.textContent = p + "%";
+      ic.textContent = p>=90 ? "battery_full"  : p>=70 ? "battery_6_bar" : p>=55 ? "battery_5_bar"
+                     : p>=40 ? "battery_4_bar" : p>=25 ? "battery_3_bar" : p>=15 ? "battery_2_bar"
+                     : p>=5  ? "battery_1_bar" : "battery_alert";
+      el.classList.toggle("lowbat", p < 20);   // red when low
+      el.title = "Battery " + p + "%";
+    } else {
+      el.classList.add("off"); el.classList.remove("lowbat");
+      pc.textContent = ""; ic.textContent = "battery_unknown";
+      el.title = "Battery: no cell / on USB";
+    }
+  }
 }

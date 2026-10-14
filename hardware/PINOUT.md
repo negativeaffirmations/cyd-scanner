@@ -7,7 +7,11 @@ in sync when wiring changes.
 - CYD pinout diagram: [cyd_esp32-2432S028r_pinout-1.png](boards/cyd_esp32-2432S028r/pinout/cyd_esp32-2432S028r_pinout-1.png)
 - ESP32-C5 pinout diagram: [esp32-c5-devkit_pinout.jpg](boards/esp32-c5-devkit/pinout/esp32-c5-devkit_pinout.jpg)
 - ESP32-C5 datasheet: [esp32-c5_datasheet_en.pdf](boards/esp32-c5-devkit/datasheets/esp32-c5_datasheet_en.pdf)
-- **Full wiring diagram (data link + battery power):** [cyd-scanner_wiring_diagram_labeled.png](diagrams/cyd-scanner_wiring_diagram_labeled.png)
+- **Full wiring diagram (data link + battery power + GPS + battery sense) — CURRENT BUILD:**
+  [cyd-scanner_wiring_diagram_v2.png](diagrams/cyd-scanner_wiring_diagram_v2.png)
+  (labeled source: [cyd-scanner_diagram_v2_labeled.svg](diagrams/cyd-scanner_diagram_v2_labeled.svg)).
+  The earlier [cyd-scanner_wiring_diagram_labeled.png](diagrams/cyd-scanner_wiring_diagram_labeled.png)
+  predates the GPS, battery-sense divider, and the C5-5V isolation switch.
 
 ---
 
@@ -71,11 +75,10 @@ in sync when wiring changes.
 | P3 / IO1 (4p)  | GND · GPIO35 (input-only, ADC1_CH7) · GPIO22 (SCL) · GPIO21 (SDA) |
 | P5 / IO2 (4p)  | GND · GPIO22 (SCL) · GPIO27 (TOUCH7, ADC2) · 3V3          |
 
-> **Free/usable GPIO** (not consumed by display/touch/SD): 22, 26, 27, 35 (in-only),
-> plus the serial header (1, 3). GPIO26 is free because no speaker is fitted (see
-> above). GPIO21 doubles as the backlight. GPIO35/34/39/36 are input-only. These are
-> the pins available for the inter-board UART/I2C link to the ESP32-C5 and for extra
-> sensors.
+> **GPIO allocation** (not consumed by display/touch/SD): **22/27** carry the C5 UART link
+> (§3); **GPIO35** (input-only, ADC1_CH7) now carries the **battery-sense divider** (§4/§5a) —
+> no longer free. Still free: **GPIO26** (no speaker, and the TP4056 CHRG pad is not wired) and
+> the serial header (1, 3). GPIO21 doubles as the backlight. GPIO35/34/39/36 are input-only.
 
 ---
 
@@ -135,6 +138,8 @@ in sync when wiring changes.
 > **Strapping pins:** GPIO8, GPIO9 (avoid holding at boot).
 > **USB-Serial/JTAG:** GPIO13 (D-) / GPIO14 (D+) — leave free for programming.
 > **Console UART0:** GPIO11 (TX) / GPIO12 (RX).
+> **GPS (wired):** GPIO15 (NEO-6M TXD→C5 RX) / GPIO23 (C5 TX→NEO-6M RXD, config-only). See §5b —
+> the GPS is on the hardware but its firmware is not written yet (protocol-v9 gated).
 
 > ⚠️ **Pin 25 / 26 caveat — UNVERIFIED.** On this physical board, GPIO25 and GPIO26
 > appear **swapped** relative to most online ESP32-C5 DevKit documentation. The
@@ -173,9 +178,18 @@ change both together.
 
 ## 4. Power subsystem — on-board battery (current rig)
 
-The scanner now runs from a **self-contained LiPo battery pack**, making it fully portable
-(no external USB needed in the field). See
-[cyd-scanner_wiring_diagram_labeled.png](diagrams/cyd-scanner_wiring_diagram_labeled.png).
+The scanner runs from a **self-contained LiPo battery pack**, making it fully portable
+(no external USB needed in the field). See the current-build diagram
+[cyd-scanner_wiring_diagram_v2.png](diagrams/cyd-scanner_wiring_diagram_v2.png).
+
+**Two switches** (both SPDT slide switches):
+- **SW1 — master on/off**, inline on the charger's positive output (TP4056 `OUT+` → boost `+in`).
+  Cuts the whole rig. The battery-sense divider (§5a) taps the *switched* side, so it only draws
+  when SW1 is on.
+- **SW2 — C5 5 V isolation**, inline on the boost `OUT+` → **C5 5V** leg only. The CYD's VIN is
+  fed directly from boost `OUT+` (not through SW2). Opening SW2 isolates the C5 from the shared 5 V
+  node, so when the CYD is powered from its own USB (e.g. while flashing it) that 5 V **cannot
+  back-feed the C5**.
 
 ### Components
 
@@ -183,40 +197,47 @@ The scanner now runs from a **self-contained LiPo battery pack**, making it full
 |-----------------------------------|----------------------------------------------------------------------|
 | 5000 mAh 3.7 V LiPo cell          | Energy store (18.5 Wh)                                                |
 | TP4056 Type-C USB charger (5V 1A) | Li-ion charge controller + protection; charge via its own USB-C port |
-| SPDT slide switch                 | Master power on/off, inline on the charger's positive output         |
+| **SW1** SPDT slide switch         | Master power on/off, inline on the charger's positive output         |
+| **SW2** SPDT slide switch         | C5 5 V isolation, inline on the boost-OUT+ → C5 5V leg                |
 | 1.5 A boost converter (3.7→5 V)   | Steps the cell up to the 5 V both boards need                        |
 
 ### Wiring (power path)
 
 ```
-Battery + ──┐                                   Switch
-Battery − ──┼── TP4056 B+ / B−                  ┌──────┐
-            │   TP4056 OUT+ ───────────────────►│ in   │──► Boost  +in
-            │   TP4056 OUT− ──────────────────────────────► Boost  −in
-            │                                   └──────┘
-            │   Boost OUT+ (5 V) ──┬──► CYD VIN (P1)
-            │                      └──► C5  5V
+Battery + ──┐                             SW1 (master)
+Battery − ──┼── TP4056 B+ / B−            ┌──────┐
+            │   TP4056 OUT+ ─────────────►│ in   │──► Boost  +in   (and → §5a divider)
+            │   TP4056 OUT− ────────────────────────► Boost  −in
+            │                             └──────┘
+            │                                            ┌──► CYD VIN (P1)   (direct)
+            │   Boost OUT+ (5 V) ────────────────────────┤
+            │                                            └──[ SW2 ]──► C5 5V (switchable)
             │   Boost OUT− (GND) ──┬──► CYD GND
             └──────────────────────┴──► C5  GND  (also the link common ground)
 ```
 
-| From                | To                         | Notes                                   |
-|---------------------|----------------------------|-----------------------------------------|
-| Battery `+` / `−`   | TP4056 `B+` / `B−`         | The cell; charges via TP4056 USB-C      |
-| TP4056 `OUT+`       | Switch → Boost `+` input   | Switch breaks the +rail = master on/off |
-| TP4056 `OUT−`       | Boost `−` input            |                                         |
-| Boost `OUT+` (5 V)  | CYD **VIN** + C5 **5V**    | Both boards fed 5 V in parallel         |
-| Boost `OUT−` (GND)  | CYD **GND** + C5 **GND**   | Common ground (shared with the UART link)|
+| From                | To                              | Notes                                       |
+|---------------------|---------------------------------|---------------------------------------------|
+| Battery `+` / `−`   | TP4056 `B+` / `B−`              | The cell; charges via TP4056 USB-C          |
+| TP4056 `OUT+`       | **SW1** → Boost `+` input       | SW1 breaks the +rail = master on/off        |
+| TP4056 `OUT−`       | Boost `−` input                 |                                             |
+| Boost `OUT+` (5 V)  | CYD **VIN** (direct)            | CYD is always fed when SW1 is on            |
+| Boost `OUT+` (5 V)  | **SW2** → C5 **5V**             | SW2 lets you cut the C5's feed alone        |
+| Boost `OUT−` (GND)  | CYD **GND** + C5 **GND**        | Common ground (shared with the UART link)   |
 
 ### Rules / safety
 
 - **Feed 5 V only** — the 5 V boost output drives each board's VIN/5V pin. Each board keeps its
   **own** 3.3 V regulator; **never tie the two 3.3 V rails together** (the CYD's AMS1117-3.3
   can't power a second Wi-Fi SoC → brownouts).
-- **One 5 V source at a time.** Before reflashing either board over its own USB, switch the
-  battery **OFF** (or unplug that board's 5 V feed) so USB-5 V and the boost output never
-  back-feed each other. (Matches the existing C5-flash rule: C5 5 V must be disconnected while
-  its USB is connected.)
+- **One 5 V source at a time.** Never let a board's USB 5 V and the boost output drive the same
+  node at once. With the two switches this is now per-board:
+  - **Flashing the C5:** open **SW2** (isolates C5 5V from the boost/CYD node). The C5 then runs
+    only off its own USB — no back-feed either way. SW1/CYD can stay as-is.
+  - **Flashing the CYD:** switch the battery **OFF** at **SW1** (the CYD's VIN is wired straight to
+    boost OUT+, so there's no CYD-side isolation switch). Its USB then powers the CYD alone; SW2
+    anyway keeps that USB 5 V off the C5.
+  - When in doubt, SW1 **OFF** before plugging any programming USB is always safe.
 - **Charge-while-run:** the TP4056 can charge the cell from its USB-C while the rig is powered;
   its OUT pads still source the load. Keep total draw within the TP4056's 1 A path.
 - Current budget: both ESP32s on Wi-Fi/BLE + the display can peak ~0.7–1 A at 5 V, which is
@@ -235,47 +256,51 @@ into the CYD** (no battery, no separate cable to the C5):
 
 ---
 
-## 5. PROPOSED add-ons — NOT BUILT (battery monitor + GPS)
+## 5. Add-ons — battery monitor (BUILT) + GPS (WIRED, firmware pending)
 
-> ⚠️ **PROPOSED / NOT WIRED. These pins are NOT in use.** Nothing below is on the hardware yet and
-> no firmware uses these pins. This section is a design reference only — the live pin assignments are
-> in §1–§4 above. Full wiring, divider math, and part notes: **[addon-wiring.md](addon-wiring.md)**.
+> ✅ **Both add-ons are now on the hardware** (matching the current-build diagram, §4 top). The
+> battery monitor is **built and firmware is live**; the GPS is **wired but not yet read in firmware**.
+> Full wiring, divider math, and part notes: **[addon-wiring.md](addon-wiring.md)**.
 >
-> 🚫 **Do NOT change the link protocol for this yet.** Build C's GPS-over-link forwarding needs a
+> 🚫 **Do NOT change the link protocol for the GPS yet.** Build C's GPS-over-link forwarding needs a
 > `PROTOCOL_VERSION` bump (8 → 9) — **leave `lib/link_protocol/link_protocol.h` and the GPS firmware
 > alone until the owner explicitly says to build this.** Until then, phone GPS (over BLE) remains the
-> only position source, and these pins stay free.
+> only position source the firmware uses.
 
-**Chosen layout (Build C):** the full battery monitor on the CYD; the GPS on the C5 (which has the
-spare GPIO), forwarded to the CYD over the existing link.
+**Layout (Build C):** the battery monitor on the CYD; the GPS on the C5 (which has the spare GPIO),
+to be forwarded to the CYD over the existing link once the GPS firmware is written.
 
-### 5a. CYD — battery monitor (PROPOSED)
+### 5a. CYD — battery monitor (BUILT — voltage-only)
 
-| Signal          | CYD pin   | Wiring (proposed)                                              |
+| Signal          | CYD pin   | Wiring                                                         |
 |-----------------|-----------|---------------------------------------------------------------|
-| Battery voltage | **GPIO35**| 100 kΩ/100 kΩ divider midpoint off **switched Vbat**; `analogReadMilliVolts(35)×2`. Only free ADC1 pin. |
-| Charge status   | **GPIO26**| TP4056 **CHRG** pad, `INPUT_PULLUP` (LOW = charging)          |
+| Battery voltage | **GPIO35**| 100 kΩ/100 kΩ divider midpoint off **switched Vbat** (SW1 side); `analogReadMilliVolts(35)×2`. Only free ADC1 pin (ADC1 is Wi-Fi-safe). |
+| ~~Charge status~~ | ~~GPIO26~~ | **NOT wired** — the TP4056 CHRG pad is not broken out on this build, so there is no USB-charge-detect input. GPIO26 stays free. |
 
-CYD-only; **no protocol/C5 change** for the battery side.
+**Firmware (live):** `src/cyd/power.{h,cpp}` reads GPIO35, smooths it, and maps the LiPo resting-voltage
+curve to 0–100 %. The CYD **status bar** shows a battery glyph (fill + colour: green >50 %, yellow
+20–50 %, red <20 %; hollow grey when no cell / on USB), and the phone **STATUS** string carries
+`bat=<pct>` (−1 = no battery) for the web app's app-bar battery indicator. CYD-only; **no protocol/C5
+change** (STATUS is the CYD→phone string, not the link `PROTOCOL_VERSION`). Charge/not-charging state
+is **not** available (no CHRG pin) — the glyph shows level only.
 
-### 5b. C5 — GY-NEO6MV2 GPS (PROPOSED)
+### 5b. C5 — GY-NEO6MV2 GPS (WIRED — firmware pending)
 
-| GY-NEO6MV2 | C5 pin                | Wiring (proposed)                                              |
-|------------|-----------------------|---------------------------------------------------------------|
-| VCC        | **5V0** (or 3V3)      | breakout has its own 3.3 V LDO                                 |
-| GND        | **GND**               | common ground (shared with the link / boost)                  |
-| TXD        | **GPIO15** (UART1 RX) | the NMEA data wire (9600 8N1); 3.3 V logic                    |
-| RXD        | *unconnected* (GPIO23)| only to configure the module — omit for read-only            |
+| GY-NEO6MV2 | C5 pin                | Wiring                                                        |
+|------------|-----------------------|--------------------------------------------------------------|
+| VCC        | **5V0**               | breakout has its own 3.3 V LDO                               |
+| GND        | **GND**               | common ground (shared with the link / boost)                |
+| TXD        | **GPIO15** (C5 UART RX)| the NMEA data wire (9600 8N1); 3.3 V logic                  |
+| RXD        | **GPIO23** (C5 UART TX)| config-only; the module needs no commands for read-only NMEA |
 
 GPIO15/23 are plain, broken-out C5 right-header pins, clear of the link (4/5), console (11/12),
-USB-JTAG (13/14), strapping (8/9), RGB LED (27), BOOT (28), and the unverified 25/26. Alternates:
-6, 7, 10, 24. **Forwarding the fix CYD-ward is a future protocol-v9 change — not to be started until
-told (see the warning above).**
+USB-JTAG (13/14), strapping (8/9), RGB LED (27), BOOT (28), and the unverified 25/26. **The pins are
+connected on the board, but no firmware reads them yet** — forwarding the fix CYD-ward is a future
+protocol-v9 change, not to be started until told (see the warning above).
 
 ### Pin-budget note
 
-After the display/touch/SD and the C5 link, the CYD has only **two** free GPIO — **GPIO35**
-(input-only, the only free ADC1 pin → must carry battery voltage) and **GPIO26**. Putting GPS on the
-C5 (Build C) is what lets the CYD keep BOTH battery pins. (Alternatives A/B in
-[addon-wiring.md](addon-wiring.md) put GPS on the CYD GPIO26 instead, trading away the charge-status
-pin.)
+After the display/touch/SD and the C5 link, the CYD had only **two** free GPIO — **GPIO35**
+(input-only, the only free ADC1 pin) and **GPIO26**. The battery monitor now uses **GPIO35**;
+because CHRG wasn't broken out, **GPIO26 remains the one free CYD GPIO**. Putting GPS on the C5
+(Build C) is what let the CYD keep its ADC pin for battery sense.

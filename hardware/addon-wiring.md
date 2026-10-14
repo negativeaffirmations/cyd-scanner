@@ -1,8 +1,20 @@
 # Add-on wiring — battery monitor + GPS (CYD)
 
-**Status: PROPOSED** (hardware mods, not yet built or in firmware). This is the reference for
-adjusting the wiring diagram. Pin facts are from [PINOUT.md](PINOUT.md); power nodes are from
-PINOUT.md §4 (the LiPo → TP4056 → switch → 5 V boost rig).
+**Status: BUILT (Build C, with one change).** Both add-ons are on the current-build hardware
+([cyd-scanner_wiring_diagram_v2.png](diagrams/cyd-scanner_wiring_diagram_v2.png)):
+
+- **Battery voltage sense (GPIO35)** — built, **firmware live** (`src/cyd/power.*`; status-bar glyph
+  + web app; STATUS `bat=`). See §4a.
+- **Charge status (GPIO26 ← TP4056 CHRG)** — **NOT wired.** The TP4056 CHRG pad isn't broken out on
+  this build, so there's no USB-charge-detect input and the indicator is **voltage/% only**. GPIO26
+  stays free. (This is Build C minus the CHRG pin — see the table in §0.)
+- **GPS on the C5 (GPIO15/23)** — **wired, firmware pending** (protocol-v9 gated; see §4b).
+- **Power:** a second switch (**SW2**) was added inline on the boost-OUT+ → **C5 5V** leg (CYD VIN is
+  fed directly). It isolates the C5 so the CYD's USB 5 V can't back-feed it while flashing. See
+  PINOUT.md §4.
+
+Pin facts are from [PINOUT.md](PINOUT.md); power nodes are from PINOUT.md §4 (the LiPo → TP4056 →
+SW1 → 5 V boost rig).
 
 ---
 
@@ -116,15 +128,16 @@ The CYD keeps **both** battery pins (voltage **and** charge status); the GPS mov
 has plenty of free GPIO. Cost: the C5 must read the NMEA and forward the fix to the CYD over the link,
 which is a **firmware + link-protocol** change (§4b) — not wiring-only.
 
-### 3a. CYD side — full battery plan (unchanged from §1)
+### 3a. CYD side — battery plan (as built)
 
 | Signal              | CYD pin   | Connection                                             |
 |---------------------|-----------|--------------------------------------------------------|
 | Battery voltage     | **GPIO35**| 100 k/100 k divider **midpoint** (off switched Vbat)   |
 | Divider bottom (R2) | GND       | common ground                                          |
-| Charge status       | **GPIO26**| TP4056 **CHRG** (`INPUT_PULLUP`, LOW = charging)       |
+| ~~Charge status~~   | ~~GPIO26~~| **NOT wired** — CHRG pad not broken out; GPIO26 stays free |
 
-C5 link (GPIO22 TX / GPIO27 RX ⇄ C5 GPIO4/5) and power feed are **unchanged**.
+C5 link (GPIO22 TX / GPIO27 RX ⇄ C5 GPIO4/5) is **unchanged**. Power feed gained **SW2** on the
+C5 5V leg (PINOUT.md §4).
 
 ### 3b. C5 side — GY-NEO6MV2 GPS
 
@@ -148,7 +161,7 @@ console (11/12), USB-JTAG (13/14), strapping (8/9), the RGB LED (27), BOOT (28),
 ```
         ┌──────────────── CYD (host) ───────────────┐        ┌──────────── ESP32-C5 (co-proc) ────────────┐
  Vbat/2 ┤ GPIO35 (ADC1)  battery voltage (÷2)        │        │ GPIO15 (UART1 RX) ◄── GPS TXD  (NMEA 9600) │
- CHRG   ┤ GPIO26         TP4056 CHRG (charging=LOW)   │        │ GPIO23 (UART1 TX) ──► GPS RXD  (optional)  │
+ (free) ┤ GPIO26         unused (CHRG not wired)      │        │ GPIO23 (UART1 TX) ──► GPS RXD  (config)    │
         │ GPIO22 ──────── link TX ───────────────────┼───────►│ GPIO4  (LP_UART RX)                        │
         │ GPIO27 ◄─────── link RX ───────────────────┼◄───────┤ GPIO5  (LP_UART TX)                        │
         │ VIN/5V ─┐                                   │        │ 5V0 ─┬─ GPS VCC                             │
@@ -160,9 +173,9 @@ console (11/12), USB-JTAG (13/14), strapping (8/9), the RGB LED (27), BOOT (28),
 | Signal          | Board | Pin        | Connects to                          |
 |-----------------|-------|------------|--------------------------------------|
 | Battery voltage | CYD   | GPIO35     | 100 k/100 k divider midpoint          |
-| Charge status   | CYD   | GPIO26     | TP4056 CHRG                           |
+| ~~Charge status~~ | CYD | ~~GPIO26~~ | **not wired** (CHRG pad not broken out) |
 | GPS data (RX)   | C5    | GPIO15     | GY-NEO6MV2 TXD                        |
-| GPS config (TX) | C5    | GPIO23     | GY-NEO6MV2 RXD (optional, read-only → omit) |
+| GPS config (TX) | C5    | GPIO23     | GY-NEO6MV2 RXD (config-only)           |
 | GPS power       | C5    | 5V0 (3V3)  | GY-NEO6MV2 VCC                        |
 | GPS ground      | C5    | GND        | GY-NEO6MV2 GND                        |
 
@@ -173,17 +186,20 @@ wiring or the 5 V power feed.
 
 ## 4. Firmware (for when this is implemented — not done yet)
 
-### 4a. CYD — battery (no protocol change, CYD-only)
+### 4a. CYD — battery (DONE — no protocol change, CYD-only)
+
+**Implemented** in [`src/cyd/power.{h,cpp}`](../src/cyd/power.cpp) + `src/cyd/main.cpp`:
 
 ```cpp
-#define PIN_BAT_ADC   35          // ADC1_CH7, battery voltage (×2 of the 100k/100k divider)
-#define PIN_CHRG      26          // TP4056 CHRG, INPUT_PULLUP (LOW = charging)
-
-uint32_t vbat_mV   = analogReadMilliVolts(PIN_BAT_ADC) * 2;   // → map to % with a LiPo curve
-bool     charging  = (digitalRead(PIN_CHRG) == LOW);          // pinMode(PIN_CHRG, INPUT_PULLUP)
+#define BAT_ADC_PIN  35            // ADC1_CH7, battery voltage (×2 of the 100k/100k divider)
+// Vbat(mV) = analogReadMilliVolts(BAT_ADC_PIN) * 2, averaged + EMA-smoothed, mapped to a LiPo % curve.
+// No CHRG pin (GPIO26 unwired) → voltage/% only, no charging state.
 ```
 
-A small `power` module + a status-bar glyph; optional `bat=`/`chg=` STATUS keys for the web app.
+The `power` module reads GPIO35 on the scan cadence; `drawStatusBar()` paints a battery glyph (fill +
+colour by level, hollow grey when no cell / on USB); `pushStatus()` adds `bat=<pct>` (−1 = absent) to
+the phone STATUS string → the web app's app-bar battery indicator. CYD-only, no `PROTOCOL_VERSION`
+change. (The `chg=` key in the earlier plan is dropped — no CHRG pin.)
 
 ### 4b. C5 — GPS, then forward over the link (**protocol bump, both boards flash together**)
 

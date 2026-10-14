@@ -30,7 +30,12 @@
 #define LED_B_PIN 17
 
 // --- Audio / speaker (DAC2 -> on-board amp + 2p speaker header) ---
+// No speaker fitted, and the TP4056 CHRG pad is NOT wired, so GPIO26 stays FREE.
 #define AUDIO_PIN 26
+
+// --- Battery monitor (voltage-only; 100k/100k divider off the switched Vbat rail) ---
+// Vbat(mV) = analogReadMilliVolts(BAT_ADC_PIN) * 2. Input-only pin, ADC1_CH7 (Wi-Fi-safe).
+#define BAT_ADC_PIN 35
 
 // --- Inter-board UART link to the ESP32-C5 (PROVISIONAL — not tested) ---
 // Dedicated UART on free expansion pins; keeps UART0/USB console free.

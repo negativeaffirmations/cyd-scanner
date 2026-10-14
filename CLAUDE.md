@@ -65,8 +65,9 @@ update [hardware/PINOUT.md](hardware/PINOUT.md) accordingly.
 - **CYD display** (ILI9341/ST7789 SPI): MOSI 13, MISO 12, SCLK 14, CS 15, DC 2, backlight 21.
 - **CYD touch** (XPT2046, separate bus): CLK 25, CS 33, MOSI 32, MISO 39, IRQ 36.
 - **CYD SD**: CS 5, MOSI 23, SCK 18, MISO 19.
-- **CYD free GPIO** for the C5 link / sensors: 22, 26, 27, 35 (input-only), serial header 1/3.
-  GPIO26 is free because **no speaker is fitted** (the on-board audio amp header is unused).
+- **CYD GPIO beyond display/touch/SD:** 22/27 = C5 UART link; **35** (input-only, ADC1_CH7) =
+  **battery-sense divider** (100k/100k off switched Vbat, `power.*`); **26** still free (no speaker,
+  and the TP4056 CHRG pad is not wired); serial header 1/3 free. See [hardware/PINOUT.md](hardware/PINOUT.md) §4–§5.
 - **ESP32-C5** console UART0 on 11/12; USB-Serial/JTAG on 13/14; strapping pins 8/9.
 - ⚠️ **ESP32-C5 pins 25 & 26 are UNVERIFIED / possibly swapped** vs. online docs.
   Follow the numbers printed on the physical board (which the repo's edited pinout
