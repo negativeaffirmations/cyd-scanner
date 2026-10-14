@@ -1897,7 +1897,9 @@ static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
 // (touch + BOOT) is ignored except that same 2-tap gesture, so the device can ride in a bag without
 // walking the menus. Discrete taps (not a hold/swipe) resist the constant pressure of a bag. The
 // background scan keeps running the whole time. No physical button needed.
-static int  lockCx()      { return tft.width() - 52; }     // padlock glyph center (clear of phone icon/dot/GPS)
+static int  lockCx()      { return tft.width() - 42; }     // padlock glyph center; battery sits 30px to its
+                                                           // left, so this evens the battery/lock/phone/dot
+                                                           // spacing (clear of phone icon/dot/GPS)
 static constexpr int      LOCK_TAPS         = 2;            // taps to toggle (2: resistive touch merges fast taps)
 static constexpr uint32_t LOCK_TAP_WINDOW_MS = 1500;       // ...that must land within rolling windows this wide
 
