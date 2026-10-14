@@ -28,6 +28,7 @@
 #include "touch.h"
 #include "logfilter.h"
 #include "power.h"
+#include "logo.h"
 
 using namespace link_protocol;
 
@@ -35,7 +36,7 @@ using namespace link_protocol;
 #define LINK_MONITOR 0
 
 static constexpr uint8_t UI_ROTATION = 0;  // portrait 240x320 (90 CCW from landscape)
-static const char*       DEVICE_NAME = "CYD-Scanner";
+static const char*       DEVICE_NAME = "COINTEL-FLO";
 
 TFT_eSPI       tft = TFT_eSPI();
 HardwareSerial LinkSerial(1);  // UART1 on GPIO22/GPIO27
@@ -2581,7 +2582,7 @@ static int homeIconTapped() {
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top. Phone Link and
 // Settings are the two title-bar icons (phone right, cog left); the list holds just Scan.
 static void drawMenu() {
-  drawListMenu("HOME", kMenuItems, MENU_N, g_menuSel);
+  drawListMenu("COINTEL-FLO", kMenuItems, MENU_N, g_menuSel);
   drawHomeIcons();  // cog (Settings) left + phone (Phone Link) right, on the HOME line
   // Two-line hint (the single line overran 240 px); kept just below the threat readout.
   tft.setTextDatum(TL_DATUM);
@@ -4144,6 +4145,22 @@ static void activateMenu() {
   }
 }
 
+// Boot splash: the COINTEL-FLO wordmark (baked from resources/logo/logo.png into logo.h as an
+// RGB565 blit — the TFT has no PNG decoder) over black, with a one-line tagline. Shown while the
+// rest of setup() initialises; setup() holds it for a minimum SPLASH_MS before the home menu.
+static constexpr uint32_t SPLASH_MS = 2000;
+static void drawSplash() {
+  tft.fillScreen(TFT_BLACK);
+  int y = (tft.height() - LOGO_H) / 2 - 12;            // wordmark a touch above centre
+  tft.setSwapBytes(true);                              // RGB565 array is big-endian for pushImage
+  tft.pushImage((tft.width() - LOGO_W) / 2, y, LOGO_W, LOGO_H, COINTEL_LOGO);
+  tft.setSwapBytes(false);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_MAGENTA, TFT_BLACK);
+  tft.drawString("counter-surveillance scanner", tft.width() / 2, y + LOGO_H + 16, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -4156,6 +4173,8 @@ void setup() {
   loadBgScan();
   g_scanActive = g_bgScan;  // background scan resumes at boot (first cycle runs right away)
   applyBrightness();
+  drawSplash();                      // show the logo while the slow init below runs
+  uint32_t splashStart = millis();
   initSD();
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
   whitelist::begin();  // load /whitelist.csv (seeds a commented header if absent)
@@ -4167,6 +4186,7 @@ void setup() {
   if (g_linkOk) g_lastLinkOkMs = millis();  // seed link stickiness for the first scan
   Serial.printf("[CYD] ready (link=%s, touch=%s, bright=%d%%)\n",
                 g_linkOk ? "up" : "down", g_touchOk ? "cal" : "uncal", g_brightness);
+  while (millis() - splashStart < SPLASH_MS) delay(10);  // keep the splash up a beat (init often outlasts it)
   drawMenu();      // start on the home menu
 }
 

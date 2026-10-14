@@ -27,11 +27,11 @@ const char* logBasename() {
 void handleRoot() {
   Serial.println("[webshare] GET / (session index)");
   String h = "<!doctype html><html><head><meta name=viewport "
-             "content='width=device-width,initial-scale=1'><title>CYD Scanner</title>"
+             "content='width=device-width,initial-scale=1'><title>COINTEL-FLO</title>"
              "<style>body{font-family:sans-serif;margin:1.2em;background:#111;color:#eee}"
              "h2{margin:.2em 0}ul{padding-left:1.1em;line-height:1.9}a{color:#6cf}"
              "small{color:#8b949e}</style></head><body>"
-             "<h2>CYD Scanner &mdash; session logs</h2><ul>";
+             "<h2>COINTEL-FLO &mdash; session logs</h2><ul>";
   int n = 0;
   File dir = SD.open("/logs");
   if (dir) {
