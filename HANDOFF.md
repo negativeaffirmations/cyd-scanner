@@ -1,5 +1,53 @@
 # Handoff — 2026-10-11 (active branch: `remoteid-decode`; `main` is the trunk)
 
+## Done — onboard GPS (protocol v9) — 2026-10-14
+- **What:** the GY-NEO6MV2 NEO-6M wired to the **C5** is now read in firmware and its fix is forwarded
+  to the CYD. The C5 reads NMEA on **UART0** (console is USB-CDC → UART0 free; RX = GPIO15, TX = -1
+  **receive-only**, 9600 8N1, XTAL clock, 512 B RX buf) with a **clean-room, checksum-verified**
+  `$GxRMC`/`$GxGGA` parser (`src/c5/gps.{h,cpp}`, no library), holds the latest fix mutex-guarded, and
+  `sendStatus()` folds it into the `Status` frame.
+- **Protocol v8 → v9.** `Status` gained `gpsLat`/`gpsLon` (int32 deg·1e7, 0 = no fix) + `gpsAltM`
+  (int16, −1000 unknown) + `gpsSats` + `gpsFix` (0/1/2); `sizeof(Status)` = 24 (`static_assert` updated).
+  FrameParser rejects a version mismatch, so **BOTH boards must be flashed together** (v9). ⚠️ Flashing
+  needs the power switches set per PINOUT.md §4 (SW2 off to flash the C5; SW1 off to flash the CYD) and
+  `PYTHONIOENCODING=utf-8`.
+- **CYD: phone GPS PREFERRED, onboard FALLBACK.** A unified `posHasFix()/posLat()/posLon()` accessor
+  (`src/cyd/main.cpp`) returns the phone fix when `phone::hasGps()`, else the onboard C5 fix (stored in
+  the `Reply::Status` branch, valid when `gpsFix!=0`), else none. All six position consumers were
+  switched to it (follow scoring, NDJSON log lat/lon, event + rid log lines, STATUS `gps=`, status-bar
+  text). With no module present the Status carries `gpsFix=0`, so behaviour is byte-identical to the old
+  phone-only path. Web app needs **no change** (it reads `gps=` / logged lat-lon as before).
+- **Receive-only / in scope:** security pass PASS — TX=-1, no writes to the module, bounded parser, no
+  new data-egress (fix flows only over the existing link + into the same device-local SD log).
+- **BOTH BOARDS FLASHED v9 (2026-10-14) + VALIDATED ON-DEVICE.** C5 on COM18 (`303A:1001`, confirmed
+  ESP32-C5 by `esptool chip-id` — COM12 `303A:1001` is the odid-tx S3, don't flash it), CYD on COM14
+  (`1A86:7523`); both power switches OFF during flashing. User confirmed a **real onboard fix** with
+  the **phone disconnected** and the coordinates correct — so the full path (NEO-6M → C5 UART0 parse →
+  Status v9 → link → CYD status bar) works end to end. Link verified up post-flash (`table=60`, dual-band).
+- **Polish applied + `gpssrc`/`sats` readout (2026-10-14, CYD + webapp, reflashed):** reviewer nits done
+  (onboard lat/lon now divided in `double` not `1e7f`; `#include <math.h>` in `gps.cpp`). Added a source
+  indicator: CYD `posSource()` (0 none/1 phone/2 onboard) + `g_onbSats`; STATUS gained **`gpssrc`** +
+  **`sats`**; the CYD status-bar GPS text is **cyan when the onboard fix is active** (white = phone); the
+  web app tints the GPS app-bar icon + shows the sat count when onboard is driving (`#gpsSats`,
+  `style.css?v=20261014b`, `#uiver → gps-source`). CYD-only STATUS additions — **no further protocol
+  bump** (still v9). README privacy note added (self-geolocation with no phone).
+- **Files:** `lib/link_protocol/link_protocol.h`, `src/c5/gps.{h,cpp}` (new), `src/c5/pins.h`
+  (`GPS_RX_PIN 15`/`GPS_TX_PIN 23`), `src/c5/main.cpp`, `src/cyd/main.cpp`; webapp `index.html`,
+  `js/ble/status.js`, `scss/_base.scss`→`style.css`; docs: `hardware/PINOUT.md` §5/§5b,
+  `hardware/addon-wiring.md` §3b/§4b (DONE), `README.md`, `CLAUDE.md`.
+- **Builds:** c5 SUCCESS Flash 45.9% / RAM 24.0%; cyd SUCCESS Flash 45.2% / RAM 33.4%. Reviewer CLEAN,
+  security PASS. **Committed + pushed to `main` 2026-10-14** (same commit carries the `resources/logo/*`
+  edits per the owner — logo is "Updated logo. Still TBD").
+- **Open / next session:**
+  - **Sanity-check C5 GPS pins 15/23** against the physical board — pins.h firmly vouches only for the
+    link pins 4/5; GPIO15 isn't a strapping pin so it's plausible, and a correct fix came through, but
+    confirm the solder points match if anything acts up.
+  - **Battery charge-detect** still TODO: the TP4056 CHRG pad is unwired (GPIO26 free). The owner found
+    extra pads labelled **`+`** and **`D`** on the charge module and will research which (if either) is
+    CHRG — **ASK the owner what they found**; if a CHRG pad exists, wire it → CYD **GPIO26**
+    (`INPUT_PULLUP`, LOW = charging) and I'll add the charging-bolt glyph + a `chg=` STATUS key.
+  - **`resources/logo/*`** — committed as-is ("Still TBD"); the owner will finish the logo later.
+
 ## Branches / deploy
 - **2026-10-11: active feature branch `remoteid-decode`** (forked from `main` after `f88ed01`). Holds
   the in-progress Remote-ID ASTM F3411 decode (increment 1 — see outstanding #5 + Done below). Pushed

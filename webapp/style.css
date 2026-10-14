@@ -225,6 +225,19 @@ button:disabled {
   color: #f85149;
 }
 
+.si#gpsState {
+  gap: 2px;
+}
+
+.si#gpsState.onboard, .si#gpsState.onboard .material-symbols-outlined {
+  color: #39c0ed;
+}
+
+.si#gpsState .gpssats {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 #log {
   background: #0b0e13;
   border: 1px solid #30363d;

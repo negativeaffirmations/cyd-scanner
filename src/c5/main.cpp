@@ -17,6 +17,7 @@
 #include "promisc.h"
 #include "ieee154.h"
 #include "remoteid.h"
+#include "gps.h"
 
 using namespace link_protocol;
 
@@ -526,6 +527,9 @@ static void sendStatus(uint8_t scanning, uint16_t total) {
   st.uptime_ms      = millis();
   st.deauth_recent  = promisc::deauthRecent();
   countAggregates(st.evil_count, st.rid_count);
+  gps::Fix gf; gps::snapshot(gf);  // v9: onboard GPS fix (sentinels when none)
+  st.gpsLat = gf.lat; st.gpsLon = gf.lon; st.gpsAltM = gf.altM;
+  st.gpsSats = gf.sats; st.gpsFix = gf.fix;
   sendFrame((uint8_t)Reply::Status, &st, sizeof(st));
 }
 
@@ -614,12 +618,14 @@ void setup() {
   LinkSerial.setClockSource(UART_CLK_SRC_XTAL);
   LinkSerial.setRxBufferSize(1024);
   LinkSerial.begin(LINK_BAUD, SERIAL_8N1, LINK_RX_PIN, LINK_TX_PIN);
+  gps::begin();  // onboard NEO-6M NMEA reader (UART0, receive-only)
   Serial.println("[C5] scanning in background; waiting for commands");
 }
 
 void loop() {
   wifiTick();
   ieee154::tick();
+  gps::poll();  // drain NMEA (non-blocking)
 
   // BLE watchdog: if the scan ever stops (stall, error, or an onScanEnd we missed),
   // restart it. Belt-and-suspenders alongside setMaxResults(0).

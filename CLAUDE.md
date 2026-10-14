@@ -189,7 +189,16 @@ back (5 GHz included). Things that matter, learned the hard way:
   Promiscuous capture itself is **receive-only** — it just monitors 802.11 frames (BLE scanning is
   active; see the Scope section). The C5 prints a per-window `mgmt/data/dataClient` capture-health
   line to its USB console.
-- **C5 behavioral detectors (added in protocol v6; link now v8).** Alongside fingerprint capture the C5 decodes
+- **Onboard GPS (C5, protocol v9).** A GY-NEO6MV2 NEO-6M is wired to the C5 on **UART0** (console is
+  USB-CDC, so UART0 is free; RX = GPIO15, TX = -1 → **receive-only**, 9600 8N1, XTAL clock). `src/c5/gps.*`
+  runs a clean-room checksum-verified `$GxRMC`/`$GxGGA` NMEA parser, holds the latest fix (mutex-guarded),
+  and `sendStatus()` folds `gpsLat`/`gpsLon` (deg·1e7) + alt/sats/fix into every `Status` frame. The CYD
+  routes it through a unified `posHasFix()/posLat()/posLon()` accessor used by every position consumer (log
+  NDJSON, status bar, STATUS `gps=`, follow scoring). **Phone GPS is PREFERRED** (it fuses A-GPS/cell);
+  the onboard fix is the **fallback** used only when the phone has no fix. With no module fitted the Status
+  carries `gpsFix=0`, so behaviour is identical to phone-only. (`PROTOCOL_VERSION` 8→9, `sizeof(Status)`=24;
+  both boards flash together.)
+- **C5 behavioral detectors (added in protocol v6; link now v9 — see onboard GPS above).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
   `FLAG_WIFI_PWNAGOTCHI` (beacon DE:AD:BE:EF IE / "pwnd"), `FLAG_WIFI_EVILTWIN` (same SSID from ≥2
@@ -250,7 +259,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   and `{…,"evt":"eviltwin","count":N}`. **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
   ~once/30 s per emitter MAC, Remote-ID increment 3):
   `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"rid","mac":"…","uas":"…","dlat":…,"dlon":…,"h":…,"alt":…,"spd":…,"hdg":…,"olat":…,"olon":…,"oid":"…"}`
-  — `lat`/`lon` = the scanner's own phone-GPS fix; `dlat`/`dlon` the drone position, `olat`/`olon` the
+  — `lat`/`lon` = the scanner's own position fix (phone GPS preferred, onboard C5 NEO-6M as fallback);
+  `dlat`/`dlon` the drone position, `olat`/`olon` the
   operator position (deg), `h`/`alt` height/geo-alt (m), `spd` m/s, `hdg` deg, `uas`/`oid` the UAS ID /
   operator ID (JSON-escaped); unknown fields omitted. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
   once GPS is sent; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
@@ -375,13 +385,15 @@ back (5 GHz included). Things that matter, learned the hard way:
     2 = custom minutes; optional `/logs/` path; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
   - `…0004` STATUS (read/notify) — `key=val;…`:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock`
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats`
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),
     `sess` = current session name, **`deauth`** = recent observed deauth/disassoc rate,
     **`evil`** = evil-twin SSID count, **`rid`** = Remote-ID emitters seen, **`bg`** = background
-    scan on/off, **`lock`** = display/touch lock state 0/1)
+    scan on/off, **`lock`** = display/touch lock state 0/1, **`bat`** = battery % (−1 = no cell / on
+    USB), **`gpssrc`** = active position source 0 none/1 phone/2 onboard, **`sats`** = onboard-GPS
+    satellites in use; `gps` = 1 when EITHER phone or onboard has a fix)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows

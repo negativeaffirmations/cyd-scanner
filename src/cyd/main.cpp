@@ -639,6 +639,16 @@ static void computeScores() {
 #define EVENT_LOG_GAP_MS  30000UL   // log at most one event line per type per this interval
 static uint16_t g_deauthRecent = 0;
 static uint8_t  g_evilCount = 0, g_ridCount = 0;
+
+// Unified position: phone GPS is PREFERRED, the C5's onboard NEO-6M fix (Status, v9) is the
+// FALLBACK. With no onboard GPS the Status carries gpsFix=0, so this is phone-only as before.
+static bool    g_onbValid = false;
+static float   g_onbLat = 0, g_onbLon = 0;
+static uint8_t g_onbSats = 0;   // satellites the onboard NEO-6M reports (0 = none; nonzero even pre-fix during acquisition)
+static bool  posHasFix() { return phone::hasGps() || g_onbValid; }
+static float posLat()    { return phone::hasGps() ? phone::lat() : g_onbLat; }
+static float posLon()    { return phone::hasGps() ? phone::lon() : g_onbLon; }
+static int   posSource() { return phone::hasGps() ? 1 : (g_onbValid ? 2 : 0); }  // 0 none / 1 phone / 2 onboard
 static uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
 static uint8_t  g_evilShown = 0;
 static uint32_t g_deauthUntil = 0, g_evilUntil = 0;  // millis() deadlines (0 = never raised)
@@ -892,11 +902,11 @@ static void updateFollowState() {
   g_followCount = w;
 
   uint32_t nowWin = now / FOLLOW_WINDOW_MS;
-  bool  gps = phone::hasGps();
+  bool  gps = posHasFix();
   float lat = 0, lon = 0, cosLat = 1.0f;
   int32_t qLat = 0, qLon = 0;
   if (gps) {
-    lat = phone::lat(); lon = phone::lon();
+    lat = posLat(); lon = posLon();
     cosLat = cosf(lat * (float)M_PI / 180.0f);  // once per cycle; lat barely changes
     qLat = (int32_t)lroundf(lat * FOLLOW_QUANT);
     qLon = (int32_t)lroundf(lon * FOLLOW_QUANT);
@@ -1199,7 +1209,7 @@ static int logNewDetections() {
   File f;  // opened lazily on the first new detection so idle boots write no file
   uint32_t ms = millis();
   uint32_t epoch = phone::epochNow();
-  bool gps = phone::hasGps();
+  bool gps = posHasFix();
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
     if (seenContains(st, d)) continue;
@@ -1230,8 +1240,8 @@ static int logNewDetections() {
     char ln[LOG_LINE];
     int n2 = 0;
     lnAppend(ln, n2, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epoch, (unsigned long)ms);
-    if (gps && isfinite(phone::lat()) && isfinite(phone::lon()))
-      lnAppend(ln, n2, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+    if (gps && isfinite(posLat()) && isfinite(posLon()))
+      lnAppend(ln, n2, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
     lnAppend(ln, n2,
              ",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"rssi\":%d,\"ch\":%d",
              srcTag(d), d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
@@ -1275,8 +1285,8 @@ static void logEvent(const char* evt, int count) {
   char ln[160];
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
-  if (phone::hasGps() && isfinite(phone::lat()) && isfinite(phone::lon()))
-    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+  if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
+    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
   lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d}\n", evt, count);
   if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
   f.close();
@@ -1337,8 +1347,8 @@ static void logRidEvents() {
     char ln[LOG_LINE];
     int n = 0;
     lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)phone::epochNow(), (unsigned long)millis());
-    if (phone::hasGps() && isfinite(phone::lat()) && isfinite(phone::lon()))
-      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", phone::lat(), phone::lon());
+    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
+      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
     lnAppend(ln, n, ",\"evt\":\"rid\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
              r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
     if (uas[0]) lnAppend(ln, n, ",\"uas\":\"%s\"", uas);
@@ -1709,6 +1719,9 @@ static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
+        g_onbValid = (st->gpsFix != 0) && (st->gpsLat != 0 || st->gpsLon != 0);  // v9 onboard GPS
+        g_onbSats  = st->gpsSats;  // sats-in-use, even pre-fix (useful for "is the module seeing sky?")
+        if (g_onbValid) { g_onbLat = st->gpsLat / 1e7; g_onbLon = st->gpsLon / 1e7; }  // divide in double, then store
         if (st->scanning != 0) sawStart = true;
         else                   done     = true;
       }
@@ -1737,17 +1750,17 @@ static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
-  char s[384];
+  char s[416];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
-           phone::hasTime() ? 1 : 0, phone::hasGps() ? 1 : 0,
+           phone::hasTime() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
            (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
-           power::percent());
+           power::percent(), posSource(), (int)g_onbSats);
   phone::setStatus(String(s));
 }
 
@@ -1929,9 +1942,9 @@ static void drawStatusBar() {
   tft.drawString(t, 4, 4, 2);
   // GPS (middle, abbreviated)
   char g[24];
-  if (phone::hasGps()) {
-    snprintf(g, sizeof(g), "%.2f,%.2f", phone::lat(), phone::lon());
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  if (posHasFix()) {
+    snprintf(g, sizeof(g), "%.2f,%.2f", posLat(), posLon());
+    tft.setTextColor(posSource() == 2 ? TFT_CYAN : TFT_WHITE, TFT_BLACK);  // cyan = onboard GPS, white = phone
   } else { strcpy(g, "Lat:- Lon:-"); tft.setTextColor(TFT_DARKGREY, TFT_BLACK); }
   tft.drawString(g, 66, 7, 1);
   // phone connection icon (right) + C5-link status dot to its right

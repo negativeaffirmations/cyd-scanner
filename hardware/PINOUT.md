@@ -138,8 +138,9 @@ in sync when wiring changes.
 > **Strapping pins:** GPIO8, GPIO9 (avoid holding at boot).
 > **USB-Serial/JTAG:** GPIO13 (D-) / GPIO14 (D+) — leave free for programming.
 > **Console UART0:** GPIO11 (TX) / GPIO12 (RX).
-> **GPS (wired):** GPIO15 (NEO-6M TXD→C5 RX) / GPIO23 (C5 TX→NEO-6M RXD, config-only). See §5b —
-> the GPS is on the hardware but its firmware is not written yet (protocol-v9 gated).
+> **GPS (BUILT):** GPIO15 (NEO-6M TXD→C5 RX, C5 UART0) / GPIO23 (C5 TX→NEO-6M RXD, config-only,
+> unused — read-only uses TX=-1). See §5b — firmware is live (`src/c5/gps.*`), forwarded to the CYD
+> over the link inside `Status` (protocol v9).
 
 > ⚠️ **Pin 25 / 26 caveat — UNVERIFIED.** On this physical board, GPIO25 and GPIO26
 > appear **swapped** relative to most online ESP32-C5 DevKit documentation. The
@@ -256,19 +257,18 @@ into the CYD** (no battery, no separate cable to the C5):
 
 ---
 
-## 5. Add-ons — battery monitor (BUILT) + GPS (WIRED, firmware pending)
+## 5. Add-ons — battery monitor (BUILT) + GPS (BUILT)
 
-> ✅ **Both add-ons are now on the hardware** (matching the current-build diagram, §4 top). The
-> battery monitor is **built and firmware is live**; the GPS is **wired but not yet read in firmware**.
-> Full wiring, divider math, and part notes: **[addon-wiring.md](addon-wiring.md)**.
+> ✅ **Both add-ons are on the hardware and firmware is live** (matching the current-build diagram,
+> §4 top). The battery monitor reads on the CYD; the GPS reads on the C5 and is forwarded to the CYD
+> over the link. Full wiring, divider math, and part notes: **[addon-wiring.md](addon-wiring.md)**.
 >
-> 🚫 **Do NOT change the link protocol for the GPS yet.** Build C's GPS-over-link forwarding needs a
-> `PROTOCOL_VERSION` bump (8 → 9) — **leave `lib/link_protocol/link_protocol.h` and the GPS firmware
-> alone until the owner explicitly says to build this.** Until then, phone GPS (over BLE) remains the
-> only position source the firmware uses.
+> ✅ **GPS-over-link is implemented (protocol v9).** The C5 reads NEO-6M NMEA on UART0 and folds the
+> fix into the `Status` frame; the CYD uses it as a **fallback to phone GPS** (phone GPS preferred —
+> it fuses A-GPS/cell). The v8→v9 bump means **both boards must be flashed together**.
 
 **Layout (Build C):** the battery monitor on the CYD; the GPS on the C5 (which has the spare GPIO),
-to be forwarded to the CYD over the existing link once the GPS firmware is written.
+forwarded to the CYD over the existing link inside `Status`.
 
 ### 5a. CYD — battery monitor (BUILT — voltage-only)
 
@@ -284,19 +284,21 @@ curve to 0–100 %. The CYD **status bar** shows a battery glyph (fill + colour:
 change** (STATUS is the CYD→phone string, not the link `PROTOCOL_VERSION`). Charge/not-charging state
 is **not** available (no CHRG pin) — the glyph shows level only.
 
-### 5b. C5 — GY-NEO6MV2 GPS (WIRED — firmware pending)
+### 5b. C5 — GY-NEO6MV2 GPS (BUILT — firmware live)
 
 | GY-NEO6MV2 | C5 pin                | Wiring                                                        |
 |------------|-----------------------|--------------------------------------------------------------|
 | VCC        | **5V0**               | breakout has its own 3.3 V LDO                               |
 | GND        | **GND**               | common ground (shared with the link / boost)                |
-| TXD        | **GPIO15** (C5 UART RX)| the NMEA data wire (9600 8N1); 3.3 V logic                  |
-| RXD        | **GPIO23** (C5 UART TX)| config-only; the module needs no commands for read-only NMEA |
+| TXD        | **GPIO15** (C5 UART0 RX)| the NMEA data wire (9600 8N1); 3.3 V logic                  |
+| RXD        | **GPIO23** (C5 UART0 TX)| config-only; **unused** — read-only NMEA opens TX=-1         |
 
 GPIO15/23 are plain, broken-out C5 right-header pins, clear of the link (4/5), console (11/12),
-USB-JTAG (13/14), strapping (8/9), RGB LED (27), BOOT (28), and the unverified 25/26. **The pins are
-connected on the board, but no firmware reads them yet** — forwarding the fix CYD-ward is a future
-protocol-v9 change, not to be started until told (see the warning above).
+USB-JTAG (13/14), strapping (8/9), RGB LED (27), BOOT (28), and the unverified 25/26. **Firmware is
+live:** `src/c5/gps.*` reads NMEA on UART0 (`GpsSerial(0)`, XTAL clock, 9600 8N1, 512 B RX, TX=-1 →
+**receive-only**), a clean-room `$GxRMC`/`$GxGGA` parser holds the latest fix (mutex-guarded), and
+`sendStatus()` folds it into the `Status` frame (protocol v9). Pin defines: `GPS_RX_PIN 15`,
+`GPS_TX_PIN 23` in `src/c5/pins.h`.
 
 ### Pin-budget note
 

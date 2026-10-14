@@ -11,6 +11,12 @@ an **ESP32-C5 DevKit** radio co-processor.
 > device's own advertised name and service UUIDs — the same thing any phone does). It
 > does **not** jam, deauthenticate, inject, spoof, flood, or otherwise interfere with
 > or attack any device. Use it lawfully and responsibly.
+>
+> **Captured data stays local.** Scan logs can pair bystanders' device identifiers with GPS +
+> timestamps — and with the **onboard GPS** fitted the device now self-geolocates even with no
+> phone connected, so background-scan logs may carry real positions earlier in a session. Keep
+> real captures on your own storage; **never commit them to this public repo** (it ships only
+> code, device signatures, and synthetic examples).
 
 ## How it works
 

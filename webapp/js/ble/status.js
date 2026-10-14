@@ -15,6 +15,14 @@ export function onStatus(ev){
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
   if("gps" in kv) $("gpsState").classList.toggle("on", kv.gps==="1");
+  if("gpssrc" in kv || "sats" in kv){            // v9: which source is live (1 phone / 2 onboard) + module sats
+    const src = +kv.gpssrc||0, sats = +kv.sats||0, el = $("gpsState"), sl = $("gpsSats");
+    el.classList.toggle("onboard", src===2);     // cyan tint when the onboard NEO-6M is the active fix
+    sl.textContent = (src===2 && sats>0) ? sats : "";   // show sat count only when onboard is driving
+    el.title = src===2 ? ("GPS: onboard · "+sats+" sat"+(sats===1?"":"s"))
+             : src===1 ? "GPS: phone"
+             : (sats>0 ? ("GPS: no fix · onboard "+sats+" sat"+(sats===1?"":"s")+" in view") : "GPS: no fix");
+  }
   // Gray the sync button once both time and GPS are synced.
   const bothSynced = $("timeState").classList.contains("on") && $("gpsState").classList.contains("on");
   $("syncBtn").disabled = !state.connected || bothSynced;

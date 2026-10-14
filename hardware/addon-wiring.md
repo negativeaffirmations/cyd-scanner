@@ -141,8 +141,9 @@ C5 5V leg (PINOUT.md §4).
 
 ### 3b. C5 side — GY-NEO6MV2 GPS
 
-Mounted on the C5's spare hardware UART (UART1). Read-only needs just the one data wire (module TXD →
-C5 RX); the TX pin is optional, only to reconfigure the module. Pins chosen to avoid the link (4/5),
+Mounted on the C5's spare hardware UART (**UART0** — the console is USB-CDC, so UART0 is free; the
+link uses UART1). Read-only needs just the one data wire (module TXD → C5 RX); the TX pin is unused
+(firmware opens TX=-1), only needed to reconfigure the module. Pins chosen to avoid the link (4/5),
 console (11/12), USB-JTAG (13/14), strapping (8/9), the RGB LED (27), BOOT (28), and the unverified
 25/26 — **GPIO15** and **GPIO23** are plain, broken-out right-header pins.
 
@@ -201,28 +202,30 @@ colour by level, hollow grey when no cell / on USB); `pushStatus()` adds `bat=<p
 the phone STATUS string → the web app's app-bar battery indicator. CYD-only, no `PROTOCOL_VERSION`
 change. (The `chg=` key in the earlier plan is dropped — no CHRG pin.)
 
-### 4b. C5 — GPS, then forward over the link (**protocol bump, both boards flash together**)
+### 4b. C5 — GPS, forwarded over the link (**DONE — protocol v9, both boards flash together**)
 
-> 🚫 **HOLD — do NOT start this until the owner explicitly says to.** It bumps `PROTOCOL_VERSION`
-> (8 → 9) and touches `lib/link_protocol/link_protocol.h` + both firmwares. Until then, leave the
-> protocol alone; phone GPS over BLE stays the only position source.
+> ✅ **DONE (2026-10-14).** Implemented as the "fold lat/lon into `Status`" option below. Bumps
+> `PROTOCOL_VERSION` 8 → 9 (`lib/link_protocol/link_protocol.h`) + both firmwares, so **both boards
+> must flash together**. Phone GPS is **preferred** (it fuses A-GPS/cell); the onboard C5 fix is the
+> **fallback** used only when the phone has no fix.
 
-Because the GPS is on the C5 but the logger/UI live on the CYD, the fix has to cross the link — so
-this is **not** wiring-only. Plan (when approved):
+Because the GPS is on the C5 but the logger/UI live on the CYD, the fix crosses the link. As built:
 
 ```cpp
-// C5: read-only NMEA on UART1, RX = GPIO15 (TX unused; -1).
-Serial1.begin(9600, SERIAL_8N1, /*RX=*/15, /*TX=*/-1);
-// parse NMEA (TinyGPS++ or a minimal RMC/GGA parse) → lat/lon + fix flag.
+// C5 (src/c5/gps.cpp): read-only NMEA on UART0, RX = GPIO15, TX = -1.
+GpsSerial.setClockSource(UART_CLK_SRC_XTAL);
+GpsSerial.setRxBufferSize(512);
+GpsSerial.begin(9600, SERIAL_8N1, /*RX=*/GPS_RX_PIN /*15*/, /*TX=*/-1);
+// clean-room minimal $GxRMC / $GxGGA parse (checksum-verified) → lat/lon (deg*1e7) + alt + sats + fix.
 ```
 
-- Add a GPS field/frame to [lib/link_protocol/link_protocol.h](../lib/link_protocol/link_protocol.h)
-  — e.g. a `Reply::Gps` (lat/lon as int32·1e7 + a fix/valid flag), or fold lat/lon into `Status`.
-  Either way `PROTOCOL_VERSION` bumps (currently **8 → 9**) and **both boards flash together**.
-- The C5 streams its latest fix in the scan-dump burst (or on `GetStatus`); the CYD consumes it and
-  routes it into the **existing position path** (today fed by the phone over BLE), so logging + the map
-  get an onboard fix. **Prefer the onboard fix when valid, fall back to phone GPS** — this also fixes
-  the "screen-off kills the phone GPS" problem (backlogged onboard-GPS item).
-- Keep the UART1 RX read cheap (buffered/interrupt-driven) so it doesn't disturb the C5's radio
-  time-slicing; GPS at 9600/1 Hz is light.
+- `Status` gained `gpsLat`/`gpsLon` (int32·1e7, 0 = no fix) + `gpsAltM` (int16, −1000 = unknown) +
+  `gpsSats` + `gpsFix` (0/1/2). `PROTOCOL_VERSION` 8 → 9; `sizeof(Status)` = 24.
+- `sendStatus()` folds the C5's latest fix into every status (start + end of the scan-dump burst). The
+  CYD stores it in the `Reply::Status` branch and a unified `posHasFix()/posLat()/posLon()` accessor
+  routes it into the **existing position path** (log NDJSON, status bar, STATUS `gps=`, follow
+  scoring) — **phone GPS preferred, onboard fallback**. With no module the Status carries `gpsFix=0`
+  so behaviour is identical to phone-only.
+- `gps::poll()` is non-blocking/bounded (≤256 B/call, 512 B RX buffer) so it doesn't disturb the C5's
+  radio time-slicing; the latest fix is mutex-guarded (written on the main loop, read in `sendStatus`).
 ```
