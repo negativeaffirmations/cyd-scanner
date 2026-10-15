@@ -1,5 +1,37 @@
 # Handoff — 2026-10-14 (branch: `main`, clean; it is the only branch / the trunk)
 
+## Done — follower logging + HOME-page alerts (2026-10-14, CYD BUILT not flashed; webapp static-verified; NOT committed/pushed)
+Motivated by a field drive: the magenta follow LED lit while driving, but the user was on the CYD HOME
+screen + the webapp **Home** page — and the follower banner is **Scan-page-only on both platforms**, so
+there was nowhere it could show, and the FOLLOWING device's MAC/flags were only live (5-min TTL), making
+"was it my car or my own phone?" unanswerable after the fact. Two features (CYD-only firmware + webapp;
+**no PROTOCOL_VERSION bump**, `src/c5/` + `lib/link_protocol/` untouched, nothing crosses the link):
+- **(A) Log followers (CYD, `src/cyd/main.cpp`).** New `logFollowEvents()` (modeled on `logRidEvents()`,
+  per-MAC ring sized `MAX_DET`, rate-limited once per `EVENT_LOG_GAP_MS`), called right after
+  `logRidEvents()` in `runScanCycle()`. One NDJSON line per device at FOLLOWING (`ftier==2`):
+  `{"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"follow","mac":"AA:BB:..","score":N,"ftier":2[,"name":..][,"src":..][,"flags":..]}`
+  — `src` via `srcTag()` (strongest member), `flags` via the existing `flagTokens()` (so a **Find-My
+  iPhone** reads `findmy` — the key tell of own-phone vs. a car device), `name` JSON-escaped; overflow-safe
+  `lnAppend` with a closing-brace guard. `parseScanNdjson` already skips `evt` lines (not mis-read as a
+  detection). **This is how to answer car-vs-phone after a drive: download the session + read the
+  `evt:follow` lines' `mac`/`flags`** (RPA MAC `4x–7x` + `findmy` ⇒ phone; stable vendor MAC ⇒ car/other).
+- **(B) HOME-page alerts.** CYD: new `drawHomeAlerts()` band at **y=120** (`HOME_ALERT_Y`, free strip
+  between the Scan button ~y109 and the "Background threats" caption y176), same magenta `! FOLLOWING: N
+  (tap)` / red `! DEAUTH:/EVIL:` labels + stacking as the scan banner; drawn from `drawMenu()` + the ~2 s
+  SCR_MENU idle refresh; clears itself when the condition drops; **tappable** → `openFollowList()` (new
+  `g_followFromHome` flag so Back returns to HOME, not Scan). Webapp: `#folBanner`/`#alertBanner` **moved
+  out of `<section id="page-scanner">` to just above `<main id="pages">`** so the one element each is
+  visible on EVERY page (Home included) with no duplicate ids — `status.js`/`connection.js`/`main.js`
+  wiring unchanged (same ids). `map.js` also gives `evt:follow` a magenta `F` pin (score/name/MAC/src/
+  flags popup). SCSS banner margin flipped to `0 0 .5em` in `_banners.scss` → recompiled `style.css`;
+  `style.css?v=20261014f`, `#uiver → home-alerts`.
+- **Builds:** CYD SUCCESS (RAM 33.8% / Flash 45.9%); C5 not rebuilt (untouched). Webapp: SCSS recompiled,
+  `parse.js` `node --check` clean; **not in-browser tested.**
+- **NOT yet:** CYD not flashed (flash it: SW1 off while flashing, `PYTHONIOENCODING=utf-8`, COM = CH340
+  `1A86:7523`), nothing committed/pushed, webapp not in-browser tested. On-device TODO: confirm the HOME
+  alert band y=120 doesn't collide + the tap opens the follow list; then a drive to capture `evt:follow`
+  lines and read `flags`/`mac` to settle car-vs-phone (#6).
+
 ## Done — COINTEL-FLO rebrand + GPS time + UI polish (2026-10-14, BOTH BOARDS FLASHED v10, all pushed to `main`)
 A run of CYD/webapp changes this session (newest first). Device state at the end: **both boards on
 protocol v10**, interoperating (link verified `table=55` dual-band). Ports this session: CYD = CH340
@@ -759,12 +791,14 @@ v7 (multi-UUID), earlier CYD camera OUIs + C5 promiscuous fixes (2026-10-10). Po
 COM8 (does NOT flash); spare S3 native = `303A:1001` = COM12 (shares VID:PID with the C5 native —
 disambiguate by `esptool chip-id`). Ports drift; always identify by VID:PID + chip type.
 **Pending field validation:** (a) ~~Wi-Fi client/camera capture~~ — DONE (#0); (b) the follower RPA
-guard — confirm your own phone no longer trips the follower banner, checked on the **Scan screen's
-magenta banner / LED** or the web follower count (`fol`), NOT the follow-gated HOME tracker tile (#6);
-(c) ~~Remote-ID decode + web map~~ — DONE/VERIFIED (web map plots the bench S3's hardcoded NYC
-operator fix, #5); (d) **onboard GPS time (v10)** — outdoors with the phone disconnected the status-bar
-clock should populate + turn **cyan** and logs get real epochs (NEW this session, bench can't test — no
-sky view).
+guard / follower banner — **STILL UNTESTED in the field (see #6).** A drive on 2026-10-14 did NOT
+exercise it: the device was on the CYD HOME screen and the phone on the webapp **Home** page, and the
+follower banner renders **ONLY on the Scan/Scanner page on BOTH platforms** (CYD: drawn inside
+`drawScanInfo()`; webapp: `#folBanner` lives inside `<section id="page-scanner">`, a hidden `.page`
+when Home is shown). So there was nowhere for it to appear. Re-test from the **Scan page** (CYD) /
+**Scanner page** (webapp). (c) ~~Remote-ID decode + web map~~ — DONE/VERIFIED (web map plots the bench
+S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE: user-confirmed working
+(2026-10-14), status-bar clock populates + real epochs~~ (#10).
 
 ## PICK UP HERE — outstanding
 
@@ -774,6 +808,9 @@ sky view).
    Residual gaps remain by design (not regressions): **DFS 5 GHz channels (52–144) not swept** and
    **dormant battery cameras RF-silent until motion**. If a specific known 5 GHz camera is ever missed,
    the next levers are adding DFS channels and/or lengthening the 5 GHz window.
+   - **2026-10-14: Axon detection confirmed in the field.** Driving past police at a blocked-off road
+     construction site, the scanner flagged Axon gear well (sigdb Axon category). Another positive
+     real-world confirmation of the signature matching.
 
 ### Resolved / superseded (were the top items on 2026-10-05)
 1. **~~BUG — C5 link disconnects & reconnects every ~2 s~~ — ACTUALLY FIXED (`a50ad3a`).** It recurred
@@ -834,6 +871,18 @@ sky view).
    COM14. **Field-verify** on a walk that your own phone no longer trips the follower banner. The
    analogous **Wi-Fi randomized-MAC** case (locally-administered probe MACs) is a cheap follow-up if it
    shows up in the field — not done yet. See [[phase5-followme-direction]].
+   - **2026-10-14: STILL UNTESTED — the follower banner is Scan-page-only on BOTH platforms.** Verified
+     in code (not a bug): the CYD banner is drawn inside `drawScanInfo()` (Scan screen only) and the
+     webapp `#folBanner` sits inside `<section id="page-scanner">` (hidden on any other page). The
+     background follow detector + the CYD **magenta LED** (`applyScanLed()`) run headless on any screen,
+     but **no on-screen banner shows on either HOME page.** A user drive with the CYD on HOME + the
+     phone on the webapp **Home** page therefore produced no banner (expected). Re-test must be done
+     from the Scan/Scanner page. **Open follow-up (offered, not yet built): surface the follower +
+     deauth/evil-twin alerts on the HOME pages too** (CYD HOME banner/indicator + webapp Home follower
+     indicator driven by STATUS `fol`/`deauth`/`evil`) so alerts are visible when not on the Scan page —
+     which is exactly when you'd be driving/walking. Also still open: whether a given drive *should*
+     flag anything depends on a stable non-RPA emitter moving with you ≥400 m — the own phone is
+     excluded by design.
 7. **~~P3 log follow-ups~~ — DONE (2026-10-11, CYD FLASHED).** (a) **Dense-area thrash guard:** when a
    stream's dedup set (`MAX_SEEN` 400) fills, `logNewDetections()` now **skips** unknown MACs (was
    re-logging every ~2 s cycle) and **auto-rotates** to a fresh session so capture resumes — capped to
@@ -850,11 +899,11 @@ sky view).
    `bat=`; CYD-only, no protocol bump). **Charge-detect is NOT FEASIBLE** on this TP4056 module — the
    extra pads the owner found are the DC **input +/−**, not a CHRG/STDBY status pad — so there's no
    `chg=` key and **GPIO26 stays free**. See [[battery-indicator-plan]] / [[battery-power-subsystem]].
-10. **Onboard GPS time (v10) — FIELD-VALIDATE.** The GPS-time fallback clock is built + flashed but
-   only works with a real fix; verify outdoors with the **phone disconnected**: the status-bar clock
-   populates + turns **cyan** (web time icon cyan, `tsrc=2`), and logged rows carry real epochs instead
-   of `0`. Before any phone has *ever* synced, the fallback reads **UTC** (no tz); after the first-ever
-   phone sync the tz offset persists in NVS (`cydscan/tzoff`) and it reads LOCAL.
+10. **~~Onboard GPS time (v10) — FIELD-VALIDATE~~ — DONE (2026-10-14, user-confirmed working).** The
+   GPS-time fallback clock was tested outdoors and works: with a real fix the status-bar clock
+   populates (+ turns cyan, `tsrc=2`) and logged rows carry real epochs instead of `0`. (Behaviour
+   reminder: before any phone has *ever* synced the fallback reads **UTC** — no tz; after the
+   first-ever phone sync the tz offset persists in NVS `cydscan/tzoff` and it reads LOCAL.)
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.

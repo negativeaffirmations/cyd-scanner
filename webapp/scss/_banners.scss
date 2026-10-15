@@ -3,7 +3,7 @@
 @use 'variables' as *;
 
 .folbanner {
-  display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+  display:none; align-items:center; gap:8px; width:100%; margin:0 0 .5em;  // under the app bar, above #pages (every page)
   padding:.6em .8em; border-radius:10px; cursor:pointer; font-weight:600;
   background:rgba($follow,.16); border:1px solid $follow; color:$follow-text;
 }
@@ -19,7 +19,7 @@
 .folscore { flex:0 0 4.2em; text-align:right; font-family:ui-monospace,monospace; color:$follow-text; }
 
 .alertbanner {
-  display:none; align-items:center; gap:8px; width:100%; margin:.5em 0 0;
+  display:none; align-items:center; gap:8px; width:100%; margin:0 0 .5em;
   padding:.6em .8em; border-radius:10px; font-weight:600;
   background:rgba($alert,.16); border:1px solid $alert; color:$alert-text;
 }

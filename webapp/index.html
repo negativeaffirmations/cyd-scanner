@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261014e">
+<link rel="stylesheet" href="style.css?v=20261014f">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -23,6 +23,10 @@
       <span id="conn" class="conn down" title="disconnected"><span class="material-symbols-outlined">bluetooth_disabled</span></span>
     </span>
   </header>
+
+  <!-- Persistent alert banners (follower + deauth/evil-twin): visible on EVERY page, updated by ble/status.js -->
+  <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
+  <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
 
   <main id="pages">
     <!-- ============================ HOME ============================ -->
@@ -54,7 +58,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-14&nbsp;·&nbsp;eviltwin-addr</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-14&nbsp;·&nbsp;home-alerts</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -69,9 +73,6 @@
         <button id="exploreBtn" class="iconbtn" title="Explore a saved log" aria-label="Explore a saved log"><span class="material-symbols-outlined">find_in_page</span></button>
         <button id="scanSetBtn" class="iconbtn" title="Scan settings" aria-label="Scan settings"><span class="material-symbols-outlined">settings</span></button>
       </div>
-
-      <div id="folBanner" class="folbanner">⚑ <span>Possible follower(s)</span><span class="fcount" id="folCount">0</span></div>
-      <div id="alertBanner" class="alertbanner">⚠ <span id="alertText">Alert</span><span class="acount" id="alertCount"></span></div>
 
       <div id="scanCounts" class="threatstrip" title="Tap for the threat breakdown" role="button" tabindex="0"></div>
 

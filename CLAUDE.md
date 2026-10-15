@@ -271,6 +271,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   operator position (deg), `h`/`alt` height/geo-alt (m), `spd` m/s, `hdg` deg, `uas`/`oid` the UAS ID /
   operator ID (JSON-escaped); unknown fields omitted. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
   once GPS is sent; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
+  **Follower** events: each device at follow tier 2 (FOLLOWING) gets an `"evt":"follow"` line, rate-limited
+  ~once/30 s per MAC (`logFollowEvents`): `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"follow","mac":"AA:BB:…","score":N,"ftier":2,"name":"…","src":"…","flags":"…"}`
+  — `lat`/`lon` the scanner's own fix; `score` the 0..100 follow score; `name` (JSON-escaped), `src` (the
+  strongest member's source tag, as in detection rows) and `flags` (the same `+`-joined detector list —
+  tells a Find-My iPhone from a car device) are omitted when blank. The web Map pins it (magenta `F`).
+  The follower + deauth/evil-twin alerts also show on the **HOME** screens: a CYD band at y=120 on HOME
+  (tappable → follow drill-down) and the web banners, which live under the app bar so every page shows them.
   **Time backfill — `{"epoch":…,"ms":…,"evt":"timesync"}` anchor.** Rows logged before the phone syncs
   the clock carry `epoch:0` (only `ms`, ms-since-boot, is meaningful). When the phone sets the time,
   `renameStreamOnSync` appends ONE `timesync` anchor line (the sync epoch + its `ms`) to any stream that

@@ -33,7 +33,7 @@ export function openMap(){
 }
 
 const EVT_STYLE={deauth:{col:"#f85149",ch:"D",name:"Deauth flood"}, eviltwin:{col:"#d29922",ch:"E",name:"Evil twin"},
-  droneid:{col:"#58a6ff",ch:"R",name:"Drone Remote ID"}};
+  droneid:{col:"#58a6ff",ch:"R",name:"Drone Remote ID"}, follow:{col:"#ff5cbf",ch:"F",name:"Follower"}};
 
 // Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
 export function plotCsvText(text, label){
@@ -98,7 +98,7 @@ export function renderMap(){
     const st=EVT_STYLE[e.evt]||{col:"#8b949e",ch:"!",name:e.evt};
     const m=L.marker([e.lat,e.lon],{icon:L.divIcon({className:"",iconSize:[18,18],
       html:`<div class="evpin" style="background:${st.col}">${st.ch}</div>`})});
-    let html="<b>"+esc(st.name)+"</b><br>count "+e.count+"<br>"+
+    let html="<b>"+esc(st.name)+"</b><br>"+(e.evt==="follow" ? "score "+e.score : "count "+e.count)+"<br>"+
       (e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+"<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5);
     const hasMacs = e.evt==="eviltwin" && e.macs && e.macs.length;
     if(e.evt==="eviltwin"){   // name the suspect SSID + its BSSIDs; each BSSID opens the device detail
@@ -106,6 +106,10 @@ export function renderMap(){
       if(hasMacs) html+="<br><b>BSSIDs:</b> "+
         e.macs.map(x=>`<span class="evmac" data-mac="${esc(x)}">${esc(x)}</span>`).join(", ")+
         '<br><span class="evhint">tap an address for details</span>';
+    }
+    if(e.evt==="follow"){   // who was following: name / MAC / source / detector flags (flags tell a Find-My tag from a car)
+      if(e.name) html+="<br><b>"+esc(e.name)+"</b>";
+      html+="<br>"+esc(e.mac)+(e.src?" · "+esc(e.src):"")+(e.flags?"<br>"+esc(e.flags):"");
     }
     m.bindPopup(html,{maxWidth:280});
     if(hasMacs) m.on('popupopen', ev=>{   // wire clicks directly on the popup DOM (Leaflet stops click

@@ -272,6 +272,7 @@ static constexpr int LIST_Y0 = 106, LIST_ROW_H = 13;
 // Scan-screen state band (y64..75, just above the body-button band at y76): shows the scan state
 // + tier counts, or the tappable follow alert when devices are flagged.
 static constexpr int BANNER_Y = 64, BANNER_H = 11;
+static constexpr int HOME_ALERT_Y = 120;  // HOME alert band: free strip between the Scan button (ends ~109) and the threat caption (176)
 // Body action buttons (tall, in the band just above the list), with the other scan-screen layout
 // constants (drawBodyButtonN below references these).
 static constexpr int BODY_BTN_Y = 76, BODY_BTN_H = 26;
@@ -897,6 +898,7 @@ static constexpr uint8_t FF_ACTIVE = 1, FF_HADGPS = 2;
 static FollowState g_follow[MAX_DET];
 static int         g_followCount = 0;
 static int         g_followN     = 0;   // devices currently FOLLOWING
+static bool        g_followFromHome = false;  // follow drill-down opened from the HOME alert band (Back -> HOME)
 
 static void resetFollow() {
   memset(g_follow, 0, sizeof(g_follow));
@@ -1302,6 +1304,7 @@ static int logNewDetections() {
 // pulled from the live detections that currently carry FLAG_WIFI_EVILTWIN, so the map/log identifies
 // the culprit APs instead of a bare count. (The "deauth" event has no per-AP address — the C5 only
 // counts frames.) No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
+// Per-device "rid" and "follow" event lines have their own writers below (logRidEvents / logFollowEvents).
 static void logEvent(const char* evt, int count) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
@@ -1405,6 +1408,67 @@ static void logRidEvents() {
     if (r.operatorLat != RID_LL_UNK || r.operatorLon != RID_LL_UNK)
       lnAppend(ln, n, ",\"olat\":%.6f,\"olon\":%.6f", r.operatorLat / 1e7, r.operatorLon / 1e7);
     if (oid[0]) lnAppend(ln, n, ",\"oid\":\"%s\"", oid);
+    if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
+      lnAppend(ln, n, "}\n");
+      if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+    }
+    f.close();
+  }
+}
+
+// Log one "follow" event line per device currently FOLLOWING (ftier 2), rate-limited per MAC to once
+// per EVENT_LOG_GAP_MS. Same ring-buffer idiom as logRidEvents().
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"follow","mac":"..","score":N,"ftier":2
+//    [,"name":"..","src":"..","flags":".."]}  (blank/unknown fields omitted)
+// "flags" is the same +-joined detector list as the detection rows (tells a Find-My iPhone from a car).
+static void logFollowEvents() {
+  if (g_followN <= 0) return;
+  static uint8_t  ringMac[MAX_DET][6];
+  static uint32_t ringLast[MAX_DET];
+  static bool     ringUsed[MAX_DET];
+  static int      ringNext = 0;
+  uint32_t now = millis();
+  for (int i = 0; i < g_followCount; i++) {
+    const FollowState& fs = g_follow[i];
+    if (fs.ftier != 2) continue;
+    int slot = -1;
+    for (int k = 0; k < MAX_DET; k++)
+      if (ringUsed[k] && memcmp(ringMac[k], fs.mac, 6) == 0) { slot = k; break; }
+    if (slot >= 0 && now - ringLast[slot] < EVENT_LOG_GAP_MS) continue;
+    if (slot < 0) {  // first sighting: take the next ring slot (round-robin eviction)
+      slot = ringNext; ringNext = (ringNext + 1) % MAX_DET;
+      memcpy(ringMac[slot], fs.mac, 6); ringUsed[slot] = true;
+    }
+    ringLast[slot] = now;
+
+    // Device facts from its DevGroup (same MAC lookup as computeFollowScores()).
+    char safe[97]; safe[0] = 0;
+    char flagStr[64]; flagStr[0] = 0;
+    const char* src = "";
+    for (int k = 0; k < g_groupCount; k++) {
+      const DevGroup& g = g_groups[k];
+      if (memcmp(g.mac, fs.mac, 6) != 0) continue;
+      if (g.nameIdx >= 0 && g.nameIdx < g_detCount) jsonEscape(safe, sizeof(safe), g_dets[g.nameIdx].name);
+      if (g.rep >= 0 && g.rep < g_detCount) src = srcTag(g_dets[g.rep]);
+      flagTokens(g.flags, flagStr, sizeof(flagStr));
+      break;
+    }
+
+    LogStream& st = activeStream();
+    if (bgCtx() && !st.path[0]) openBgSession();
+    if (!ensureLogFile(st)) return;
+    File f = SD.open(st.path, FILE_APPEND);
+    if (!f) return;
+    char ln[LOG_LINE];
+    int n = 0;
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
+    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
+      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+    lnAppend(ln, n, ",\"evt\":\"follow\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"score\":%d,\"ftier\":2",
+             fs.mac[0], fs.mac[1], fs.mac[2], fs.mac[3], fs.mac[4], fs.mac[5], (int)fs.score);
+    if (safe[0])    lnAppend(ln, n, ",\"name\":\"%s\"", safe);
+    if (src[0])     lnAppend(ln, n, ",\"src\":\"%s\"", src);
+    if (flagStr[0]) lnAppend(ln, n, ",\"flags\":\"%s\"", flagStr);
     if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
       lnAppend(ln, n, "}\n");
       if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
@@ -2578,6 +2642,50 @@ static void drawMenuThreats() {
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
 }
 
+// HOME alert band (HOME_ALERT_Y, BANNER_H): same magenta follow / red deauth+evil banner as the scan
+// screen (drawScanInfo), so a follower or flood is visible without opening Scan. Always clears its
+// strip first, so it vanishes cleanly when the condition drops.
+static void drawHomeAlerts() {
+  int W = tft.width();
+  tft.fillRect(0, HOME_ALERT_Y, W, BANNER_H, TFT_BLACK);
+  bool evA = eventAlertActive();
+  if (g_followN <= 0 && !evA) return;
+  int fw = evA ? W / 2 : W;
+  char buf[32];
+  tft.setTextDatum(MC_DATUM);
+  if (g_followN > 0) {
+    tft.fillRect(0, HOME_ALERT_Y, fw, BANNER_H, TFT_MAGENTA);
+    tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
+    snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", g_followN);
+    tft.drawString(buf, fw / 2, HOME_ALERT_Y + BANNER_H / 2 + 1, 1);
+  }
+  if (evA) {
+    int x0 = (g_followN > 0) ? fw : 0;
+    tft.fillRect(x0, HOME_ALERT_Y, W - x0, BANNER_H, TFT_RED);
+    tft.setTextColor(TFT_WHITE, TFT_RED);
+    int an = snprintf(buf, sizeof(buf), "! ");
+    if (deauthAlertActive()) an += snprintf(buf + an, sizeof(buf) - an, "DEAUTH:%d ", (int)g_deauthShown);
+    if (evilAlertActive())   an += snprintf(buf + an, sizeof(buf) - an, "EVIL:%d", (int)g_evilShown);
+    tft.drawString(buf, x0 + (W - x0) / 2, HOME_ALERT_Y + BANNER_H / 2 + 1, 1);
+  }
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);  // restore the menu hint-line colour state
+}
+
+// Fresh tap on the HOME alert band. Call every loop iteration (keeps edge state); caller checks g_followN.
+static bool homeAlertTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return false; }
+  bool now = g_touch.touched();
+  bool hit = false;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z) && sy >= HOME_ALERT_Y && sy <= HOME_ALERT_Y + BANNER_H) hit = true;
+  }
+  prev = now;
+  return hit;
+}
+
 // Fresh tap on a HOME threat tile -> tile index (0..g_menuCatN-1), else -1. Mirrors tappedRow()'s
 // edge detection; its hit region (y >= CHIP_Y0) is disjoint from the menu rows so both can be
 // polled each loop without stealing each other's taps.
@@ -2668,6 +2776,7 @@ static void drawMenu() {
   tft.drawString(g_touchOk ? "Tap an item, or use BOOT:" : "Navigate with the BOOT button:", 10, MENU_HINT_Y, 1);
   tft.drawString("tap = next,  hold = select", 10, MENU_HINT_Y + 10, 1);
   drawMenuThreats();
+  drawHomeAlerts();
 }
 
 // Settings screen: Calibrate Touch / Brightness / Back.
@@ -3414,6 +3523,11 @@ static void followBackToList() {
 
 static void showScan();  // fwd decl (defined after the follow drill-down)
 static void followBackToScan() {
+  if (g_followFromHome) {  // opened from the HOME alert band: return to HOME, not the scan screen
+    g_followFromHome = false;
+    g_screen = SCR_MENU; g_menuSel = 0; drawMenu();
+    return;
+  }
   showScan();   // the SCAN case no longer repaints on entry, so showScan() does it
 }
 
@@ -4187,6 +4301,7 @@ static void runScanCycle() {
   }
   int newCount = logNewDetections();
   logRidEvents();   // rate-limited per-MAC Remote-ID event lines
+  logFollowEvents(); // rate-limited per-MAC FOLLOWING event lines
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
@@ -4518,6 +4633,7 @@ void loop() {
       if (it >= 0)              { g_menuSel = MENU_N + it; activateMenu(); return; }  // cog / phone icon
       int ct = menuChipTapped();
       if (ct >= 0)              { g_menuSel = MENU_CHIP0 + ct; activateMenu(); return; }  // touch select (threat chip)
+      if (homeAlertTapped() && g_followN > 0) { g_followFromHome = true; openFollowList(); return; }  // alert band -> follow drill-down
       int navN = MENU_CHIP0 + g_menuCatN;  // BOOT walks Scan, the two icons, then the threat chips
       if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % navN; drawMenu(); }
       else if (ev == BTN_LONG)  { activateMenu(); }
@@ -4541,6 +4657,7 @@ void loop() {
           }
           drawStatusBar();  // just the top bar — no full-screen flicker
           drawMenuThreats();  // live bg-scan tier counts (own band only)
+          drawHomeAlerts();   // follow / deauth / evil-twin banner (own band; clears itself)
           pushStatus();     // keep the phone informed (incl. scan=0) while idle
         }
       }
@@ -4807,9 +4924,9 @@ void loop() {
         return;
       }
       { bool bn = bannerTapped();  // always called so its edge state stays current
-        if (bn && g_followN > 0 && ev != BTN_LONG) { openFollowList(); return; } }
+        if (bn && g_followN > 0 && ev != BTN_LONG) { g_followFromHome = false; openFollowList(); return; } }
       // BOOT short-press opens the follow drill-down (so it's reachable without touch).
-      if (ev == BTN_SHORT && g_followN > 0) { openFollowList(); return; }
+      if (ev == BTN_SHORT && g_followN > 0) { g_followFromHome = false; openFollowList(); return; }
       // Back via the on-screen button (touch) or a long BOOT hold; asks first while scanning.
       if (ev == BTN_LONG || topBarTapped()) { backFromScan(); return; }
       int rt = handleScanTouch();  // scroll / row tap

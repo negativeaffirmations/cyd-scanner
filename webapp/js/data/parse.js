@@ -55,7 +55,7 @@ export function parseScanLog(text){
   const t=(text||"").trimStart();
   return t[0]==="{" ? parseScanNdjson(t) : parseScanCsv(t);
 }
-// Event lines (NDJSON objects with an "evt" key: deauth / eviltwin / droneid, no "mac") are skipped by
+// Event lines (NDJSON objects with an "evt" key: deauth / eviltwin / droneid / rid / follow) are skipped by
 // the row parser above; this collects the geolocated ones for the map's event pins.
 export function parseScanEvents(text){
   const out=[]; let sync=null;
@@ -74,6 +74,10 @@ export function parseScanEvents(text){
       const f=v=>v==null?NaN:parseFloat(v), n=v=>v==null?NaN:parseInt(v,10), s=v=>v==null?"":String(v);
       Object.assign(ev,{dlat:f(o.dlat), dlon:f(o.dlon), olat:f(o.olat), olon:f(o.olon),
         h:n(o.h), alt:n(o.alt), spd:f(o.spd), hdg:n(o.hdg), uas:s(o.uas), oid:s(o.oid), mac:s(o.mac)});
+    }
+    if(ev.evt==="follow"){   // FOLLOWING device: the scanner's own fix + who it was (mac/score/name/src/flags)
+      Object.assign(ev,{mac:o.mac==null?"":String(o.mac), score:parseInt(o.score,10)||0,
+        name:o.name==null?"":String(o.name), src:o.src==null?"":String(o.src), flags:o.flags==null?"":String(o.flags)});
     }
     out.push(ev);
   }
