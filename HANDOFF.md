@@ -1,6 +1,6 @@
 # Handoff — 2026-10-14 (branch: `main`, clean; it is the only branch / the trunk)
 
-## Done — follower logging + HOME-page alerts (2026-10-14, CYD BUILT not flashed; webapp static-verified; NOT committed/pushed)
+## Done — follower logging + HOME-page alerts (2026-10-14, CYD FLASHED COM14 + pushed `1aaebea`; webapp Pages-deploying)
 Motivated by a field drive: the magenta follow LED lit while driving, but the user was on the CYD HOME
 screen + the webapp **Home** page — and the follower banner is **Scan-page-only on both platforms**, so
 there was nowhere it could show, and the FOLLOWING device's MAC/flags were only live (5-min TTL), making
@@ -26,11 +26,14 @@ there was nowhere it could show, and the FOLLOWING device's MAC/flags were only 
   flags popup). SCSS banner margin flipped to `0 0 .5em` in `_banners.scss` → recompiled `style.css`;
   `style.css?v=20261014f`, `#uiver → home-alerts`.
 - **Builds:** CYD SUCCESS (RAM 33.8% / Flash 45.9%); C5 not rebuilt (untouched). Webapp: SCSS recompiled,
-  `parse.js` `node --check` clean; **not in-browser tested.**
-- **NOT yet:** CYD not flashed (flash it: SW1 off while flashing, `PYTHONIOENCODING=utf-8`, COM = CH340
-  `1A86:7523`), nothing committed/pushed, webapp not in-browser tested. On-device TODO: confirm the HOME
-  alert band y=120 doesn't collide + the tap opens the follow list; then a drive to capture `evt:follow`
-  lines and read `flags`/`mac` to settle car-vs-phone (#6).
+  `parse.js` `node --check` clean.
+- **Shipped:** CYD **FLASHED COM14** (`1A86:7523`, ESP32-D0WD-V3 MAC `d4:e9:f4:f4:17:b8`, first-try
+  SUCCESS). **Committed + pushed to `main` `1aaebea`** (8 files); **GitHub Pages building** for
+  `1aaebea` at push time (the ~10-min cache then applies — footer `#uiver → home-alerts` = live).
+- **On-device TODO (not blocking):** confirm the HOME alert band y=120 doesn't collide with the Scan
+  button / threat tiles + the tap opens the follow list (needs a live FOLLOWING or an event to render);
+  webapp not yet in-browser tested. Then a drive to capture `evt:follow` lines and read `flags`/`mac`
+  to settle car-vs-phone (#6).
 
 ## Done — COINTEL-FLO rebrand + GPS time + UI polish (2026-10-14, BOTH BOARDS FLASHED v10, all pushed to `main`)
 A run of CYD/webapp changes this session (newest first). Device state at the end: **both boards on
