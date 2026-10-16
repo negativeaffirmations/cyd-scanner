@@ -11,7 +11,11 @@ never committed anywhere). **Proposal + synthetic test fixture are in this repo'
 feed `PROPOSAL.md` into a fresh session there. The user will copy `.claude/hooks/` over; the new
 session must review/extend `gitignore-sensitive.py` for the server's data/DB/.env paths.
 
-**Pending work in THIS repo (web app, not started):** a **"Remote server"** connection so the phone
+**Status (2026-10-15):** the CYD↔scan-analyzer **API contract is APPROVED at DRAFT v0** by the owner;
+**both sessions are holding the build** until usage resets (token-heavy). Full shapes captured in
+outstanding **#11** + scan-analyzer `docs/api-contract.md`.
+
+**Pending work in THIS repo (web app, build deferred):** a **"Remote server"** connection so the phone
 web app can upload to scan-analyzer **without a hard-coded server address** — scan-analyzer shows a
 **QR** deep-linking into this web app with `?server=<url>&token=<pairing-token>` (store in
 `localStorage`), plus a **Settings "Remote server"** paste field as the fallback. Later: **live POST**
@@ -977,10 +981,29 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    populates (+ turns cyan, `tsrc=2`) and logged rows carry real epochs instead of `0`. (Behaviour
    reminder: before any phone has *ever* synced the fallback reads **UTC** — no tz; after the
    first-ever phone sync the tz offset persists in NVS `cydscan/tzoff` and it reads LOCAL.)
-11. **Remote-server upload to scan-analyzer (NEW, not started).** Web-app "Remote server" pairing
-   (QR deep-link `?server=&token=` + Settings paste fallback, `localStorage`), then live detection
-   POST once paired; HTTPS-only (mixed content). See the top "New direction" section + CLAUDE.md
-   "Companion project + remote-server upload". Companion repo proposal: git-ignored `scan-analyzer/`.
+11. **Remote-server upload to scan-analyzer — contract APPROVED v0 (owner, 2026-10-15); BUILD DEFERRED.**
+   The CYD↔scan-analyzer API contract is locked at **DRAFT v0, owner-approved**. **Both sessions are
+   holding IMPLEMENTATION** until the owner greenlights — deliberately deferred so session usage can
+   reset before the (token-heavy) build starts. Authoritative full spec: scan-analyzer
+   `docs/api-contract.md`. cyd-scanner (web-app client) side to build **when greenlit**:
+   - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
+     string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.
+     The web app reads `location.hash`, stores `server` + the exchanged key in `localStorage`; a
+     **Settings "Remote server"** paste field is the fallback. Exchange: `POST <server>/api/v1/pair
+     {token}` → `{key}`; thereafter `Authorization: Bearer <key>`.
+   - **File upload:** `POST /api/v1/uploads`, raw `application/x-ndjson` body (`text/csv` legacy),
+     metadata via `X-Session-Name` / `X-Client-Tz` headers, Bearer, sha256-idempotent.
+   - **Live-POST (Phase 3):** `POST /api/v1/detections`, batched **reduced** NDJSON — the phone web app
+     can't produce `ch`/`cid`/`uuid`/`pan`/`sig`/`score` (those optional), dedup by session+`ms`.
+   - **Constraints:** server MUST send CORS + preflight `OPTIONS` for
+     `https://negativeaffirmations.github.io`, and MUST be HTTPS (mixed content). Log-schema semantics
+     are locked; **DETS is NOT ingested** by the analyzer. Reserved future `src` tags:
+     `BTC`/`OPT`/`CAM`/`VISION`.
+   - **Near-term (no build):** uploading is just download-a-log-then-upload-the-file via
+     scan-analyzer's own UI.
+   **Doc discipline while building (both projects):** update THIS item + the bridge incrementally each
+   work session (what's built / what's next), so a fresh session can resume mid-build if one runs out
+   of context/usage. See the top "New direction" + CLAUDE.md "Companion project + remote-server upload".
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.

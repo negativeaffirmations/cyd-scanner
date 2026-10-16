@@ -585,7 +585,9 @@ private bridge for this project's Claude session to exchange messages with — a
 logs/serial output with — the scan-analyzer project's session. **Read `REMOTE.md`** when coordinating
 anything shared across the two projects (log schema, DETS, the upload/pairing API, test fixtures).
 It's git-ignored and holds the machine-local bridge path, so nothing committed here names an external
-location.
+location. **While building the remote-server integration, keep HANDOFF #11 and the bridge updated each
+work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
+context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
 
 ## Subagents (`.claude/agents/`)
 
