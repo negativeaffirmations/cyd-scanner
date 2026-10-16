@@ -702,6 +702,7 @@ struct DevGroup {
   int      rep;       // g_dets index of the strongest member (colour/source hint)
   int      nameIdx;   // g_dets index of the first member with a name, else -1
   uint32_t ie;        // first non-zero IE fingerprint, else 0
+  uint16_t companyId; // first non-zero BLE manufacturer company ID across members, else 0 (display/web)
   bool     whitelisted;  // matches a /whitelist.csv rule (muted; excluded from threat counts)
   char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
   char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
@@ -720,10 +721,20 @@ static int      g_groupCount = 0;
 // consumes the result (copies/draws it) before the next call, so one buffer is safe.
 static const char* groupName(const DevGroup* g) {
   if (g && g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) return g_dets[g->nameIdx].name;
-  static char buf[18];  // "AA:BB:CC:DD:EE:FF" + NUL
-  if (g) snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-                  g->mac[0], g->mac[1], g->mac[2], g->mac[3], g->mac[4], g->mac[5]);
-  else snprintf(buf, sizeof(buf), "?");
+  static char buf[28];  // "<vendor> AA:BB" or "AA:BB:CC:DD:EE:FF" + NUL
+  if (!g) { snprintf(buf, sizeof(buf), "?"); return buf; }
+  // Nameless: if the OUI resolves to a known vendor (sigdb 'vendor,' rule), show "<vendor> <tail>" —
+  // human-readable yet still distinguishable between same-vendor devices. Only for a real
+  // (globally-administered) MAC that isn't a BLE rotating RPA, so randomized addresses can't be
+  // mislabelled. Vendor lookup is display-only; it never affects scoring. Falls back to the raw MAC.
+  bool realOui = (g->mac[0] & 0x02) == 0 &&                                     // IEEE globally-administered
+                 !((g->srcMask & MASK_BLE) && (g->mac[0] & 0xC0) == 0x40);      // not a BLE RPA (top bits 01)
+  const char* v = realOui ? sigdb::vendorFor(g->mac) : "";
+  if (v && v[0])
+    snprintf(buf, sizeof(buf), "%.14s %02X:%02X", v, g->mac[4], g->mac[5]);
+  else
+    snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+             g->mac[0], g->mac[1], g->mac[2], g->mac[3], g->mac[4], g->mac[5]);
   return buf;
 }
 
@@ -774,7 +785,7 @@ static int buildGroups() {
       DevGroup& g = g_groups[gi];
       memcpy(g.mac, d.mac, 6);
       g.tier = (int)g_score[i].tier; g.score = g_score[i].score; g.bestRssi = d.rssi; g.rep = i;
-      g.nameIdx = -1; g.ie = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0;
+      g.nameIdx = -1; g.ie = 0; g.companyId = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0;
     }
     DevGroup& g = g_groups[gi];
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
@@ -800,6 +811,7 @@ static int buildGroups() {
     }
     g.whitelisted = whitelist::match(g.mac, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : nullptr,
                                      cid, svc, bits);
+    g.companyId = cid;  // first company ID across members (for the detail screen + web maker label)
   }
   std::sort(g_groups, g_groups + n, [](const DevGroup& a, const DevGroup& b) {
     if (a.whitelisted != b.whitelisted) return !a.whitelisted;  // muted devices sink
@@ -899,6 +911,18 @@ static FollowState g_follow[MAX_DET];
 static int         g_followCount = 0;
 static int         g_followN     = 0;   // devices currently FOLLOWING
 static bool        g_followFromHome = false;  // follow drill-down opened from the HOME alert band (Back -> HOME)
+
+// Follower-ALERT feature flag (temporarily off). The follow DETECTION keeps running in full —
+// updateFollowState()/computeFollowScores() still set each device's ftier/score, so isFollowing()
+// and the follow-gated TRACKER category behave exactly as before. This flag only suppresses the
+// user-facing follower SURFACES: the count, the magenta banners (scan + HOME), the magenta LED,
+// STATUS fol, the evt:follow log line, the DETS follow fields, and the drill-down. Flip to true to
+// restore the full follower UX unchanged. Disabled for now because the follow metric (anchor-radial
+// GPS span in computeFollowScores) over-fires on fixed infrastructure passed while driving — a
+// co-travel rework is planned before re-enabling. [[phase5-followme-direction]]
+static constexpr bool FOLLOW_ALERTS_ENABLED = false;
+// Follower count as surfaced to UI / STATUS / logging — 0 while the alerts feature is disabled.
+static inline int followAlertN() { return FOLLOW_ALERTS_ENABLED ? g_followN : 0; }
 
 static void resetFollow() {
   memset(g_follow, 0, sizeof(g_follow));
@@ -1186,8 +1210,9 @@ static void renameSessionOnSync() {
 // Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
 // the firmware (e.g. after adding seed rules). This DISCARDS any on-card DB edits, so
 // only bump it when that's intended.
-static constexpr uint32_t DB_GEN = 3;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion;
-                                       // 3: Nest/Reolink/SimpliSafe OUIs + Arlo/Blink reweight (2026-10-10)
+static constexpr uint32_t DB_GEN = 4;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion;
+                                       // 3: Nest/Reolink/SimpliSafe OUIs + Arlo/Blink reweight (2026-10-10);
+                                       // 4: 'vendor,' OUI->vendor display rules (2026-10-15)
 
 static void reseedDbIfNeeded() {
   Preferences p;
@@ -1422,7 +1447,7 @@ static void logRidEvents() {
 //    [,"name":"..","src":"..","flags":".."]}  (blank/unknown fields omitted)
 // "flags" is the same +-joined detector list as the detection rows (tells a Find-My iPhone from a car).
 static void logFollowEvents() {
-  if (g_followN <= 0) return;
+  if (followAlertN() <= 0) return;
   static uint8_t  ringMac[MAX_DET][6];
   static uint32_t ringLast[MAX_DET];
   static bool     ringUsed[MAX_DET];
@@ -1867,7 +1892,7 @@ static void pushStatus() {
            timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
-           whitelist::count(), countMuted(), g_followN, sb, g_bgScan ? 1 : 0,
+           whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
            (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
            power::percent(), posSource(), (int)g_onbSats, timeSource());
   phone::setStatus(String(s));
@@ -1877,6 +1902,7 @@ static void pushStatus() {
 // DETS stream v4 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
 // row per device (one MAC, merged across sources), top-of-list first:
 //   <seq>\t<tier>\t<mac>\t<bestRssi>\t<ie>\t<name>\t<tag:rssi,tag:rssi,...>\t<ftier>\t<fscore>\t<muted>
+//     [\t<flags>\t<cat>\t<cidLabel>]
 // where <ftier> is the follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), <fscore> the
 // 0..100 follow score, and <muted> is 1 when the device matches a whitelist rule. These
 // three trailing fields were appended in v3; older web parsers that read by fixed index
@@ -1884,6 +1910,10 @@ static void pushStatus() {
 // field, <flags>: the decimal DetFlags bits (FLAGS_NOTABLE only: iBeacon 8 / Find My 16 /
 // Pwnagotchi 32 / Evil Twin 64 / Drone RID 128) OR'd across the device's members, 0 if none.
 // Older parsers read fields 0..9 and ignore it.
+// v7 appends ONE more trailing per-row field, <cidLabel>: the BLE company maker name
+// (sigdb::cidName of the device's company ID; empty when unknown/none) — shown on the web live list
+// IN ADDITION to the MAC, so a rotating-random-address device is still identifiable by its maker.
+// Older parsers read fields 0..10 (through <cat>) and ignore it.
 // v6 appends a trailing RID block AFTER the n detection rows, only while a Remote-ID emitter is
 // held: an "R:<ridCount>" header then ridCount rows of 11 tab-separated fields (always 11 columns,
 // unknown = empty): mac uas dlat dlon olat olon h alt spd hdg oid (lat/lon %.6f deg, h/alt m,
@@ -1907,7 +1937,7 @@ static void pushDetections() {
     const DevGroup& g = g_groups[r];
     char name[24];
     sanitizeField(name, sizeof(name), groupName(&g));
-    char row[192];
+    char row[224];
     int len = snprintf(row, sizeof(row), "%u\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%08lX\t%s\t",
                        (unsigned)g_detsSeq, g.tier,
                        g.mac[0], g.mac[1], g.mac[2], g.mac[3], g.mac[4], g.mac[5],
@@ -1916,13 +1946,18 @@ static void pushDetections() {
     len += snprintf(row + len, sizeof(row) - len, "%s", g.srcs);  // list pre-built (de-duped) in buildGroups
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
     // v3 trailing fields: follow tier / follow score / muted (whitelisted) — all CYD-computed.
-    const FollowState* f = findFollow(g.mac);
+    // follow tier/score forced to 0 while the follower-alerts feature is disabled (FOLLOW_ALERTS_ENABLED).
+    const FollowState* f = FOLLOW_ALERTS_ENABLED ? findFollow(g.mac) : nullptr;
     len += snprintf(row + len, sizeof(row) - len, "\t%d\t%d\t%d",
                     f ? f->ftier : 0, f ? f->score : 0, g.whitelisted ? 1 : 0);
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
     len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.flags);  // v4 trailing: notable flag bits
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)groupCategory(g));  // v5 trailing: category id
+    len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)groupCategory(g));  // v5 trailing: category id
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v7 trailing: BLE company maker label (empty if unknown/none), shown on the web live list.
+    char mk[24]; sanitizeField(mk, sizeof(mk), sigdb::cidName(g.companyId));
+    snprintf(row + len, sizeof(row) - len, "\t%s", mk);
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }
@@ -2336,19 +2371,19 @@ static void drawScanInfo() {
   // (opens the drill-down), else one-shot feedback, else the scan state + tier counts. The
   // scan/pause state is also shown by the buttons. Plain '!' (the TFT font has no warning glyph).
   bool evA = eventAlertActive();
-  if (g_followN > 0 || evA) {
+  if (followAlertN() > 0 || evA) {
     // Red deauth / evil-twin alert (full width alone, right half when stacked with the follow
     // banner, which keeps the left half and stays tappable anywhere on the band).
     int W = tft.width(), fw = evA ? W / 2 : W;
     tft.setTextDatum(MC_DATUM);
-    if (g_followN > 0) {
+    if (followAlertN() > 0) {
       tft.fillRect(0, BANNER_Y, fw, BANNER_H, TFT_MAGENTA);
       tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
-      snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", g_followN);
+      snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", followAlertN());
       tft.drawString(buf, fw / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
     }
     if (evA) {
-      int x0 = (g_followN > 0) ? fw : 0;
+      int x0 = (followAlertN() > 0) ? fw : 0;
       tft.fillRect(x0, BANNER_Y, W - x0, BANNER_H, TFT_RED);
       tft.setTextColor(TFT_WHITE, TFT_RED);
       char a[32];
@@ -2649,18 +2684,18 @@ static void drawHomeAlerts() {
   int W = tft.width();
   tft.fillRect(0, HOME_ALERT_Y, W, BANNER_H, TFT_BLACK);
   bool evA = eventAlertActive();
-  if (g_followN <= 0 && !evA) return;
+  if (followAlertN() <= 0 && !evA) return;
   int fw = evA ? W / 2 : W;
   char buf[32];
   tft.setTextDatum(MC_DATUM);
-  if (g_followN > 0) {
+  if (followAlertN() > 0) {
     tft.fillRect(0, HOME_ALERT_Y, fw, BANNER_H, TFT_MAGENTA);
     tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
-    snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", g_followN);
+    snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", followAlertN());
     tft.drawString(buf, fw / 2, HOME_ALERT_Y + BANNER_H / 2 + 1, 1);
   }
   if (evA) {
-    int x0 = (g_followN > 0) ? fw : 0;
+    int x0 = (followAlertN() > 0) ? fw : 0;
     tft.fillRect(x0, HOME_ALERT_Y, W - x0, BANNER_H, TFT_RED);
     tft.setTextColor(TFT_WHITE, TFT_RED);
     int an = snprintf(buf, sizeof(buf), "! ");
@@ -3811,7 +3846,12 @@ static void buildDeviceDetail(const uint8_t* mac) {
       if (!svc) for (int j = 0; j < 16; j++) if (d.svc[j]) { svc = d.svc; break; }
     }
     if (g->ie) { snprintf(b, sizeof(b), "%08lX", (unsigned long)g->ie); addField("IE fingerprint", b); }
-    if (cid)   { snprintf(b, sizeof(b), "%04X", cid); addField("BLE company ID", b); }
+    if (cid) {
+      const char* mk = sigdb::cidName(cid);
+      if (mk && mk[0]) snprintf(b, sizeof(b), "%s (%04X)", mk, cid);  // maker name + raw ID
+      else             snprintf(b, sizeof(b), "%04X", cid);
+      addField("BLE company", b);
+    }
     if (svc) {
       char u[33];
       for (int j = 0; j < 16; j++) sprintf(u + j * 2, "%02X", svc[j]);
@@ -4263,9 +4303,9 @@ static void applyScanLed() {
   phase = !phase;
   if (eventAlertActive()) {
     if (phase) setLed(true, false, false);
-    else if (g_followN > 0) setLed(true, false, true);
+    else if (followAlertN() > 0) setLed(true, false, true);
     else setLed(!g_linkOk, g_linkOk, false);
-  } else if (g_followN > 0) setLed(true, false, true);
+  } else if (followAlertN() > 0) setLed(true, false, true);
   else setLed(!g_linkOk, g_linkOk, false);
 }
 
@@ -4633,7 +4673,7 @@ void loop() {
       if (it >= 0)              { g_menuSel = MENU_N + it; activateMenu(); return; }  // cog / phone icon
       int ct = menuChipTapped();
       if (ct >= 0)              { g_menuSel = MENU_CHIP0 + ct; activateMenu(); return; }  // touch select (threat chip)
-      if (homeAlertTapped() && g_followN > 0) { g_followFromHome = true; openFollowList(); return; }  // alert band -> follow drill-down
+      if (homeAlertTapped() && followAlertN() > 0) { g_followFromHome = true; openFollowList(); return; }  // alert band -> follow drill-down
       int navN = MENU_CHIP0 + g_menuCatN;  // BOOT walks Scan, the two icons, then the threat chips
       if      (ev == BTN_SHORT) { g_menuSel = (g_menuSel + 1) % navN; drawMenu(); }
       else if (ev == BTN_LONG)  { activateMenu(); }
@@ -4924,9 +4964,9 @@ void loop() {
         return;
       }
       { bool bn = bannerTapped();  // always called so its edge state stays current
-        if (bn && g_followN > 0 && ev != BTN_LONG) { g_followFromHome = false; openFollowList(); return; } }
+        if (bn && followAlertN() > 0 && ev != BTN_LONG) { g_followFromHome = false; openFollowList(); return; } }
       // BOOT short-press opens the follow drill-down (so it's reachable without touch).
-      if (ev == BTN_SHORT && g_followN > 0) { g_followFromHome = false; openFollowList(); return; }
+      if (ev == BTN_SHORT && followAlertN() > 0) { g_followFromHome = false; openFollowList(); return; }
       // Back via the on-screen button (touch) or a long BOOT hold; asks first while scanning.
       if (ev == BTN_LONG || topBarTapped()) { backFromScan(); return; }
       int rt = handleScanTouch();  // scroll / row tap

@@ -799,6 +799,11 @@ body {
   font-family: ui-monospace, monospace;
 }
 
+.detrow .r2sub .mk {
+  color: #aa00aa;
+  font-family: inherit;
+}
+
 .scancounts {
   display: flex;
   gap: 6px;
@@ -1126,3 +1131,5 @@ body {
   background: #0b0e13;
   margin-top: 0.7em;
 }
+
+/*# sourceMappingURL=style.css.map */

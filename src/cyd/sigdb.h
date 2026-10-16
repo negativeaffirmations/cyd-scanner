@@ -41,6 +41,16 @@ void score(const link_protocol::Detection& d, ScoreResult& out);
 // Label of the strongest matched rule for a result ("" if none).
 const char* labelFor(const ScoreResult& r);
 
+// Display-only OUI -> vendor name lookup (the 'vendor,<OUI>,<label>' rules). Returns the
+// vendor label for a MAC's OUI, or "" if none is known. This is a human-readable maker name
+// for otherwise-nameless devices; it NEVER contributes to scoring or tiers.
+const char* vendorFor(const uint8_t mac[6]);
+
+// Display-only BLE company-ID -> maker name (the 'cidname,<hex>,<label>' rules, with a fallback to
+// any matching 'blecid,' threat-rule label). Returns "" if the company ID is 0 or unknown. The
+// stable maker identifier for a device that advertises a rotating random address. Never scored.
+const char* cidName(uint16_t cid);
+
 const char* tierName(Tier t);   // "none"/"suspect"/"likely"/"confirmed"
 bool        loaded();           // true if a DB file was parsed (vs fallback)
 uint16_t    ruleCount();        // total loaded rules (OUI + string)

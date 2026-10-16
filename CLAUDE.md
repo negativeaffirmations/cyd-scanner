@@ -239,11 +239,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   results — both captured at runtime, so device-agnostic. The phone filter is best-effort:
   phones use rotating random BLE addresses, so their scanned advertisements may not match
   the connection address.
-- **Nameless devices show their MAC** (not a generic `<hidden>`). The `groupName()` helper
-  (`src/cyd/main.cpp`) returns a device's advertised name, or — when it has none — its MAC as
-  text, so nameless devices stay individually identifiable everywhere a name is shown (live
-  list, detail screens, Explore viewer, the DETS phone stream, and the web app). This is a
-  **CYD-side display fallback**: the C5 sends empty names (no protocol involvement). The NDJSON
+- **Nameless devices show a vendor, else their MAC** (not a generic `<hidden>`). The `groupName()` helper
+  (`src/cyd/main.cpp`) returns a device's advertised name, or — when it has none — its **OUI vendor**
+  (`sigdb::vendorFor()`, the `vendor,` DB rules; shown as `<vendor> AA:BB` so same-vendor devices stay
+  distinct) for a real globally-administered MAC that isn't a BLE RPA, else its full MAC as text — so
+  nameless devices stay individually identifiable everywhere a name is shown (live list, detail screens,
+  Explore viewer, the DETS phone stream, and the web app). This is a **CYD-side display fallback**: the
+  C5 sends empty names (no protocol involvement). The NDJSON
   log is unchanged — it still omits `name` when blank and carries `mac` separately; readers
   apply the MAC fallback at display time.
 - **SD logging (CYD) — per-session NDJSON files, two parallel streams.** The log is **NDJSON**
@@ -327,9 +329,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   against the primary `svc[]` AND the extra 16-bit UUIDs the active scan captures in
   `Detection.svc16[]`, protocol v7, so a signature UUID is caught even when not advertised first;
   the Flock GATT UUID is seeded), and `blecid,<hex>,…` (Phase 3 — matches a BLE
-  manufacturer company ID); `thresholds,<suspect>,<likely>,<confirmed>`. `srcmask`:
+  manufacturer company ID); `thresholds,<suspect>,<likely>,<confirmed>`; and
+  `vendor,<PREFIX>,<label>` (**display-only** OUI→vendor name used by `groupName()` as a fallback for
+  nameless devices — no weight/srcmask, never scored; the `label` may contain commas). `srcmask`:
   W/B/4/A (a probe-request detection also matches W/A rules). Weights sum across the
-  OUI + name + IE + BLE-UUID + company-ID layers. No on-device regex.
+  OUI + name + IE + BLE-UUID + company-ID layers (`vendor,` excluded). No on-device regex.
 - Design + roadmap (Phases 2–6): [docs/signature-matching.md](docs/signature-matching.md).
 
 ### Display / UI (portrait)

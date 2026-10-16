@@ -2,10 +2,11 @@
 // the Explore Scan Viewer).
 //
 // DETS: "D:<seq>:<n>" header then n rows (seq-tagged atomic snapshot, one row per MAC):
-// seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi") [ftier fscore muted flags cat] —
+// seq tier mac bestRssi ie name srcList ("tag:rssi,tag:rssi") [ftier fscore muted flags cat cidLabel] —
 // v4 appended the decimal flag bits (iBeacon 8, Find My 16, Pwnagotchi 32, Evil Twin 64, Drone RID 128);
 // the ftier/fscore/muted three (follow tier 0/1/2, follow score, muted flag) were added in v3;
-// v5 appended the category id. Rows from older firmware have only the first 7 fields and parse fine.
+// v5 appended the category id; v7 appends the BLE company maker label (empty if unknown), shown on the
+// live list in addition to the MAC. Rows from older firmware have only the first 7 fields and parse fine.
 // v6 appends a trailing "R:<n>" Remote-ID block (n rows: mac uas dlat dlon olat olon h alt spd hdg oid).
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
@@ -76,7 +77,8 @@ export function onDets(ev){
                       fscore: p.length>8 ? (+p[8]||0) : 0,   // follow score 0..100
                       muted: p.length>9 ? p[9]==="1" : false,
                       flags: p.length>10 ? (+p[10]||0) : 0,     // DETS v4: notable flag bits
-                      cat: p.length>11 ? (+p[11]||0) : 0});     // DETS v5: threat category id
+                      cat: p.length>11 ? (+p[11]||0) : 0,       // DETS v5: threat category id
+                      cid: p.length>12 ? (p[12]||"") : ""});    // DETS v7: BLE company maker label ("" if unknown)
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -103,6 +105,7 @@ export function renderDetList(el, rows, opts){
     const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
     const extra = [esc(r.mac || "")];
+    if (!viewer && r.cid) extra.push(`<span class="mk">${esc(r.cid)}</span>`);  // BLE company maker, in addition to the MAC
     if (viewer && r.channel) extra.push("ch"+esc(r.channel));
     if (viewer) extra.push(fmtTimecode(r));
     return `<div class="detrow clk ${sc}${muted?" muted":""}${ft===2?" following":""}" data-ri="${ri}">`+

@@ -88,6 +88,7 @@ export function openLiveDetail(r){
     ["Signals", sig],
     ["Strongest RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
+  if (r.cid) rowsKv.push(["BLE company", r.cid]);
   if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);
   if (r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint", r.ie]);
   const rid = (state.rids||{})[String(r.mac||"").toLowerCase()];   // DETS v6 Remote-ID, if this MAC is an emitter

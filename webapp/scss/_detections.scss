@@ -81,6 +81,8 @@
 .detrow .r2 { display:flex; align-items:center; gap:7px; font-size:.72rem; color:$color-text-muted; min-width:0; }
 .detrow .r2 .sigcol { flex:0 0 auto; display:flex; flex-wrap:wrap; gap:3px; }
 .detrow .r2sub { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,monospace; }
+// BLE company maker label on a live row (shown in addition to the MAC) — subtle accent, non-mono.
+.detrow .r2sub .mk { color:$color-accent; font-family:inherit; }
 
 // --- Scanner threat-counter strip (compact, horizontally scrollable) ------------------------------
 .scancounts { display:flex; gap:6px; overflow-x:auto; padding:2px 0 8px; -webkit-overflow-scrolling:touch; }

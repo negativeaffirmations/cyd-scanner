@@ -6,11 +6,13 @@ using namespace link_protocol;
 
 namespace {
 
-constexpr int MAX_OUI   = 96;
-constexpr int MAX_STR   = 48;
-constexpr int MAX_IE    = 32;
-constexpr int MAX_UUID  = 24;
-constexpr int MAX_CID   = 24;
+constexpr int MAX_OUI    = 96;
+constexpr int MAX_STR    = 48;
+constexpr int MAX_IE     = 32;
+constexpr int MAX_UUID   = 24;
+constexpr int MAX_CID    = 24;
+constexpr int MAX_VENDOR  = 64;  // display-only OUI->vendor names ('vendor,' rules)
+constexpr int MAX_CIDNAME = 48;  // display-only BLE company-ID->maker names ('cidname,' rules)
 constexpr int LABEL_LEN = 20;
 constexpr int PAT_LEN   = 24;
 constexpr int LINE_BUF  = 160;
@@ -25,13 +27,21 @@ struct StrRule  { StrKind kind; uint8_t weight; uint8_t srcMask; char pat[PAT_LE
 struct IeRule   { uint32_t hash; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
 struct UuidRule { uint8_t uuid[16]; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
 struct CidRule  { uint16_t cid; uint8_t weight; uint8_t srcMask; char label[LABEL_LEN]; };
+// Display-only: maps an OUI to a vendor name shown on nameless devices. No weight/srcmask — it
+// never participates in scoring, so it can carry benign (non-threat) makers without affecting tiers.
+struct VendorRule  { uint8_t prefix[3]; char label[LABEL_LEN]; };
+// Display-only: maps a BLE company ID to a maker name. Same role as VendorRule but keyed on the
+// manufacturer company ID — the stable identifier when a device uses a rotating random address.
+struct CidNameRule { uint16_t cid; char label[LABEL_LEN]; };
 
-OuiRule  g_oui[MAX_OUI];
-StrRule  g_str[MAX_STR];
-IeRule   g_ie[MAX_IE];
-UuidRule g_uuid[MAX_UUID];
-CidRule  g_cid[MAX_CID];
-int      g_ouiN = 0, g_strN = 0, g_ieN = 0, g_uuidN = 0, g_cidN = 0;
+OuiRule   g_oui[MAX_OUI];
+StrRule   g_str[MAX_STR];
+IeRule    g_ie[MAX_IE];
+UuidRule  g_uuid[MAX_UUID];
+CidRule   g_cid[MAX_CID];
+VendorRule  g_vendor[MAX_VENDOR];
+CidNameRule g_cidname[MAX_CIDNAME];
+int      g_ouiN = 0, g_strN = 0, g_ieN = 0, g_uuidN = 0, g_cidN = 0, g_vendorN = 0, g_cidnameN = 0;
 uint8_t  g_suspect = 40, g_likely = 70, g_confirmed = 100;
 bool     g_loaded = false;
 
@@ -156,10 +166,34 @@ const char* kSeedCsv =
     "contains,Axon,40,B,Axon-BLE\n"
     "prefix,Pineapple_,40,W,WiFi-Pineapple\n"
     "prefix,pwned,40,W,Deauther-AP\n"
-    "contains,Flipper,40,B,Flipper-name\n";
+    "contains,Flipper,40,B,Flipper-name\n"
+    // vendor,<OUI>,<label> — DISPLAY-ONLY OUI->vendor name for NAMELESS devices. No weight/srcmask,
+    // no effect on scoring/tiers. Shown as "<vendor> <mac-tail>" on a device that advertises no name
+    // and has a real (globally-administered) MAC. Add your own: read a device's MAC from the scan log,
+    // look its OUI up at https://standards-oui.ieee.org/ , and add one line (e.g. a car stereo:
+    // vendor,20:11:68,MyCarStereo). Seeded with a few confirmed makers; expand freely (no reflash).
+    "vendor,D4:AD:FC,Espressif\n"
+    "vendor,AC:67:B2,Espressif\n"
+    "vendor,84:F3:EB,Espressif\n"
+    "vendor,B4:E6:2D,Espressif\n"
+    "vendor,B8:27:EB,Raspberry Pi\n"
+    "vendor,DC:A6:32,Raspberry Pi\n"
+    "vendor,E4:5F:01,Raspberry Pi\n"
+    "vendor,28:CD:C1,Raspberry Pi\n"
+    // cidname,<hex>,<label> — DISPLAY-ONLY BLE company-ID -> maker name. No weight/srcmask, no effect
+    // on scoring. Shown IN ADDITION to the MAC (detail screen on the CYD; the live list on the web app)
+    // so a device using a rotating random address is still identifiable by its maker. cidName() also
+    // falls back to any matching 'blecid,' threat-rule label, so Apple/Tile/Flipper/etc. resolve for
+    // free. Company IDs are Bluetooth SIG assigned numbers; add your own freely (no reflash).
+    "cidname,0075,Samsung\n"
+    "cidname,0006,Microsoft\n"
+    "cidname,00E0,Google\n"
+    "cidname,0059,Nordic\n"
+    "cidname,000F,Broadcom\n"
+    "cidname,0087,Garmin\n";
 
 void resetTables() {
-  g_ouiN = g_strN = g_ieN = g_uuidN = g_cidN = 0;
+  g_ouiN = g_strN = g_ieN = g_uuidN = g_cidN = g_vendorN = g_cidnameN = 0;
   g_suspect = 40; g_likely = 70; g_confirmed = 100;
 }
 
@@ -229,6 +263,40 @@ int split5(char* line, char* f[5]) {
 void parseLine(char* line) {
   trim(line);
   if (line[0] == 0 || line[0] == '#') return;
+
+  // vendor,<OUI>,<label> — parsed before split5 so a label may contain commas. Display-only.
+  if (strncmp(line, "vendor,", 7) == 0) {
+    if (g_vendorN >= MAX_VENDOR) return;  // cap: extra rules skipped
+    char* oui = line + 7;
+    char* comma = strchr(oui, ',');
+    if (!comma) return;
+    *comma = 0;
+    const char* label = comma + 1;
+    unsigned b0, b1, b2;
+    if (sscanf(oui, "%x:%x:%x", &b0, &b1, &b2) != 3) return;
+    VendorRule& r = g_vendor[g_vendorN];
+    r.prefix[0] = (uint8_t)b0; r.prefix[1] = (uint8_t)b1; r.prefix[2] = (uint8_t)b2;
+    strncpy(r.label, label, LABEL_LEN - 1); r.label[LABEL_LEN - 1] = 0;
+    g_vendorN++;
+    return;
+  }
+
+  // cidname,<hex>,<label> — display-only BLE company-ID -> maker name (label may contain commas).
+  if (strncmp(line, "cidname,", 8) == 0) {
+    if (g_cidnameN >= MAX_CIDNAME) return;  // cap: extra rules skipped
+    char* hexp = line + 8;
+    char* comma = strchr(hexp, ',');
+    if (!comma) return;
+    *comma = 0;
+    const char* label = comma + 1;
+    uint16_t cid = (uint16_t)strtoul(hexp, nullptr, 16);
+    if (cid == 0) return;  // 0 is the "no company ID" sentinel
+    CidNameRule& r = g_cidname[g_cidnameN];
+    r.cid = cid;
+    strncpy(r.label, label, LABEL_LEN - 1); r.label[LABEL_LEN - 1] = 0;
+    g_cidnameN++;
+    return;
+  }
 
   char* f[5];
   int nf = split5(line, f);
@@ -324,7 +392,7 @@ bool loadFrom(const char* path) {
   char line[LINE_BUF];
   while (readLine(f, line, LINE_BUF)) parseLine(line);
   f.close();
-  return (g_ouiN + g_strN + g_ieN + g_uuidN + g_cidN) > 0;
+  return (g_ouiN + g_strN + g_ieN + g_uuidN + g_cidN + g_vendorN + g_cidnameN) > 0;
 }
 
 void loadFallback() {
@@ -358,15 +426,15 @@ bool begin() {
 bool reload() {
   if (loadFrom(kDbPath)) {
     g_loaded = true;
-    Serial.printf("[sigdb] loaded %d OUI + %d name + %d IE + %d bleuuid + %d blecid rules "
+    Serial.printf("[sigdb] loaded %d OUI + %d name + %d IE + %d bleuuid + %d blecid + %d vendor + %d cidname rules "
                   "from %s (thr %d/%d/%d)\n",
-                  g_ouiN, g_strN, g_ieN, g_uuidN, g_cidN, kDbPath,
+                  g_ouiN, g_strN, g_ieN, g_uuidN, g_cidN, g_vendorN, g_cidnameN, kDbPath,
                   g_suspect, g_likely, g_confirmed);
     return true;
   }
   loadFallback();
-  Serial.printf("[sigdb] using built-in fallback (%d OUI + %d name + %d IE + %d bleuuid + %d blecid)\n",
-                g_ouiN, g_strN, g_ieN, g_uuidN, g_cidN);
+  Serial.printf("[sigdb] using built-in fallback (%d OUI + %d name + %d IE + %d bleuuid + %d blecid + %d vendor + %d cidname)\n",
+                g_ouiN, g_strN, g_ieN, g_uuidN, g_cidN, g_vendorN, g_cidnameN);
   return false;
 }
 
@@ -467,6 +535,23 @@ const char* labelFor(const ScoreResult& r) {
   if (r.bestUuid >= 0 && g_uuid[r.bestUuid].weight > best) { best = g_uuid[r.bestUuid].weight; lbl = g_uuid[r.bestUuid].label; }
   if (r.bestCid  >= 0 && g_cid[r.bestCid].weight   > best) { best = g_cid[r.bestCid].weight;   lbl = g_cid[r.bestCid].label; }
   return lbl;
+}
+
+const char* vendorFor(const uint8_t mac[6]) {
+  for (int i = 0; i < g_vendorN; i++)
+    if (memcmp(mac, g_vendor[i].prefix, 3) == 0) return g_vendor[i].label;
+  return "";
+}
+
+const char* cidName(uint16_t cid) {
+  if (!cid) return "";
+  for (int i = 0; i < g_cidnameN; i++)
+    if (g_cidname[i].cid == cid) return g_cidname[i].label;
+  // Fall back to a 'blecid,' threat-rule label (so Apple/Tile/Flipper/etc. resolve without a
+  // duplicate cidname entry). Display-only use of the label; the rule's weight is irrelevant here.
+  for (int i = 0; i < g_cidN; i++)
+    if (g_cid[i].cid == cid) return g_cid[i].label;
+  return "";
 }
 
 const char* tierName(Tier t) {

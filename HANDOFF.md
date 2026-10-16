@@ -1,4 +1,42 @@
-# Handoff — 2026-10-14 (branch: `main`, clean; it is the only branch / the trunk)
+# Handoff — 2026-10-15 (branch: `main`; it is the only branch / the trunk)
+
+## Done — follower count DISABLED + OUI/company-ID maker labels (2026-10-15, CYD FLASHED COM14 + webapp; pushed)
+Context: a field drive to test the follow alert showed the count inflating (6→10→2→1). Root-caused: the
+follow gate is an **anchor-radial GPS span** (`computeFollowScores`, `maxSpanM` = the max straight-line
+distance from a device's first-seen anchor to the current position, a running max) — it can't distinguish
+"a device followed me 400 m" from "I drove 400 m away from a fixed device," so it over-fires on roadside
+infrastructure. The remaining "1" the user took for their car was actually their **own phone** (a Samsung
+BLE RPA the `peerMac` self-filter misses, since a phone's advertised RPA ≠ its GATT address). Three changes
+(CYD-only + webapp; **no `PROTOCOL_VERSION` bump**, `src/c5/` + `lib/link_protocol/` untouched, **C5 NOT
+reflashed**):
+- **(A) Follower count/alerts DISABLED, code preserved.** New `FOLLOW_ALERTS_ENABLED = false` flag +
+  `followAlertN()` accessor (`src/cyd/main.cpp`). The follow DETECTION still runs
+  (`updateFollowState`/`computeFollowScores`/`isFollowing`), so the follow-gated **TRACKER** category is
+  UNCHANGED (user's choice). Only the surfaces are suppressed: CYD scan + HOME banners, magenta LED,
+  STATUS `fol` (→0, hides the web follower banner), DETS `ftier`/`fscore` (→0, hides web follow markers),
+  the `evt:follow` log line, and the drill-down (now unreachable — its only callers are gated). Flip the
+  flag to `true` to restore the full UX, no other edits. A co-travel rework is the planned fix before
+  re-enabling. [[phase5-followme-direction]]
+- **(B) OUI vendor display label.** New display-only `vendor,<OUI>,<label>` sigdb rule + `vendorFor(mac)`
+  (never scored; parsed before the 5-field split so labels may contain commas). `groupName()` now shows
+  `<vendor> AA:BB` for a nameless device with a real globally-administered MAC that isn't a BLE RPA (else
+  the raw MAC) — propagates to list/detail/DETS/web. Seeded Espressif + Raspberry Pi; user-expandable
+  (one line, reload DB, no reflash). **RPAs are excluded by design** (random addresses can't be a vendor).
+- **(C) BLE company-ID maker label.** New display-only `cidname,<hex>,<label>` sigdb rule + `cidName(cid)`
+  (falls back to any matching `blecid,` threat label, so Apple/Tile/Flipper/etc. resolve for free). Shown
+  **IN ADDITION to the MAC**: CYD **detail** screen → "BLE company: Samsung (0075)"; webapp **live list**
+  r2 line (`.mk` accent span) + device modal. Carried to the phone via a new trailing **DETS v7** field
+  (CYD→phone stream; append-only, older parsers ignore). `DevGroup` gained `companyId` (first across
+  members, set in `buildGroups`). Seeded Samsung/Microsoft/Google/Nordic/Broadcom/Garmin. This is the
+  stable identifier for rotating-RPA devices (phones, watches, car head units) where no OUI exists.
+- **`DB_GEN` 3→4** so the card re-seeds `/signatures.csv` on next boot (⚠ DISCARDS on-card DB edits).
+- Builds: **CYD SUCCESS** (RAM 34.2% / Flash 45.8%). Webapp: SCSS recompiled (`style.css?v=20261015a`,
+  `#uiver → maker-labels`), JS `node --check` clean. **CYD FLASHED COM14** (`1A86:7523`). Pushed to `main`.
+- **On-device TODO (non-blocking):** eyeball the CYD detail "BLE company" line + the webapp live-list
+  maker tag; the phone's own Samsung RPA should now read "Samsung" next to its (rotating) MAC. The car
+  **stereo itself is still invisible** — its named side is Bluetooth Classic, which the BLE-only scanner
+  can't see; **BT Classic inquiry** (needs a NimBLE→Bluedroid rework) and **IRK/RPA resolution** (to
+  filter the own phone) remain backlogged, both declined this round.
 
 ## Done — follower logging + HOME-page alerts (2026-10-14, CYD FLASHED COM14 + pushed `1aaebea`; webapp Pages-deploying)
 Motivated by a field drive: the magenta follow LED lit while driving, but the user was on the CYD HOME
