@@ -2,7 +2,7 @@
 // The one session list feeds both the Session-logs picker and the Explore picker.
 import { state } from '../state.js';
 import { enc } from '../config.js';
-import { $, log } from '../util/dom.js';
+import { $, log, toast } from '../util/dom.js';
 import { openMap } from './map.js';
 
 export async function refreshSessions(){
@@ -38,8 +38,9 @@ export async function fetchSession(sink){
   try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:path.split("/").pop(),sink:sink};
     if(sink==="map") $("mapMsg").textContent="Loading "+state.dl.name+"…";
     if(sink==="explore") $("expMsg").textContent="Loading "+state.dl.name+"…";
+    if(sink==="save") toast("Fetching "+state.dl.name+" over BLE…", {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode("F:"+path)); log("Requesting "+state.dl.name+"…"); }
-  catch(e){ log("Download failed: "+e.message); }
+  catch(e){ log("Download failed: "+e.message); toast("Download failed: "+e.message, {err:true}); }
 }
 export function downloadSession(){ fetchSession("save"); }
 export function mapSelectedSession(){ openMap(); fetchSession("map"); }

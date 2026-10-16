@@ -1012,6 +1012,13 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
      phone fix, local-encoded epoch + epoch-ms, session+ms dedup holding). **Only path not yet
      exercised in a live run: the file-upload button (`/uploads` "Upload current session") — the BLE
      fetch→upload wiring is built + curl-validated server-side, just not clicked on the phone yet.**
+   **Upload/download UX fix (2026-10-16, follow-up):** the first file-upload run landed 200 server-side
+   but the owner saw no client feedback (the Activity log is Home-only; the buttons stayed on the
+   Data/Settings page). Added a page-agnostic **toast** (`util/dom.js` `toast()` + `#toast` element +
+   `.toast` SCSS) and wired optimistic "Fetching over BLE…/Uploading…" + result ("N sightings / M
+   events / duplicate") + error toasts into both upload buttons (which also disable on tap via
+   `setUploadBusy`) AND the plain Download-current/Download-selected paths (owner flagged the same
+   lag). `style.css` rebuilt (`?v=20261016a`), `uiver` → `2026-10-16 · upload-ux`.
    Original client-side spec (unchanged, for reference):
    - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
      string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.

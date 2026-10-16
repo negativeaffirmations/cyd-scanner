@@ -24,3 +24,19 @@
   background:rgba($alert,.16); border:1px solid $alert; color:$alert-text;
 }
 .alertbanner .acount { margin-left:auto; font-family:ui-monospace,monospace; }
+
+// Transient toast (see util/dom.js toast()). Floats just above the bottom navbar, centered, so
+// action feedback (upload/download) is visible on every page — the Activity log is Home-only.
+.toast {
+  position:fixed; left:50%; transform:translateX(-50%);
+  bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 16px);   // clear of the fixed navbar (nav-h 60px)
+  z-index:30; max-width:88vw; text-align:center;
+  padding:.7em 1em; border-radius:10px; font-weight:600; font-size:.86rem;
+  background:$color-surface; color:$color-text; border:1px solid $color-border;
+  box-shadow:0 4px 18px rgba(0,0,0,.5);
+  opacity:0; transition:opacity .15s; pointer-events:none;
+}
+.toast.show { opacity:1; }
+.toast.work { border-color:$color-accent; }   // pending "working…" state
+.toast.err  { border-color:$alert; color:$alert-text; }   // error
+.toast[hidden] { display:none; }

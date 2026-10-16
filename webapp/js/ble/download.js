@@ -3,7 +3,7 @@
 // list, "WL=<n>" = the whitelist), then <n> bytes of chunks follow.
 import { state } from '../state.js';
 import { enc } from '../config.js';
-import { $, log } from '../util/dom.js';
+import { $, log, toast } from '../util/dom.js';
 import { parseScanLog } from '../data/parse.js';
 import { plotCsvText } from '../features/map.js';
 import { loadedExplore } from '../features/explore.js';
@@ -19,7 +19,9 @@ export function onLogData(ev){
     if (txt.startsWith("SIZE=")) {
       state.dl.mode="file"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[];
       if (state.dl.expect===0){ log(state.dl.sink==="map"||state.dl.sink==="explore"?"That session is empty.":"No log on device yet (or no rows in that time range).");
-        if(state.dl.sink==="explore") loadedExplore([], state.dl.name); state.dl.mode=null; }
+        if(state.dl.sink==="explore") loadedExplore([], state.dl.name);
+        if(state.dl.sink==="upload") uploadSessionText("", state.dl.name);   // report empty + clear the upload busy state
+        state.dl.mode=null; }
       return;
     }
     if (txt.startsWith("SESS=")) {
@@ -47,6 +49,7 @@ export function onLogData(ev){
         const a=document.createElement("a");
         a.href=URL.createObjectURL(blob); a.download=state.dl.name; a.click(); URL.revokeObjectURL(a.href);
         log("Downloaded "+state.dl.name+" ("+state.dl.got+" bytes).");
+        toast("Saved "+state.dl.name+" ("+Math.round(state.dl.got/1024)+" KB).");
       }
     } else if (state.dl.mode==="list") {
       blob.text().then(populateSessions);
@@ -63,8 +66,9 @@ export async function downloadLog(){
   const sess=($("sessName").textContent.replace(/^Session:\s*/,"").trim())||"scanlog";
   const fname=sess.endsWith(".jsonl")?sess:sess+".jsonl";
   try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save"};
+    toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session ("+fname+")…"); }
-  catch(e){ log("Download failed: "+e.message); }
+  catch(e){ log("Download failed: "+e.message); toast("Download failed: "+e.message, {err:true}); }
 }
 // --- Time-filtered export. The CYD filters on the device and streams only the matching lines:
 // BLE = CMD "T:<mode>[:<minutes>][:<path>]" (mode 0 whole file / 1 past 24 h / 2 past <minutes>;

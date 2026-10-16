@@ -15,7 +15,7 @@
 // The server is the user's private scan-analyzer; uploading our own captures to it is the intended
 // design. The key/token are secrets — stored in localStorage, never written to the Activity log.
 import { state } from '../state.js';
-import { $, log, esc } from '../util/dom.js';
+import { $, log, esc, toast } from '../util/dom.js';
 import { enc, TIER_NAMES } from '../config.js';
 
 // --- persisted config (localStorage) ------------------------------------------------------------
@@ -86,13 +86,24 @@ export async function handlePairHash(){
 }
 
 // --- file upload (full-fidelity SD log) ---------------------------------------------------------
+// Disable/enable both upload buttons for the duration of a fetch+upload so a double-tap can't start
+// two. Re-enabling honors the current paired/connected state (via renderRemoteUI).
+function setUploadBusy(busy){
+  if(busy){ ["rsUploadCurBtn","sessUploadBtn"].forEach(id=>{ const e=$(id); if(e) e.disabled = true; }); return; }
+  renderRemoteUI();   // restores rsUploadCurBtn per paired+connected
+  const su = $("sessUploadBtn"); if(su) su.disabled = !(state.connected && isPaired());
+}
+
 // Upload raw NDJSON text (as fetched from the device) to the server. sessionName -> X-Session-Name.
+// This is the terminal step of the BLE fetch -> upload flow (download.js routes the "upload" sink
+// here), so it always clears the busy state, success or fail.
 export async function uploadSessionText(text, sessionName){
-  if(!isPaired()){ log("Remote: not paired — pair with a server first (Settings)."); return; }
-  if(!text || !text.trim()){ log("Remote: nothing to upload (empty session)."); return; }
+  if(!isPaired()){ log("Remote: not paired — pair with a server first (Settings)."); toast("Not paired — pair a server in Settings.", {err:true}); setUploadBusy(false); return; }
+  if(!text || !text.trim()){ log("Remote: nothing to upload (empty session)."); toast("Nothing to upload — that session is empty.", {err:true}); setUploadBusy(false); return; }
   const isCsv = /\.csv$/i.test(sessionName||"");
   const bytes = enc.encode(text);
   log("Remote: uploading "+(sessionName||"session")+" ("+bytes.length+" bytes)…");
+  toast("Uploading "+(sessionName||"session")+" ("+Math.round(bytes.length/1024)+" KB)…", {work:true, sticky:true});
   try{
     const r = await fetch(api("/api/v1/uploads"), {
       method:"POST",
@@ -100,13 +111,21 @@ export async function uploadSessionText(text, sessionName){
                              "X-Session-Name": (sessionName||"").slice(0,120), "X-Client-Tz": clientTz() }),
       body: bytes
     });
-    if(r.status===401 || r.status===403){ log("Remote: upload rejected ("+r.status+") — the device key may be revoked. Re-pair in Settings."); return; }
-    if(!r.ok){ log("Remote: upload failed ("+r.status+" "+r.statusText+")."); return; }
+    if(r.status===401 || r.status===403){
+      log("Remote: upload rejected ("+r.status+") — the device key may be revoked. Re-pair in Settings.");
+      toast("Upload rejected ("+r.status+") — re-pair in Settings.", {err:true}); return;
+    }
+    if(!r.ok){ log("Remote: upload failed ("+r.status+" "+r.statusText+")."); toast("Upload failed ("+r.status+" "+r.statusText+").", {err:true}); return; }
     const j = await r.json().catch(()=>null);
-    if(j){ log("Remote: uploaded — "+(j.duplicate?"already had it (dedup); ":"")+(j.sightings??"?")+" sighting(s), "+(j.events??"?")+" event(s)."); }
-    else { log("Remote: upload accepted."); }
+    if(j){
+      const msg = "Uploaded "+(sessionName||"session")+": "+(j.sightings??"?")+" sighting(s), "+(j.events??"?")+" event(s)"+(j.duplicate?" — already had it (dedup)":"")+".";
+      log("Remote: "+msg); toast(msg);
+    } else { log("Remote: upload accepted."); toast("Uploaded "+(sessionName||"session")+" — accepted."); }
   }catch(e){
     log("Remote: upload error — "+e.message+" (HTTPS + server CORS for "+location.origin+" required).");
+    toast("Upload error — "+e.message, {err:true});
+  }finally{
+    setUploadBusy(false);
   }
 }
 
@@ -195,11 +214,13 @@ export async function uploadCurrentSession(){
   if(!state.connected || !state.chars.cmd){ log("Remote: connect to the scanner first."); return; }
   const sess = ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "scanlog";
   const fname = sess.endsWith(".jsonl")||sess.endsWith(".csv") ? sess : sess+".jsonl";
+  setUploadBusy(true);                                        // optimistic: lock buttons the instant it's tapped
+  toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
   try{
     state.dl = { mode:null, expect:0, got:0, chunks:[], name:fname, sink:"upload" };
     await state.chars.cmd.writeValue(enc.encode("L"));
     log("Remote: fetching current session ("+fname+") to upload…");
-  }catch(e){ log("Remote: could not request the session — "+e.message); }
+  }catch(e){ log("Remote: could not request the session — "+e.message); toast("Could not request the session — "+e.message, {err:true}); setUploadBusy(false); }
 }
 
 // Upload the session currently selected in the Data > Session logs picker (fetched via F:<path>).
@@ -207,10 +228,13 @@ export async function uploadSelectedSession(){
   if(!isPaired()){ log("Remote: pair with a server first (Settings)."); return; }
   if(!state.connected || !state.chars.cmd){ log("Remote: connect to the scanner first."); return; }
   const path = $("sessSel").value;
-  if(!path || path.startsWith("—")){ log("Remote: pick a session in Session logs first."); return; }
+  if(!path || path.startsWith("—")){ log("Remote: pick a session in Session logs first."); toast("Pick a session in Session logs first.", {err:true}); return; }
+  const name = path.split("/").pop();
+  setUploadBusy(true);                                        // optimistic: lock buttons the instant it's tapped
+  toast("Fetching "+name+" over BLE…", {work:true, sticky:true});
   try{
-    state.dl = { mode:null, expect:0, got:0, chunks:[], name:path.split("/").pop(), sink:"upload" };
+    state.dl = { mode:null, expect:0, got:0, chunks:[], name, sink:"upload" };
     await state.chars.cmd.writeValue(enc.encode("F:"+path));
-    log("Remote: fetching "+state.dl.name+" to upload…");
-  }catch(e){ log("Remote: could not request the session — "+e.message); }
+    log("Remote: fetching "+name+" to upload…");
+  }catch(e){ log("Remote: could not request the session — "+e.message); toast("Could not request the session — "+e.message, {err:true}); setUploadBusy(false); }
 }
