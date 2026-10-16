@@ -1002,8 +1002,16 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
      the file rows). Gated by `rs.live` localStorage toggle + paired + scanning + connected; in-flight
      guard + first-failure-only logging. (A background browser tab can't hold the link — hence opt-in.)
    - `uiver` bumped to `2026-10-16 · remote-server`. No `style.css` change (reused existing classes),
-     so no `?v=` bump. **Not yet deployed to Pages / tested against a live server** — needs the
-     scan-analyzer endpoints up + a real pairing QR to validate end to end.
+     so no `?v=` bump. **DEPLOYED + VALIDATED END-TO-END** (committed d32bdc5, pushed to Pages
+     2026-10-16). scan-analyzer validated the server contract path over the live HTTPS tailnet by its
+     own curl smoke (pair 200 / uploads 200 / detections accepted→deduped / revoke→401), AND the owner
+     ran the real **phone live pass** on Chrome/Android + the CYD: QR pairing (#fragment token→key,
+     cleared from URL) worked, BLE connected, and **live-POST streamed to /detections, all 200 OK**
+     over the direct-LAN tailnet hop (829 sightings / 36 MACs / BLE+5G+2.4+PRB, all with the phone's
+     GPS fix). Reduced-row schema confirmed on the server (ch/cid/uuid/pan/sig/score omitted, lat/lon =
+     phone fix, local-encoded epoch + epoch-ms, session+ms dedup holding). **Only path not yet
+     exercised in a live run: the file-upload button (`/uploads` "Upload current session") — the BLE
+     fetch→upload wiring is built + curl-validated server-side, just not clicked on the phone yet.**
    Original client-side spec (unchanged, for reference):
    - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
      string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.
