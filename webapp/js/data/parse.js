@@ -64,6 +64,7 @@ export function parseScanEvents(text){
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
     if(!o || !o.evt) continue;
     if(o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }  // anchor, not a map pin
+    if(o.evt==="meta") continue;   // scan-provenance anchor (scanner_id/fw/db_gen) — server-side only, not a map pin
     const ev={evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
       ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)};
     if(ev.evt==="eviltwin"){   // suspect SSID + its BSSIDs (CYD enriches the line, up to 8 macs)

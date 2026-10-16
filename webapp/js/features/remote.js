@@ -138,6 +138,18 @@ function flagStr(bits){ return FLAG_NAMES.filter(f=>bits&f[0]).map(f=>f[1]).join
 let livePosting = false;    // in-flight guard (don't pile POSTs if the network lags behind the ~2 s snapshot cadence)
 let liveFailLogged = false; // only log the first failure in a run, then stay quiet until a success
 
+// Scan-provenance anchor for a live-POST batch: the locked {"evt":"meta"} shape, built from the
+// STATUS fields the connected CYD reports (state.scannerId/Fw/DbGen). File uploads already carry the
+// CYD's own meta line as line 1; for live rows the phone learns the id over STATUS and prepends it
+// here. Returns "" (no meta) until the CYD has reported an id — the server ingests meta-less fine.
+function metaLine(){
+  if(!state.scannerId) return "";
+  const o = { evt:"meta", scanner_id: state.scannerId };
+  if(state.scannerFw) o.fw = state.scannerFw;
+  if(state.scannerDbGen) o.db_gen = state.scannerDbGen;
+  return JSON.stringify(o);
+}
+
 // Build one reduced, log-shaped NDJSON line from a live DETS row. Omits the fields the web app can't
 // produce (ch/ie/cid/uuid/pan/score/sig) per the contract; lat/lon = the phone's own fix (omitted
 // when there's no fix). epoch = LOCAL seconds, ms = phone wall-clock ms (unique per snapshot for the
@@ -162,7 +174,8 @@ export function maybePostLive(rows){
   const sess = ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "live";
   const epoch = localEpoch();
   const baseMs = Date.now();
-  const body = rows.map((r,i)=> liveRow(r, sess, epoch, baseMs+i)).join("\n") + "\n";
+  const meta = metaLine();
+  const body = (meta ? meta+"\n" : "") + rows.map((r,i)=> liveRow(r, sess, epoch, baseMs+i)).join("\n") + "\n";
   livePosting = true;
   fetch(api("/api/v1/detections"), {
     method:"POST", headers: authHeaders({ "Content-Type":"application/x-ndjson" }), body

@@ -47,6 +47,9 @@ export function onStatus(ev){
     $("alertBanner").style.display = parts.length ? "flex" : "none";
     $("alertText").textContent = parts.join(" · ");
   }
+  if("sid" in kv) state.scannerId = kv.sid;            // scan provenance: stable CYD id (eFuse MAC)
+  if("fw"  in kv) state.scannerFw = kv.fw;             // CYD firmware version
+  if("dbgen"in kv) state.scannerDbGen = +kv.dbgen||0;  // sig-DB generation
   if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
   if("scan"in kv){ state.scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv){ const m=+kv.src;

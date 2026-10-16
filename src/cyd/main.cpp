@@ -1151,13 +1151,17 @@ static void startNewSession(bool forceFg = false) {
   syncSharePath();
 }
 
-// Create the (empty) session file the first time a row needs writing. NDJSON has no header.
-// No-op once created. Returns false if SD is unavailable or can't be opened.
+// Create the (empty) session file the first time a row needs writing. NDJSON has no header, but we
+// write a one-line {"evt":"meta"} provenance anchor as the FIRST line (scan-analyzer tags each
+// session with the scanner + sig-DB generation that produced it; readers skip it by its "evt" like
+// the timesync anchor). No-op once created. Returns false if SD is unavailable or can't be opened.
+static void writeSessionMeta(File& f);  // defined with FW_VERSION/DB_GEN below
 static bool ensureLogFile(LogStream& st) {
   if (st.started) return true;
   if (!g_sdOk || !st.path[0]) return false;
   File f = SD.open(st.path, FILE_WRITE);
   if (!f) return false;
+  writeSessionMeta(f);
   f.close();
   st.started = true;
   Serial.printf("[CYD] session log created: %s\n", st.path);
@@ -1226,6 +1230,30 @@ static void reseedDbIfNeeded() {
                   (unsigned long)gen, (unsigned long)DB_GEN);
   }
   p.end();
+}
+
+// Human-facing firmware version, distinct from the CYD<->C5 PROTOCOL_VERSION and the sig-DB DB_GEN.
+// Emitted in the per-session {"evt":"meta"} provenance anchor and the STATUS characteristic.
+static constexpr char FW_VERSION[] = "0.9.0";
+
+// Stable per-unit scanner id: the 48-bit factory eFuse MAC as 12 lowercase hex chars (computed once).
+// Globally unique and constant across reflashes. OPAQUE — this is the BASE MAC, so it won't equal any
+// scanned `mac` row (the BLE/Wi-Fi interface MACs derive from it with offsets). First-party: the
+// owner's own device, not bystander data.
+static const char* scannerIdHex() {
+  static char id[13] = {0};
+  if (!id[0]) {
+    uint64_t mac = ESP.getEfuseMac();
+    snprintf(id, sizeof(id), "%04x%08x", (unsigned)(uint16_t)(mac >> 32), (unsigned)(uint32_t)mac);
+  }
+  return id;
+}
+
+// Provenance anchor written as the first line of every session stream (see ensureLogFile). scanner_name
+// is omitted for v1 — no per-unit user label exists yet (planned NVS-settable label from the phone).
+static void writeSessionMeta(File& f) {
+  f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
+           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
 }
 
 static void initSD() {
@@ -1885,17 +1913,19 @@ static void pushStatus() {
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
-  char s[416];
+  char s[512];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d",
+           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d;"
+           "sid=%s;fw=%s;dbgen=%lu",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
            timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
            whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
            (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
-           power::percent(), posSource(), (int)g_onbSats, timeSource());
+           power::percent(), posSource(), (int)g_onbSats, timeSource(),
+           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
   phone::setStatus(String(s));
 }
 

@@ -1021,8 +1021,9 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    events / duplicate") + error toasts into both upload buttons (which also disable on tap via
    `setUploadBusy`) AND the plain Download-current/Download-selected paths (owner flagged the same
    lag). `style.css` rebuilt (`?v=20261016a`), `uiver` → `2026-10-16 · upload-ux`.
-   **NEXT, SHAPE LOCKED — scan-provenance `evt:meta` record (owner-gated, NOT built; agreed via bridge
-   2026-10-16 14:50/14:55).** So a scan's origin survives whoever uploads it (today the server only
+   **DONE 2026-10-16 — scan-provenance `evt:meta` record (owner greenlit; CYD BUILT + FLASHED, webapp
+   edited; server side was already built to this shape by scan-analyzer-cb).** So a scan's origin
+   survives whoever uploads it (today the server only
    records the uploader's bearer→device_id, i.e. the phone, not the scanner). The CYD firmware emits a
    per-session metadata line, one per session near the top of each log stream (fg + bg) mirroring the
    `timesync` anchor, AND the web app includes it in each live-POST batch:
@@ -1037,12 +1038,22 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    - **Live-POST provenance:** CYD adds `sid=`/`fw=`/`dbgen=` to the **STATUS** characteristic
      (CYD→phone); the web app prepends a matching meta record per batch. **No CYD↔C5 link-protocol
      (PROTOCOL_VERSION) change** — all CYD-side + web-app.
-   - **Build footprint when greenlit:** CYD firmware (emit meta per session + add FW_VERSION + 3 STATUS
-     fields) + web app (skip `evt:meta` in `parse.js`; add meta to live-POST batches). Server columns
-     are scan-analyzer's side, stored DISTINCT from uploader device_id. Their server is
-     FORWARD-COMPATIBLE (ignores meta's absence until we emit it), so timelines need not line up.
-     Privacy: first-party (owner's own device), no bystander PII. **Coordinate the build via the bridge
-     + committed docs — the peer's live session wound down 2026-10-16; ping the bridge when greenlit.**
+   - **What shipped (2026-10-16):** CYD firmware — `FW_VERSION="0.9.0"` + `scannerIdHex()` (eFuse MAC,
+     12 lc hex, computed once) + `writeSessionMeta()` writes the meta line as the FIRST line of every
+     stream in `ensureLogFile()` (fg + bg; before the first row, like the timesync anchor), and
+     `pushStatus()` now appends `sid=`/`fw=`/`dbgen=` (STATUS buffer widened 416→512). `scanner_name`
+     OMITTED for v1 (no label yet; server column is nullable). NO PROTOCOL_VERSION bump (CYD-only; C5
+     untouched, not reflashed). Build: RAM 34.2%, Flash 45.9%. Web app — `parse.js` skips `evt:meta`
+     (both parsers); `ble/status.js` reads `sid/fw/dbgen` into `state.scanner{Id,Fw,DbGen}`;
+     `features/remote.js` `metaLine()` prepends a meta record to each live-POST batch (omits unknown
+     fields); `state.js` holds the three fields; `#uiver` → `scan-provenance`. **Webapp code edited but
+     NOT yet pushed to Pages** (file uploads already carry the CYD's own meta line 1, so server tagging
+     works today from uploads; live-POST provenance needs the Pages deploy).
+   - Server columns are scan-analyzer's side, stored DISTINCT from uploader device_id. Their server was
+     already built to this shape (migration v5, meta parsed on upload + live paths w/ backfill,
+     `GET /api/v1/sessions`, 66 tests — bridge note scan-analyzer-cb 2026-10-16) and is
+     FORWARD-COMPATIBLE (ignores meta's absence). Privacy: first-party (owner's own device), no
+     bystander PII.
    Original client-side spec (unchanged, for reference):
    - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
      string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.

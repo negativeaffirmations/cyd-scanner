@@ -14,6 +14,12 @@ export const state = {
   scanning: false,      // authoritative value comes back via STATUS scan=
   paused: false,        // live-list view frozen (counts/scanning keep running) — mirrors the CYD PAUSE
 
+  // --- scan provenance (STATUS sid/fw/dbgen) — tags live-POST batches so scan-analyzer knows which
+  // scanner produced them (file uploads already carry the CYD's own {"evt":"meta"} first line) ---
+  scannerId: "",        // stable eFuse-MAC id of the connected CYD (opaque)
+  scannerFw: "",        // CYD firmware version string
+  scannerDbGen: 0,      // sig-DB generation
+
   // --- LOGDATA download/stream reassembly (see ble/download.js) ---
   dl: { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" },
 
