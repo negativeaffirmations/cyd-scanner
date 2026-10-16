@@ -1021,6 +1021,28 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    events / duplicate") + error toasts into both upload buttons (which also disable on tap via
    `setUploadBusy`) AND the plain Download-current/Download-selected paths (owner flagged the same
    lag). `style.css` rebuilt (`?v=20261016a`), `uiver` → `2026-10-16 · upload-ux`.
+   **NEXT, SHAPE LOCKED — scan-provenance `evt:meta` record (owner-gated, NOT built; agreed via bridge
+   2026-10-16 14:50/14:55).** So a scan's origin survives whoever uploads it (today the server only
+   records the uploader's bearer→device_id, i.e. the phone, not the scanner). The CYD firmware emits a
+   per-session metadata line, one per session near the top of each log stream (fg + bg) mirroring the
+   `timesync` anchor, AND the web app includes it in each live-POST batch:
+   `{"evt":"meta","scanner_id":"<eFuse-MAC hex>","fw":"<FW_VERSION>","db_gen":<DB_GEN>,"scanner_name":"<opt>"}`
+   - `scanner_id` = `ESP.getEfuseMac()` as 12-char lowercase hex (stable, unique, already used for the
+     SoftAP). It's the **base** MAC — an opaque key, won't equal any row `mac` (BLE/Wi-Fi MACs derive
+     from it with offsets).
+   - `db_gen` = the existing `DB_GEN` constant (main.cpp, currently 5). `fw` = a short `FW_VERSION`
+     string to ADD (none exists today — we have PROTOCOL_VERSION for the link + DB_GEN only).
+     `scanner_name` = optional/blank for v1 (no per-unit label yet; make it an NVS-settable phone label
+     later). Keep meta minimal — NO gps-source/hw-rev (point-in-time / untracked).
+   - **Live-POST provenance:** CYD adds `sid=`/`fw=`/`dbgen=` to the **STATUS** characteristic
+     (CYD→phone); the web app prepends a matching meta record per batch. **No CYD↔C5 link-protocol
+     (PROTOCOL_VERSION) change** — all CYD-side + web-app.
+   - **Build footprint when greenlit:** CYD firmware (emit meta per session + add FW_VERSION + 3 STATUS
+     fields) + web app (skip `evt:meta` in `parse.js`; add meta to live-POST batches). Server columns
+     are scan-analyzer's side, stored DISTINCT from uploader device_id. Their server is
+     FORWARD-COMPATIBLE (ignores meta's absence until we emit it), so timelines need not line up.
+     Privacy: first-party (owner's own device), no bystander PII. **Coordinate the build via the bridge
+     + committed docs — the peer's live session wound down 2026-10-16; ping the bridge when greenlit.**
    Original client-side spec (unchanged, for reference):
    - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
      string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.
