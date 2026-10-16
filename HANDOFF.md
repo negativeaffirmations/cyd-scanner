@@ -1009,9 +1009,11 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
      cleared from URL) worked, BLE connected, and **live-POST streamed to /detections, all 200 OK**
      over the direct-LAN tailnet hop (829 sightings / 36 MACs / BLE+5G+2.4+PRB, all with the phone's
      GPS fix). Reduced-row schema confirmed on the server (ch/cid/uuid/pan/sig/score omitted, lat/lon =
-     phone fix, local-encoded epoch + epoch-ms, session+ms dedup holding). **Only path not yet
-     exercised in a live run: the file-upload button (`/uploads` "Upload current session") — the BLE
-     fetch→upload wiring is built + curl-validated server-side, just not clicked on the phone yet.**
+     phone fix, local-encoded epoch + epoch-ms, session+ms dedup holding). **File upload also
+     validated on real hardware (2026-10-16, upload-ux build):** "Upload selected to server" pushed two
+     sessions, both fresh ingests (uploads #5/#6 = 235/236 sightings, duplicate:false), toasts showed
+     the real counts + the "Fetching over BLE…" feedback. **All three endpoints (/pair, /uploads,
+     /detections) + the client UX are now validated end-to-end — the integration is COMPLETE.**
    **Upload/download UX fix (2026-10-16, follow-up):** the first file-upload run landed 200 server-side
    but the owner saw no client feedback (the Activity log is Home-only; the buttons stayed on the
    Data/Settings page). Added a page-agnostic **toast** (`util/dom.js` `toast()` + `#toast` element +
