@@ -27,9 +27,11 @@ reflashed**):
   **IN ADDITION to the MAC**: CYD **detail** screen → "BLE company: Samsung (0075)"; webapp **live list**
   r2 line (`.mk` accent span) + device modal. Carried to the phone via a new trailing **DETS v7** field
   (CYD→phone stream; append-only, older parsers ignore). `DevGroup` gained `companyId` (first across
-  members, set in `buildGroups`). Seeded Samsung/Microsoft/Google/Nordic/Broadcom/Garmin. This is the
-  stable identifier for rotating-RPA devices (phones, watches, car head units) where no OUI exists.
-- **`DB_GEN` 3→4** so the card re-seeds `/signatures.csv` on next boot (⚠ DISCARDS on-card DB edits).
+  members, set in `buildGroups`). This is the stable identifier for rotating-RPA devices (phones,
+  watches, car head units) where no OUI exists. **Seed expanded to ~32 common Bluetooth SIG makers**
+  (Apple/Tile/etc. also via the `blecid` fallback), each **verified against the SIG assignment list** —
+  which caught a decimal/hex bug: Garmin is `0x0057` (87 dec), not `0x0087`. Second CYD flash for this.
+- **`DB_GEN` 3→4→5** so the card re-seeds `/signatures.csv` on next boot (⚠ DISCARDS on-card DB edits).
 - Builds: **CYD SUCCESS** (RAM 34.2% / Flash 45.8%). Webapp: SCSS recompiled (`style.css?v=20261015a`,
   `#uiver → maker-labels`), JS `node --check` clean. **CYD FLASHED COM14** (`1A86:7523`). Pushed to `main`.
 - **On-device TODO (non-blocking):** eyeball the CYD detail "BLE company" line + the webapp live-list

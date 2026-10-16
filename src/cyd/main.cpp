@@ -1210,9 +1210,10 @@ static void renameSessionOnSync() {
 // Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
 // the firmware (e.g. after adding seed rules). This DISCARDS any on-card DB edits, so
 // only bump it when that's intended.
-static constexpr uint32_t DB_GEN = 4;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion;
+static constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion;
                                        // 3: Nest/Reolink/SimpliSafe OUIs + Arlo/Blink reweight (2026-10-10);
-                                       // 4: 'vendor,' OUI->vendor display rules (2026-10-15)
+                                       // 4: 'vendor,' OUI->vendor display rules (2026-10-15);
+                                       // 5: expanded 'cidname,' BLE company makers + Garmin ID fix (2026-10-15)
 
 static void reseedDbIfNeeded() {
   Preferences p;

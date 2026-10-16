@@ -185,12 +185,39 @@ const char* kSeedCsv =
     // so a device using a rotating random address is still identifiable by its maker. cidName() also
     // falls back to any matching 'blecid,' threat-rule label, so Apple/Tile/Flipper/etc. resolve for
     // free. Company IDs are Bluetooth SIG assigned numbers; add your own freely (no reflash).
-    "cidname,0075,Samsung\n"
+    // Verified against the Bluetooth SIG company-identifier assignments (bluetooth.com). Ordered by ID.
+    "cidname,0002,Intel\n"
     "cidname,0006,Microsoft\n"
-    "cidname,00E0,Google\n"
-    "cidname,0059,Nordic\n"
+    "cidname,000A,Nokia\n"
+    "cidname,000B,Sonos\n"
     "cidname,000F,Broadcom\n"
-    "cidname,0087,Garmin\n";
+    "cidname,0047,Plantronics\n"
+    "cidname,0057,Garmin\n"
+    "cidname,0059,Nordic\n"
+    "cidname,0075,Samsung\n"
+    "cidname,0078,Sony\n"
+    "cidname,0080,Toshiba\n"
+    "cidname,008A,Bose\n"
+    "cidname,00C4,LG\n"
+    "cidname,00C6,Beats\n"
+    "cidname,00D6,HP\n"
+    "cidname,00E0,Google\n"
+    "cidname,00E8,Fitbit\n"
+    "cidname,0111,Logitech\n"
+    "cidname,0131,Cypress\n"
+    "cidname,0157,Amazfit\n"
+    "cidname,0197,Huawei\n"
+    "cidname,01D7,Jabra\n"
+    "cidname,01FF,Meta\n"
+    "cidname,0201,Polar\n"
+    "cidname,029F,Tile\n"
+    "cidname,0301,Sony Mobile\n"
+    "cidname,0310,Realtek\n"
+    "cidname,0362,Harman\n"
+    "cidname,038F,Xiaomi\n"
+    "cidname,0560,Withings\n"
+    "cidname,0602,OnePlus\n"
+    "cidname,0831,Sennheiser\n";
 
 void resetTables() {
   g_ouiN = g_strN = g_ieN = g_uuidN = g_cidN = g_vendorN = g_cidnameN = 0;
