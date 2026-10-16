@@ -981,11 +981,30 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    populates (+ turns cyan, `tsrc=2`) and logged rows carry real epochs instead of `0`. (Behaviour
    reminder: before any phone has *ever* synced the fallback reads **UTC** — no tz; after the
    first-ever phone sync the tz offset persists in NVS `cydscan/tzoff` and it reads LOCAL.)
-11. **Remote-server upload to scan-analyzer — contract APPROVED v0 (owner, 2026-10-15); BUILD DEFERRED.**
-   The CYD↔scan-analyzer API contract is locked at **DRAFT v0, owner-approved**. **Both sessions are
-   holding IMPLEMENTATION** until the owner greenlights — deliberately deferred so session usage can
-   reset before the (token-heavy) build starts. Authoritative full spec: scan-analyzer
-   `docs/api-contract.md`. cyd-scanner (web-app client) side to build **when greenlit**:
+11. **Remote-server upload to scan-analyzer — contract v0; WEB-APP CLIENT BUILT (2026-10-16).**
+   The CYD↔scan-analyzer API contract is locked at **DRAFT v0, owner-approved**. **Owner greenlit the
+   build** (2026-10-16): scan-analyzer is implementing the server endpoints (bridge 11:19) and
+   cyd-scanner's **web-app client is now built** (this session) against v0 — no shape changes.
+   Authoritative full spec: scan-analyzer `docs/api-contract.md`.
+   **LANDED (web app, `webapp/js/features/remote.js` + Settings "Remote server" card + Data "Upload
+   selected to server"):** all three client paths, all to the user's OWN private server.
+   - **Pairing:** `handlePairHash()` reads a QR deep link `…/webapp/#server=<enc>&token=<token>` (the
+     `#` fragment, cleared from the URL right after via `history.replaceState`), `POST /api/v1/pair
+     {token}` → stores `{key,device_id}` in `localStorage` (`rs.server`/`rs.key`/`rs.deviceId`); the
+     Settings paste field (`pairFromForm`) is the fallback. Key/token are never written to the log.
+   - **File upload:** `uploadSessionText()` POSTs the raw session NDJSON to `/api/v1/uploads`
+     (`application/x-ndjson`, `text/csv` for legacy), Bearer key, `X-Session-Name`/`X-Client-Tz`
+     headers. Wired via a new `state.dl.sink==="upload"` branch in `ble/download.js` — "Upload current
+     session" (`L`) and "Upload selected to server" (`F:<path>`) both fetch over BLE then upload.
+   - **Live-POST (opt-in, off by default):** `maybePostLive()` in `renderDets()` batch-POSTs each scan
+     snapshot to `/api/v1/detections` as reduced log-shaped NDJSON (`live:1`; omits
+     ch/ie/cid/uuid/pan/score/sig; `lat`/`lon` = the phone's own fix; `epoch` = LOCAL-encoded to match
+     the file rows). Gated by `rs.live` localStorage toggle + paired + scanning + connected; in-flight
+     guard + first-failure-only logging. (A background browser tab can't hold the link — hence opt-in.)
+   - `uiver` bumped to `2026-10-16 · remote-server`. No `style.css` change (reused existing classes),
+     so no `?v=` bump. **Not yet deployed to Pages / tested against a live server** — needs the
+     scan-analyzer endpoints up + a real pairing QR to validate end to end.
+   Original client-side spec (unchanged, for reference):
    - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
      string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.
      The web app reads `location.hash`, stores `server` + the exchanged key in `localStorage`; a

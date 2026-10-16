@@ -14,6 +14,7 @@ import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
 import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
+import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession, uploadSelectedSession } from './features/remote.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -93,6 +94,12 @@ $("wlClose").onclick = ()=> $("wlDlg").close();
 $("wlDlg").addEventListener("click", e=>{ if(e.target === $("wlDlg")) $("wlDlg").close(); });
 $("wlReloadBtn").onclick = async()=>{ await wlCmd("W","Reloading whitelist…"); setTimeout(refreshWhitelist,300); };
 $("wlAddBtn").onclick = addWhitelistRule;
+// Remote server (scan-analyzer) pairing + upload.
+$("rsPairBtn").onclick = pairFromForm;
+$("rsUnpairBtn").onclick = unpair;
+$("rsUploadCurBtn").onclick = uploadCurrentSession;
+$("rsLive").addEventListener("change", toggleLive);
+$("sessUploadBtn").onclick = uploadSelectedSession;
 $("mapBtn").onclick = openMap;   // retired hidden button -> Map page (openMap sizes Leaflet)
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;
@@ -107,4 +114,6 @@ $("mapFile").addEventListener("change", e=>{
   rd.readAsText(f);
   e.target.value="";   // allow re-loading the same file
 });
+// Remote server: honor a QR deep link (#server=&token=) then paint the Settings card.
+handlePairHash().finally(renderRemoteUI);
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");

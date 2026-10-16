@@ -9,6 +9,7 @@ import { onStatus } from './status.js';
 import { onLogData } from './download.js';
 import { onDets, resetPause } from '../features/detections.js';
 import { clearSightings } from '../features/sightings.js';
+import { renderRemoteUI } from '../features/remote.js';
 import { acquireWake, releaseWake } from '../wakelock.js';
 
 export async function connect(){
@@ -45,6 +46,7 @@ export async function connect(){
     ["scanNavBtn","scanBtn","pauseBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessWipeBtn","sessSel","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
       .forEach(id=>$(id).disabled=false);
     $("wlBtn").disabled=false;
+    renderRemoteUI();   // enable "Upload current session" now the link is up
     log("Connected.");
     acquireWake();   // keep the screen on so GPS keeps flowing (see wakelock.js)
     await syncTime();
@@ -59,6 +61,7 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   $("connectBtn").style.display = "";
   ["scanNavBtn","scanBtn","pauseBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","sessSel","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn"]
     .forEach(id=>$(id).disabled=true);
+  $("sessUploadBtn").disabled=true; renderRemoteUI();   // disable session/current upload (no link)
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
   state.wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";

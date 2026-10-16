@@ -13,7 +13,7 @@ export function populateSessions(text){
   const sels=[$("sessSel"),$("expSel")]; sels.forEach(s=>s.innerHTML="");  // one list feeds both pickers
   const rows=(text||"").split("\n").filter(l=>l.includes("\t"));
   if(!rows.length){ sels.forEach(s=>s.innerHTML="<option>— no sessions —</option>");
-    $("sessDlBtn").disabled=true; $("sessDlfBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true;
+    $("sessDlBtn").disabled=true; $("sessDlfBtn").disabled=true; $("sessDelBtn").disabled=true; $("sessMapBtn").disabled=true; $("sessUploadBtn").disabled=true;
     if(state.exploreWant){ state.exploreWant=false; $("expMsg").textContent="No sessions on the device."; $("scanViewer").innerHTML=""; }
     return; }
   rows.sort().reverse();  // date-time names sort newest-first
@@ -28,7 +28,7 @@ export function populateSessions(text){
     else if(flag==="latest")  label+="  (latest session)";
     sels.forEach(s=>{ const o=document.createElement("option"); o.value=path; o.textContent=label; s.appendChild(o); });
   }
-  $("sessDlBtn").disabled=false; $("sessDlfBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false;
+  $("sessDlBtn").disabled=false; $("sessDlfBtn").disabled=false; $("sessDelBtn").disabled=false; $("sessMapBtn").disabled=false; $("sessUploadBtn").disabled=false;
   log(rows.length+" session(s) found.");
   if(state.exploreWant){ state.exploreWant=false; fetchSession("explore"); }   // newest is first -> default pick
 }

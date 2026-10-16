@@ -58,7 +58,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-15&nbsp;·&nbsp;maker-labels</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-16&nbsp;·&nbsp;remote-server</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -155,6 +155,7 @@
         <button id="sessDlBtn" disabled>Download selected session</button>
         <button id="sessDlfBtn" class="secondary" disabled>Download selected &mdash; time range (see above)</button>
         <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
+        <button id="sessUploadBtn" class="secondary" disabled>Upload selected to server</button>
         <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
         <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
       </details>
@@ -178,6 +179,23 @@
         <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
         <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
         <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
+      </div>
+
+      <!-- Remote server (scan-analyzer): pair + upload scans to the user's own private server -->
+      <div class="card" style="margin-top:12px">
+        <strong class="cardhdr">Remote server</strong>
+        <div id="rsStatus" class="sub" style="margin:.4em 0">Not paired.</div>
+        <div class="sub" style="margin-bottom:.4em">Scan the QR on your scan-analyzer server to pair automatically, or paste its HTTPS URL + pairing token here.</div>
+        <input type="text" id="rsServer" placeholder="https://your-server.example" autocomplete="off" inputmode="url">
+        <input type="text" id="rsToken" placeholder="pairing token (one-time)" autocomplete="off" style="margin-top:.3em">
+        <button id="rsPairBtn" style="margin-top:.4em">Pair with server</button>
+        <button id="rsUnpairBtn" class="danger" disabled style="margin-top:.4em">Forget key</button>
+        <div class="hrule" style="margin:.7em 0"></div>
+        <button id="rsUploadCurBtn" class="secondary" disabled>Upload current session to server</button>
+        <label id="rsLiveWrap" style="display:block;margin-top:.6em;opacity:.5">
+          <input type="checkbox" id="rsLive"> Live upload while scanning
+          <span class="sub" style="display:block">POSTs each scan snapshot as it happens (reduced fields). Keep the screen on; a background tab can't hold the link.</span>
+        </label>
       </div>
     </section>
   </main>

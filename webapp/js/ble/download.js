@@ -9,6 +9,7 @@ import { plotCsvText } from '../features/map.js';
 import { loadedExplore } from '../features/explore.js';
 import { populateSessions } from '../features/sessions.js';
 import { populateWhitelist } from '../features/whitelist.js';
+import { uploadSessionText } from '../features/remote.js';
 
 export function onLogData(ev){
   const dv = ev.target.value;
@@ -41,6 +42,7 @@ export function onLogData(ev){
     if (state.dl.mode==="file") {
       if (state.dl.sink==="map") { blob.text().then(t=>plotCsvText(t, state.dl.name)); }
       else if (state.dl.sink==="explore") { const nm=state.dl.name; blob.text().then(t=>loadedExplore(parseScanLog(t), nm)); }
+      else if (state.dl.sink==="upload") { const nm=state.dl.name; blob.text().then(t=>uploadSessionText(t, nm)); }
       else {
         const a=document.createElement("a");
         a.href=URL.createObjectURL(blob); a.download=state.dl.name; a.click(); URL.revokeObjectURL(a.href);

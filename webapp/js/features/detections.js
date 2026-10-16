@@ -13,6 +13,7 @@ import { $, esc } from '../util/dom.js';
 import { tierNum, fmtTimecode, flagBadges } from '../util/format.js';
 import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
 import { recordSightings } from './sightings.js';
+import { maybePostLive } from './remote.js';
 
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
@@ -143,6 +144,7 @@ export function setScanMode(live){
 export function renderDets(rows){   // live view
   state.lastDetRows = rows;
   recordSightings(rows);   // log each seen MAC at the phone's current GPS fix (for the detail-modal trail)
+  maybePostLive(rows);     // opt-in: batch-POST this snapshot to the paired scan-analyzer server
   setScanMode(true);
   renderCatChips(rows);       // counts + strip reflect ALL detections, not the filtered subset
   renderScanCounts(rows);
