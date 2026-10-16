@@ -291,6 +291,15 @@ back (5 GHz included). Things that matter, learned the hard way:
   **Why NDJSON:** append-only (a torn write loses only the trailing line), self-describing (schema
   grows without breaking old parsers), JSON escaping kills the comma/formula-injection bug class.
   Old `.csv` sessions still list/read (readers branch by extension; no timesync backfill for legacy CSV).
+  **Scan provenance — `{"evt":"meta","scanner_id":…,"fw":…,"db_gen":…}` anchor.** `writeSessionMeta()`
+  writes ONE `meta` line as the **first line of every stream** (fg + bg, in `ensureLogFile()`, before
+  the first detection row — same slot as the timesync anchor) so a scan's origin travels with the file
+  no matter who uploads it. `scanner_id` = `scannerIdHex()` (the 48-bit factory eFuse MAC as 12
+  lowercase hex, stable across reflashes, OPAQUE — the base MAC, won't equal any row `mac`); `fw` =
+  `FW_VERSION`; `db_gen` = the sig-DB `DB_GEN`. `scanner_name` is omitted for v1 (no per-unit label yet).
+  Readers skip it by its `evt` (like timesync). Consumed by the scan-analyzer companion server (tags
+  each session distinct from the uploader's device id); the web app also prepends the same record,
+  learned from STATUS `sid`/`fw`/`dbgen`, to each live-POST batch. First-party (owner's own device).
 - **Log retention — 512 MB cap with auto-rotation.** `enforceLogCap()` keeps total `/logs/` size
   under `LOG_CAP_BYTES` (512 MB) by deleting the **oldest** files (by FS timestamp), never the live
   fg/bg/Explore-held/currently-streaming file. Runs at boot, on each session rotation, and on a
@@ -408,7 +417,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     2 = custom minutes; optional `/logs/` path; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
   - `…0004` STATUS (read/notify) — `key=val;…`:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc`
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,sid,fw,dbgen`
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),
@@ -417,7 +426,11 @@ back (5 GHz included). Things that matter, learned the hard way:
     scan on/off, **`lock`** = display/touch lock state 0/1, **`bat`** = battery % (−1 = no cell / on
     USB), **`gpssrc`** = active position source 0 none/1 phone/2 onboard, **`sats`** = onboard-GPS
     satellites in use, **`tsrc`** = active time source 0 none/1 phone/2 onboard GPS (v10; `time` = 1
-    when EITHER source has the clock); `gps` = 1 when EITHER phone or onboard has a fix)
+    when EITHER source has the clock); `gps` = 1 when EITHER phone or onboard has a fix;
+    **`sid`** = stable scanner id (eFuse base MAC, 12 hex lc — opaque), **`fw`** = firmware version
+    string, **`dbgen`** = sig-DB generation — the **scan-provenance** fields the web app prepends as a
+    `{"evt":"meta",…}` record on each live-POST batch; file uploads carry the same meta as line 1 of
+    the NDJSON)
   - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows

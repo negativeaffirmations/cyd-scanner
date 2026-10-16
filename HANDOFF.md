@@ -1021,8 +1021,10 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    events / duplicate") + error toasts into both upload buttons (which also disable on tap via
    `setUploadBusy`) AND the plain Download-current/Download-selected paths (owner flagged the same
    lag). `style.css` rebuilt (`?v=20261016a`), `uiver` → `2026-10-16 · upload-ux`.
-   **DONE 2026-10-16 — scan-provenance `evt:meta` record (owner greenlit; CYD BUILT + FLASHED, webapp
-   edited; server side was already built to this shape by scan-analyzer-cb).** So a scan's origin
+   **DONE + VALIDATED GREEN 2026-10-16 — scan-provenance `evt:meta` record (owner greenlit; CYD BUILT +
+   FLASHED, webapp DEPLOYED to Pages, server side built by scan-analyzer-cb; end-to-end provenance pass
+   passed on real hardware — see "Validation" below. Committed cyd-scanner `737649a`; scan-analyzer
+   `8a14e34`/HANDOFF `92689fa`).** So a scan's origin
    survives whoever uploads it (today the server only
    records the uploader's bearer→device_id, i.e. the phone, not the scanner). The CYD firmware emits a
    per-session metadata line, one per session near the top of each log stream (fg + bg) mirroring the
@@ -1046,14 +1048,20 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
      untouched, not reflashed). Build: RAM 34.2%, Flash 45.9%. Web app — `parse.js` skips `evt:meta`
      (both parsers); `ble/status.js` reads `sid/fw/dbgen` into `state.scanner{Id,Fw,DbGen}`;
      `features/remote.js` `metaLine()` prepends a meta record to each live-POST batch (omits unknown
-     fields); `state.js` holds the three fields; `#uiver` → `scan-provenance`. **Webapp code edited but
-     NOT yet pushed to Pages** (file uploads already carry the CYD's own meta line 1, so server tagging
-     works today from uploads; live-POST provenance needs the Pages deploy).
+     fields); `state.js` holds the three fields; `#uiver` → `scan-provenance`. **Webapp DEPLOYED to
+     GitHub Pages** (both provenance paths live: file-upload carries the CYD's own meta line 1; live-POST
+     prepends the meta record per batch).
    - Server columns are scan-analyzer's side, stored DISTINCT from uploader device_id. Their server was
-     already built to this shape (migration v5, meta parsed on upload + live paths w/ backfill,
-     `GET /api/v1/sessions`, 66 tests — bridge note scan-analyzer-cb 2026-10-16) and is
-     FORWARD-COMPATIBLE (ignores meta's absence). Privacy: first-party (owner's own device), no
-     bystander PII.
+     built to this shape (migration v5, meta parsed on upload + live paths w/ backfill,
+     `GET /api/v1/sessions`) and is FORWARD-COMPATIBLE (ignores meta's absence). Privacy: first-party
+     (owner's own device), no bystander PII.
+   - **Validation (2026-10-16, real hardware, scan-analyzer-cb):** end-to-end GREEN on BOTH paths. A real
+     phone upload landed server session 20 (file-upload) + session 19 (live-POST), both carrying
+     `scanner_id=b817f4f4e9d4` / `fw=0.9.0` / `db_gen=5` (= this CYD's eFuse-derived id), `scanner_name`
+     NULL, kept DISTINCT from the uploader `device_id=cyd-fb861c94`. Our per-batch live meta prepend AND
+     the server's backfill both verified; `scanner_id` reads opaque (matches no scanned `mac`);
+     pre-firmware sessions correctly stay NULL; integrity clean. **No shape changes — shipped +
+     validated on both projects.** scan-analyzer's dev server is staying UP for continued testing.
    Original client-side spec (unchanged, for reference):
    - **Pairing:** scan-analyzer shows a QR → the web app opens with a URL **`#fragment`** (NOT a query
      string, so the token never reaches GitHub Pages logs): `…/webapp/#server=<url-enc>&token=<token>`.
