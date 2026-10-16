@@ -74,6 +74,29 @@ near-verbatim reuse is what triggers the rules above.**
   is not.
 - **Status:** **signature DATA reused** (2026-10-04) — see "Code actually used" below.
 
+### Flock-Noir
+- **URL:** https://github.com/valleytechsolutions/Flock-Noir
+- **Platform / language:** **Seeed XIAO ESP32-S3 Sense** + **OV2640** camera (IR-cut filter removed;
+  the repo's About says **OV3660**, which conflicts with its build docs — verify against the actual
+  board), plus an **OPT101** analog light sensor, **ATGM336H** GPS, a piezo buzzer, and a FAT32
+  microSD. PlatformIO/Arduino C++ (same toolchain family as cyd-scanner). Experimental.
+- **Why it's here:** a **camera/optical modality** for ALPR-camera detection that cyd-scanner (RF-only)
+  lacks. Its approach is **not computer-vision object recognition** — it correlates three cheap
+  signals within a ~3 s window: (1) **optical IR-flash pulse timing** — the OPT101 sampled ~1 kHz
+  looking for an ALPR-like flash profile (reference ~8–12 Hz, 10–30% duty, 8–35 ms pulses; the repo
+  stresses "no verified universal ALPR flash rate"), (2) **camera brightness analysis** (640×480 JPEG
+  reduced to an 80×60 brightness grid at fixed exposure — brightness, not objects), and (3) **RF**
+  (Flock-You OUI/probe rules, BLE names/services, promiscuous Wi-Fi; OUI-only = candidate). Logs ALPR
+  CSV, **WiGLE CSV**, **JSONL**, and **pcap**; on-device web dashboard over its own hotspot. Relevant
+  to: a future **camera/vision sub-board** for cyd-scanner, **geotagged image capture**, and the
+  scan-analyzer multi-modal direction. (The XIAO S3 Sense can *also* run lightweight on-device ML /
+  object detection — Flock-Noir itself does **not**; that's a separate capability to explore.)
+- **License:** **MIT** (permissive) — reuse/adaptation allowed; only obligation is preserving the MIT
+  notice for reused code plus the in-repo attribution the directive above requires. MIT does not
+  constrain cyd-scanner's GPL-3.0 licensing.
+- **Status:** reference only; no code used yet. Owner has the hardware (with the newer **OV3660**) and
+  is evaluating whether it works before deciding to incorporate the capability.
+
 ## Code actually used
 
 ### SquachWatch-CYD — surveillance-device signature DATA (2026-10-04)

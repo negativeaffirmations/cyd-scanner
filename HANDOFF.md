@@ -1,5 +1,35 @@
 # Handoff — 2026-10-15 (branch: `main`; it is the only branch / the trunk)
 
+## New direction — scan-analyzer companion + remote-server pairing (PLANNED, 2026-10-15)
+A separate **private** companion project — **scan-analyzer** — is being started: a self-hosted
+server + web app that ingests this device's NDJSON logs into a database and **learns over time**
+(estimate stationary-emitter locations from many GPS/time-stamped sightings; enrich OUI→vendor and
+**BLE SIG company-ID**→manufacturer + likely-device research; wardriving map with GPS/time/source/
+threat filters). Code public, **data + server private** (captured RF = bystander identifiers + GPS,
+never committed anywhere). **Proposal + synthetic test fixture are in this repo's git-ignored
+`scan-analyzer/` folder** (`PROPOSAL.md`, `sample-synthetic.jsonl`) for transfer to the new repo —
+feed `PROPOSAL.md` into a fresh session there. The user will copy `.claude/hooks/` over; the new
+session must review/extend `gitignore-sensitive.py` for the server's data/DB/.env paths.
+
+**Pending work in THIS repo (web app, not started):** a **"Remote server"** connection so the phone
+web app can upload to scan-analyzer **without a hard-coded server address** — scan-analyzer shows a
+**QR** deep-linking into this web app with `?server=<url>&token=<pairing-token>` (store in
+`localStorage`), plus a **Settings "Remote server"** paste field as the fallback. Later: **live POST**
+of detections once paired (Bearer = per-device key from the token); a standalone phone app is the
+likely durable path for background live upload. **HTTPS mandatory** (mixed-content: this app is HTTPS,
+so the server URL must be too — Tailscale / Cloudflare Tunnel / LAN cert). See CLAUDE.md "Companion
+project + remote-server upload". Near-term upload is just download-a-log-then-upload-the-file (no
+THIS-repo change). [[aggregate-triangulation-db-idea]]
+
+**Hardware/modality expansion (exploratory, not started):** beyond RF, add boards or sibling setups
+feeding the same scan-analyzer — a **camera/optical ALPR sub-board** à la **Flock-Noir** (MIT, now in
+[docs/references.md](docs/references.md): XIAO ESP32-S3 Sense + OV2640/**OV3660** + OPT101; detects via
+IR-flash pulse timing + brightness + RF, not CV); **geotagged image upload** + **on-device vision**
+(XIAO S3 can run light ML); **per-device notes** (authored from the phone web app); and **Bluetooth
+Classic** scanning (needs a new board — C5 has no BR/EDR, the CYD's ESP32 is held by NimBLE). Owner has
+the Flock-Noir hardware (OV3660) and is testing viability. scan-analyzer PROPOSAL.md §11 + CLAUDE.md
+"Hardware / modality expansion" carry the details; keep scan-analyzer's data model source-agnostic.
+
 ## Done — follower count DISABLED + OUI/company-ID maker labels (2026-10-15, CYD FLASHED COM14 + webapp; pushed)
 Context: a field drive to test the follow alert showed the count inflating (6→10→2→1). Root-caused: the
 follow gate is an **anchor-radial GPS span** (`computeFollowScores`, `maxSpanM` = the max straight-line
@@ -947,6 +977,10 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    populates (+ turns cyan, `tsrc=2`) and logged rows carry real epochs instead of `0`. (Behaviour
    reminder: before any phone has *ever* synced the fallback reads **UTC** — no tz; after the
    first-ever phone sync the tz offset persists in NVS `cydscan/tzoff` and it reads LOCAL.)
+11. **Remote-server upload to scan-analyzer (NEW, not started).** Web-app "Remote server" pairing
+   (QR deep-link `?server=&token=` + Settings paste fallback, `localStorage`), then live detection
+   POST once paired; HTTPS-only (mixed content). See the top "New direction" section + CLAUDE.md
+   "Companion project + remote-server upload". Companion repo proposal: git-ignored `scan-analyzer/`.
 
 ## Flash / tooling notes
 - `pio` is not on the bash PATH: use `"$HOME/.platformio/penv/Scripts/pio.exe"`.

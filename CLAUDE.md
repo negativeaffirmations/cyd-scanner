@@ -530,6 +530,63 @@ back (5 GHz included). Things that matter, learned the hard way:
   the default.
 - Needs `board_build.partitions = huge_app.csv` (BLE + Wi-Fi + web server + TFT).
 
+## Companion project + remote-server upload (PLANNED — new direction)
+
+A separate, **private** companion project — **scan-analyzer** — is being built to be the long-term
+*memory/analysis layer* for the scans this device produces: a self-hosted server + web app that
+ingests the NDJSON logs, stores every GPS/time-stamped sighting in a database, and **learns over
+time** — estimating the fixed location of **stationary** emitters (a camera + its infrastructure
+reappearing at one spot) from many sightings, enriching devices (OUI → vendor; **BLE SIG company ID**
+→ manufacturer + a research layer on likely device models), and plotting everything on a
+wardriving-style map (GPS + time + source/threat filters). It realizes the aggregate-triangulation
+idea deliberately kept *off* the handheld. **Its code may be public; its data and server are not** —
+captured RF data (bystander identifiers + GPS) must never be committed anywhere, here or there. The
+proposal + synthetic test data live in this repo's **git-ignored `scan-analyzer/` folder** (for
+transfer to the new repo), not in version control.
+
+**What THIS repo must add to connect to it (web app, planned):**
+- **No hard-coded server address.** The scan-analyzer web app shows a **QR code** encoding a deep
+  link into THIS web app carrying the server URL (+ a pairing token), e.g.
+  `…/cyd-scanner/webapp/?server=<url-encoded>&token=<pairing-token>`; scanning it opens the web app
+  pre-paired (store server + token in `localStorage`). **Fallback:** a **"Remote server"** field in
+  **Settings** to paste the URL/token (the QR page also shows them as copyable text), for phones
+  whose camera QR scan can't deep-link into the web app.
+- **Live upload (later phase):** once paired, the web app POSTs live detections to the server during
+  a scan (Bearer = the per-device key exchanged from the pairing token). A robust background live
+  feed likely needs a **standalone phone app** eventually (a browser tab can't reliably hold BLE +
+  geolocation + network in the background); web-app live-POST is the first cut.
+- **HTTPS is mandatory** for the server URL: this web app is served over HTTPS, so browsers block
+  mixed content — an HTTP server won't be reachable (same constraint as the SoftAP note above). The
+  private server must be exposed over HTTPS (Tailscale / Cloudflare Tunnel / LAN cert).
+- Near-term, uploading is just **downloading a session log and uploading the file** to the
+  scan-analyzer web app (no THIS-repo change); the pairing + live-POST work above is the later phase.
+
+**Hardware / modality expansion (exploratory, beyond RF).** The device is RF-only today, but the
+intent is to gather **other signals** — either by **adding boards** to the current rig or building
+**purpose-built sibling setups** — all feeding the same scan-analyzer DB/map:
+- **Camera / optical ALPR detection:** a camera sub-board modeled on **Flock-Noir** (MIT — see
+  [docs/references.md](docs/references.md); Seeed **XIAO ESP32-S3 Sense** + OV2640/**OV3660** + an
+  OPT101 light sensor) that flags ALPR/Flock cameras via **IR-flash pulse timing + camera brightness
+  + RF** (not CV object recognition). Owner has the hardware (newer OV3660) and is testing viability
+  before committing to integrate.
+- **Geotagged image capture + upload** (useful even if auto-ALPR detection is unreliable) and
+  **on-device vision** (the XIAO S3 Sense can run lightweight ML object detection) as future
+  detection inputs.
+- **Device notes:** free-text annotations on any device seen — authored from the **phone web app**
+  (the handheld has no keyboard), persisted/aggregated in scan-analyzer.
+- **Bluetooth Classic (BR/EDR):** not possible on the current boards (C5 has no BR/EDR; the CYD's
+  ESP32 is held by the NimBLE phone link — mutually-exclusive host stacks), so a **new board / second
+  setup** is required to catch e.g. a car head unit's friendly name.
+These are **future/exploratory** — not started. Any code ported from Flock-Noir or similar follows
+the [docs/references.md](docs/references.md) license+attribution directive.
+
+**Cross-project coordination:** a **local, git-ignored `REMOTE.md`** in this repo root describes a
+private bridge for this project's Claude session to exchange messages with — and share sensitive
+logs/serial output with — the scan-analyzer project's session. **Read `REMOTE.md`** when coordinating
+anything shared across the two projects (log schema, DETS, the upload/pairing API, test fixtures).
+It's git-ignored and holds the machine-local bridge path, so nothing committed here names an external
+location.
+
 ## Subagents (`.claude/agents/`)
 
 A specialized agent suite is available (adapted from the owner's other firmware project):

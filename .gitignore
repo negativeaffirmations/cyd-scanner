@@ -9,6 +9,9 @@ compile_commands.json
 
 # Claude Code personal/local settings (may hold machine-specific paths)
 .claude/settings.local.json
+# Local-only cross-project bridge instructions: holds a machine path + may reference sensitive
+# logs/serial output. Never commit. (See the file itself; CLAUDE.md only cites its name.)
+REMOTE.md
 scanlogs
 
 # Captured RF data — may contain bystander (human) identifiers + GPS.
