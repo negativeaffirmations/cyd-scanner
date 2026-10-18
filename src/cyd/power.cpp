@@ -1,5 +1,5 @@
 // power.cpp — CYD battery monitor. See power.h.
-#include "power.h"
+#include "../host_common/power.h"
 #include "pins.h"
 #include <Arduino.h>
 

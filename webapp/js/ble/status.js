@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { $ } from '../util/dom.js';
 import { DEAUTH_ALERT } from '../config.js';
 import { updateScanBtn } from './commands.js';
+import { renderApCard } from '../features/wifiap.js';
 
 export function onStatus(ev){
   const txt = new TextDecoder().decode(ev.target.value);
@@ -13,6 +14,9 @@ export function onStatus(ev){
   if("prb" in kv) $("prb").textContent = kv.prb;
   if("z"   in kv) $("z154").textContent = kv.z;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
+  if("link"in kv){ const up = kv.link==="1", el = $("linkState");   // host<->C5 scanner UART link (the headless host's only link readout)
+    el.style.color = up ? "#3fb950" : "#f85149"; el.style.opacity = "1";   // green up / red down, like the CYD link dot
+    el.title = up ? "Scanner (C5) link: up" : "Scanner (C5) link: DOWN"; }
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
   if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS)
     const ts = +kv.tsrc||0, el = $("timeState");
@@ -46,6 +50,10 @@ export function onStatus(ev){
     if(ev > 0) parts.push("Evil twin: "+ev+" SSID"+(ev>1?"s":""));
     $("alertBanner").style.display = parts.length ? "flex" : "none";
     $("alertText").textContent = parts.join(" · ");
+  }
+  if("dl" in kv){                                       // Wi-Fi download AP creds (present only while the AP is up)
+    state.ap = (kv.dl==="1" && kv.apssid && kv.appsk) ? { ssid:kv.apssid, psk:kv.appsk, url:kv.apurl||"http://192.168.4.1" } : null;
+    renderApCard();
   }
   if("sid" in kv) state.scannerId = kv.sid;            // scan provenance: stable CYD id (eFuse MAC)
   if("fw"  in kv) state.scannerFw = kv.fw;             // CYD firmware version

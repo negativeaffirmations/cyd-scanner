@@ -8,6 +8,7 @@
 <title>COINTEL-FLO</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="js/vendor/qrcode.js"></script>  <!-- vendored qrcode-generator (MIT, Kazuhiko Arase); sets global `qrcode` -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="style.css?v=20261016a">
 </head>
@@ -19,6 +20,7 @@
       <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span></span>
       <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span><span class="gpssats" id="gpsSats"></span></span>
       <span class="si" id="db" title="Signature DB loaded"><span class="material-symbols-outlined">database</span></span>
+      <span class="si" id="linkState" title="Scanner (C5) link"><span class="material-symbols-outlined">cable</span></span>
       <span class="si batt off" id="battState" title="Battery"><span class="material-symbols-outlined" id="battIcon">battery_unknown</span><span class="batpct" id="battPct"></span></span>
       <span id="conn" class="conn down" title="disconnected"><span class="material-symbols-outlined">bluetooth_disabled</span></span>
     </span>
@@ -58,7 +60,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-16&nbsp;·&nbsp;scan-provenance</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-18&nbsp;·&nbsp;c5-link-icon</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -132,6 +134,12 @@
       <h3 style="margin:.4em 0 .3em">Data</h3>
       <button id="dlBtn" disabled>Download current session</button>
       <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
+      <div id="apCard" class="card" style="display:none; text-align:center; margin:.5em 0">
+        <span class="cardhdr">Join the device Wi-Fi</span>
+        <canvas id="apQr" width="0" height="0" style="background:#fff; border-radius:6px; max-width:100%"></canvas>
+        <div class="sub" id="apTxt" style="margin-top:.4em"></div>
+        <div class="sub" style="margin-top:.4em">Scan with your camera to join, then <a id="apUrl" href="#" target="_blank" rel="noopener">open the log index</a> (a separate tab &mdash; this page can't reach the device over HTTPS).</div>
+      </div>
       <details id="filterBox">
         <summary>Download a time range (filtered on the device)</summary>
         <select id="expRange">

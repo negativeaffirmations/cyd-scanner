@@ -136,3 +136,15 @@ near-verbatim reuse is what triggers the rules above.**
 
 *When further code/data from a cataloged project is adapted, record it here too: project, what was
 used, where it landed (file/function), the license, and the attribution added.*
+
+### qrcode-generator — vendored QR encoder for the web app (2026-10-18)
+
+- **What was used:** the whole library, **vendored unmodified** (apart from a 2-line provenance comment
+  prepended) so the web app can draw the Wi-Fi-join QR for the headless host's download SoftAP without
+  any network/CDN dependency near the device.
+- **Where it landed:** `webapp/js/vendor/qrcode.js` (plain `<script>`, defines the global `qrcode`),
+  used by `webapp/js/features/wifiap.js`.
+- **Source:** *qrcode-generator* v1.4.4 by **Kazuhiko Arase**
+  (https://github.com/kazuhikoarase/qrcode-generator, https://www.d-project.com/).
+- **License:** MIT (header retained in the file) — GPL-3.0-compatible. "QR Code" is a registered
+  trademark of DENSO WAVE INCORPORATED.

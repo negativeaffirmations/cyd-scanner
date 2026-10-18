@@ -64,7 +64,7 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   $("sessUploadBtn").disabled=true; renderRemoteUI();   // disable session/current upload (no link)
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
-  state.wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode";
+  state.wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode"; state.ap=null; $("apCard").style.display="none";
   state.scanning=false; updateScanBtn(); resetPause();
   $("scanPanel").style.display="none"; $("exploreView").style.display="none";
   if($("detDlg").open) $("detDlg").close();
@@ -72,5 +72,6 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   state.lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
   { const bs=$("battState"); bs.classList.add("off"); bs.classList.remove("lowbat");  // reset battery indicator
     $("battPct").textContent=""; $("battIcon").textContent="battery_unknown"; bs.title="Battery"; }
+  { const ls=$("linkState"); ls.style.color=""; ls.style.opacity=""; ls.title="Scanner (C5) link"; }  // reset C5-link icon (gray)
   if(state.gpsWatch!==null){ navigator.geolocation.clearWatch(state.gpsWatch); state.gpsWatch=null; }
   releaseWake(); }

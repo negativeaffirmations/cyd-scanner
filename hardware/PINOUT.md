@@ -7,6 +7,10 @@ in sync when wiring changes.
 - CYD pinout diagram: [cyd_esp32-2432S028r_pinout-1.png](boards/cyd_esp32-2432S028r/pinout/cyd_esp32-2432S028r_pinout-1.png)
 - ESP32-C5 pinout diagram: [esp32-c5-devkit_pinout.jpg](boards/esp32-c5-devkit/pinout/esp32-c5-devkit_pinout.jpg)
 - ESP32-C5 datasheet: [esp32-c5_datasheet_en.pdf](boards/esp32-c5-devkit/datasheets/esp32-c5_datasheet_en.pdf)
+- **Mini build (screenless XIAO sibling) — see §6:** XIAO ESP32-S3 Sense pinout
+  [xiao_esp32-s3_sense_pinout.jpg](boards/xiao_esp32-s3_sense/pinout/xiao_esp32-s3_sense_pinout.jpg) ·
+  XIAO ESP32-C5 pinout [xiao_esp32-c5_pinout.png](boards/xiao_esp32-c5/pinout/xiao_esp32-c5_pinout.png) ·
+  design/migration plan [docs/mini-build.md](../docs/mini-build.md)
 - **Full wiring diagram (data link + battery power + GPS + battery sense) — CURRENT BUILD:**
   [cyd-scanner_wiring_diagram_v2.png](diagrams/cyd-scanner_wiring_diagram_v2.png)
   (labeled source: [cyd-scanner_diagram_v2_labeled.svg](diagrams/cyd-scanner_diagram_v2_labeled.svg)).
@@ -306,3 +310,119 @@ After the display/touch/SD and the C5 link, the CYD had only **two** free GPIO �
 (input-only, the only free ADC1 pin) and **GPIO26**. The battery monitor now uses **GPIO35**;
 because CHRG wasn't broken out, **GPIO26 remains the one free CYD GPIO**. Putting GPS on the C5
 (Build C) is what let the CYD keep its ADC pin for battery sense.
+
+---
+
+## 6. Mini build — screenless XIAO sibling (XIAO-S3 host + XIAO-C5 scanner + DS3231)
+
+A smaller, **screenless** variant of the rig: a **Seeed XIAO ESP32-S3 Sense** host (replaces the
+CYD; no TFT/touch/BOOT UI — driven entirely from the BLE web app) + a **Seeed XIAO ESP32-C5**
+scanner (replaces the DevKit C5) + a **DS3231 RTC** for a persistent wall clock. Same SoCs as the
+main rig, so the radios and firmware carry over. Full design/migration plan:
+[docs/mini-build.md](../docs/mini-build.md). PlatformIO envs: `[env:xiao_s3]`, `[env:xiao_c5]`.
+
+> ✅ **Built + validated on hardware (2026-10-18).** All five firmware phases build; the S3 boots
+> (PSRAM ok, SD mounts, BLE advertises `COINTEL-FLO`), the DS3231 answers on I2C, and the S3↔C5 link
+> streams dual-band detections (**5 GHz beacons confirmed**). Pins below are **as-wired and working**.
+
+### 6a. XIAO ESP32-S3 Sense (host)
+
+**SoC:** ESP32-S3 (dual-core LX7) · BLE 5.0 + 2.4 GHz Wi-Fi · 8 MB PSRAM + 8 MB flash · onboard microSD
+on the Sense B2B. **PlatformIO board id:** `seeed_xiao_esp32s3`. Native USB-C (hwid `303A:1001`),
+auto-reset flashing — no DevKit two-port gotcha.
+
+| Pad | GPIO | Mini-build use                                                      |
+|-----|------|--------------------------------------------------------------------|
+| D4  | 5    | **DS3231 SDA** (I2C `Wire`)                                         |
+| D5  | 6    | **DS3231 SCL** (I2C `Wire`)                                         |
+| D6  | 43   | **Link UART TX → XIAO-C5 RX** (U0TXD pad; UART1 matrixed here)      |
+| D7  | 44   | **Link UART RX ← XIAO-C5 TX** (U0RXD pad)                           |
+| D8  | 7    | **microSD SCK** (Sense B2B)                                        |
+| D9  | 8    | **microSD MISO**                                                   |
+| D10 | 9    | **microSD MOSI**                                                  |
+| —   | 21   | **microSD CS** (Sense onboard) — **confirmed** (Seeed wiki + on-device)|
+
+- **microSD CS = GPIO21**, SCK/MISO/MOSI = 7/8/9 (verified: card mounts, DB loads from it). GPIO21 is
+  also the onboard user LED, so **the status LED is dropped** (`SCAN_LED_PIN = -1`); the host is
+  headless, LED cosmetic. The Sense SD + camera share one B2B SPI group — treat as one bus.
+- **Console is USB-CDC** (`ARDUINO_USB_CDC_ON_BOOT=1`), freeing the UART0 pads (43/44) for the link
+  via `HardwareSerial(1)`. Note: the S3 ROM boot log prints on GPIO43 at power-up → brief noise on the
+  C5 RX until the C5 flushes stale RX (self-recovers).
+- **Reserved for the deferred camera — DO NOT USE:** GPIO10–18 (DVP + XCLK/PCLK) and GPIO38–48
+  (VSYNC/HREF + SCCB SIOD/SIOC on 40/39). Nothing wired now; kept free so the camera drops in later.
+- **No battery-sense GPIO** (the CYD's input-only GPIO35 doesn't exist here) → host reports `bat=-1`.
+
+### 6b. XIAO ESP32-C5 (scanner)
+
+**SoC:** ESP32-C5 (RISC-V) · Wi-Fi 6 **dual-band 2.4 + 5 GHz** · BLE 5 · 802.15.4. **PlatformIO board
+id:** `seeed_xiao_esp32c5` (defines `ARDUINO_XIAO_ESP32C5`, which `src/c5/pins.h` branches on). Native
+USB-C (hwid `303A:1001` — **shares VID:PID with the S3**, so identify by `esptool chip-id` before
+flashing). The XIAO only breaks out GPIO **0, 1, 7, 8, 9, 10, 11, 12, 23, 24, 25** (8/9 strapping), so
+the DevKit's link pins (GPIO4/5) and GPS RX (GPIO15) had to move:
+
+| Signal                 | GPIO | Pad | Notes                                                    |
+|------------------------|------|-----|----------------------------------------------------------|
+| Link UART **TX** → host RX | 23 | **D4** (silk "SDA") | plain GPIO, matrixed to `HardwareSerial(1)`     |
+| Link UART **RX** ← host TX | 24 | **D5** (silk "SCL") | plain GPIO                                        |
+| **GPS RX** ← NEO-6M TXD | 1   | **D0** | C5 UART0, receive-only (TX=-1); GPIO0/1 double as XTAL_32K — fine with no 32 kHz crystal |
+
+> ⚠️ **Watch the D-pad ↔ GPIO mapping when wiring the link.** GPIO23 = pad **D4**, GPIO24 = pad **D5**
+> (not D2/D3). The link must **cross** TX↔RX — see §6c. Wiring it "straight" by pad position
+> (S3 D6→C5 D4, D7→D5) connects TX→TX/RX→RX and the link stays dead (this was the initial bring-up bug).
+> The C5 link keeps the `UART_CLK_SRC_XTAL` clocking (Wi-Fi PLL can't shift its baud), same as the DevKit.
+
+> **PSRAM note (risk #2):** the XIAO-C5 board def forces `-DBOARD_HAS_PSRAM`; this unit prints
+> `Failed to allocate dummy cacheline for PSRAM memory barrier!` at boot but runs fine (`src/c5/` doesn't
+> use PSRAM). Harmless; drop the flag via a local board-def override if a clean console is wanted.
+
+### 6c. Mini-build inter-board link (XIAO-S3 ⇄ XIAO-C5)
+
+Dedicated UART, **not** the USB-CDC console on either side. **As-wired and validated.** Link must cross.
+
+| Purpose         | XIAO-S3 side          | XIAO-C5 side          |
+|-----------------|-----------------------|-----------------------|
+| UART link TX→RX | **D6 / GPIO43**       | **D5 / GPIO24**       |
+| UART link RX←TX | **D7 / GPIO44**       | **D4 / GPIO23**       |
+| Common ground   | GND                   | GND                   |
+
+Firmware: S3 `hostlink::begin(rx=44, tx=43)`; C5 `pins.h` XIAO branch `LINK_TX_PIN 23` / `LINK_RX_PIN
+24`. Baud 115200 (`LINK_BAUD`). No `PROTOCOL_VERSION` change — all four firmwares stay link-compatible
+(v10). Keep leads short + mechanically solid (loose contacts pass pings but drop the detection burst).
+
+### 6d. DS3231 RTC (host I2C)
+
+| DS3231 | XIAO-S3 pin        | Notes                                                        |
+|--------|--------------------|--------------------------------------------------------------|
+| VCC    | **3V3**            | 3.3 V-safe                                                   |
+| GND    | **GND**            | common ground                                                |
+| SDA    | **D4 / GPIO5**     | `Wire` SDA — clear of SD (7/8/9) and the camera bus          |
+| SCL    | **D5 / GPIO6**     | `Wire` SCL                                                   |
+
+- I2C address **0x68** (detected on hardware). ZS-042 modules also expose an **AT24C32 EEPROM at
+  0x57** — ignored (firmware probes only 0x68). Firmware: `src/host_common/rtc.*` (direct-I2C BCD
+  read of regs 0x00–0x06, no RTClib), time source priority **3** (after phone > GPS), disciplined
+  (write-back) from phone/GPS at most hourly. `STATUS tsrc=3` = RTC keeping time.
+- ⚠️ **CR2032 trickle-charge hazard:** the common ZS-042 board has a charge resistor/diode for a
+  rechargeable **LIR2032**. With a non-rechargeable **CR2032** it can overheat/leak — fit a LIR2032
+  **or** remove the charge resistor.
+
+### 6e. Power & 5 GHz antenna
+
+- **Single cell, native 3.3 V (no boost).** LiPo → **TP4056** (`B±`) → `OUT±` → **XIAO-S3 BAT±** (host
+  runs from the TP4056's protected output). Power the **XIAO-C5, NEO-6M, DS3231 from the host's `3V3`
+  pin**; tie all grounds. **Do NOT** parallel the cell across both XIAO BAT pads (each has its own
+  charger). Charge via the **TP4056's own USB only** (not the XIAO USB at the same time). The
+  boost/step-up of the CYD build is **deleted** (XIAO is natively 3.3 V).
+- ⚠️ **5 GHz antenna (risk #3):** the stock XIAO-C5 antenna is **2.4 GHz-only**. The C5's reason to
+  exist is **5 GHz Wi-Fi 6** — fit a **dual-band 2.4/5 GHz u.FL antenna**. (Bring-up saw 5 GHz beacons
+  with the fitted antenna; validate `5G` counts > 0 before trusting 5 GHz coverage.)
+
+### 6f. Flashing the XIAO boards
+
+- Both native USB-C, `303A:1001`, auto-reset (no button press normally). **They share VID:PID with each
+  other and the odid-tx S3 → run `esptool chip-id` first** (S3 = "ESP32-S3 … PSRAM 8MB"; C5 = "ESP32-C5
+  … Wi-Fi 6 dual-band … 802.15.4"). COM numbers are not stable.
+- `PYTHONIOENCODING=utf-8 pio run -e xiao_s3 -t upload --upload-port COMxx` / `-e xiao_c5`.
+- If the C5's native `303A:1001` port doesn't enumerate: suspect a **charge-only USB-C cable** first
+  (use a data cable, direct to a PC port), then a first-flash manual download mode (hold BOOT, tap
+  RESET, release BOOT) per Espressif's USB-Serial/JTAG guide.

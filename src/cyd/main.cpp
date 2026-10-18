@@ -21,13 +21,20 @@
 #include <qrcode.h>
 #include "pins.h"
 #include "link_protocol.h"
-#include "phone.h"
-#include "webshare.h"
-#include "sigdb.h"
-#include "whitelist.h"
+#include "../host_common/phone.h"
+#include "../host_common/webshare.h"
+#include "../host_common/sigdb.h"
+#include "../host_common/whitelist.h"
 #include "touch.h"
-#include "logfilter.h"
-#include "power.h"
+#include "../host_common/logfilter.h"
+#include "../host_common/power.h"
+#include "../host_common/host_link.h"
+#include "../host_common/host_core.h"
+#include "../host_common/host_log.h"
+#include "../host_common/host_status.h"
+#include "../host_common/host_phone_cmds.h"
+#include "../host_common/host_board.h"
+#include "../host_common/host_ui.h"
 #include "logo.h"
 
 using namespace link_protocol;
@@ -42,15 +49,6 @@ static const char*       DEVICE_NAME = "COINTEL-FLO";
 static constexpr uint16_t UI_ACCENT = 0xA815;  // #AA00AA
 
 TFT_eSPI       tft = TFT_eSPI();
-HardwareSerial LinkSerial(1);  // UART1 on GPIO22/GPIO27
-FrameParser    parser;
-
-static void sendFrame(uint8_t type, const void* payload, uint16_t len) {
-  uint8_t out[MAX_FRAME];
-  uint16_t n = encodeFrame(type, (const uint8_t*)payload, len, out);
-  LinkSerial.write(out, n);
-  LinkSerial.flush();
-}
 
 static void setLed(bool r, bool g, bool b) {  // active low
   digitalWrite(LED_R_PIN, r ? LOW : HIGH);
@@ -73,49 +71,7 @@ static void initCommon() {
   ledcAttach(TFT_BL_PIN, 5000, 8);
   ledcWrite(TFT_BL_PIN, 255);        // full brightness until the saved level is applied
 
-  LinkSerial.setRxBufferSize(2048);
-  LinkSerial.begin(LINK_BAUD, SERIAL_8N1, LINK_RX_PIN, LINK_TX_PIN);
-}
-
-static const char* srcTag(const Detection& d) {
-  if (d.source == (uint8_t)Source::BleScan)   return "BLE";
-  if (d.source == (uint8_t)Source::WifiProbe) return "PRB";  // Wi-Fi client probe
-  if (d.source == (uint8_t)Source::Ieee802154) return "154";  // Zigbee / Thread
-  return d.channel > 14 ? "5G" : "2.4";
-}
-
-// Copy a device-controlled free-text field, replacing delimiter-breaking characters
-// (comma, tab, CR/LF and other control chars) with a space so plain delimiter-split
-// parsing of the tab-delimited DETS rows stays correct (the log uses jsonEscape instead).
-static void sanitizeField(char* dst, size_t cap, const char* src) {
-  size_t i = 0;
-  for (; i + 1 < cap && src[i]; i++) {
-    char c = src[i];
-    dst[i] = (c == ',' || (uint8_t)c < 0x20 || c == 0x7F) ? ' ' : c;
-  }
-  dst[i] = 0;
-}
-
-// Escape a device-controlled string for use inside a JSON string literal (no surrounding
-// quotes): " \ and control chars (<0x20, 0x7F) become escapes. Bounded and NUL-terminated;
-// stops before a whole escape sequence would overflow, so output is always valid JSON.
-static void jsonEscape(char* dst, size_t cap, const char* src) {
-  size_t o = 0;
-  for (size_t i = 0; src[i]; i++) {
-    uint8_t c = (uint8_t)src[i];
-    char esc[7];
-    size_t n;
-    if (c == '"' || c == '\\') { esc[0] = '\\'; esc[1] = (char)c; n = 2; }
-    else if (c == '\n') { memcpy(esc, "\\n", 2); n = 2; }
-    else if (c == '\r') { memcpy(esc, "\\r", 2); n = 2; }
-    else if (c == '\t') { memcpy(esc, "\\t", 2); n = 2; }
-    else if (c < 0x20 || c == 0x7F) { n = snprintf(esc, sizeof(esc), "\\u%04X", c); }
-    else { esc[0] = (char)c; n = 1; }
-    if (o + n + 1 > cap) break;
-    memcpy(dst + o, esc, n);
-    o += n;
-  }
-  if (cap) dst[o] = 0;
+  hostlink::begin(LINK_RX_PIN, LINK_TX_PIN);
 }
 
 #if LINK_MONITOR
@@ -170,56 +126,6 @@ void loop() {
 
 #else
 // ---------------------------------------------------------------- normal mode
-static constexpr int MAX_DET  = 96;
-static constexpr int MAX_SEEN = 400;
-
-// --- "Following me" detector (Phase 5, device-only). Tunables; these become NVS-settable in a
-// later increment. A device is FOLLOWING when it keeps showing up (persistence) while the
-// phone's GPS says we moved far from where it was first seen (span) across several distinct
-// places (fixes). Without GPS movement a device can only reach PERSISTENT. ---
-#define FOLLOW_WINDOW_MS     15000UL   // presence-history bucket (32-bit mask -> ~8 min)
-#define FOLLOW_TTL_MS        300000UL  // drop a device unseen this long (> the C5's 30 s TTL)
-#define FOLLOW_SPAN_M        400.0f    // min GPS span (m) over which a device must track to FOLLOW
-#define FOLLOW_FIXES         3         // ...across at least this many distinct GPS fixes
-#define FOLLOW_PERSIST_FOLLOW 4        // ...and >= this many present windows (popcount)
-#define FOLLOW_PERSIST_ONLY  6         // PERSISTENT (time only, no GPS needed): present windows
-#define FOLLOW_PERSIST_B1    3         // persistence buckets (windows present)
-#define FOLLOW_PERSIST_B2    6
-#define FOLLOW_PERSIST_B3    12
-#define FOLLOW_SPAN_B1       150.0f    // span buckets (metres)
-#define FOLLOW_SPAN_B2       400.0f
-#define FOLLOW_SPAN_B3       1000.0f
-#define FOLLOW_FIXES_B1      2         // distinct-fix buckets
-#define FOLLOW_FIXES_B2      4
-#define FOLLOW_FIXES_B3      8
-#define FOLLOW_RSSI_SPREAD   12        // max-min RSSI (dB) counted as "stable" ...
-#define FOLLOW_SPAN_MIN      150.0f    // min span (m) before the RSSI-stability bonus applies
-#define FOLLOW_W_PERSIST     10        // score weight per persistence bucket (max 30)
-#define FOLLOW_W_SPAN        12        // per span bucket (max 36)
-#define FOLLOW_W_FIXES       6         // per fixes bucket (max 18)
-#define FOLLOW_W_STABLE      16        // RSSI-stability bonus
-#define FOLLOW_W_THREAT      10        // bonus when the sigdb tier is above None
-#define FOLLOW_QUANT         1e4f      // fix quantum: 1e-4 deg (~11 m)
-
-Detection          g_dets[MAX_DET];
-sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
-int                g_detCount = 0;
-// Decoded Remote-ID broadcasts (Reply::RemoteId), keyed by emitter MAC. Same lifecycle as g_dets:
-// reset at the top of each requestScan() so it mirrors the current burst.
-static constexpr int MAX_RID = 8;
-RemoteId           g_rids[MAX_RID];
-int                g_ridStoreCount = 0;
-// "Unknown" sentinels in RemoteId fields (match the C5 decoder's values; tested by VALUE, not `have`).
-constexpr int32_t  RID_LL_UNK  = 0;      // lat/lon 0 = unknown
-constexpr int16_t  RID_ALT_UNK = -1000;  // height / geodetic altitude -1000 = unknown
-constexpr uint16_t RID_HDG_UNK = 361;    // heading 361 = unknown
-constexpr size_t   LOG_ID_ESC  = 128;    // escaped uas/operator ID buffer (20 chars x up to 6x escape + NUL)
-static const RemoteId* ridByMac(const uint8_t* mac) {
-  for (int i = 0; i < g_ridStoreCount; i++)
-    if (memcmp(g_rids[i].mac, mac, 6) == 0) return &g_rids[i];
-  return nullptr;
-}
-bool               g_linkOk   = false;
 
 Touch    g_touch;
 bool     g_touchOk    = false;   // calibration loaded/valid -> touch selection enabled
@@ -303,22 +209,6 @@ static BtnEv buttonEvent() {
   return ev;
 }
 
-// Send a Ping and wait briefly for the C5's Pong — used to light the link dot on the
-// menu BEFORE any scan is started. Safe when idle: the C5 answers Ping immediately
-// (scanning is async and never blocks its link reader).
-static bool pingC5(uint32_t timeoutMs = 400) {
-  while (LinkSerial.available()) LinkSerial.read();
-  parser.reset();
-  sendFrame((uint8_t)Command::Ping, nullptr, 0);
-  uint32_t t0 = millis();
-  while (millis() - t0 < timeoutMs) {
-    while (LinkSerial.available())
-      if (parser.feed(LinkSerial.read()) && parser.type() == (uint8_t)Reply::Pong) return true;
-    delay(2);
-  }
-  return false;
-}
-
 // --- Backlight brightness: LEDC PWM on TFT_BL_PIN, persisted in NVS ---
 static void applyBrightness() {
   ledcWrite(TFT_BL_PIN, map(g_brightness, 0, 100, 20, 255));  // floor so never fully dark
@@ -332,42 +222,6 @@ static void loadBrightness() {
 static void saveBrightness() {
   Preferences p; p.begin("cydui", false);
   p.putUChar("bright", g_brightness);
-  p.end();
-}
-
-// --- Scan-source enable mask (ScanConfig.sources), persisted in NVS. The "2.4" toggle
-// covers probe-request capture too (both are 2.4 GHz Wi-Fi). 802.15.4 has its own toggle. ---
-static uint8_t g_srcMask = (MASK_ALL & ~MASK_154);
-static constexpr uint8_t SRC_24_BITS = MASK_WIFI24 | MASK_PROBE;
-static void loadSrcMask() {
-  Preferences p; p.begin("cydui", true);
-  g_srcMask = p.getUChar("srcmask", (MASK_ALL & ~MASK_154));
-  p.end();
-}
-static void saveSrcMask() {
-  Preferences p; p.begin("cydui", false);
-  p.putUChar("srcmask", g_srcMask);
-  p.end();
-}
-
-// --- Background scan: when ON the scan cycle keeps running on any (non-SD-heavy) screen, headless,
-// so detection/logging continues while the user is on the menu / Phone Link. Persisted in NVS. ---
-// Default ON. BGDEF_GEN (like DB_GEN) force-flips already-provisioned units to ON exactly once: bump it
-// only to re-apply a new default (it overwrites a user's saved choice).
-static constexpr uint32_t BGDEF_GEN = 1;
-static bool g_bgScan = true;
-static void loadBgScan() {
-  Preferences p; p.begin("cydui", false);
-  if (p.getULong("bgdef_gen", 0) < BGDEF_GEN) {
-    p.putBool("bgscan", true);
-    p.putULong("bgdef_gen", BGDEF_GEN);
-  }
-  g_bgScan = p.getBool("bgscan", true);
-  p.end();
-}
-static void saveBgScan() {
-  Preferences p; p.begin("cydui", false);
-  p.putBool("bgscan", g_bgScan);
   p.end();
 }
 
@@ -425,108 +279,6 @@ static bool bannerTapped() {
 }
 
 SPIClass  sdSPI(HSPI);
-bool      g_sdOk = false;
-// Legacy CSV header (schema v5): only used to recognize header-only old .csv files in the sweep.
-static const char* kLogHeader =
-    "epoch,ms_since_boot,lat,lon,source,mac,rssi,channel,ie,cid,uuid,pan,name,score,tier,signature";
-static constexpr size_t LOG_LINE = 512;  // max log line (NDJSON lines are ~100-330 B; worst case < 512)
-
-struct SeenKey { uint8_t source; uint8_t mac[6]; uint16_t pan; };
-
-// One log stream = one live NDJSON session file + its own first-seen dedup set. Two streams:
-//   g_fg = foreground/manual sessions (the on-screen scan):  /logs/sess-NNNNN.jsonl -> /logs/YYYYMMDD-HHMMSS.jsonl
-//   g_bg = headless background scan (g_screen != SCR_SCAN):  /logs/bg-NNNNN.jsonl   -> /logs/bg-YYYYMMDD-HHMMSS.jsonl
-// The file is created lazily on the first row; the counter name is renamed to a date-time name once
-// the phone syncs the clock (renameSessionOnSync). Each stream dedups independently (MAX_SEEN each).
-struct LogStream {
-  char     path[48];   // current session file (NDJSON)
-  bool     named;      // true once renamed to the date-time form
-  bool     started;    // true once the file is actually created (first row)
-  SeenKey  seen[MAX_SEEN];
-  int      seenCount;
-  uint32_t lastRotateMs;  // millis() of the last session start (dense-area auto-rotate guard)
-};
-// When a stream's per-session dedup set (MAX_SEEN) fills, unknown devices can no longer be deduped,
-// so logNewDetections() skips them (never re-logs the same MAC every cycle) and rolls the session to
-// a fresh file so capture resumes. This caps that auto-rotation to at most once per interval so a
-// dense RF drive can't thrash out many tiny files.
-static constexpr uint32_t SESS_ROTATE_MIN_MS = 5UL * 60 * 1000;  // >= 5 min between dense-area rotations
-static LogStream g_fg;  // zero-init (.bss); path set by openSession()
-static LogStream g_bg;
-static char g_streamingPath[48] = "";  // file currently being streamed to a phone (BLE); never auto-deleted
-
-// Headless background cycle = scan polling while NOT on the scanner screen (only runs when bg is on).
-static bool bgCtx() { return g_bgScan && g_screen != SCR_SCAN; }
-// The stream the current screen logs to / "current session" refers to.
-static LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
-// Keep the Wi-Fi download server's "current session" pointed at the active stream.
-static void syncSharePath() {
-  static char last[48] = "";
-  const char* cur = activeStream().path;
-  if (strcmp(last, cur) == 0) return;
-  strncpy(last, cur, sizeof(last) - 1);
-  webshare::setLogPath(cur);
-}
-
-// Short-address 15.4 devices are only unique within a PAN, so key them by panId too
-// (pan = 0 for every other source, which keeps their key source+MAC).
-static uint16_t seenPan(const Detection& d) {
-  return (d.source == (uint8_t)Source::Ieee802154 && !(d.flags & FLAG_154_EXTENDED)) ? d.panId : 0;
-}
-static bool seenContains(const LogStream& st, const Detection& d) {
-  for (int i = 0; i < st.seenCount; i++)
-    if (st.seen[i].source == d.source && memcmp(st.seen[i].mac, d.mac, 6) == 0 &&
-        st.seen[i].pan == seenPan(d)) return true;
-  return false;
-}
-static void seenAdd(LogStream& st, const Detection& d) {
-  if (st.seenCount >= MAX_SEEN) return;
-  st.seen[st.seenCount].source = d.source;
-  st.seen[st.seenCount].pan = seenPan(d);
-  memcpy(st.seen[st.seenCount].mac, d.mac, 6);
-  st.seenCount++;
-}
-
-static void countBands(int& n24, int& n5, int& nble, int& nprb, int& n154) {
-  n24 = n5 = nble = nprb = n154 = 0;
-  for (int i = 0; i < g_detCount; i++) {
-    switch (g_dets[i].source) {
-      case (uint8_t)Source::BleScan:   nble++; break;
-      case (uint8_t)Source::WifiProbe: nprb++; break;
-      case (uint8_t)Source::Ieee802154: n154++; break;
-      default: (g_dets[i].channel > 14 ? n5 : n24)++; break;
-    }
-  }
-}
-
-// --- C5 behavioral-detector flags (Detection.flags, protocol v6). Notable flags carry a minimum
-// threat tier (applied after sigdb::score), a short on-screen label that overrides the sigdb
-// signature label, and a lowercase token for the NDJSON "flags" key. iBeacon is informational
-// only (no tier bump). Order = label priority when several are set. ---
-struct FlagRule { uint16_t bit; sigdb::Tier floor; const char* label; const char* token; };
-static const FlagRule kFlagRules[] = {
-  { FLAG_BLE_FINDMY,      sigdb::Tier::Suspect, "Find My",    "findmy"     },
-  { FLAG_WIFI_PWNAGOTCHI, sigdb::Tier::Likely,  "Pwnagotchi", "pwnagotchi" },
-  { FLAG_WIFI_EVILTWIN,   sigdb::Tier::Likely,  "Evil Twin",  "eviltwin"   },
-  { FLAG_BLE_ODID,        sigdb::Tier::Suspect, "Drone RID",  "droneid"    },
-  { FLAG_BLE_IBEACON,     sigdb::Tier::None,    "iBeacon",    "ibeacon"    },
-};
-static constexpr uint16_t FLAGS_NOTABLE = FLAG_BLE_IBEACON | FLAG_BLE_FINDMY | FLAG_WIFI_PWNAGOTCHI |
-                                          FLAG_WIFI_EVILTWIN | FLAG_BLE_ODID;
-static char g_flagLabel[MAX_DET][16];  // aligned with g_dets; "" when no notable flag
-
-// --- Threat categories. A SquachWatch-style grouping of each device's sigdb label + behavioral
-// flags into a small fixed taxonomy, used for the HOME-menu category readout + drill-down and
-// streamed to the phone (DETS v5) so the web app shows the same breakdown. Derived on the CYD so
-// the mapping lives in one place. ---
-enum Category : uint8_t {
-  CAT_NONE = 0, CAT_FLOCK, CAT_AXON, CAT_ALPR, CAT_CAM, CAT_RING, CAT_RAVEN,
-  CAT_GLASS, CAT_TRACKER, CAT_DRONE, CAT_DEAUTH, CAT_FLIPPER, CAT_SKIM, CAT_OTHER, CAT_N
-};
-static const char* const kCatName[CAT_N] = {
-  "", "Flock", "Axon", "ALPR", "Cam", "Ring", "Raven",
-  "Glass", "Tracker", "Drone", "Deauth", "Flipper", "Skim", "Other"
-};
 // Per-category tile colours (RGB565), approximating the web app's CAT_COL palette (webapp/js/config.js)
 // so the HOME threat readout reads the same hue per category on both the device and the phone — the
 // project's "reuse CAT_COL anywhere categories appear" consistency directive. The TFT's 16-bit gamut
@@ -566,177 +318,6 @@ static const char* catDescription(int c) {
     default:          return "";
   }
 }
-static uint8_t g_category[MAX_DET];  // aligned with g_dets; filled by computeScores()
-static Category categoryOf(int i);   // defined after detLabel() (it reads the resolved label)
-
-// '+'-joined token list of the notable flags in `flags` ("" if none).
-static void flagTokens(uint16_t flags, char* out, size_t cap) {
-  size_t o = 0;
-  if (cap) out[0] = 0;
-  for (const FlagRule& r : kFlagRules) {
-    if (!(flags & r.bit)) continue;
-    int w = snprintf(out + o, cap - o, o ? "+%s" : "%s", r.token);
-    if (w < 0 || (size_t)w >= cap - o) { out[o] = 0; break; }
-    o += w;
-  }
-}
-
-// Label to show for detection i: the flag label when one exists, else the sigdb signature label.
-static const char* detLabel(int i) {
-  return g_flagLabel[i][0] ? g_flagLabel[i] : sigdb::labelFor(g_score[i]);
-}
-
-// Map one detection to a category. Behavioral flags win over the sigdb label (they are the most
-// specific signal); otherwise the roster label is matched by substring (labels are the
-// /signatures.csv strings, e.g. "Flock IEEE", "Axon-Body", "ALPR-Motorola", "Wyze", "Ring").
-static Category categoryOf(int i) {
-  uint16_t fl = g_dets[i].flags;
-  if (fl & FLAG_BLE_ODID)                                return CAT_DRONE;
-  if (fl & FLAG_BLE_FINDMY)                              return CAT_TRACKER;
-  if (fl & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN))  return CAT_DEAUTH;
-  const char* l = detLabel(i);
-  if (!l || !l[0]) return CAT_NONE;
-  if (strstr(l, "Flock"))       return CAT_FLOCK;
-  if (strstr(l, "Axon"))        return CAT_AXON;
-  if (strstr(l, "ALPR"))        return CAT_ALPR;
-  if (strstr(l, "Raven"))       return CAT_RAVEN;
-  if (strstr(l, "Ring"))        return CAT_RING;
-  if (strstr(l, "OpenDroneID")) return CAT_DRONE;
-  if (strstr(l, "Tile") || strstr(l, "SmartTag") || strstr(l, "FindMy") || strstr(l, "Find My"))
-    return CAT_TRACKER;
-  if (strstr(l, "RayBan") || strstr(l, "Meta") || strstr(l, "Luxottica") ||
-      strstr(l, "Spectacles") || strstr(l, "Snap"))
-    return CAT_GLASS;
-  if (strstr(l, "Flipper"))     return CAT_FLIPPER;
-  if (strstr(l, "Pineapple") || strstr(l, "Deauth") || strstr(l, "pwned") ||
-      strstr(l, "Pwnagotchi") || strstr(l, "Hak5"))
-    return CAT_DEAUTH;
-  if (strstr(l, "Wyze") || strstr(l, "Hikvision") || strstr(l, "Arlo") || strstr(l, "Blink") ||
-      strstr(l, "Tuya") || strstr(l, "Realtek") || strstr(l, "Amazon-Cam") || strstr(l, "Verkada") ||
-      strstr(l, "Avigilon") || strstr(l, "Axis") || strstr(l, "Nest") || strstr(l, "Reolink") ||
-      strstr(l, "SimpliSafe") || strstr(l, "Cam"))
-    return CAT_CAM;
-  if (strstr(l, "Skim"))        return CAT_SKIM;
-  return CAT_OTHER;
-}
-
-// Score every current detection against the signature DB (aligned into g_score[]), then raise
-// the tier to at least each set flag's floor and record the flag label.
-static void computeScores() {
-  for (int i = 0; i < g_detCount; i++) {
-    sigdb::score(g_dets[i], g_score[i]);
-    g_flagLabel[i][0] = 0;
-    for (const FlagRule& r : kFlagRules) {
-      if (!(g_dets[i].flags & r.bit)) continue;
-      if (r.floor > g_score[i].tier) g_score[i].tier = r.floor;
-      if (!g_flagLabel[i][0]) snprintf(g_flagLabel[i], sizeof(g_flagLabel[i]), "%s", r.label);
-    }
-    g_category[i] = (uint8_t)categoryOf(i);  // after score+flags so detLabel() is final
-  }
-}
-
-// --- Aggregate C5 events (Status.deauth_recent / evil_count / rid_count, protocol v6). The values
-// are refreshed by every requestScan(); an alert is held for EVENT_HOLD_MS so a one-cycle burst
-// stays visible across the ~2 s poll cadence. Receive-side only: these are counts of frames the C5
-// OBSERVED, nothing is transmitted. ---
-#define DEAUTH_ALERT      20        // deauth/disassoc frames in the C5's last ~1 s that raise the alert
-#define EVENT_HOLD_MS     6000UL    // keep an alert up this long after the last trigger
-#define EVENT_LOG_GAP_MS  30000UL   // log at most one event line per type per this interval
-static uint16_t g_deauthRecent = 0;
-static uint8_t  g_evilCount = 0, g_ridCount = 0;
-
-// Unified position: phone GPS is PREFERRED, the C5's onboard NEO-6M fix (Status, v9) is the
-// FALLBACK. With no onboard GPS the Status carries gpsFix=0, so this is phone-only as before.
-static bool    g_onbValid = false;
-static float   g_onbLat = 0, g_onbLon = 0;
-static uint8_t g_onbSats = 0;   // satellites the onboard NEO-6M reports (0 = none; nonzero even pre-fix during acquisition)
-static bool  posHasFix() { return phone::hasGps() || g_onbValid; }
-static float posLat()    { return phone::hasGps() ? phone::lat() : g_onbLat; }
-static float posLon()    { return phone::hasGps() ? phone::lon() : g_onbLon; }
-static int   posSource() { return phone::hasGps() ? 1 : (g_onbValid ? 2 : 0); }  // 0 none / 1 phone / 2 onboard
-
-// Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
-// is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
-// is latched on first receipt and free-runs on the CYD's millis() (refreshed whenever a newer GPS
-// epoch arrives, correcting drift). GPS gives UTC only, so we add the last phone tz offset (persisted
-// in NVS) to show LOCAL time — matching phone::epochNow()'s local convention; 0 offset (never synced
-// to a phone) means the fallback reads UTC until the first-ever phone sync teaches it the zone.
-static uint32_t g_gpsEpochUtc = 0;   // last UTC epoch from Status.gpsEpoch (0 = never)
-static uint32_t g_gpsEpochAtMs = 0;  // millis() when it was latched
-static bool     timeHasSync() { return phone::hasTime() || g_gpsEpochUtc != 0; }
-static int      timeSource()  { return phone::hasTime() ? 1 : (g_gpsEpochUtc ? 2 : 0); }  // 0 none / 1 phone / 2 GPS
-static uint32_t epochLocal() {
-  if (phone::hasTime()) return phone::epochNow();
-  if (g_gpsEpochUtc) {
-    uint32_t utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
-    return utc - (uint32_t)(phone::tzOffsetMin() * 60);  // UTC-local offset -> local
-  }
-  return 0;
-}
-static uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
-static uint8_t  g_evilShown = 0;
-static uint32_t g_deauthUntil = 0, g_evilUntil = 0;  // millis() deadlines (0 = never raised)
-static bool deauthAlertActive() { return g_deauthUntil && (int32_t)(g_deauthUntil - millis()) > 0; }
-static bool evilAlertActive()   { return g_evilUntil   && (int32_t)(g_evilUntil   - millis()) > 0; }
-static bool eventAlertActive()  { return deauthAlertActive() || evilAlertActive(); }
-
-// Fill idx[0..g_detCount) with detection indices sorted threat-tier-first then
-// RSSI — the order shown on screen and streamed to the phone. Returns the count.
-static int buildSorted(int* idx) {
-  for (int i = 0; i < g_detCount; i++) idx[i] = i;
-  std::sort(idx, idx + g_detCount, [](int a, int b) {
-    if (g_score[a].tier != g_score[b].tier) return g_score[a].tier > g_score[b].tier;
-    return g_dets[a].rssi > g_dets[b].rssi;
-  });
-  return g_detCount;
-}
-
-// One device = one MAC, merged across sources (2.4 / 5G / BLE / PRB). Built from the
-// sorted detections; ordered tier-first then strongest RSSI. Shared by the on-screen
-// list and the phone DETS stream.
-struct DevGroup {
-  uint8_t  mac[6];
-  int      tier;      // max tier across members
-  int      score;     // max member sigdb score (0-100); drives the HOME tile threat-score badge
-  int      bestRssi;  // strongest member RSSI
-  int      rep;       // g_dets index of the strongest member (colour/source hint)
-  int      nameIdx;   // g_dets index of the first member with a name, else -1
-  uint32_t ie;        // first non-zero IE fingerprint, else 0
-  uint16_t companyId; // first non-zero BLE manufacturer company ID across members, else 0 (display/web)
-  bool     whitelisted;  // matches a /whitelist.csv rule (muted; excluded from threat counts)
-  char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
-  char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
-  uint16_t flags;     // union of the notable C5 detector flags (FLAGS_NOTABLE) across members
-  uint8_t  srcMask;   // union of srcType bits (2.4/5G/BLE/PRB/154) across members; computed at
-                      // build time so the live-view/snapshot filter never depends on the transient
-                      // g_dets table (which requestScan() zeroes, and an aborted scan leaves empty)
-};
-static int      g_sortIdx[MAX_DET];   // detections sorted tier-first then RSSI (see buildGroups)
-static DevGroup g_groups[MAX_DET];
-static int      g_groupCount = 0;
-
-// Name to show for a device: its advertised name, or — when it has none — its MAC as text, so
-// nameless devices stay individually identifiable instead of all collapsing to one "<hidden>".
-// Returns either a pointer into g_dets[] (persistent) or a single static buffer; every caller
-// consumes the result (copies/draws it) before the next call, so one buffer is safe.
-static const char* groupName(const DevGroup* g) {
-  if (g && g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) return g_dets[g->nameIdx].name;
-  static char buf[28];  // "<vendor> AA:BB" or "AA:BB:CC:DD:EE:FF" + NUL
-  if (!g) { snprintf(buf, sizeof(buf), "?"); return buf; }
-  // Nameless: if the OUI resolves to a known vendor (sigdb 'vendor,' rule), show "<vendor> <tail>" —
-  // human-readable yet still distinguishable between same-vendor devices. Only for a real
-  // (globally-administered) MAC that isn't a BLE rotating RPA, so randomized addresses can't be
-  // mislabelled. Vendor lookup is display-only; it never affects scoring. Falls back to the raw MAC.
-  bool realOui = (g->mac[0] & 0x02) == 0 &&                                     // IEEE globally-administered
-                 !((g->srcMask & MASK_BLE) && (g->mac[0] & 0xC0) == 0x40);      // not a BLE RPA (top bits 01)
-  const char* v = realOui ? sigdb::vendorFor(g->mac) : "";
-  if (v && v[0])
-    snprintf(buf, sizeof(buf), "%.14s %02X:%02X", v, g->mac[4], g->mac[5]);
-  else
-    snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-             g->mac[0], g->mac[1], g->mac[2], g->mac[3], g->mac[4], g->mac[5]);
-  return buf;
-}
 
 // --- Scanner screen (SCR_SCAN) state. The visible list is a filtered view (g_scanView) of either
 // the live g_groups or, while the view is frozen (PAUSE), a snapshot (g_frozenRows). Bounded static
@@ -745,7 +326,6 @@ struct ScanRow {
   uint8_t mac[6]; char name[20]; char tag[12]; int16_t rssi;
   uint8_t tier, source, channel, srcMask; bool whitelisted;
 };
-static bool     g_scanActive = false;   // C5 polling on (START/STOP); independent of the screen
 static bool     g_viewFrozen = false;   // list frozen on a snapshot while scanning continues
 static uint8_t  g_lvType   = 0x1F;      // live filter srcType bits 2.4/5G/BLE/PRB/154
 static bool     g_lvThreat = false;
@@ -755,1289 +335,8 @@ static uint8_t  g_scanView[MAX_DET];    // filtered index into g_groups (live) O
 static int      g_scanViewN = 0;
 static uint8_t  g_scanRowMac[6];        // device the row-action / detail screens target
 static int      g_scanRowSel = 0, g_sfSel = 0, g_sfOff = 0, g_confirmSel = 0;
-static uint32_t g_lastCycleMs = 0;
-// Scan-poll cadence + link stickiness. The C5 is a continuous scanner that cannot service the link
-// while its Wi-Fi scan phase runs (a multi-second busy window), so a poll landing in that window
-// gets no reply. That is a BUSY MISS, not a link failure: we keep the last table/view, don't flash
-// the link dot, and retry soon instead of after the full cadence. The link only counts as DOWN once
-// no successful exchange has happened for LINK_STICKY_MS (covers the longest observed busy window).
-static constexpr uint32_t SCAN_CYCLE_MS  = 2000;   // normal poll spacing
-static constexpr uint32_t SCAN_RETRY_MS  = 400;    // quick re-poll after a busy miss (catch the C5 free)
-static constexpr uint32_t SCAN_CYCLE_DOWN_MS = 5000; // headless bg-scan poll spacing when the C5 link is down
-                                                     // (each poll costs ~800ms of no-reply wait; back off so menus stay snappy)
-static constexpr uint32_t LINK_STICKY_MS = 8000;   // treat the link as up this long after the last reply
-static uint32_t g_lastLinkOkMs = 0;                // millis() of the last successful scan exchange / ping
 static const char* g_scanMsg = nullptr; static uint16_t g_scanMsgCol = TFT_GREEN;  // state-line feedback
-
-static uint8_t srcTypeOf(const char* tag);  // fwd decl (defined below with the view helpers)
-
-static int buildGroups() {
-  buildSorted(g_sortIdx);
-  int n = 0;
-  for (int r = 0; r < g_detCount; r++) {
-    int i = g_sortIdx[r];
-    const Detection& d = g_dets[i];
-    int gi = -1;
-    for (int k = 0; k < n; k++)
-      if (memcmp(g_groups[k].mac, d.mac, 6) == 0) { gi = k; break; }
-    if (gi < 0) {
-      gi = n++;
-      DevGroup& g = g_groups[gi];
-      memcpy(g.mac, d.mac, 6);
-      g.tier = (int)g_score[i].tier; g.score = g_score[i].score; g.bestRssi = d.rssi; g.rep = i;
-      g.nameIdx = -1; g.ie = 0; g.companyId = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0;
-    }
-    DevGroup& g = g_groups[gi];
-    if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
-    if ((int)g_score[i].score > g.score) g.score = (int)g_score[i].score;
-    if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
-    if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
-    if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
-    g.flags |= (uint16_t)(d.flags & FLAGS_NOTABLE);
-    g.srcMask |= (uint8_t)(1u << srcTypeOf(srcTag(d)));
-  }
-  // Whitelist check per device (before the sort, which uses it): union of member sources,
-  // first company ID / service UUID.
-  static const uint8_t zeroSvc[16] = {0};
-  for (int k = 0; k < n; k++) {
-    DevGroup& g = g_groups[k];
-    uint8_t bits = 0; uint16_t cid = 0; const uint8_t* svc = zeroSvc;
-    for (int r = 0; r < g_detCount; r++) {
-      const Detection& d = g_dets[g_sortIdx[r]];
-      if (memcmp(d.mac, g.mac, 6) != 0) continue;
-      bits |= (uint8_t)(1u << d.source);
-      if (!cid) cid = d.companyId;
-      if (svc == zeroSvc) for (int j = 0; j < 16; j++) if (d.svc[j]) { svc = d.svc; break; }
-    }
-    g.whitelisted = whitelist::match(g.mac, g.nameIdx >= 0 ? g_dets[g.nameIdx].name : nullptr,
-                                     cid, svc, bits);
-    g.companyId = cid;  // first company ID across members (for the detail screen + web maker label)
-  }
-  std::sort(g_groups, g_groups + n, [](const DevGroup& a, const DevGroup& b) {
-    if (a.whitelisted != b.whitelisted) return !a.whitelisted;  // muted devices sink
-    if (a.tier != b.tier) return a.tier > b.tier;
-    return a.bestRssi > b.bestRssi;
-  });
-  // Per-group source strings, built once per cycle: distinct tags only (exact compare),
-  // strongest first. tag = "2.4+PRB" for the screen, srcs = "2.4:-41,PRB:-55" for the phone.
-  for (int k = 0; k < n; k++) {
-    DevGroup& g = g_groups[k];
-    g.tag[0] = 0; g.srcs[0] = 0;
-    const char* seen[4]; int ns = 0;
-    size_t tl = 0, sl = 0;
-    for (int r = 0; r < g_detCount && ns < 4; r++) {
-      const Detection& d = g_dets[g_sortIdx[r]];
-      if (memcmp(d.mac, g.mac, 6) != 0) continue;
-      const char* t = srcTag(d);
-      bool dup = false;
-      for (int s = 0; s < ns; s++) if (strcmp(seen[s], t) == 0) { dup = true; break; }
-      if (dup) continue;
-      seen[ns++] = t;
-      int w = snprintf(g.tag + tl, sizeof(g.tag) - tl, tl ? "+%s" : "%s", t);
-      if (w > 0 && (size_t)w < sizeof(g.tag) - tl) tl += w; else g.tag[tl] = 0;
-      w = snprintf(g.srcs + sl, sizeof(g.srcs) - sl, sl ? ",%s:%d" : "%s:%d", t, d.rssi);
-      if (w > 0 && (size_t)w < sizeof(g.srcs) - sl) sl += w; else g.srcs[sl] = 0;
-    }
-  }
-  g_groupCount = n;
-  return n;
-}
-
-// Category of a whole device (one MAC = one DevGroup). Behavioral flags (unioned across the
-// device's members in g.flags) win; otherwise the category of its strongest-scoring member.
-static bool isFollowing(const uint8_t* mac);  // fwd: defined with the follow-state helpers below
-
-static Category groupCategory(const DevGroup& g) {
-  Category c;
-  if      (g.flags & FLAG_BLE_ODID)                              c = CAT_DRONE;
-  else if (g.flags & FLAG_BLE_FINDMY)                            c = CAT_TRACKER;
-  else if (g.flags & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN)) c = CAT_DEAUTH;
-  else {
-    int best = -1;
-    for (int i = 0; i < g_detCount; i++)
-      if (memcmp(g_dets[i].mac, g.mac, 6) == 0 && (best < 0 || g_score[i].score > g_score[best].score)) best = i;
-    c = best >= 0 ? (Category)g_category[best] : CAT_OTHER;
-  }
-  // AirTag/Tile/SmartTag trackers are everywhere in daily life; counting every one as a threat
-  // buries the real signal. Treat a tracker as the TRACKER threat category only when it is actually
-  // FOLLOWING (ftier 2 = tracked across >=FOLLOW_SPAN_M of the GPS route); otherwise it drops out of
-  // the HOME readout, the drill-down list, and the phone breakdown (all derive from this function).
-  if (c == CAT_TRACKER && !isFollowing(g.mac)) return CAT_NONE;
-  return c;
-}
-
-// Per-category live threat tally over the device groups. Counts only non-whitelisted devices at
-// tier >= Suspect (same alarm basis as countTiers); records the worst tier seen per category so
-// the readout can colour each chip. Returns the total threat devices.
-static int countCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N]) {
-  for (int c = 0; c < CAT_N; c++) { cnt[c] = 0; worstTier[c] = 0; scoreMax[c] = 0; }
-  int total = 0;
-  for (int k = 0; k < g_groupCount; k++) {
-    const DevGroup& g = g_groups[k];
-    if (g.whitelisted || g.tier < (int)sigdb::Tier::Suspect) continue;
-    Category c = groupCategory(g);
-    cnt[c]++;
-    if (g.tier > worstTier[c]) worstTier[c] = g.tier;
-    if (g.score > scoreMax[c]) scoreMax[c] = g.score;
-    total++;
-  }
-  return total;
-}
-
-static int countMuted() {
-  int m = 0;
-  for (int k = 0; k < g_groupCount; k++) if (g_groups[k].whitelisted) m++;
-  return m;
-}
-
-// ---- Following-me state (one entry per MAC, bounded, static; CYD loop is single-threaded) ----
-struct FollowState {
-  uint8_t  mac[6];
-  uint16_t sightings;
-  uint32_t firstMs, lastMs;
-  uint32_t windowMask;      // 1 bit per FOLLOW_WINDOW_MS, bit0 = window baseWin (newest)
-  uint8_t  baseWin;         // window index (mod 256) of bit0
-  int8_t   rssiMin, rssiMax;
-  float    anchorLat, anchorLon;  // first GPS fix seen at (NAN until a fix)
-  float    maxSpanM;        // farthest anchor->current distance seen
-  int32_t  lastQLat, lastQLon;    // last counted quantized fix
-  uint8_t  distinctFixes;
-  uint8_t  score;           // 0..100
-  uint8_t  ftier;           // 0 none / 1 PERSISTENT / 2 FOLLOWING
-  uint8_t  flags;           // FF_ACTIVE | FF_HADGPS
-};
-static constexpr uint8_t FF_ACTIVE = 1, FF_HADGPS = 2;
-static FollowState g_follow[MAX_DET];
-static int         g_followCount = 0;
-static int         g_followN     = 0;   // devices currently FOLLOWING
 static bool        g_followFromHome = false;  // follow drill-down opened from the HOME alert band (Back -> HOME)
-
-// Follower-ALERT feature flag (temporarily off). The follow DETECTION keeps running in full —
-// updateFollowState()/computeFollowScores() still set each device's ftier/score, so isFollowing()
-// and the follow-gated TRACKER category behave exactly as before. This flag only suppresses the
-// user-facing follower SURFACES: the count, the magenta banners (scan + HOME), the magenta LED,
-// STATUS fol, the evt:follow log line, the DETS follow fields, and the drill-down. Flip to true to
-// restore the full follower UX unchanged. Disabled for now because the follow metric (anchor-radial
-// GPS span in computeFollowScores) over-fires on fixed infrastructure passed while driving — a
-// co-travel rework is planned before re-enabling. [[phase5-followme-direction]]
-static constexpr bool FOLLOW_ALERTS_ENABLED = false;
-// Follower count as surfaced to UI / STATUS / logging — 0 while the alerts feature is disabled.
-static inline int followAlertN() { return FOLLOW_ALERTS_ENABLED ? g_followN : 0; }
-
-static void resetFollow() {
-  memset(g_follow, 0, sizeof(g_follow));
-  g_followCount = 0; g_followN = 0;
-}
-
-static const FollowState* findFollow(const uint8_t* mac) {
-  for (int i = 0; i < g_followCount; i++)
-    if (memcmp(g_follow[i].mac, mac, 6) == 0) return &g_follow[i];
-  return nullptr;
-}
-
-// True only when this MAC is currently FOLLOWING (ftier 2). Used to gate the TRACKER category so
-// stationary/passing AirTags don't alarm — only a tracker tailing the user's route does.
-static bool isFollowing(const uint8_t* mac) {
-  const FollowState* f = findFollow(mac);
-  return f && f->ftier == 2;
-}
-
-static void updateFollowState() {
-  uint32_t now = millis();  // millis() wrap (~49 d) ignored, as elsewhere for a handheld session
-  // Expire stale entries (compact in place).
-  int w = 0;
-  for (int i = 0; i < g_followCount; i++)
-    if (now - g_follow[i].lastMs <= FOLLOW_TTL_MS) { if (w != i) g_follow[w] = g_follow[i]; w++; }
-  g_followCount = w;
-
-  uint32_t nowWin = now / FOLLOW_WINDOW_MS;
-  bool  gps = posHasFix();
-  float lat = 0, lon = 0, cosLat = 1.0f;
-  int32_t qLat = 0, qLon = 0;
-  if (gps) {
-    lat = posLat(); lon = posLon();
-    cosLat = cosf(lat * (float)M_PI / 180.0f);  // once per cycle; lat barely changes
-    qLat = (int32_t)lroundf(lat * FOLLOW_QUANT);
-    qLon = (int32_t)lroundf(lon * FOLLOW_QUANT);
-  }
-
-  for (int k = 0; k < g_groupCount; k++) {
-    const DevGroup& g = g_groups[k];
-    FollowState* f = nullptr;
-    for (int i = 0; i < g_followCount; i++)
-      if (memcmp(g_follow[i].mac, g.mac, 6) == 0) { f = &g_follow[i]; break; }
-    if (!f) {
-      if (g_followCount >= MAX_DET) {  // full: evict oldest. Routine in busy RF (5 min TTL vs a ~2 s rebuild), so tracking caps at MAX_DET devices
-        int o = 0;
-        for (int i = 1; i < g_followCount; i++)
-          if (now - g_follow[i].lastMs > now - g_follow[o].lastMs) o = i;
-        f = &g_follow[o];
-      } else f = &g_follow[g_followCount++];
-      memset(f, 0, sizeof(*f));
-      memcpy(f->mac, g.mac, 6);
-      f->firstMs = now; f->baseWin = (uint8_t)nowWin;
-      f->rssiMin = 127; f->rssiMax = -128;
-      f->anchorLat = f->anchorLon = NAN;
-      f->flags = FF_ACTIVE;
-    }
-    if (f->sightings < 0xFFFF) f->sightings++;
-    f->lastMs = now;
-    // Roll the presence mask forward so bit0 = the current window.
-    uint8_t delta = (uint8_t)((uint8_t)nowWin - f->baseWin);
-    if (delta) { f->windowMask = delta >= 32 ? 0 : (f->windowMask << delta); f->baseWin = (uint8_t)nowWin; }
-    f->windowMask |= 1u;
-    int r = constrain(g.bestRssi, -127, 127);
-    if (r < f->rssiMin) f->rssiMin = (int8_t)r;
-    if (r > f->rssiMax) f->rssiMax = (int8_t)r;
-    if (gps) {
-      if (isnan(f->anchorLat)) {
-        f->anchorLat = lat; f->anchorLon = lon;
-        f->lastQLat = qLat; f->lastQLon = qLon; f->distinctFixes = 1;
-      } else {
-        // Equirectangular: dx = dLon*cos(lat), dy = dLat, 1 deg ~ 111320 m.
-        float dx = (lon - f->anchorLon) * cosLat * 111320.0f;
-        float dy = (lat - f->anchorLat) * 111320.0f;
-        float d  = sqrtf(dx * dx + dy * dy);
-        if (d > f->maxSpanM) f->maxSpanM = d;
-        if ((qLat != f->lastQLat || qLon != f->lastQLon) && f->distinctFixes < 255) {
-          f->distinctFixes++; f->lastQLat = qLat; f->lastQLon = qLon;
-        }
-      }
-      f->flags |= FF_HADGPS;
-    }
-  }
-}
-
-// BLE Resolvable Private Address: the most-significant address byte's top two bits are 0b01. RPAs
-// are privacy-rotating addresses used by phones, watches and other personal gear. A device we're
-// "tracking" by a fixed RPA is almost always our own/companion phone within a single rotation
-// window (the classic follow false-positive, and the one the own-phone peerMac filter misses
-// because a phone's GATT address differs from its advertised RPA) — and it can't be tracked past
-// the next rotation anyway. A genuinely planted AirTag/tracker surfaces through its Find-My/tracker
-// signature (a notable flag or a sigdb tier), which exempts it from this guard below.
-static inline bool macIsBleRpa(const uint8_t* mac) { return (mac[0] & 0xC0) == 0x40; }
-
-static void computeFollowScores() {
-  g_followN = 0;
-  for (int i = 0; i < g_followCount; i++) {
-    FollowState& f = g_follow[i];
-    int pers = __builtin_popcount(f.windowMask);
-    bool gpsOk = (f.flags & FF_HADGPS) && !isnan(f.anchorLat);
-    float span = gpsOk ? f.maxSpanM : 0;
-    int fixes  = gpsOk ? f.distinctFixes : 0;
-    int sc = FOLLOW_W_PERSIST * ((pers >= FOLLOW_PERSIST_B1) + (pers >= FOLLOW_PERSIST_B2) + (pers >= FOLLOW_PERSIST_B3))
-           + FOLLOW_W_SPAN    * ((span >= FOLLOW_SPAN_B1) + (span >= FOLLOW_SPAN_B2) + (span >= FOLLOW_SPAN_B3))
-           + FOLLOW_W_FIXES   * ((fixes >= FOLLOW_FIXES_B1) + (fixes >= FOLLOW_FIXES_B2) + (fixes >= FOLLOW_FIXES_B3));
-    if (span >= FOLLOW_SPAN_MIN && (f.rssiMax - f.rssiMin) <= FOLLOW_RSSI_SPREAD) sc += FOLLOW_W_STABLE;
-    // Look up this MAC's group: threat boost (sigdb tier above None), whitelist state, and the
-    // data the RPA false-positive guard needs (source + flags + tier).
-    bool whitelisted = false;
-    uint8_t  grpSrcMask = 0, grpTier = (uint8_t)sigdb::Tier::None;
-    uint16_t grpFlags = 0;
-    for (int k = 0; k < g_groupCount; k++)
-      if (memcmp(g_groups[k].mac, f.mac, 6) == 0) {
-        if (g_groups[k].tier != (int)sigdb::Tier::None) sc += FOLLOW_W_THREAT;
-        whitelisted = g_groups[k].whitelisted;
-        grpSrcMask = g_groups[k].srcMask; grpFlags = g_groups[k].flags; grpTier = (uint8_t)g_groups[k].tier;
-        break;
-      }
-    // Whitelisted (known) devices never raise the follow alert or the magenta LED.
-    if (whitelisted) { f.score = 0; f.ftier = 0; continue; }
-    f.score = (uint8_t)min(sc, 100);
-    // Follow false-positive guard: a benign BLE RPA (privacy-rotating phone/wearable with no threat
-    // signature and no notable flag) never escalates to FOLLOWING — it can only reach PERSISTENT.
-    bool benignRpa = (grpSrcMask & MASK_BLE) && macIsBleRpa(f.mac) &&
-                     grpTier == (uint8_t)sigdb::Tier::None && (grpFlags & FLAGS_NOTABLE) == 0;
-    // PERSISTENT is time-only and capped: only GPS movement can reach FOLLOWING.
-    if (gpsOk && span >= FOLLOW_SPAN_M && fixes >= FOLLOW_FIXES && pers >= FOLLOW_PERSIST_FOLLOW && !benignRpa) f.ftier = 2;
-    else if (pers >= FOLLOW_PERSIST_ONLY) f.ftier = 1;
-    else f.ftier = 0;
-    if (f.ftier == 2) g_followN++;
-  }
-}
-
-static void countTiers(int& susp, int& lk, int& conf) {
-  susp = lk = conf = 0;
-  for (int i = 0; i < g_detCount; i++) {
-    bool muted = false;  // known (whitelisted) devices don't count toward the alarm totals
-    for (int k = 0; k < g_groupCount; k++)
-      if (memcmp(g_groups[k].mac, g_dets[i].mac, 6) == 0) { muted = g_groups[k].whitelisted; break; }
-    if (muted) continue;
-    switch (g_score[i].tier) {
-      case sigdb::Tier::Suspect:   susp++; break;
-      case sigdb::Tier::Likely:    lk++;   break;
-      case sigdb::Tier::Confirmed: conf++; break;
-      default: break;
-    }
-  }
-}
-
-// Delete leftover header-only session logs (no detections were ever written). Past boots
-// created a file up front, so a card can accumulate many ~90-byte empties; sweep them on
-// startup. A file with even one data row is larger than the header and is kept.
-static void sweepEmptySessions() {
-  const size_t emptyMax = strlen(kLogHeader) + 2;  // legacy .csv: header + CRLF, nothing else
-  File dir = SD.open("/logs");
-  if (!dir) return;
-  char victims[16][48];
-  int nv = 0;
-  for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
-    // .jsonl has no header, so an empty one is 0 bytes; .csv is header-only.
-    String en = e.name();
-    bool jl = en.endsWith(".jsonl");
-    if (!e.isDirectory() && e.size() <= (jl ? 0 : emptyMax) && nv < 16) {
-      String nm = en;                             // may be a full path or a bare basename
-      int slash = nm.lastIndexOf('/');
-      String base = slash >= 0 ? nm.substring(slash + 1) : nm;
-      snprintf(victims[nv++], sizeof(victims[0]), "/logs/%s", base.c_str());
-    }
-    e.close();
-  }
-  dir.close();
-  for (int i = 0; i < nv; i++) {
-    if (SD.remove(victims[i])) Serial.printf("[CYD] removed empty session log %s\n", victims[i]);
-  }
-}
-
-// Start a fresh per-boot session log under /logs/. Named by a boot counter so it works
-// before the phone has synced wall-clock time; renamed to /logs/YYYYMMDD-HHMMSS.jsonl once
-// time is known (renameSessionOnSync). The file itself is created lazily on the first
-// logged detection (ensureLogFile), so idle boots leave no empty file behind. Rows still
-// carry absolute epoch after sync.
-// Shared by boot + "New Session" + the background stream: bump the persistent counter (monotonic
-// across boots and new sessions, so names never repeat; the bg stream has its own counter), adopt
-// the counter name, reset that stream's dedup, and re-arm the time-sync rename (named=false) so the
-// next renameSessionOnSync() gives it a date-time name if time is known.
-static void enforceLogCap();  // fwd decl (defined with the other /logs/ helpers below)
-static void beginSessionNamed(LogStream& st, bool bg) {
-  Preferences p; p.begin("cydscan", false);
-  const char* key = bg ? "bgcnt" : "bootcnt";
-  uint32_t n = p.getULong(key, 0) + 1;
-  p.putULong(key, n);
-  p.end();
-  snprintf(st.path, sizeof(st.path), bg ? "/logs/bg-%05lu.jsonl" : "/logs/sess-%05lu.jsonl", (unsigned long)n);
-  st.named        = false;   // re-arm rename-on-sync
-  st.started      = false;   // file is created lazily on the first row (ensureLogFile)
-  st.seenCount    = 0;       // fresh per-session dedup
-  st.lastRotateMs = millis(); // arm the dense-area auto-rotate guard
-  Serial.printf("[CYD] %s session log (created on first detection): %s\n", bg ? "bg" : "fg", st.path);
-}
-
-static void openSession() {
-  SD.mkdir("/logs");
-  if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file (CSV era)
-  sweepEmptySessions();
-  beginSessionNamed(g_fg, false);
-  resetFollow();          // a "following" judgement is per continuous trip
-}
-
-// Open the background stream's session (boot with bg on, and when bg is toggled on). A pending bg
-// session that never wrote a row is reused rather than burning another counter value.
-static void openBgSession() {
-  if (!g_sdOk) return;
-  if (g_bg.path[0] && !g_bg.started) return;
-  beginSessionNamed(g_bg, true);
-}
-
-// Start a fresh session without rebooting (Scan menu / phone CMD "N"). Rotates the stream the
-// current screen logs to (the Scan menu passes forceFg so its New Session always means the manual
-// foreground session). The writer opens with FILE_APPEND and closes every cycle, so there is no
-// handle to flush. An unused previous session left no file (lazy create), so nothing is orphaned.
-static void startNewSession(bool forceFg = false) {
-  if (!forceFg && bgCtx()) beginSessionNamed(g_bg, true);
-  else                     beginSessionNamed(g_fg, false);
-  resetFollow();
-  enforceLogCap();        // rotation trigger: trim /logs/ to the cap
-  syncSharePath();
-}
-
-// Create the (empty) session file the first time a row needs writing. NDJSON has no header, but we
-// write a one-line {"evt":"meta"} provenance anchor as the FIRST line (scan-analyzer tags each
-// session with the scanner + sig-DB generation that produced it; readers skip it by its "evt" like
-// the timesync anchor). No-op once created. Returns false if SD is unavailable or can't be opened.
-static void writeSessionMeta(File& f);  // defined with FW_VERSION/DB_GEN below
-static bool ensureLogFile(LogStream& st) {
-  if (st.started) return true;
-  if (!g_sdOk || !st.path[0]) return false;
-  File f = SD.open(st.path, FILE_WRITE);
-  if (!f) return false;
-  writeSessionMeta(f);
-  f.close();
-  st.started = true;
-  Serial.printf("[CYD] session log created: %s\n", st.path);
-  return true;
-}
-
-// Once the phone provides wall-clock time, rename a boot-counter session file to a date-time name
-// (fg: YYYYMMDD-HHMMSS.jsonl, bg: bg-YYYYMMDD-HHMMSS.jsonl). Runs once per session (even if the
-// rename fails, it won't retry-spam).
-static void renameStreamOnSync(LogStream& st, bool bg) {
-  if (st.named || !st.path[0] || !g_sdOk || !timeHasSync()) return;
-  time_t t = (time_t)epochLocal();
-  struct tm tmv;
-  gmtime_r(&t, &tmv);  // epoch is stored already-localized, so gmtime gives local fields
-  char nn[48];
-  snprintf(nn, sizeof(nn), "/logs/%s%04d%02d%02d-%02d%02d%02d.jsonl", bg ? "bg-" : "",
-           tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-           tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-  if (SD.exists(nn)) { st.named = true; return; }  // name taken; keep the current one
-  if (!st.started) {
-    // File not created yet (no detections logged): just adopt the date-time name so the
-    // file is born correctly named when the first row is written.
-    strncpy(st.path, nn, sizeof(st.path) - 1);
-    st.path[sizeof(st.path) - 1] = 0;
-    Serial.printf("[CYD] session log will use %s\n", st.path);
-  } else {
-    // This file already holds pre-sync rows (epoch:0, ms = ms-since-boot). Append a one-line
-    // timesync ANCHOR so a reader can backfill their real time: epoch = sync.epoch +
-    // (row.ms - sync.ms)/1000 (same formula epochNow() uses; valid because it's one boot).
-    File mf = SD.open(st.path, FILE_APPEND);
-    if (mf) {
-      mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
-                (unsigned long)epochLocal(), (unsigned long)millis());
-      mf.close();
-    }
-    if (SD.rename(st.path, nn)) {
-      Serial.printf("[CYD] session log renamed %s -> %s\n", st.path, nn);
-      strncpy(st.path, nn, sizeof(st.path) - 1);
-      st.path[sizeof(st.path) - 1] = 0;
-    }
-  }
-  st.named = true;
-}
-static void renameSessionOnSync() {
-  renameStreamOnSync(g_fg, false);
-  renameStreamOnSync(g_bg, true);
-  syncSharePath();
-}
-
-// Bump DB_GEN to force a one-time delete of /signatures.csv so sigdb re-seeds it from
-// the firmware (e.g. after adding seed rules). This DISCARDS any on-card DB edits, so
-// only bump it when that's intended.
-static constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2: SquachWatch roster expansion;
-                                       // 3: Nest/Reolink/SimpliSafe OUIs + Arlo/Blink reweight (2026-10-10);
-                                       // 4: 'vendor,' OUI->vendor display rules (2026-10-15);
-                                       // 5: expanded 'cidname,' BLE company makers + Garmin ID fix (2026-10-15)
-
-static void reseedDbIfNeeded() {
-  Preferences p;
-  p.begin("cydscan", false);
-  uint32_t gen = p.getULong("dbgen", 0);
-  if (gen != DB_GEN) {
-    if (SD.exists("/signatures.csv")) SD.remove("/signatures.csv");
-    p.putULong("dbgen", DB_GEN);
-    Serial.printf("[CYD] DB reseed (gen %lu -> %lu); signatures.csv rewritten from firmware\n",
-                  (unsigned long)gen, (unsigned long)DB_GEN);
-  }
-  p.end();
-}
-
-// Human-facing firmware version, distinct from the CYD<->C5 PROTOCOL_VERSION and the sig-DB DB_GEN.
-// Emitted in the per-session {"evt":"meta"} provenance anchor and the STATUS characteristic.
-static constexpr char FW_VERSION[] = "0.9.0";
-
-// Stable per-unit scanner id: the 48-bit factory eFuse MAC as 12 lowercase hex chars (computed once).
-// Globally unique and constant across reflashes. OPAQUE — this is the BASE MAC, so it won't equal any
-// scanned `mac` row (the BLE/Wi-Fi interface MACs derive from it with offsets). First-party: the
-// owner's own device, not bystander data.
-static const char* scannerIdHex() {
-  static char id[13] = {0};
-  if (!id[0]) {
-    uint64_t mac = ESP.getEfuseMac();
-    snprintf(id, sizeof(id), "%04x%08x", (unsigned)(uint16_t)(mac >> 32), (unsigned)(uint32_t)mac);
-  }
-  return id;
-}
-
-// Provenance anchor written as the first line of every session stream (see ensureLogFile). scanner_name
-// is omitted for v1 — no per-unit user label exists yet (planned NVS-settable label from the phone).
-static void writeSessionMeta(File& f) {
-  f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
-           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
-}
-
-static void initSD() {
-  sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-  g_sdOk = SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
-  if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
-  reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
-  openSession();       // create this boot's /logs/sess-NNNNN.jsonl (renamed on time sync)
-  if (g_bgScan) openBgSession();  // and the background stream /logs/bg-NNNNN.jsonl
-  enforceLogCap();     // rotation trigger: boot
-  syncSharePath();
-  Serial.println("[CYD] SD ready");
-}
-
-// Append to an NDJSON line buffer. snprintf returns the would-be length, so a plain
-// "n += snprintf(ln+n, sizeof-n, ...)" chain underflows once n passes the buffer; instead
-// any truncation parks n at cap+1 (sticky), which the caller treats as "drop this line".
-static void lnAppend(char* ln, int& n, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
-static void lnAppend(char* ln, int& n, const char* fmt, ...) {
-  if (n > (int)LOG_LINE) return;  // already overflowed
-  va_list ap; va_start(ap, fmt);
-  int w = vsnprintf(ln + n, LOG_LINE - n, fmt, ap);
-  va_end(ap);
-  if (w < 0 || n + w >= (int)LOG_LINE) n = (int)LOG_LINE + 1;
-  else n += w;
-}
-
-static int logNewDetections() {
-  int n = 0;
-  LogStream& st = activeStream();  // headless bg cycle -> bg stream; on-screen scan -> fg stream
-  if (bgCtx() && !st.path[0]) openBgSession();
-  File f;  // opened lazily on the first new detection so idle boots write no file
-  uint32_t ms = millis();
-  uint32_t epoch = epochLocal();
-  bool gps = posHasFix();
-  for (int i = 0; i < g_detCount; i++) {
-    const Detection& d = g_dets[i];
-    if (seenContains(st, d)) continue;
-    if (st.seenCount >= MAX_SEEN) continue;  // dedup set full: skip (don't re-log every cycle); the rotation below resumes capture
-    seenAdd(st, d);
-    n++;
-    if (!f && ensureLogFile(st)) f = SD.open(st.path, FILE_APPEND);
-    if (!f) continue;
-    char safe[97];  // escaped name (32 B name, worst case \uXXXX per byte truncates safely)
-    jsonEscape(safe, sizeof(safe), d.name);
-    const sigdb::ScoreResult& sc = g_score[i];
-    char sig[49];
-    jsonEscape(sig, sizeof(sig), detLabel(i));
-    char flagStr[64]; flagTokens(d.flags, flagStr, sizeof(flagStr));
-    char panStr[5]; panStr[0] = 0;  // hex PAN, 802.15.4 only
-    if (d.source == (uint8_t)Source::Ieee802154 && d.panId) snprintf(panStr, sizeof(panStr), "%04X", d.panId);
-    char uuidStr[33]; uuidStr[0] = 0;
-    for (int k = 0; k < 16; k++)
-      if (d.svc[k]) { for (int j = 0; j < 16; j++) sprintf(uuidStr + j * 2, "%02X", d.svc[j]); break; }
-    // Whitelist state of this device, looked up per-group by MAC (buildGroups() ran this
-    // cycle). Stamped into the log so downstream tools can filter muted detections.
-    bool wl = false;
-    for (int k = 0; k < g_groupCount; k++)
-      if (memcmp(g_groups[k].mac, d.mac, 6) == 0) { wl = g_groups[k].whitelisted; break; }
-    // One NDJSON object per line; optional keys are omitted when blank. Worst case (every
-    // optional key + a fully escaped name): ~60 B fixed/numeric + 96 name + 48 sig + 32 uuid
-    // + key text ~ 440-480 B, inside the 512 B buffer. lnAppend() is overflow-proof anyway.
-    char ln[LOG_LINE];
-    int n2 = 0;
-    lnAppend(ln, n2, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epoch, (unsigned long)ms);
-    if (gps && isfinite(posLat()) && isfinite(posLon()))
-      lnAppend(ln, n2, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-    lnAppend(ln, n2,
-             ",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"rssi\":%d,\"ch\":%d",
-             srcTag(d), d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
-             d.rssi, d.channel);
-    if (d.ie_hash)   lnAppend(ln, n2, ",\"ie\":\"%08lX\"", (unsigned long)d.ie_hash);
-    if (d.companyId) lnAppend(ln, n2, ",\"cid\":\"%04X\"", d.companyId);
-    if (uuidStr[0])  lnAppend(ln, n2, ",\"uuid\":\"%s\"", uuidStr);
-    if (panStr[0])   lnAppend(ln, n2, ",\"pan\":\"%s\"", panStr);
-    if (safe[0])     lnAppend(ln, n2, ",\"name\":\"%s\"", safe);
-    lnAppend(ln, n2, ",\"score\":%d,\"tier\":\"%s\"", sc.score, sigdb::tierName(sc.tier));
-    if (sig[0])      lnAppend(ln, n2, ",\"sig\":\"%s\"", sig);
-    if (flagStr[0])  lnAppend(ln, n2, ",\"flags\":\"%s\"", flagStr);
-    lnAppend(ln, n2, ",\"wl\":%d", wl ? 1 : 0);
-    if (n2 > (int)LOG_LINE - 2) continue;  // can't close the object in-buffer: drop the row, never write truncated JSON
-    ln[n2++] = '}'; ln[n2++] = '\n';
-    f.write((const uint8_t*)ln, n2);
-  }
-  if (f) f.close();
-  // Dense-area auto-rotate: once the dedup set is full we've stopped logging new MACs (skip above),
-  // so roll to a fresh session to resume capture — but at most once per SESS_ROTATE_MIN_MS so a
-  // dense drive can't thrash out tiny files. Follow state is per-trip (not per-file), so it is NOT
-  // reset here; the ~10 min enforceLogCap timer handles trimming.
-  if (st.seenCount >= MAX_SEEN && ms - st.lastRotateMs >= SESS_ROTATE_MIN_MS) {
-    bool bg = bgCtx();
-    beginSessionNamed(st, bg);   // fresh file + empty seen set; arms lastRotateMs
-    syncSharePath();
-    Serial.println("[CYD] dedup set full -> rotated to a fresh session (dense area)");
-  }
-  return n;
-}
-
-// Append one event line to the current session log:
-//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N[,"ssid":..,"macs":".."]}
-// For "eviltwin" we also name the suspect SSID + its BSSIDs (comma-joined, up to EVIL_MAX_BSSID),
-// pulled from the live detections that currently carry FLAG_WIFI_EVILTWIN, so the map/log identifies
-// the culprit APs instead of a bare count. (The "deauth" event has no per-AP address — the C5 only
-// counts frames.) No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
-// Per-device "rid" and "follow" event lines have their own writers below (logRidEvents / logFollowEvents).
-static void logEvent(const char* evt, int count) {
-  LogStream& st = activeStream();
-  if (bgCtx() && !st.path[0]) openBgSession();
-  if (!ensureLogFile(st)) return;
-  File f = SD.open(st.path, FILE_APPEND);
-  if (!f) return;
-  char ln[LOG_LINE];
-  int n = 0;
-  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
-  if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-  lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d", evt, count);
-  if (!strcmp(evt, "eviltwin")) {
-    static constexpr int EVIL_MAX_BSSID = 8;
-    char ssid[97] = {0};
-    int emitted = 0;
-    for (int i = 0; i < g_detCount; i++) {
-      if (!(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) continue;
-      if (!ssid[0] && g_dets[i].name[0]) jsonEscape(ssid, sizeof(ssid), g_dets[i].name);
-      if (emitted >= EVIL_MAX_BSSID) continue;
-      const uint8_t* m = g_dets[i].mac;
-      if (emitted == 0) lnAppend(ln, n, ",\"macs\":\"");
-      lnAppend(ln, n, "%s%02X:%02X:%02X:%02X:%02X:%02X", emitted ? "," : "",
-               m[0], m[1], m[2], m[3], m[4], m[5]);
-      emitted++;
-    }
-    if (emitted) lnAppend(ln, n, "\"");
-    if (ssid[0]) lnAppend(ln, n, ",\"ssid\":\"%s\"", ssid);
-  }
-  lnAppend(ln, n, "}\n");
-  if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
-  f.close();
-}
-
-// Raise/hold the deauth + evil-twin alerts from the latest C5 Status and log an event line for each
-// type at most once per EVENT_LOG_GAP_MS (never per cycle).
-static void updateEvents() {
-  uint32_t now = millis();
-  static uint32_t lastLog[2] = {0, 0};
-  static bool     logged[2]  = {false, false};
-  if (g_deauthRecent >= DEAUTH_ALERT) {
-    g_deauthUntil = now + EVENT_HOLD_MS; if (!g_deauthUntil) g_deauthUntil = 1;
-    g_deauthShown = g_deauthRecent;
-    if (!logged[0] || now - lastLog[0] >= EVENT_LOG_GAP_MS) {
-      logged[0] = true; lastLog[0] = now; logEvent("deauth", g_deauthRecent);
-    }
-  }
-  if (g_evilCount > 0) {
-    g_evilUntil = now + EVENT_HOLD_MS; if (!g_evilUntil) g_evilUntil = 1;
-    g_evilShown = g_evilCount;
-    if (!logged[1] || now - lastLog[1] >= EVENT_LOG_GAP_MS) {
-      logged[1] = true; lastLog[1] = now; logEvent("eviltwin", g_evilCount);
-    }
-  }
-}
-
-// Log one "rid" event line per Remote-ID emitter, rate-limited per MAC to once per EVENT_LOG_GAP_MS.
-//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"rid","mac":"..",["uas":..,"dlat":..,"dlon":..,"h":..,
-//    "alt":..,"spd":..,"hdg":..,"olat":..,"olon":..,"oid":..]}  (unknown fields omitted)
-// Worst case (two 20-char strings escaping to ~120 B each) stays inside LOG_LINE; lnAppend is overflow-safe.
-static void logRidEvents() {
-  static uint8_t  ringMac[MAX_RID][6];
-  static uint32_t ringLast[MAX_RID];
-  static bool     ringUsed[MAX_RID];
-  static int      ringNext = 0;
-  uint32_t now = millis();
-  for (int i = 0; i < g_ridStoreCount; i++) {
-    const RemoteId& r = g_rids[i];
-    int slot = -1;
-    for (int k = 0; k < MAX_RID; k++)
-      if (ringUsed[k] && memcmp(ringMac[k], r.mac, 6) == 0) { slot = k; break; }
-    if (slot >= 0 && now - ringLast[slot] < EVENT_LOG_GAP_MS) continue;
-    if (slot < 0) {  // first sighting: take the next ring slot (round-robin eviction)
-      slot = ringNext; ringNext = (ringNext + 1) % MAX_RID;
-      memcpy(ringMac[slot], r.mac, 6); ringUsed[slot] = true;
-    }
-    ringLast[slot] = now;
-
-    LogStream& st = activeStream();
-    if (bgCtx() && !st.path[0]) openBgSession();
-    if (!ensureLogFile(st)) return;
-    File f = SD.open(st.path, FILE_APPEND);
-    if (!f) return;
-    char uas[LOG_ID_ESC], oid[LOG_ID_ESC];
-    jsonEscape(uas, sizeof(uas), r.uasId);
-    jsonEscape(oid, sizeof(oid), r.operatorId);
-    char ln[LOG_LINE];
-    int n = 0;
-    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
-    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-    lnAppend(ln, n, ",\"evt\":\"rid\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
-             r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
-    if (uas[0]) lnAppend(ln, n, ",\"uas\":\"%s\"", uas);
-    if (r.droneLat != RID_LL_UNK || r.droneLon != RID_LL_UNK)
-      lnAppend(ln, n, ",\"dlat\":%.6f,\"dlon\":%.6f", r.droneLat / 1e7, r.droneLon / 1e7);
-    if (r.heightM != RID_ALT_UNK) lnAppend(ln, n, ",\"h\":%d", r.heightM);
-    if (r.altGeoM != RID_ALT_UNK) lnAppend(ln, n, ",\"alt\":%d", r.altGeoM);
-    if (r.headingDeg != RID_HDG_UNK)
-      lnAppend(ln, n, ",\"spd\":%.1f,\"hdg\":%u", r.speedCms / 100.0, (unsigned)r.headingDeg);
-    if (r.operatorLat != RID_LL_UNK || r.operatorLon != RID_LL_UNK)
-      lnAppend(ln, n, ",\"olat\":%.6f,\"olon\":%.6f", r.operatorLat / 1e7, r.operatorLon / 1e7);
-    if (oid[0]) lnAppend(ln, n, ",\"oid\":\"%s\"", oid);
-    if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
-      lnAppend(ln, n, "}\n");
-      if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
-    }
-    f.close();
-  }
-}
-
-// Log one "follow" event line per device currently FOLLOWING (ftier 2), rate-limited per MAC to once
-// per EVENT_LOG_GAP_MS. Same ring-buffer idiom as logRidEvents().
-//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"follow","mac":"..","score":N,"ftier":2
-//    [,"name":"..","src":"..","flags":".."]}  (blank/unknown fields omitted)
-// "flags" is the same +-joined detector list as the detection rows (tells a Find-My iPhone from a car).
-static void logFollowEvents() {
-  if (followAlertN() <= 0) return;
-  static uint8_t  ringMac[MAX_DET][6];
-  static uint32_t ringLast[MAX_DET];
-  static bool     ringUsed[MAX_DET];
-  static int      ringNext = 0;
-  uint32_t now = millis();
-  for (int i = 0; i < g_followCount; i++) {
-    const FollowState& fs = g_follow[i];
-    if (fs.ftier != 2) continue;
-    int slot = -1;
-    for (int k = 0; k < MAX_DET; k++)
-      if (ringUsed[k] && memcmp(ringMac[k], fs.mac, 6) == 0) { slot = k; break; }
-    if (slot >= 0 && now - ringLast[slot] < EVENT_LOG_GAP_MS) continue;
-    if (slot < 0) {  // first sighting: take the next ring slot (round-robin eviction)
-      slot = ringNext; ringNext = (ringNext + 1) % MAX_DET;
-      memcpy(ringMac[slot], fs.mac, 6); ringUsed[slot] = true;
-    }
-    ringLast[slot] = now;
-
-    // Device facts from its DevGroup (same MAC lookup as computeFollowScores()).
-    char safe[97]; safe[0] = 0;
-    char flagStr[64]; flagStr[0] = 0;
-    const char* src = "";
-    for (int k = 0; k < g_groupCount; k++) {
-      const DevGroup& g = g_groups[k];
-      if (memcmp(g.mac, fs.mac, 6) != 0) continue;
-      if (g.nameIdx >= 0 && g.nameIdx < g_detCount) jsonEscape(safe, sizeof(safe), g_dets[g.nameIdx].name);
-      if (g.rep >= 0 && g.rep < g_detCount) src = srcTag(g_dets[g.rep]);
-      flagTokens(g.flags, flagStr, sizeof(flagStr));
-      break;
-    }
-
-    LogStream& st = activeStream();
-    if (bgCtx() && !st.path[0]) openBgSession();
-    if (!ensureLogFile(st)) return;
-    File f = SD.open(st.path, FILE_APPEND);
-    if (!f) return;
-    char ln[LOG_LINE];
-    int n = 0;
-    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
-    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-    lnAppend(ln, n, ",\"evt\":\"follow\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"score\":%d,\"ftier\":2",
-             fs.mac[0], fs.mac[1], fs.mac[2], fs.mac[3], fs.mac[4], fs.mac[5], (int)fs.score);
-    if (safe[0])    lnAppend(ln, n, ",\"name\":\"%s\"", safe);
-    if (src[0])     lnAppend(ln, n, ",\"src\":\"%s\"", src);
-    if (flagStr[0]) lnAppend(ln, n, ",\"flags\":\"%s\"", flagStr);
-    if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
-      lnAppend(ln, n, "}\n");
-      if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
-    }
-    f.close();
-  }
-}
-
-// Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
-// chunks. The web app reassembles and saves it (no Wi-Fi needed).
-static void streamFileOverBle(const char* path) {
-  strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);  // guard: not rotated away mid-stream
-  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
-  if (!g_sdOk || !SD.exists(path)) {
-    phone::logNotify((const uint8_t*)"SIZE=0", 6);
-    Serial.printf("[CYD] BLE dl: no file %s\n", path);
-    g_streamingPath[0] = 0;
-    return;
-  }
-  File f = SD.open(path, "r");
-  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); g_streamingPath[0] = 0; return; }
-  size_t sz = f.size();
-  char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)sz);
-  phone::logNotify((const uint8_t*)hdr, hn);
-  delay(30);
-  uint8_t buf[180];  // chunk < MTU-3 (Android negotiates a large MTU)
-  size_t sent = 0;
-  while (f.available()) {
-    int n = f.read(buf, sizeof(buf));
-    if (n <= 0) break;
-    phone::logNotify(buf, n);
-    sent += n;
-    delay(15);
-  }
-  f.close();
-  Serial.printf("[CYD] BLE sent %u/%u bytes of %s\n", (unsigned)sent, (unsigned)sz, path);
-  g_streamingPath[0] = 0;
-}
-
-// Time-filtered BLE export: filter ON the CYD, never stream the whole file. TWO passes over the
-// file -- pass 1 sums the byte length of the lines inside the window (for the SIZE= header), pass 2
-// streams only those lines. Same LineReader + predicate for both, so the totals always agree.
-static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) {
-  if (!g_sdOk || !SD.exists(path)) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
-  File f = SD.open(path, "r");
-  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
-  strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);
-  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
-  char line[logfilter::LINE_CAP];
-  size_t len;
-  uint32_t total = 0, nlines = 0;
-  {
-    logfilter::LineReader rd(f);
-    while (rd.next(line, len)) if (logfilter::keep(line, c)) { total += len; nlines++; }
-  }
-  char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
-  phone::logNotify((const uint8_t*)hdr, hn);
-  if (total == 0) { f.close(); g_streamingPath[0] = 0; Serial.printf("[CYD] BLE filtered: no rows in range (%s)\n", path); return; }
-  delay(30);
-  f.seek(0);
-  uint8_t out[180];  // chunk < MTU-3
-  size_t on = 0;
-  uint32_t sent = 0;
-  logfilter::LineReader rd2(f);
-  while (rd2.next(line, len) && phone::connected()) {
-    if (!logfilter::keep(line, c)) continue;
-    for (size_t off = 0; off < len; ) {
-      size_t rem = len - off, avail = sizeof(out) - on;
-      size_t n = rem < avail ? rem : avail;  // (not min(): Arduino's min macro trips IntelliSense here)
-      memcpy(out + on, line + off, n);
-      on += n; off += n;
-      if (on == sizeof(out)) { phone::logNotify(out, on); sent += on; on = 0; delay(15); }
-    }
-  }
-  if (on) { phone::logNotify(out, on); sent += on; }
-  f.close();
-  g_streamingPath[0] = 0;
-  Serial.printf("[CYD] BLE filtered sent %u/%u bytes (%u lines) of %s\n", (unsigned)sent, (unsigned)total,
-                (unsigned)nlines, path);
-}
-
-// "L": the current session = the stream matching the current screen.
-static void transferLog() { streamFileOverBle(activeStream().path); }
-
-// "T:<mode>[:<minutes>][:<path>]": mode 0 = whole file ("since boot"), 1 = past 24 h, 2 = past
-// <minutes>. Path optional (restricted to /logs/); default = the current session.
-static void transferFiltered(int mode, int minutes, const char* pathIn) {
-  char path[48];
-  if (pathIn && pathIn[0]) {
-    if (strncmp(pathIn, "/logs/", 6) != 0 || strstr(pathIn, "..")) {
-      phone::logNotify((const uint8_t*)"SIZE=0", 6);
-      Serial.printf("[CYD] BLE export: rejected path %s\n", pathIn);
-      return;
-    }
-    snprintf(path, sizeof(path), "%s", pathIn);
-  } else {
-    snprintf(path, sizeof(path), "%s", activeStream().path);
-  }
-  if (mode != 1 && mode != 2) { streamFileOverBle(path); return; }
-  logfilter::Cutoff c = logfilter::make(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis());
-  streamFilteredOverBle(path, c);
-}
-
-// Download a specific session file requested by the phone ("F:<path>"). Restricted to
-// /logs/ (no path traversal) so the phone can't pull arbitrary SD files.
-static void transferFile(const char* path) {
-  if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
-    phone::logNotify((const uint8_t*)"SIZE=0", 6);
-    Serial.printf("[CYD] BLE dl: rejected path %s\n", path);
-    return;
-  }
-  streamFileOverBle(path);
-}
-
-// Delete a session file the phone selected ("D:<path>"). Restricted to /logs/ (no
-// traversal) and refuses the live session being written. Pushes the refreshed list back.
-static void sendSessionList();  // fwd decl
-static bool exploreHolds(const char* path);  // true if the Scan Viewer has this file open
-static void wipeAllLogs();      // fwd decl ("D:*" bulk delete)
-static void deleteSession(const char* path) {
-  if (strcmp(path, "*") == 0 || strcmp(path, "/logs/*") == 0) {  // "D:*" = wipe all sessions
-    wipeAllLogs();
-    sendSessionList();
-    return;
-  }
-  if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
-    Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
-  } else if (strcmp(path, g_fg.path) == 0 || strcmp(path, g_bg.path) == 0) {
-    Serial.println("[CYD] delete refused: that's a live session");
-  } else if (g_streamingPath[0] && strcmp(path, g_streamingPath) == 0) {
-    Serial.println("[CYD] delete refused: being downloaded");   // defense-in-depth (also covered by logProtected)
-  } else if (exploreHolds(path)) {
-    Serial.println("[CYD] delete refused: open in the scan viewer");
-  } else {
-    if (SD.exists(path)) SD.remove(path);
-    Serial.printf("[CYD] deleted %s\n", path);
-  }
-  sendSessionList();  // refresh the phone's picker either way
-}
-
-static String logBase(const String& nm) {  // dir entry -> bare basename (core may add a path)
-  int slash = nm.lastIndexOf('/');
-  return slash >= 0 ? nm.substring(slash + 1) : nm;
-}
-
-// Bulk-delete every /logs/ session except the live one and any file the Scan Viewer holds
-// open (same guards as deleteSession). Two-pass per batch (collect names, then remove) since
-// deleting while iterating a directory is unsafe; re-scans until a pass finds nothing left to
-// delete, bounded so a huge card can't spin forever.
-static void wipeAllLogs() {
-  int removed = 0;
-  for (int pass = 0; pass < 64; pass++) {       // up to 64 * 24 files
-    File dir = SD.open("/logs");
-    if (!dir) break;
-    char victims[24][48];
-    int nv = 0;
-    for (File e = dir.openNextFile(); e && nv < 24; e = dir.openNextFile()) {
-      if (!e.isDirectory()) {
-        char full[48];
-        snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
-        if (strcmp(full, g_fg.path) != 0 && strcmp(full, g_bg.path) != 0 && !exploreHolds(full))
-          snprintf(victims[nv++], sizeof(victims[0]), "%s", full);
-      }
-      e.close();
-    }
-    dir.close();
-    if (nv == 0) break;                          // only the live/held file(s) remain
-    for (int i = 0; i < nv; i++)
-      if (SD.remove(victims[i])) { removed++; Serial.printf("[CYD] wiped %s\n", victims[i]); }
-  }
-  Serial.printf("[CYD] wipe all logs: %d file(s) removed (live session kept)\n", removed);
-}
-
-// --- 512 MB /logs/ cap with oldest-first auto-rotation. Sums every /logs/ file and, while over the
-// cap, deletes the OLDEST (by filesystem last-write time), never touching the live fg/bg files, a
-// file the Explore viewer holds open, or one being streamed. Run only at low frequency (boot, each
-// session rotation, a ~10 min loop() timer) -- never per scan cycle. Bounded per call. ---
-static constexpr uint64_t LOG_CAP_BYTES = 512ULL * 1024 * 1024;
-static bool logProtected(const char* full) {
-  return strcmp(full, g_fg.path) == 0 || strcmp(full, g_bg.path) == 0 || exploreHolds(full) ||
-         (g_streamingPath[0] && strcmp(full, g_streamingPath) == 0);
-}
-static void enforceLogCap() {
-  if (!g_sdOk) return;
-  int removed = 0;
-  for (int pass = 0; pass < 64; pass++) {
-    File dir = SD.open("/logs");
-    if (!dir) return;
-    uint64_t total = 0;
-    time_t oldT = 0;
-    char oldest[48] = "";
-    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
-      if (!e.isDirectory()) {
-        total += (uint64_t)e.size();
-        char full[48];
-        snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
-        // Eviction order = oldest filesystem last-write time. NOTE: before the phone syncs the clock
-        // the RTC sits at the FAT epoch (2016-ish), so files written this pre-sync boot carry
-        // near-identical timestamps and their relative eviction order is arbitrary. That's benign:
-        // the cap still trims deterministically down to size, and real wall-clock times (hence a
-        // meaningful oldest-first order) apply to every file written after sync.
-        time_t t = e.getLastWrite();
-        if (!logProtected(full) && (!oldest[0] || t < oldT)) { oldT = t; memcpy(oldest, full, sizeof(oldest)); }
-      }
-      e.close();
-    }
-    dir.close();
-    if (total <= LOG_CAP_BYTES || !oldest[0]) break;
-    if (!SD.remove(oldest)) break;
-    removed++;
-    Serial.printf("[CYD] log cap: removed oldest %s (was %llu MB total)\n", oldest, (unsigned long long)(total >> 20));
-  }
-  if (removed) Serial.printf("[CYD] log cap: %d file(s) removed\n", removed);
-}
-
-// Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
-// "<path>\t<size>\t<flag>\n" lines. <flag> marks the newest file: "current" while a scan
-// is running (its file is being written), else "latest"; blank for all other rows. The web
-// app parses it into a picker and labels/floats the flagged row.
-static void sendSessionList() {
-  // The newest file is the current session when its file exists this boot; otherwise the
-  // most recently written prior file (by FS timestamp).
-  const LogStream& cs = activeStream();   // the stream "current"/"L" refers to right now
-  String curBase = logBase(String(cs.path));
-  String newestBase;
-  if (cs.started) {
-    newestBase = curBase;
-  } else {
-    time_t newestT = -1;
-    File d = SD.open("/logs");
-    if (d) {
-      for (File e = d.openNextFile(); e; e = d.openNextFile()) {
-        if (!e.isDirectory()) {
-          time_t t = e.getLastWrite();
-          if (t >= newestT) { newestT = t; newestBase = logBase(String(e.name())); }
-        }
-        e.close();
-      }
-      d.close();
-    }
-  }
-  const char* flagWord = (cs.started && (g_screen == SCR_SCAN || (g_bgScan && g_scanActive))) ? "current" : "latest";
-
-  String list;
-  File dir = SD.open("/logs");
-  if (dir) {
-    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
-      if (e.isDirectory()) continue;
-      String base = logBase(String(e.name()));
-      const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
-      list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\n";
-    }
-    dir.close();
-  }
-  char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "SESS=%u", (unsigned)list.length());
-  phone::logNotify((const uint8_t*)hdr, hn);
-  delay(30);
-  const char* p = list.c_str();
-  size_t rem = list.length();
-  while (rem) {
-    size_t n = rem > 180 ? 180 : rem;
-    phone::logNotify((const uint8_t*)p, n);
-    p += n; rem -= n;
-    delay(15);
-  }
-  Serial.printf("[CYD] session list sent (%u bytes)\n", (unsigned)list.length());
-}
-
-// Send the active whitelist rules to the phone, same framing as the session list: a
-// "WL=<bytes>" header then <bytes> bytes of "<csv rule line>\n" lines (line order = the
-// index "E:<n>" removes).
-static void sendWhitelist() {
-  String list;
-  whitelist::listAll(list);
-  char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "WL=%u", (unsigned)list.length());
-  phone::logNotify((const uint8_t*)hdr, hn);
-  delay(30);
-  const char* p = list.c_str();
-  size_t rem = list.length();
-  while (rem) {
-    size_t n = rem > 180 ? 180 : rem;
-    phone::logNotify((const uint8_t*)p, n);
-    p += n; rem -= n;
-    delay(15);
-  }
-  Serial.printf("[CYD] whitelist sent (%d rules, %u bytes)\n", whitelist::count(), (unsigned)list.length());
-}
-
-// This device's own BLE MAC, cached at boot so we can drop our own advertisement
-// from the scan results (the CYD's phone-link peripheral is visible to the C5's BLE
-// scan). Captured at runtime -> device-agnostic, works on any CYD unit.
-static uint8_t g_ownMac[6]   = {0};
-static bool    g_haveOwnMac  = false;
-
-static bool isSelfDet(const Detection& d) {
-  return g_haveOwnMac && d.source == (uint8_t)Source::BleScan &&
-         memcmp(d.mac, g_ownMac, 6) == 0;
-}
-
-// One scan command -> full response, read atomically. The CYD⇄C5 link is STRICTLY synchronous:
-// we send ONE StartScan and must read the C5's entire burst through its closing Status(scanning=0)
-// before the next cycle can send anything, or the C5 drops the next command (it flushes its RX after
-// streaming) and the boards desync. So this does NOT abort mid-transaction on user input -- the C5 is
-// a fast non-blocking dumper (~hundreds of ms), so a tap is serviced on the next loop iteration with
-// no perceptible lag.
-//
-// Returns true if a response was received (full burst or at least a Status), false on a MISS. A miss
-// is detected fast: the C5 answers within ~12 ms when free, so if NOTHING has arrived by noRespMs we
-// bail (the C5 is in its Wi-Fi-scan busy window) instead of burning the whole timeoutMs. Once bytes
-// start, we read the full burst up to timeoutMs (which must exceed a worst-case dense-table dump).
-// On a miss nothing is transmitted during the window (verified on-wire), so there is no late burst to
-// desync the next poll. This does NOT touch g_linkOk -- the caller owns link state (sticky).
-static bool requestScan(uint32_t noRespMs = 800, uint32_t timeoutMs = 5000) {
-  g_detCount = 0;
-  g_ridStoreCount = 0;
-  bool sawStart = false, done = false, anyByte = false;
-  uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
-  while (LinkSerial.available()) LinkSerial.read();
-  parser.reset();
-  ScanConfig cfg{};
-  cfg.sources  = g_srcMask;
-  cfg.dwell_ms = 0;
-  sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
-  uint32_t t0 = millis();
-  uint32_t lastByte = millis();
-  while (!done && millis() - t0 < timeoutMs) {
-    if (!anyByte && millis() - t0 > noRespMs) break;  // no reply at all -> busy miss, bail fast
-    bool got = false;
-    while (LinkSerial.available()) {
-      got = true; anyByte = true; lastByte = millis();
-      if (!parser.feed(LinkSerial.read())) continue;
-      uint8_t t = parser.type();
-      if (t == (uint8_t)Reply::Detection && parser.length() >= sizeof(Detection)) {
-        if (g_detCount < MAX_DET) {
-          Detection& nd = g_dets[g_detCount];
-          memcpy(&nd, parser.payload(), sizeof(Detection));
-          bool isPhone = havePeer && nd.source == (uint8_t)Source::BleScan &&
-                         memcmp(nd.mac, peer, 6) == 0;
-          if (!isSelfDet(nd) && !isPhone) g_detCount++;  // drop our own + the paired phone
-        }
-      } else if (t == (uint8_t)Reply::RemoteId && parser.length() >= sizeof(RemoteId)) {
-        // Non-terminating (like Detection): rides inside the Status(1)..Status(0) burst.
-        const RemoteId* r = reinterpret_cast<const RemoteId*>(parser.payload());
-        int slot = -1;
-        for (int k = 0; k < g_ridStoreCount; k++)
-          if (memcmp(g_rids[k].mac, r->mac, 6) == 0) { slot = k; break; }  // replace on MAC match
-        if (slot < 0) {
-          if (g_ridStoreCount < MAX_RID) slot = g_ridStoreCount++;
-          else slot = 0;  // full: overwrite index 0 (store is rebuilt every poll, so rarely hit)
-        }
-        memcpy(&g_rids[slot], r, sizeof(RemoteId));
-      } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
-        const Status* st = reinterpret_cast<const Status*>(parser.payload());
-        g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
-        g_onbValid = (st->gpsFix != 0) && (st->gpsLat != 0 || st->gpsLon != 0);  // v9 onboard GPS
-        g_onbSats  = st->gpsSats;  // sats-in-use, even pre-fix (useful for "is the module seeing sky?")
-        if (g_onbValid) { g_onbLat = st->gpsLat / 1e7; g_onbLon = st->gpsLon / 1e7; }  // divide in double, then store
-        if (st->gpsEpoch != 0) { g_gpsEpochUtc = st->gpsEpoch; g_gpsEpochAtMs = millis(); }  // v10: latch GPS UTC clock
-        if (st->scanning != 0) sawStart = true;
-        else                   done     = true;
-      }
-    }
-    // Idle-gap backstop: burst started but the closing Status was lost -> don't wait the full timeout.
-    if ((sawStart || g_detCount > 0) && millis() - lastByte > 250) done = true;
-    if (!got) delay(1);  // yield instead of a tight spin
-  }
-  return done || sawStart || g_detCount > 0;
-}
-
-// Session basename: the stream's path without the "/logs/" dir and ".jsonl" extension.
-static void sessBase(const LogStream& st, char* out, size_t cap) {
-  const char* b = strrchr(st.path, '/');
-  b = b ? b + 1 : st.path;
-  strncpy(out, b, cap - 1); out[cap - 1] = 0;
-  char* dot = strrchr(out, '.');
-  if (dot) *dot = 0;
-}
-
-// Bag-safe touch lock (also settable from the web app via CMD "K1"/"K0"); declared here so pushStatus
-// can report it. The padlock glyph + 2-tap gesture live further down (drawLockGlyph/serviceTouchLock).
-static bool g_touchLocked = false;
-
-static void pushStatus() {
-  int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
-  int susp, lk, conf; countTiers(susp, lk, conf);
-  char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
-  char s[512];
-  snprintf(s, sizeof(s),
-           "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
-           "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d;"
-           "sid=%s;fw=%s;dbgen=%lu",
-           g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
-           timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
-           webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
-           g_scanActive ? 1 : 0, g_brightness, (int)g_srcMask,
-           whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
-           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
-           power::percent(), posSource(), (int)g_onbSats, timeSource(),
-           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
-  phone::setStatus(String(s));
-}
-
-// Stream the live detection list to the phone so its app mirrors the CYD screen.
-// DETS stream v4 = "seq-tagged atomic snapshot": a "D:<seq>:<groups>" header, then one
-// row per device (one MAC, merged across sources), top-of-list first:
-//   <seq>\t<tier>\t<mac>\t<bestRssi>\t<ie>\t<name>\t<tag:rssi,tag:rssi,...>\t<ftier>\t<fscore>\t<muted>
-//     [\t<flags>\t<cat>\t<cidLabel>]
-// where <ftier> is the follow tier (0 none / 1 PERSISTENT / 2 FOLLOWING), <fscore> the
-// 0..100 follow score, and <muted> is 1 when the device matches a whitelist rule. These
-// three trailing fields were appended in v3; older web parsers that read by fixed index
-// (fields 0..6) ignore them, so the change is backward-compatible. v4 appends ONE more trailing
-// field, <flags>: the decimal DetFlags bits (FLAGS_NOTABLE only: iBeacon 8 / Find My 16 /
-// Pwnagotchi 32 / Evil Twin 64 / Drone RID 128) OR'd across the device's members, 0 if none.
-// Older parsers read fields 0..9 and ignore it.
-// v7 appends ONE more trailing per-row field, <cidLabel>: the BLE company maker name
-// (sigdb::cidName of the device's company ID; empty when unknown/none) — shown on the web live list
-// IN ADDITION to the MAC, so a rotating-random-address device is still identifiable by its maker.
-// Older parsers read fields 0..10 (through <cat>) and ignore it.
-// v6 appends a trailing RID block AFTER the n detection rows, only while a Remote-ID emitter is
-// held: an "R:<ridCount>" header then ridCount rows of 11 tab-separated fields (always 11 columns,
-// unknown = empty): mac uas dlat dlon olat olon h alt spd hdg oid (lat/lon %.6f deg, h/alt m,
-// spd m/s, hdg deg; spd+hdg are both empty when heading is unknown). Older parsers read exactly n
-// rows then wait for the next "D:" header, so the appended block does not affect them.
-// The app drops rows whose seq != the current header's and swaps the list in only when
-// the snapshot is complete. Fallbacks considered and held in reserve if this proves
-// lossy: (a) a length-prefixed blob like the log download, (b) a polled READ
-// characteristic. Capped so the burst stays small on the BLE link.
-static constexpr int DETS_STREAM_MAX = 12;
-static void pushDetections() {
-  if (!phone::connected()) return;
-  if (!g_scanActive) return;  // only stream while scanning
-  static uint16_t g_detsSeq = 0;
-  int n = min(g_groupCount, DETS_STREAM_MAX);
-  g_detsSeq++;
-  char hdr[24];
-  snprintf(hdr, sizeof(hdr), "D:%u:%d", (unsigned)g_detsSeq, n);
-  phone::detsNotify(String(hdr));
-  for (int r = 0; r < n; r++) {
-    const DevGroup& g = g_groups[r];
-    char name[24];
-    sanitizeField(name, sizeof(name), groupName(&g));
-    char row[224];
-    int len = snprintf(row, sizeof(row), "%u\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%08lX\t%s\t",
-                       (unsigned)g_detsSeq, g.tier,
-                       g.mac[0], g.mac[1], g.mac[2], g.mac[3], g.mac[4], g.mac[5],
-                       g.bestRssi, (unsigned long)g.ie, name);
-    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    len += snprintf(row + len, sizeof(row) - len, "%s", g.srcs);  // list pre-built (de-duped) in buildGroups
-    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    // v3 trailing fields: follow tier / follow score / muted (whitelisted) — all CYD-computed.
-    // follow tier/score forced to 0 while the follower-alerts feature is disabled (FOLLOW_ALERTS_ENABLED).
-    const FollowState* f = FOLLOW_ALERTS_ENABLED ? findFollow(g.mac) : nullptr;
-    len += snprintf(row + len, sizeof(row) - len, "\t%d\t%d\t%d",
-                    f ? f->ftier : 0, f ? f->score : 0, g.whitelisted ? 1 : 0);
-    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.flags);  // v4 trailing: notable flag bits
-    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)groupCategory(g));  // v5 trailing: category id
-    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-    // v7 trailing: BLE company maker label (empty if unknown/none), shown on the web live list.
-    char mk[24]; sanitizeField(mk, sizeof(mk), sigdb::cidName(g.companyId));
-    snprintf(row + len, sizeof(row) - len, "\t%s", mk);
-    phone::detsNotify(String(row));
-    delay(6);  // let the BLE stack drain each notification
-  }
-
-  // v6 trailing RID block (only while a Remote-ID emitter is held): "R:<n>" then n 11-field rows.
-  if (g_ridStoreCount >= 1) {
-    int ridCount = min(g_ridStoreCount, MAX_RID);
-    char ridHdr[16];
-    snprintf(ridHdr, sizeof(ridHdr), "R:%d", ridCount);
-    phone::detsNotify(String(ridHdr));
-    for (int i = 0; i < ridCount; i++) {
-      const RemoteId& r = g_rids[i];
-      char uas[24], oid[24];
-      sanitizeField(uas, sizeof(uas), r.uasId);
-      sanitizeField(oid, sizeof(oid), r.operatorId);
-      char row[256];
-      int len = snprintf(row, sizeof(row), "%02X:%02X:%02X:%02X:%02X:%02X\t%s\t",
-                         r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5], uas);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      // Each unknown field is emitted EMPTY (separators always present -> always 11 columns).
-      if (r.droneLat != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.droneLat / 1e7);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      len += snprintf(row + len, sizeof(row) - len, "\t");
-      if (r.droneLon != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.droneLon / 1e7);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      len += snprintf(row + len, sizeof(row) - len, "\t");
-      if (r.operatorLat != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.operatorLat / 1e7);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      len += snprintf(row + len, sizeof(row) - len, "\t");
-      if (r.operatorLon != RID_LL_UNK) len += snprintf(row + len, sizeof(row) - len, "%.6f", r.operatorLon / 1e7);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      len += snprintf(row + len, sizeof(row) - len, "\t");
-      if (r.heightM != RID_ALT_UNK) len += snprintf(row + len, sizeof(row) - len, "%d", (int)r.heightM);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      len += snprintf(row + len, sizeof(row) - len, "\t");
-      if (r.altGeoM != RID_ALT_UNK) len += snprintf(row + len, sizeof(row) - len, "%d", (int)r.altGeoM);
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      len += snprintf(row + len, sizeof(row) - len, "\t");
-      if (r.headingDeg != RID_HDG_UNK)  // speed + heading are gated together
-        len += snprintf(row + len, sizeof(row) - len, "%.1f\t%u\t", r.speedCms / 100.0, (unsigned)r.headingDeg);
-      else
-        len += snprintf(row + len, sizeof(row) - len, "\t\t");
-      if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
-      snprintf(row + len, sizeof(row) - len, "%s", oid);
-      phone::detsNotify(String(row));
-      delay(6);
-    }
-  }
-}
 
 // --- status-bar icons (drawn with primitives, ~14 px) ---
 static void iconBle(int x, int y, uint16_t c) {  // stylized Bluetooth rune
@@ -3073,14 +1372,6 @@ static bool parseLogLine(char* line, LogRow& r) {
   return line[0] == '{' ? parseJsonLine(line, r) : parseCsvLine(line, r);
 }
 
-// 0=2.4, 1=5G, 2=BLE, 3=PRB, 4=154 (stored in LogIdx).
-static uint8_t srcTypeOf(const char* tag) {
-  if (!strcmp(tag, "BLE")) return 2;
-  if (!strcmp(tag, "PRB")) return 3;
-  if (!strcmp(tag, "154")) return 4;
-  if (!strcmp(tag, "5G"))  return 1;
-  return 0;
-}
 static uint8_t linkSourceOf(uint8_t st) {  // -> link_protocol::Source for tierColor()
   return st == 2 ? (uint8_t)Source::BleScan : st == 3 ? (uint8_t)Source::WifiProbe
        : st == 4 ? (uint8_t)Source::Ieee802154 : (uint8_t)Source::WifiScan;
@@ -4326,64 +2617,6 @@ static void activateSettings(int sel) {
   }
 }
 
-// Scan-cycle LED (works headless). Event alert (deauth / evil twin) blinks red each cycle, alternating
-// with magenta when a follow alert is also up, else with the link colour; follow alone = solid
-// magenta; otherwise link green/red.
-static void applyScanLed() {
-  static bool phase = false;
-  phase = !phase;
-  if (eventAlertActive()) {
-    if (phase) setLed(true, false, false);
-    else if (followAlertN() > 0) setLed(true, false, true);
-    else setLed(!g_linkOk, g_linkOk, false);
-  } else if (followAlertN() > 0) setLed(true, false, true);
-  else setLed(!g_linkOk, g_linkOk, false);
-}
-
-// One scan → score → log → render cycle, also mirrored to the phone app.
-static void runScanCycle() {
-  power::sample();  // refresh the battery reading every cadence (independent of the C5 link)
-  if (!requestScan()) {
-    // BUSY MISS: the C5 didn't answer (it's in its Wi-Fi-scan busy window). This is not a link
-    // failure. Keep the last table/view (requestScan zeroed g_detCount but we skip the pipeline, so
-    // g_groups/g_scanView and the on-screen list stay as they were), don't push the empty table to
-    // the phone, and keep the link dot/LED green until LINK_STICKY_MS of total silence. Re-poll soon
-    // so we catch the C5 the moment it frees up, instead of waiting the full cadence.
-    g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
-    if (!g_linkOk) { g_deauthRecent = 0; g_evilCount = 0; g_ridCount = 0; }  // no stale C5 events
-    applyScanLed();
-    if (g_screen == SCR_SCAN) drawStatusBar();  // link dot + clock only (never touches the list region); headless in background
-    g_lastCycleMs = millis() - (SCAN_CYCLE_MS - SCAN_RETRY_MS);  // fire the next poll in ~SCAN_RETRY_MS
-    return;
-  }
-  g_linkOk = true; g_lastLinkOkMs = millis();
-  computeScores();
-  buildGroups();  // once per cycle; shared by render() and pushDetections()
-  updateFollowState();
-  computeFollowScores();
-  if (!g_viewFrozen) buildScanView();  // a paused view keeps its snapshot while scanning continues
-  updateEvents();   // deauth / evil-twin alert hold + rate-limited event log lines
-  applyScanLed();   // alert / follow / link LED (works headless)
-  if (bgCtx() && g_bg.seenCount >= MAX_SEEN - 32) {
-    // The bg stream never ends on its own, and once its dedup set is full new devices would be
-    // re-logged every cycle: roll to a fresh bg session (also a cap-rotation trigger).
-    beginSessionNamed(g_bg, true);
-    enforceLogCap();
-  }
-  int newCount = logNewDetections();
-  logRidEvents();   // rate-limited per-MAC Remote-ID event lines
-  logFollowEvents(); // rate-limited per-MAC FOLLOWING event lines
-  int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
-  int susp, lk, conf; countTiers(susp, lk, conf);
-  Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
-                g_detCount, n24, n5, nble, nprb, n154, newCount, activeStream().seenCount,
-                susp, lk, conf, sigdb::loaded());
-  if (g_screen == SCR_SCAN)
-    updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
-  pushStatus();
-  pushDetections();
-}
-
 // Phone-initiated Wi-Fi bulk-download mode: SoftAP + web server + on-screen QR.
 static void runDownload() {
   static int lastJoined = -1;
@@ -4524,13 +2757,54 @@ static bool serviceGpsModal(BtnEv ev) {
   return false;
 }
 
+// ---- CYD implementation of the host_common board/UI interfaces (host_board.h / host_ui.h) --------
+// Screens that hold indices into the live tables (follow / whitelist / scan-row / category drill-downs)
+// versus the SD-reading Explore screens: the headless cycle and the phone scan-start gate on these.
+static bool screenIsDrill() {
+  return g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL ||
+         g_screen == SCR_WHITELIST  || g_screen == SCR_WLADD       || g_screen == SCR_WLRULE ||
+         g_screen == SCR_SCANROW    || g_screen == SCR_SCANDETAIL  || g_screen == SCR_SCANCONFIRM ||
+         g_screen == SCR_SCANFILTER || g_screen == SCR_MENUCAT     || g_screen == SCR_MENUCATDETAIL;
+}
+static bool screenIsExplore() {
+  return g_screen == SCR_PICKLOG || g_screen == SCR_SCANVIEWER || g_screen == SCR_DETAIL ||
+         g_screen == SCR_SORT    || g_screen == SCR_FILTER;
+}
+
+void hostboard::begin() {
+  initCommon();       // LED, TFT + backlight PWM, link UART
+  power::init();      // battery monitor on GPIO35 (voltage-only)
+  power::sample();    // seed the reading so the status bar shows a level immediately
+}
+void hostboard::sample() { power::sample(); }
+bool hostboard::sdBegin() {
+  sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+  return SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
+}
+void    hostboard::setScanLed(bool r, bool g, bool b) { setLed(r, g, b); }
+int     hostboard::batteryPercent() { return power::percent(); }
+uint8_t hostboard::brightness()     { return g_brightness; }
+bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
+bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN; }
+bool    hostboard::pipelineAllowed() { return !screenIsDrill() && !screenIsExplore(); }
+
+void hostui::onScanCycle(const ScanCycleResult&) {
+  if (!g_viewFrozen) buildScanView();  // a paused view keeps its snapshot while scanning continues
+  if (g_screen == SCR_SCAN)
+    updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
+}
+void hostui::onBusyMiss() {
+  if (g_screen == SCR_SCAN) drawStatusBar();  // link dot + clock only (never touches the list region)
+}
+void hostui::onDownloadState(bool, bool) { drawDownloadScreen(); }  // swap the QR (runDownload() does this directly)
+void hostui::onStatusPushed() {}
+bool hostui::exploreHolds(const char* path) { return ::exploreHolds(path); }
+
 void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
-  initCommon();
-  power::init();      // battery monitor on GPIO35 (voltage-only)
-  power::sample();    // seed the reading so the status bar shows a level immediately
+  hostboard::begin(); // initCommon() + battery monitor, seeded so the status bar shows a level immediately
   loadBrightness();
   loadSrcMask();
   loadBgScan();
@@ -4554,92 +2828,50 @@ void setup() {
 }
 
 void loop() {
-  // Phone commands are honored from any screen.
-  if (phone::reloadRequested()) sigdb::reload();
-  if (phone::logRequested())    transferLog();
-  if (phone::listRequested())   sendSessionList();
-  if (phone::wlReloadRequested()) { whitelist::reload(); pushStatus(); }
-  if (phone::wlListRequested())   sendWhitelist();
-  { char ln[96]; if (phone::wlAddRequested(ln, sizeof(ln))) {  // "A:<rule>": SD write in the loop, not mid-scan
-      bool ok = true;
-      for (const char* c = ln; *c; c++) if ((unsigned char)*c < 0x20) { ok = false; break; }  // one line only
-      if (ok) ok = whitelist::add(ln);
-      Serial.printf("[CYD] whitelist add %s: %s\n", ok ? "ok" : "REJECTED", ln);
-      sendWhitelist(); pushStatus();
-    } }
-  { int ix; if (phone::wlRemoveRequested(&ix)) {
-      bool ok = whitelist::removeAt(ix);
-      Serial.printf("[CYD] whitelist remove %d: %s\n", ix, ok ? "ok" : "FAILED");
-      sendWhitelist(); pushStatus();
-    } }
-  { char fn[48]; if (phone::fileRequested(fn, sizeof(fn)))   transferFile(fn); }
-  { int m, a; char fn[48]; if (phone::exportRequested(&m, &a, fn, sizeof(fn))) transferFiltered(m, a, fn); }
-  { char fn[48]; if (phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
-  { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
-      g_brightness = (uint8_t)constrain(b, 10, 100);
-      applyBrightness(); saveBrightness();
-    } }
-  { bool lk; if (phone::lockRequested(&lk)) {              // web-app lock / unlock the display
-      g_touchLocked = lk;
-      drawStatusBar();                                     // repaint the padlock immediately
-      pushStatus();                                        // reflect lock= back to the phone
-    } }
-  { uint8_t m; if (phone::srcMaskRequested(&m) && m != 0) {  // web-app source toggles (ignore all-off)
-      g_srcMask = m; saveSrcMask();
-      if (g_screen == SCR_SCANSETTINGS) drawScanSettings();
-      pushStatus();
-    } }
-  if (phone::newSessionRequested()) { startNewSession(); pushStatus(); }  // web-app "New Session"
-  renameSessionOnSync();  // give each live session a date-time filename once time is known (also syncs the share path)
-  syncSharePath();        // the screen context (fg/bg) may have changed
-  {  // keep the Scan-menu session label live (phone "N", or the time-sync rename)
-    static char lastSess[48] = "";
-    if (strcmp(lastSess, g_fg.path) != 0) {
-      strncpy(lastSess, g_fg.path, sizeof(lastSess) - 1);
-      if (g_screen == SCR_SCANMENU) drawScanMenu();
-    }
+  // Phone commands are honored from any screen. The board-agnostic dispatch (BLE transfers, whitelist,
+  // session/time-sync rename, ...) lives in host_common; below are the CYD's UI reactions to it.
+  PhoneCmdFlags pf;
+  core::servicePhoneCommands(pf);
+  if (pf.brightnessChanged) {                              // web-app brightness slider
+    g_brightness = (uint8_t)constrain(pf.brightnessPct, 10, 100);
+    applyBrightness(); saveBrightness();
   }
+  if (pf.lockChanged) {                                    // web-app lock / unlock the display
+    drawStatusBar();                                       // repaint the padlock immediately
+    pushStatus();                                          // reflect lock= back to the phone
+  }
+  if (pf.srcMaskChanged) {                                 // web-app source toggles (all-off ignored in core)
+    if (g_screen == SCR_SCANSETTINGS) drawScanSettings();
+    pushStatus();
+  }
+  if (pf.newSession) pushStatus();                         // web-app "New Session"
+  if (pf.sessionChanged && g_screen == SCR_SCANMENU) drawScanMenu();  // keep the Scan-menu session label live
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
-  if (phone::downloadRequested()) { exploreFree(); runDownload(); return; }
-  if (webshare::active()) {  // just left download mode: tear down AP and repaint
-    webshare::stop();
-    g_scanActive = g_bgScan; g_viewFrozen = false;  // the download interrupted any running scan (bg scan resumes)
+  if (pf.downloadEnter) { exploreFree(); runDownload(); return; }
+  if (pf.downloadExit) {  // just left download mode (core tore down the AP + restored the bg scan): repaint
+    g_viewFrozen = false;
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu(); pushStatus();
   }
 
   // Low-frequency /logs/ cap check (~10 min). Never while a Wi-Fi/phone download is active (both
   // returned above) and not on the SD-reading Explore screens (avoid contending for the card).
-  {
-    static uint32_t lastCap = 0;
-    if (g_sdOk && millis() - lastCap >= 600000UL &&
-        g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
-        g_screen != SCR_SORT && g_screen != SCR_FILTER) {
-      lastCap = millis();
-      enforceLogCap();
-    }
-  }
+  core::tickLogCap(screenIsExplore());
 
   // Phone can start/stop the scan remotely (single toggle in the web app). Ignore a start while
   // drilling the follow or whitelist screens so a stray phone toggle can't reset follow state /
-  // abandon the snapshot mid-view; scanStartRequested() is consume-on-read, so short-circuiting
+  // abandon the snapshot mid-view; scanStartRequested() is consume-on-read, so deferring it
   // leaves it pending until we return to SCR_SCAN.
-  bool inDrill = (g_screen == SCR_FOLLOWLIST || g_screen == SCR_FOLLOWACTION || g_screen == SCR_FOLLOWDETAIL ||
-                  g_screen == SCR_WHITELIST  || g_screen == SCR_WLADD       || g_screen == SCR_WLRULE ||
-                  g_screen == SCR_SCANROW    || g_screen == SCR_SCANDETAIL  || g_screen == SCR_SCANCONFIRM ||
-                  g_screen == SCR_SCANFILTER  || g_screen == SCR_MENUCAT    || g_screen == SCR_MENUCATDETAIL);
-  if (!inDrill && phone::scanStartRequested()) {
-    g_scanActive = true;
-    g_lastCycleMs = 0;  // run the first cycle immediately
+  pf.acceptScanStart = !screenIsDrill();
+  core::servicePhoneScan(pf);
+  if (pf.scanStarted) {
     if (g_screen != SCR_SCAN) { g_scrollOffset = 0; resetFollow(); g_viewFrozen = false; showScan(); }
     else render();      // already on the scanner: repaint the START->STOP state
     pushStatus();
   }
-  // Consume the stop flag unconditionally. Stop ends the scan but stays on the scanner screen
-  // (it just goes idle), so the user can review the list or restart.
-  if (phone::scanStopRequested()) {
-    g_scanActive = false;
-    setLed(!g_linkOk, g_linkOk, false);
+  // Stop ends the scan but stays on the scanner screen (it just goes idle), so the user can review
+  // the list or restart.
+  if (pf.scanStopped) {
     if (g_screen == SCR_SCAN) render();
     pushStatus();
   }
@@ -4656,13 +2888,11 @@ void loop() {
   // already returned above.
   // When the C5 link is down, each headless poll burns ~800ms waiting for a reply the C5 won't send,
   // which would make menus feel laggy; back the cadence off until the link is back (SCR_SCAN is unaffected).
-  if (g_bgScan && g_scanActive && g_screen != SCR_SCAN && !inDrill &&
-      g_screen != SCR_PICKLOG && g_screen != SCR_SCANVIEWER && g_screen != SCR_DETAIL &&
-      g_screen != SCR_SORT && g_screen != SCR_FILTER &&
+  if (g_bgScan && g_scanActive && !hostboard::foregroundScan() && hostboard::pipelineAllowed() &&
       !webshare::active() &&
       millis() - g_lastCycleMs >= (g_linkOk ? SCAN_CYCLE_MS : SCAN_CYCLE_DOWN_MS)) {
     g_lastCycleMs = millis();
-    runScanCycle();
+    core::runScanCycle();
   }
 
   BtnEv ev = buttonEvent();
@@ -4674,7 +2904,7 @@ void loop() {
   if (serviceTouchLock()) {
     if (g_screen == SCR_SCAN && g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
       g_lastCycleMs = millis();
-      runScanCycle();   // renders via updateScan()
+      core::runScanCycle();   // renders via updateScan()
     } else if (g_screen == SCR_MENU) {
       // HOME's live readout is normally repainted by the SCR_MENU idle branch, which the early
       // return above skips while locked — so the tiles froze on screen even though the headless
@@ -5002,7 +3232,7 @@ void loop() {
       if (ev == BTN_LONG || topBarTapped()) { backFromScan(); return; }
       int rt = handleScanTouch();  // scroll / row tap
       if (rt >= 0) { openScanRow(rt); return; }
-      if (g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) { g_lastCycleMs = millis(); runScanCycle(); }
+      if (g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) { g_lastCycleMs = millis(); core::runScanCycle(); }
       delay(20);
       return;
     }

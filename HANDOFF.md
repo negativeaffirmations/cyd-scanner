@@ -1,4 +1,4 @@
-# Handoff — 2026-10-15 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-18 (branch: `main`; it is the only branch / the trunk)
 
 ## New direction — scan-analyzer companion + remote-server pairing (PLANNED, 2026-10-15)
 A separate **private** companion project — **scan-analyzer** — is being started: a self-hosted
@@ -33,6 +33,55 @@ IR-flash pulse timing + brightness + RF, not CV); **geotagged image upload** + *
 Classic** scanning (needs a new board — C5 has no BR/EDR, the CYD's ESP32 is held by NimBLE). Owner has
 the Flock-Noir hardware (OV3660) and is testing viability. scan-analyzer PROPOSAL.md §11 + CLAUDE.md
 "Hardware / modality expansion" carry the details; keep scan-analyzer's data model source-agnostic.
+
+## Done — mini build (screenless XIAO sibling): Phases 0–4 + bring-up validated (2026-10-18, BOTH XIAO BOARDS FLASHED; committed)
+Built the **screenless XIAO sibling** of the rig per [docs/mini-build.md](docs/mini-build.md): a **XIAO
+ESP32-S3 Sense** host (replaces the CYD; no TFT/touch/BOOT — driven only via the BLE web app) + a **XIAO
+ESP32-C5** scanner (replaces the DevKit C5) + a **DS3231 RTC** for a persistent clock. One repo, new
+PlatformIO envs; the CYD-only `main.cpp` core was carved into a board-agnostic `src/host_common/` shared
+by both hosts. **No `PROTOCOL_VERSION` bump** — all four firmwares stay link-compatible (v10); `src/c5/`
++ `lib/link_protocol/` untouched except the C5 `pins.h` board branch. New mini-build pinout: **[hardware/PINOUT.md](hardware/PINOUT.md) §6**.
+Memory: [[mini-build-xiao-sibling]].
+- **Phase 0 — scaffolding.** `src/c5/pins.h` branches on `ARDUINO_XIAO_ESP32C5` (XIAO link GPIO23/24,
+  GPS RX GPIO1; DevKit pins in `#else`). Added `[env:xiao_s3]` (`seeed_xiao_esp32s3`) + `[env:xiao_c5]`
+  (`seeed_xiao_esp32c5`); CYD filter → `+<cyd/> +<host_common/> -<host_common/rtc.cpp>`. Risk #1 cleared:
+  the pinned stable platform (`55.3.312`) ships `seeed_xiao_esp32c5.json` — no local board def needed.
+- **Phase 1 — host-core refactor (reviewed CLEAN).** 5011-line `src/cyd/main.cpp` → ~3250 lines +
+  `src/host_common/` (`host_core`/`host_log`/`host_status`/`host_link`/`host_phone_cmds` + `host_board.h`/
+  `host_ui.h`; sigdb/phone/webshare/whitelist/logfilter/power.h moved). `setup()`/`loop()`/the `SCR_*`
+  state machine stay per-board; only the functions they call moved. Reviewer diffed vs HEAD → **CYD
+  byte-for-behavior identical** (STATUS/DETS/NDJSON/on-screen flow), only sub-100 ms repaint-latency shift.
+  CYD **Flash 45.9% / RAM 34.2% unchanged**.
+- **Phase 2 — headless XIAO-S3 host.** `src/xiao_s3/` (`main.cpp` tiny setup/loop, `host_board.cpp`,
+  `host_ui.cpp` serial-only hooks, `power.cpp` stub, `pins.h`). `foregroundScan()` uses a dedicated
+  `g_fgScan` flag (not `g_scanActive`) to keep the fg/bg stream split. Builds 40.7%/30.9% (~197 KB < CYD).
+- **Phase 3 — DS3231 RTC (host, I2C GPIO5/6).** `src/host_common/rtc.*` direct-I2C BCD read (no RTClib),
+  probes only 0x68 (ignores AT24C32 0x57). Time **source priority 3** + hourly **write-back sink**
+  (`disciplineRtc`). CYD stays byte-identical (`rtc.cpp` excluded from its filter; core reaches RTC via a
+  null `g_rtcWrite` fn-ptr — including `<Wire.h>` would link ~32 KB). tz sign is `− tzOffsetMin*60`
+  (matches the GPS branch). `STATUS tsrc=3` = RTC. CYD Flash +356 B only.
+- **Phase 4 — headless Wi-Fi-download QR.** STATUS appends `apssid/appsk/apurl` while `webshare::active()`
+  (buffer 512→640); web app `features/wifiap.js` renders a `WIFI:T:WPA;S:;P:;;` join QR + an open-index
+  link. The web app had **no QR renderer** → **vendored MIT `qrcode-generator`** to
+  `webapp/js/vendor/qrcode.js` (NOT a CDN dep; verified MIT, no network/eval; attributed in
+  [docs/references.md](docs/references.md)).
+- **Web-app C5-link indicator (NEW, this session).** The headless host has no screen, so the CYD's link
+  dot had no home — added a `#linkState` app-bar icon (`cable`, green up / red down from STATUS `link=`)
+  in `webapp/index.html` + `js/ble/status.js` + reset in `connection.js`. JS/HTML-only (no SCSS recompile);
+  `#uiver → c5-link-icon`.
+- **Bring-up (2026-10-18, on hardware).** Both XIAO flashed (S3 native `303A:1001` MAC `10:b4:1d:e7:ed:a0`;
+  C5 native `303A:1001` base MAC `10:bd:a3:cf:02:dc`, confirmed ESP32-C5 by `esptool chip-id`). S3 boots
+  clean (PSRAM ok, **SD mounts on GPIO21**, sigdb loads, BLE advertises `COINTEL-FLO`), **DS3231 detected**
+  (`[S3] RTC present, time not set`). Initial link was DOWN — **root cause: link wiring not crossed** (the
+  D-pad↔GPIO map: C5 GPIO23=D4 / GPIO24=D5); after the user fixed it, the link is **up and streaming
+  dual-band detections** (`[S3] cycle: 2.4:6 5G:2 BLE:9 PRB:10` — **5 GHz confirmed**, risk #3 antenna ok).
+  The C5 prints a non-fatal `BOARD_HAS_PSRAM` cacheline error at boot (risk #2) but runs fine.
+- **On-device TODO (non-blocking):** RTC **persist** test (sync time via phone → power-cycle → boot log
+  should read `RTC valid (latched)` + logs timestamped from row 1); web-app in-browser check of the new
+  link icon + the Wi-Fi-download QR; a threat/5 GHz walk. Optional cleanup: drop forced `BOARD_HAS_PSRAM`
+  on `xiao_c5` to silence the boot error. Camera (XIAO-S3 Sense) stays **deferred** (pins reserved).
+- **Builds:** all four envs SUCCESS (cyd 45.9%/34.2% unchanged; xiao_s3 40.7%/30.9%; xiao_c5 45.4%/24.0%;
+  c5 untouched). Webapp JS `node --check` clean.
 
 ## Done — follower count DISABLED + OUI/company-ID maker labels (2026-10-15, CYD FLASHED COM14 + webapp; pushed)
 Context: a field drive to test the follow alert showed the count inflating (6→10→2→1). Root-caused: the
