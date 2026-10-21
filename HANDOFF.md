@@ -1,4 +1,39 @@
-# Handoff — 2026-10-18 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-20 (branch: `main`; it is the only branch / the trunk)
+
+## In progress — mini build soldered bring-up: C5 POWER REWIRE (2026-10-20, hardware rework pending)
+The owner moved the mini build from a breadboard (each XIAO on its own USB) to a soldered rig with the
+TP4056 + switch. **Finding:** fed from the **S3's 3V3 pin into the C5's 3V3 pad** (the original
+mini-build.md §2.5 plan), the **C5 never starts its firmware**. Its pad reads 3.3 V and every wire
+passes continuity, but the new bring-up pin probe saw its link TX **100% floating, with no reboot
+loop** (even after the C5 was changed to start its link UART first). A temporary **S3 5V → C5 5V
+jumper** (C5 on its OWN regulator, S3 USB) gave `[LINK] PASS | pong 68 miss 0 corrupt 0 | burst 3/3
+(28/28)`. Root cause unconfirmed (no XIAO-C5 schematic in the repo): either the S3's regulator can't
+start the C5, or the C5's 3V3 pad isn't a usable supply input.
+- **New power topology (docs updated: mini-build.md §2.5/§2.6, PINOUT.md §6e, mini-build-bringup.md):**
+  switched TP4056 `OUT+` → **both** S3 `BAT+` and **C5 `BAT+`** (OUT− → both BAT−/GND). **No S3 3V3 →
+  C5 3V3 wire.** RTC + GPS stay on the S3's 3V3. Rules: never plug in both XIAOs' USB at once; **keep
+  the switch ON whenever any USB is in** (the C5 has no other supply).
+- **Owner is desoldering the C5** to reach its underside BAT pads (in progress). Next: rewire per
+  §2.6, then re-run [docs/mini-build-bringup.md](docs/mini-build-bringup.md) Stage 1 (incl. the `x`
+  stress + a battery run), then Stage 2 (RTC) and Stage 3 (GPS).
+- **Wiring diagrams are STALE:** `hardware/diagrams/mini-build_wiring_diagram{.png,.svg,_labeled.png}`
+  are still untracked and show the old 3V3 feed. The owner is redrawing them, so don't commit the old
+  ones.
+- **New: bring-up test firmware `[env:xiao_s3_bringup]`** (`src/xiao_s3_bringup/main.cpp`, never
+  shipped). Flash it to the S3 in place of `xiao_s3`; the C5 keeps `xiao_c5`. Every 3 s it prints
+  `[LINK]` (pong/miss/corrupt, detection-burst completeness, C5 reset detection from uptime going
+  backwards), `[RTC ]` (I2C scan, time, OSF, temperature), `[GPS ]` (fix via Status) and `[PWR ]` (S3
+  reset reason, BROWNOUT flagged). `[PROBE]` reads the link RX pin with pull-down/up over 3 s:
+  driven / floating / low / **REBOOTING** / D6-D7 bridged. Commands: `p` probe, `x` S3 Wi-Fi stress,
+  `s <epoch>` set RTC, `i` I2C rescan, `c` clear.
+- **C5 firmware changes (`src/c5/`, both `c5` + `xiao_c5`; no protocol bump):** the link UART now
+  starts at the **top of `setup()`, before Wi-Fi/BLE** (so a radio-start-up brownout shows as a reboot
+  loop on the host's RX line, not a dead wire); the boot banner prints `reset=<esp_reset_reason>`;
+  `gps.cpp` prints `[C5] gps: bytes= nmea_ok= bad= fix= sats=` every 10 s (proves the NEO-6M wire
+  indoors without a fix). All builds green (xiao_s3_bringup, xiao_c5, c5). **The DevKit `c5` was NOT
+  reflashed**; the change is harmless for the CYD link, but the CYD rig still runs the old C5 binary.
+- Earlier in the session: the owner's first soldered S3 had bad joints (resoldered all S3 pins, fixed).
+  28 AWG stranded wire is fine electrically; tin the ends (stray strands bridge the 3V3/GND pads).
 
 ## New direction — scan-analyzer companion + remote-server pairing (PLANNED, 2026-10-15)
 A separate **private** companion project — **scan-analyzer** — is being started: a self-hosted

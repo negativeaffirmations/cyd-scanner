@@ -19,6 +19,10 @@ static char   s_line[NMEA_LINE_MAX];
 static size_t s_len = 0;
 static bool   s_overflow = false;
 
+// Wiring-health counters, printed to the USB console every 10 s by poll(): bytes>0 proves the
+// NEO-6M TXD -> GPS_RX_PIN wire; ok>0 proves clean 9600-baud NMEA (bad>0 = noise/wrong baud).
+static uint32_t s_bytes = 0, s_ok = 0, s_bad = 0;
+
 void begin() {
   s_mux = xSemaphoreCreateMutex();
   GpsSerial.setClockSource(UART_CLK_SRC_XTAL);
@@ -84,7 +88,8 @@ static void parseLine(char* s) {
   uint8_t sum = 0;
   for (const char* p = s + 1; p < star; p++) sum ^= (uint8_t)*p;
   int h1 = hexVal(star[1]), h2 = hexVal(star[2]);
-  if (h1 < 0 || h2 < 0 || sum != (uint8_t)((h1 << 4) | h2)) return;  // bad checksum
+  if (h1 < 0 || h2 < 0 || sum != (uint8_t)((h1 << 4) | h2)) { s_bad++; return; }  // bad checksum
+  s_ok++;
   *star = 0;
 
   // Split on commas in place (empty fields preserved).
@@ -141,6 +146,7 @@ void poll() {
   int budget = 256;  // bound work per call; the 512 B RX buffer holds the rest for next loop
   while (budget-- > 0 && GpsSerial.available()) {
     char c = (char)GpsSerial.read();
+    s_bytes++;
     if (c == '\n') {
       if (!s_overflow && s_len > 0) {
         if (s_line[s_len - 1] == '\r') s_len--;
@@ -153,6 +159,13 @@ void poll() {
     } else {
       s_overflow = true;  // overlong: discard through the next newline
     }
+  }
+  static uint32_t lastDiag = 0;
+  if (millis() - lastDiag >= 10000) {
+    lastDiag = millis();
+    Fix f; snapshot(f);
+    Serial.printf("[C5] gps: bytes=%lu nmea_ok=%lu bad=%lu fix=%u sats=%u\n",
+                  (unsigned long)s_bytes, (unsigned long)s_ok, (unsigned long)s_bad, f.fix, f.sats);
   }
 }
 

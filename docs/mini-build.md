@@ -138,13 +138,24 @@ a TP4056 to charge and a boost converter to lift 3.7 V → 5 V. The XIAO is nati
 (3.0–4.2 V) feeds the XIAO's onboard regulator directly, so **the boost/step-up module is simply
 deleted**, and an onboard charge IC charges over USB-C.
 
-**Topology (one cell, one charger, one rail):**
-- LiPo → **host (XIAO-S3) BAT pads** only. The host's onboard regulator makes 3.3 V.
-- Power the **XIAO-C5, NEO-6M GPS, and DS3231 from the host's `3V3` output pin** (all 3.3 V); tie
-  all grounds together. Powering a second XIAO through its `3V3` pin (bypassing its own LDO) is
-  standard practice.
-- **Do NOT** parallel the LiPo across both XIAO boards' BAT pads — each board has its **own** charge
-  IC, and two chargers on one cell will fight. Charge through one path only.
+**Topology (REVISED 2026-10-20): one cell, each XIAO on its own regulator:**
+- The switched, protected cell output (TP4056 `OUT+` → switch) feeds **both XIAOs' BAT pads**:
+  **XIAO-S3 `BAT+`/`BAT−`** *and* **XIAO-C5 `BAT+`/`BAT−`**. Each board's onboard regulator makes its
+  own 3.3 V.
+- The **NEO-6M GPS and DS3231** run from the **S3's `3V3` output pin**. All grounds are tied together.
+- **Do NOT wire S3 `3V3` → C5 `3V3`.** That was the original plan, and **it does not work**. On
+  hardware (2026-10-20) the C5's 3V3 pad read 3.3 V, but the C5 **never started its firmware**: the
+  bring-up pin probe showed its link TX 100% undriven, with no reboot loop. The same C5 ran perfectly
+  as soon as its **own** regulator was fed (a temporary S3 `5V` → C5 `5V` jumper on USB). The root
+  cause is unconfirmed (no XIAO-C5 schematic in the repo): either the S3's regulator can't start the
+  C5, or the C5's 3V3 pad isn't a usable supply input. Don't rely on the 3V3 pad.
+- **Both XIAO chargers now sit on the cell**, but a XIAO's charger is only active while **that board's
+  own USB** is plugged in. Rule: **never plug in both XIAOs' USB at once.** One XIAO USB at a time just
+  trickles the cell, which is harmless (see the TP4056 notes below).
+- **The C5 has no supply except the cell (or its own USB).** With the switch **off**, an S3-USB-only
+  bench session leaves the C5 dark and the link down. **Keep the switch ON whenever any USB is
+  plugged in.** Switch-off plus C5-USB would also feed the S3's BAT pad from the C5's charger with no
+  cell attached.
 - On battery the **5 V / VUSB pin floats** (live only on USB) — every peripheral must be 3.3 V-safe
   off-battery. DS3231 ✓; confirm the GY-NEO6MV2 runs at 3.3 V (most do via their onboard regulator).
 
@@ -167,22 +178,30 @@ path only** (the boost/step-up is still deleted — the XIAO runs the cell nativ
 - Net BOM change vs. CYD: **TP4056 kept, boost/step-up removed.**
 
 **Battery sense:** the XIAO-S3 exposes no battery-voltage divider (the CYD used input-only GPIO35,
-absent here), so the host reports `bat=-1` (§2.1). (The XIAO-C5 does have a BAT_VOLT sense, but the
-C5 isn't the host and doesn't carry the cell.) A future divider to a spare S3 ADC pad (D0–D3) could
+absent here), so the host reports `bat=-1` (§2.1). (The XIAO-C5 has a BAT_VOLT sense and, since
+2026-10-20, sits on the cell too, but nothing reads it yet: it would need a link field.) A future divider to a spare S3 ADC pad (D0–D3) could
 fill `bat` in later; out of scope.
 
 ### 2.6 Complete device wiring (pinout)
 
-All five components, net by net. Power rail = host 3V3; single common ground.
+All five components, net by net. The two XIAOs each run from the switched cell through their own
+regulator; the RTC and GPS share the S3's 3V3; single common ground. Wire and verify them one module
+at a time with the staged bring-up test: [mini-build-bringup.md](mini-build-bringup.md).
+
+> ⚠️ `hardware/diagrams/mini-build_wiring_diagram*.{png,svg}` still show the OLD S3 3V3 → C5 3V3
+> feed and are being redrawn. **This table is authoritative.**
 
 | From | Pin | To | Pin | Net / purpose |
 |------|-----|----|-----|---------------|
 | LP103450 LiPo | **+** | TP4056 | **B +** | cell → charger battery terminal |
 | LP103450 LiPo | **−** | TP4056 | **B −** | cell → charger battery terminal |
-| TP4056 | **OUT +** | XIAO-S3 | **BAT +** | protected cell output → host (host runs from here) |
-| TP4056 | **OUT −** | XIAO-S3 | **BAT −** | protected cell output → host |
+| TP4056 | **OUT +** | Switch | common | master on/off |
+| Switch | throw | XIAO-S3 | **BAT +** | switched cell → host regulator |
+| Switch | throw | XIAO-C5 | **BAT +** | switched cell → scanner's **own** regulator (same net as S3 BAT+) |
+| TP4056 | **OUT −** | XIAO-S3 | **BAT −** | protected cell return |
+| TP4056 | **OUT −** | XIAO-C5 | **BAT −** | protected cell return (same net as S3 BAT−/GND) |
 | TP4056 | **IN + / IN −** | *(USB)* | — | charge input — charge via the TP4056's own USB only |
-| XIAO-S3 | **3V3** | XIAO-C5 | **3V3** | power the C5 from host regulator |
+| ~~XIAO-S3~~ | ~~**3V3**~~ | ~~XIAO-C5~~ | ~~**3V3**~~ | **REMOVED 2026-10-20**: the C5 won't boot from its 3V3 pad (§2.5) |
 | XIAO-S3 | **3V3** | DS3231 | **VCC** | RTC power |
 | XIAO-S3 | **3V3** | NEO-6M | **VCC** | GPS power (verify 3.3 V) |
 | XIAO-S3 | **GND** | XIAO-C5 | **GND** | common ground |

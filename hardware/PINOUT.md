@@ -408,11 +408,16 @@ Firmware: S3 `hostlink::begin(rx=44, tx=43)`; C5 `pins.h` XIAO branch `LINK_TX_P
 
 ### 6e. Power & 5 GHz antenna
 
-- **Single cell, native 3.3 V (no boost).** LiPo → **TP4056** (`B±`) → `OUT±` → **XIAO-S3 BAT±** (host
-  runs from the TP4056's protected output). Power the **XIAO-C5, NEO-6M, DS3231 from the host's `3V3`
-  pin**; tie all grounds. **Do NOT** parallel the cell across both XIAO BAT pads (each has its own
-  charger). Charge via the **TP4056's own USB only** (not the XIAO USB at the same time). The
-  boost/step-up of the CYD build is **deleted** (XIAO is natively 3.3 V).
+- **Single cell, native 3.3 V (no boost). REVISED 2026-10-20.** LiPo → **TP4056** (`B±`) → `OUT+` →
+  switch → **both XIAO-S3 BAT+ and XIAO-C5 BAT+** (`OUT−` → both BAT− / common GND). Each XIAO runs
+  from its **own** regulator. **NEO-6M + DS3231** run from the **S3's `3V3`** pin. **No S3 3V3 → C5
+  3V3 wire:** fed that way, the C5 read 3.3 V at the pad but never started its firmware. It booted
+  as soon as its own regulator was fed (root cause unconfirmed; see
+  [docs/mini-build.md §2.5](../docs/mini-build.md)).
+- **Rules:** charge via the **TP4056's own USB**. **Never plug in both XIAOs' USB at once** (each
+  XIAO's charger is live only on its own USB, so one at a time just trickles the cell). **Keep the
+  switch ON whenever any USB is in**, because the C5 has no other supply. The boost/step-up of the
+  CYD build is **deleted** (XIAO is natively 3.3 V).
 - ⚠️ **5 GHz antenna (risk #3):** the stock XIAO-C5 antenna is **2.4 GHz-only**. The C5's reason to
   exist is **5 GHz Wi-Fi 6** — fit a **dual-band 2.4/5 GHz u.FL antenna**. (Bring-up saw 5 GHz beacons
   with the fitted antenna; validate `5G` counts > 0 before trusting 5 GHz coverage.)

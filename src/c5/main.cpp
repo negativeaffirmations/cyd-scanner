@@ -593,8 +593,16 @@ static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
 
 void setup() {
   Serial.begin(115200);
+  // Link UART up FIRST, before the radios: its TX then idles high from the moment the app starts, so a
+  // C5 that browns out during Wi-Fi/BLE RF bring-up shows on the host's RX line as a reboot loop
+  // (driven-high / floating), not as a silently dead wire. Commands that arrive during init just wait
+  // in the RX buffer.
+  LinkSerial.setClockSource(UART_CLK_SRC_XTAL);
+  LinkSerial.setRxBufferSize(1024);
+  LinkSerial.begin(LINK_BAUD, SERIAL_8N1, LINK_RX_PIN, LINK_TX_PIN);
   delay(300);
-  Serial.println("\n[C5] boot: async scanner (Wi-Fi dual-band scan + promiscuous probe/beacon + BLE)");
+  Serial.printf("\n[C5] boot: async scanner (Wi-Fi dual-band scan + promiscuous probe/beacon + BLE) reset=%d\n",
+                (int)esp_reset_reason());
 
   g_mux = xSemaphoreCreateMutex();
 
@@ -616,9 +624,6 @@ void setup() {
   scan->setMaxResults(0);
   scan->start(0, false);  // continuous
 
-  LinkSerial.setClockSource(UART_CLK_SRC_XTAL);
-  LinkSerial.setRxBufferSize(1024);
-  LinkSerial.begin(LINK_BAUD, SERIAL_8N1, LINK_RX_PIN, LINK_TX_PIN);
   gps::begin();  // onboard NEO-6M NMEA reader (UART0, receive-only)
   Serial.println("[C5] scanning in background; waiting for commands");
 }
