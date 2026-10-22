@@ -50,6 +50,37 @@ function backfillEpoch(items, sync){
   if(!sync) return;
   for(const it of items) if(!it.epoch) it.epoch = sync.epoch + Math.round((it.ms - sync.ms)/1000);
 }
+// Join several session files (a scan's parts, or several picked scans) into ONE NDJSON text that
+// stays self-consistent. Timesync anchors only date rows from their own boot, so each part's pre-sync
+// rows (epoch:0) are backfilled from THAT part's anchor and rewritten in place (same formula as
+// backfillEpoch); the consumed anchors are dropped. Only the first {"evt":"meta"} line is kept.
+// Legacy CSV parts can't be merged with NDJSON: a lone CSV part passes through as-is, otherwise
+// CSV parts are skipped.
+export function joinLogParts(texts){
+  const parts=(texts||[]).filter(t=>t && t.trim());
+  if(parts.length===1 && parts[0].trimStart()[0]!=="{") return parts[0];
+  const out=[]; let haveMeta=false;
+  for(const t of parts){
+    if(t.trimStart()[0]!=="{") continue;
+    const lines=t.split(/\r?\n/);
+    let sync=null;
+    for(const ln of lines) if(ln.includes('"evt":"timesync"')){
+      try{ const o=JSON.parse(ln), e=parseInt(o.epoch,10)||0; if(e>0){ sync={epoch:e, ms:parseInt(o.ms,10)||0}; break; } }catch(e){}
+    }
+    for(const ln of lines){
+      if(!ln.trim()) continue;
+      if(ln.includes('"evt":"meta"')){ if(haveMeta) continue; haveMeta=true; out.push(ln); continue; }
+      if(sync && ln.includes('"evt":"timesync"')) continue;
+      if(sync && ln.startsWith('{"epoch":0,')){
+        const m=/"ms":(\d+)/.exec(ln);
+        const e=m ? sync.epoch + Math.round((parseInt(m[1],10) - sync.ms)/1000) : 0;
+        if(e>0){ out.push('{"epoch":'+e+','+ln.slice(11)); continue; }
+      }
+      out.push(ln);
+    }
+  }
+  return out.length ? out.join("\n")+"\n" : "";
+}
 // Detect the log format: first non-empty char "{" = NDJSON, else legacy CSV.
 export function parseScanLog(text){
   const t=(text||"").trimStart();

@@ -162,14 +162,14 @@ class WriteCB : public NimBLECharacteristicCallbacks {
         }
       } else if (c0 == 'T' || c0 == 't') {           // "T:<mode>[:<minutes>][:<path>]" filtered export
         // mode 0 = whole file, 1 = past 24 h, 2 = past <minutes>. Optional /logs/ path (default =
-        // the current session). ('E' is taken by whitelist-remove, hence 'T' for time.)
+        // the current session), or "*" = every log file. ('E' is taken by whitelist-remove, hence 'T'.)
         if (val.size() > 2 && val[1] == ':') {
           const char* s = val.c_str();
           g_expMode = atoi(s + 2);
           g_expArg = 0; g_expPath[0] = 0;
           for (const char* q = strchr(s + 2, ':'); q; ) {
             q++;
-            if (*q == '/') { strncpy(g_expPath, q, sizeof(g_expPath) - 1); g_expPath[sizeof(g_expPath) - 1] = 0; break; }
+            if (*q == '/' || *q == '*') { strncpy(g_expPath, q, sizeof(g_expPath) - 1); g_expPath[sizeof(g_expPath) - 1] = 0; break; }
             if (*q >= '0' && *q <= '9') g_expArg = atoi(q);
             q = strchr(q, ':');
           }

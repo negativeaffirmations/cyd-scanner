@@ -70,18 +70,33 @@ void syncSharePath() {
 static uint16_t seenPan(const Detection& d) {
   return (d.source == (uint8_t)Source::Ieee802154 && !(d.flags & FLAG_154_EXTENDED)) ? d.panId : 0;
 }
-static bool seenContains(const LogStream& st, const Detection& d) {
+// Index of this device in the stream's table, or -1.
+static int seenFind(const LogStream& st, const Detection& d) {
+  uint16_t pan = seenPan(d);
   for (int i = 0; i < st.seenCount; i++)
-    if (st.seen[i].source == d.source && memcmp(st.seen[i].mac, d.mac, 6) == 0 &&
-        st.seen[i].pan == seenPan(d)) return true;
-  return false;
+    if (st.seen[i].source == d.source && st.seen[i].pan == pan && memcmp(st.seen[i].mac, d.mac, 6) == 0) return i;
+  return -1;
 }
-static void seenAdd(LogStream& st, const Detection& d) {
-  if (st.seenCount >= MAX_SEEN) return;
-  st.seen[st.seenCount].source = d.source;
-  st.seen[st.seenCount].pan = seenPan(d);
-  memcpy(st.seen[st.seenCount].mac, d.mac, 6);
-  st.seenCount++;
+// Insert a device; when the table is full, evict the least-recently-SEEN entry (a device that is
+// still in range is refreshed every cycle, so it is never the victim). Never fails. The new entry is
+// "due" (lastLogged = ms - RELOG_MS); the caller stamps lastLogged once its row is actually written.
+static int seenInsert(LogStream& st, const Detection& d, uint32_t ms) {
+  int idx = st.seenCount;
+  if (idx < MAX_SEEN) {
+    st.seenCount++;
+  } else {
+    idx = 0;
+    for (int i = 1; i < MAX_SEEN; i++)
+      if ((uint32_t)(ms - st.seen[i].lastSeen) > (uint32_t)(ms - st.seen[idx].lastSeen)) idx = i;
+  }
+  SeenKey& k = st.seen[idx];
+  k.source = d.source;
+  k.pan = seenPan(d);
+  memcpy(k.mac, d.mac, 6);
+  k.lastSeen = ms;
+  k.lastLogged = ms - RELOG_MS;
+  st.uniqCount++;
+  return idx;
 }
 
 // Delete leftover header-only session logs (no detections were ever written). Past boots
@@ -120,7 +135,30 @@ static void sweepEmptySessions() {
 // across boots and new sessions, so names never repeat; the bg stream has its own counter), adopt
 // the counter name, reset that stream's dedup, and re-arm the time-sync rename (named=false) so the
 // next renameSessionOnSync() gives it a date-time name if time is known.
+// Session files that ENDED this boot (New Session / bg toggle). They keep valid ms-since-boot, so the
+// time-window export can still date them, and renameSessionOnSync() appends a timesync anchor to
+// any that ended before the clock was known (else their epoch:0 rows could never be dated).
+struct BootFile { char path[48]; bool anchored; };
+static constexpr int BOOT_FILES = 8;
+static BootFile g_bootFiles[BOOT_FILES];
+static int g_bootFileN = 0;  // ring write count
+static void rememberBootFile(const LogStream& st) {
+  if (!st.started || !st.path[0]) return;
+  BootFile& b = g_bootFiles[g_bootFileN++ % BOOT_FILES];
+  snprintf(b.path, sizeof(b.path), "%s", st.path);
+  b.anchored = st.named;  // a date-named file was created/renamed after sync (rows dated or anchored)
+}
+int thisBootFiles(const char** out, int cap) {
+  int n = 0;
+  if (n < cap && g_fg.path[0]) out[n++] = g_fg.path;
+  if (n < cap && g_bg.path[0]) out[n++] = g_bg.path;
+  int have = g_bootFileN < BOOT_FILES ? g_bootFileN : BOOT_FILES;
+  for (int i = 0; i < have && n < cap; i++) out[n++] = g_bootFiles[i].path;
+  return n;
+}
+
 void beginSessionNamed(LogStream& st, bool bg) {
+  rememberBootFile(st);
   Preferences p; p.begin("cydscan", false);
   const char* key = bg ? "bgcnt" : "bootcnt";
   uint32_t n = p.getULong(key, 0) + 1;
@@ -130,7 +168,8 @@ void beginSessionNamed(LogStream& st, bool bg) {
   st.named        = false;   // re-arm rename-on-sync
   st.started      = false;   // file is created lazily on the first row (ensureLogFile)
   st.seenCount    = 0;       // fresh per-session dedup
-  st.lastRotateMs = millis(); // arm the dense-area auto-rotate guard
+  st.uniqCount    = 0;
+  st.rowCount     = 0;
   Serial.printf("[CYD] %s session log (created on first detection): %s\n", bg ? "bg" : "fg", st.path);
 }
 
@@ -219,6 +258,21 @@ static void renameStreamOnSync(LogStream& st, bool bg) {
 void renameSessionOnSync() {
   renameStreamOnSync(g_fg, false);
   renameStreamOnSync(g_bg, true);
+  if (g_sdOk && timeHasSync()) {  // earlier this-boot files that ended pre-sync: anchor them too
+    int have = g_bootFileN < BOOT_FILES ? g_bootFileN : BOOT_FILES;
+    for (int i = 0; i < have; i++) {
+      BootFile& b = g_bootFiles[i];
+      if (b.anchored) continue;
+      b.anchored = true;
+      if (!SD.exists(b.path)) continue;
+      File mf = SD.open(b.path, FILE_APPEND);
+      if (!mf) continue;
+      mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
+                (unsigned long)epochLocal(), (unsigned long)millis());
+      mf.close();
+      Serial.printf("[CYD] timesync anchor appended to earlier session %s\n", b.path);
+    }
+  }
   syncSharePath();
 }
 
@@ -289,10 +343,14 @@ int logNewDetections() {
   bool gps = posHasFix();
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
-    if (seenContains(st, d)) continue;
-    if (st.seenCount >= MAX_SEEN) continue;  // dedup set full: skip (don't re-log every cycle); the rotation below resumes capture
-    seenAdd(st, d);
-    n++;
+    int si = seenFind(st, d);
+    if (si >= 0) {
+      st.seen[si].lastSeen = ms;
+      if (ms - st.seen[si].lastLogged < RELOG_MS) continue;  // logged recently: no new row yet
+    } else {                                                  // (else: a due re-sighting row)
+      si = seenInsert(st, d, ms);
+      n++;  // "new" = first sighting this session
+    }
     if (!f && ensureLogFile(st)) f = SD.open(st.path, FILE_APPEND);
     if (!f) continue;
     char safe[97];  // escaped name (32 B name, worst case \uXXXX per byte truncates safely)
@@ -334,19 +392,11 @@ int logNewDetections() {
     lnAppend(ln, n2, ",\"wl\":%d", wl ? 1 : 0);
     if (n2 > (int)LOG_LINE - 2) continue;  // can't close the object in-buffer: drop the row, never write truncated JSON
     ln[n2++] = '}'; ln[n2++] = '\n';
-    f.write((const uint8_t*)ln, n2);
+    if (f.write((const uint8_t*)ln, n2) != (size_t)n2) continue;  // not written: stays due, retried next cycle
+    st.seen[si].lastLogged = ms;
+    st.rowCount++;
   }
   if (f) f.close();
-  // Dense-area auto-rotate: once the dedup set is full we've stopped logging new MACs (skip above),
-  // so roll to a fresh session to resume capture — but at most once per SESS_ROTATE_MIN_MS so a
-  // dense drive can't thrash out tiny files. Follow state is per-trip (not per-file), so it is NOT
-  // reset here; the ~10 min enforceLogCap timer handles trimming.
-  if (st.seenCount >= MAX_SEEN && ms - st.lastRotateMs >= SESS_ROTATE_MIN_MS) {
-    bool bg = bgCtx();
-    beginSessionNamed(st, bg);   // fresh file + empty seen set; arms lastRotateMs
-    syncSharePath();
-    Serial.println("[CYD] dedup set full -> rotated to a fresh session (dense area)");
-  }
   return n;
 }
 
@@ -539,6 +589,22 @@ static void streamFileOverBle(const char* path) {
   g_streamingPath[0] = 0;
 }
 
+// The phone reassembles until it has exactly SIZE= bytes. If a send pass came up short (an SD read
+// hiccup ended a file early), pad with newlines -- NDJSON readers skip blank lines -- so the phone's
+// transfer completes instead of hanging. (A dropped link can't be helped; the phone times out.)
+static void padToSize(uint32_t& sent, uint32_t total) {
+  if (sent >= total || !phone::connected()) return;
+  Serial.printf("[CYD] BLE export short by %u bytes: padding\n", (unsigned)(total - sent));
+  uint8_t nl[180];
+  memset(nl, '\n', sizeof(nl));
+  while (sent < total && phone::connected()) {
+    uint32_t k = total - sent > sizeof(nl) ? sizeof(nl) : total - sent;
+    phone::logNotify(nl, k);
+    sent += k;
+    delay(15);
+  }
+}
+
 // Time-filtered BLE export: filter ON the CYD, never stream the whole file. TWO passes over the
 // file -- pass 1 sums the byte length of the lines inside the window (for the SIZE= header), pass 2
 // streams only those lines. Same LineReader + predicate for both, so the totals always agree.
@@ -576,19 +642,70 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
     }
   }
   if (on) { phone::logNotify(out, on); sent += on; }
+  padToSize(sent, total);
   f.close();
   g_streamingPath[0] = 0;
   Serial.printf("[CYD] BLE filtered sent %u/%u bytes (%u lines) of %s\n", (unsigned)sent, (unsigned)total,
                 (unsigned)nlines, path);
 }
 
+// The scan-provenance meta line (same shape as writeSessionMeta) into a buffer, for exports that
+// join several files and so drop each file's own meta line.
+int sessionMetaLine(char* out, size_t cap) {
+  int w = snprintf(out, cap, "{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
+                   scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
+  return (w > 0 && (size_t)w < cap) ? w : 0;
+}
+
+// Time-window export of ALL session files ("T:<mode>[:<minutes>]:*"): one joined NDJSON stream of
+// every row in the window across every /logs/*.jsonl (fg + bg, New Session, earlier boots), dated
+// and filtered on the CYD (logfilter::MultiExport). Two passes like the single-file export: count
+// for the SIZE= header, then send. Both are deterministic, and nothing logs while this runs (same
+// loop task), so the totals agree.
+static void streamMultiOverBle(int mode, int minutes) {
+  if (!g_sdOk) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  const char* boot[BOOT_FILES + 2];
+  int nb = thisBootFiles(boot, BOOT_FILES + 2);
+  logfilter::MultiExport mx(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis(), boot, nb);
+  int nf = mx.begin();
+  char meta[160];
+  int metaN = sessionMetaLine(meta, sizeof(meta));
+  uint32_t rows = mx.run([](const char*, size_t) { return true; });
+  uint32_t total = rows ? rows + (uint32_t)metaN : 0;
+  char hdr[24];
+  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
+  phone::logNotify((const uint8_t*)hdr, hn);
+  Serial.printf("[CYD] BLE multi export mode=%d: %d file(s)%s, %u bytes\n", mode, nf,
+                mx.dropped() ? " (oldest beyond cap skipped)" : "", (unsigned)total);
+  if (!total) return;
+  delay(30);
+  struct Out { uint8_t b[180]; size_t n = 0; uint32_t sent = 0; } o;  // chunk < MTU-3
+  auto put = [&o](const char* p, size_t len) {
+    for (size_t off = 0; off < len; ) {
+      size_t rem = len - off, avail = sizeof(o.b) - o.n;
+      size_t k = rem < avail ? rem : avail;
+      memcpy(o.b + o.n, p + off, k);
+      o.n += k; off += k;
+      if (o.n == sizeof(o.b)) { phone::logNotify(o.b, o.n); o.sent += o.n; o.n = 0; delay(15); }
+    }
+    return phone::connected();
+  };
+  put(meta, metaN);
+  mx.run(put);
+  if (o.n) { phone::logNotify(o.b, o.n); o.sent += o.n; o.n = 0; }
+  padToSize(o.sent, total);
+  Serial.printf("[CYD] BLE multi export sent %u/%u bytes\n", (unsigned)o.sent, (unsigned)total);
+}
+
 // "L": the current session = the stream matching the current screen.
 void transferLog() { streamFileOverBle(activeStream().path); }
 
 // "T:<mode>[:<minutes>][:<path>]": mode 0 = whole file ("since boot"), 1 = past 24 h, 2 = past
-// <minutes>. Path optional (restricted to /logs/); default = the current session.
+// <minutes>. Path optional (restricted to /logs/); default = the current session; "*" = every log
+// file (the window spans all sessions -- see streamMultiOverBle).
 void transferFiltered(int mode, int minutes, const char* pathIn) {
   char path[48];
+  if (pathIn && pathIn[0] == '*') { streamMultiOverBle(mode, minutes); return; }
   if (pathIn && pathIn[0]) {
     if (strncmp(pathIn, "/logs/", 6) != 0 || strstr(pathIn, "..")) {
       phone::logNotify((const uint8_t*)"SIZE=0", 6);
@@ -716,7 +833,8 @@ void enforceLogCap() {
 }
 
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
-// "<path>\t<size>\t<flag>\n" lines. <flag> marks the newest file: "current" while a scan
+// "<path>\t<size>\t<flag>\t<firstEpoch>\t<lastEpoch>\n" lines (the epochs = the file's dated span,
+// 0 = unknown; older web apps read only the first three fields). <flag> marks the newest file: "current" while a scan
 // is running (its file is being written), else "latest"; blank for all other rows. The web
 // app parses it into a picker and labels/floats the flagged row.
 void sendSessionList() {
@@ -744,13 +862,17 @@ void sendSessionList() {
   const char* flagWord = (cs.started && (hostboard::foregroundScan() || (g_bgScan && g_scanActive))) ? "current" : "latest";
 
   String list;
+  list.reserve(4096);
   File dir = SD.open("/logs");
   if (dir) {
     for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
       if (e.isDirectory()) continue;
       String base = logBase(String(e.name()));
       const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
-      list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\n";
+      uint32_t first = 0, last = 0;  // dated span (local epoch; 0 = unknown) -> the phone groups a scan's parts
+      if (base.endsWith(".jsonl")) logfilter::MultiExport::fileSpan(e, first, last);
+      list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\t" + String(first) +
+              "\t" + String(last) + "\n";
     }
     dir.close();
   }

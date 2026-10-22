@@ -9,26 +9,35 @@ static constexpr size_t LOG_LINE = 512;  // max log line (NDJSON lines are ~100-
 
 extern bool g_sdOk;
 
-struct SeenKey { uint8_t source; uint8_t mac[6]; uint16_t pan; };
+// One entry of a stream's recent-device table. lastSeen drives LRU eviction (the table never fills up
+// and stops logging); lastLogged drives the RELOG_MS re-sighting rows.
+// Packed: 17 B instead of 20 (x MAX_SEEN x 2 streams on the no-PSRAM CYD).
+struct __attribute__((packed)) SeenKey { uint32_t lastSeen; uint32_t lastLogged; uint16_t pan; uint8_t source; uint8_t mac[6]; };
+
+// A device already logged this session is logged AGAIN once RELOG_MS has passed since its last row
+// while it is still (or again) in range, so a drive / long session gets periodic location points
+// for it instead of one row at first sight. Downstream (web app, scan-analyzer) handles many rows
+// per MAC.
+static constexpr uint32_t RELOG_MS = 5UL * 60 * 1000;
 
 // One log stream = one live NDJSON session file + its own first-seen dedup set. Two streams:
 //   g_fg = foreground/manual sessions (the on-screen scan):  /logs/sess-NNNNN.jsonl -> /logs/YYYYMMDD-HHMMSS.jsonl
 //   g_bg = headless background scan (not the foreground scan):  /logs/bg-NNNNN.jsonl   -> /logs/bg-YYYYMMDD-HHMMSS.jsonl
 // The file is created lazily on the first row; the counter name is renamed to a date-time name once
 // the phone syncs the clock (renameSessionOnSync). Each stream dedups independently (MAX_SEEN each).
+// One scan = one file: the seen table is an LRU of the MAX_SEEN most recently seen devices, so a
+// dense drive never fills it -- the least-recently-seen device is evicted (and simply re-logged if
+// it comes back). The file only changes on a new boot or an explicit "New Session".
 struct LogStream {
   char     path[48];   // current session file (NDJSON)
   bool     named;      // true once renamed to the date-time form
   bool     started;    // true once the file is actually created (first row)
   SeenKey  seen[MAX_SEEN];
-  int      seenCount;
-  uint32_t lastRotateMs;  // millis() of the last session start (dense-area auto-rotate guard)
+  int      seenCount;  // occupied table slots (<= MAX_SEEN)
+  uint32_t uniqCount;  // distinct devices logged this session (STATUS uniq / U:); a device evicted
+                       // from the LRU and seen again later counts again, so it's a close upper bound
+  uint32_t rowCount;   // detection rows written this session (first sightings + re-sightings)
 };
-// When a stream's per-session dedup set (MAX_SEEN) fills, unknown devices can no longer be deduped,
-// so logNewDetections() skips them (never re-logs the same MAC every cycle) and rolls the session to
-// a fresh file so capture resumes. This caps that auto-rotation to at most once per interval so a
-// dense RF drive can't thrash out many tiny files.
-static constexpr uint32_t SESS_ROTATE_MIN_MS = 5UL * 60 * 1000;  // >= 5 min between dense-area rotations
 
 extern LogStream g_fg;  // foreground/manual (on-screen) scan session
 extern LogStream g_bg;  // headless background scan session
@@ -57,6 +66,10 @@ inline constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2:
 inline constexpr char FW_VERSION[] = "0.9.0";
 
 const char* scannerIdHex();
+int sessionMetaLine(char* out, size_t cap);
+// Every session file written THIS boot: the live fg/bg files plus earlier ones this boot (New Session,
+// bg toggles). Their ms-since-boot is still valid, so a time-window export can date them. Returns n.
+int thisBootFiles(const char** out, int cap);  // one {"evt":"meta",...}\n line; returns its length (0 = no room)
 
 void beginSessionNamed(LogStream& st, bool bg);
 void openSession();

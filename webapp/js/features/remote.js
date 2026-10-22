@@ -235,19 +235,3 @@ export async function uploadCurrentSession(){
     log("Remote: fetching current session ("+fname+") to upload…");
   }catch(e){ log("Remote: could not request the session — "+e.message); toast("Could not request the session — "+e.message, {err:true}); setUploadBusy(false); }
 }
-
-// Upload the session currently selected in the Data > Session logs picker (fetched via F:<path>).
-export async function uploadSelectedSession(){
-  if(!isPaired()){ log("Remote: pair with a server first (Settings)."); return; }
-  if(!state.connected || !state.chars.cmd){ log("Remote: connect to the scanner first."); return; }
-  const path = $("sessSel").value;
-  if(!path || path.startsWith("—")){ log("Remote: pick a session in Session logs first."); toast("Pick a session in Session logs first.", {err:true}); return; }
-  const name = path.split("/").pop();
-  setUploadBusy(true);                                        // optimistic: lock buttons the instant it's tapped
-  toast("Fetching "+name+" over BLE…", {work:true, sticky:true});
-  try{
-    state.dl = { mode:null, expect:0, got:0, chunks:[], name, sink:"upload" };
-    await state.chars.cmd.writeValue(enc.encode("F:"+path));
-    log("Remote: fetching "+name+" to upload…");
-  }catch(e){ log("Remote: could not request the session — "+e.message); toast("Could not request the session — "+e.message, {err:true}); setUploadBusy(false); }
-}

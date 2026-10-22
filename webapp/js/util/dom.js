@@ -37,3 +37,12 @@ export function toast(msg, opts){
   const ms = o.sticky ? 0 : (o.ms || 4500);
   if(ms > 0) toastTimer = setTimeout(()=>{ el.classList.remove("show"); el.hidden = true; toastTimer = null; }, ms);
 }
+
+// Save a Blob as a named file. octet-stream (not text) so Android Chrome keeps the .jsonl name
+// instead of sniffing text and appending ".txt".
+export function saveBlob(blob, name){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download=name; a.click(); URL.revokeObjectURL(a.href);
+  log("Downloaded "+name+" ("+blob.size+" bytes).");
+  toast("Saved "+name+" ("+Math.round(blob.size/1024)+" KB).");
+}

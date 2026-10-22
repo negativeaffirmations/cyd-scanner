@@ -1,8 +1,9 @@
 // Explore Scan: pick a past session, browse it in the Scan Viewer, tap a row for details.
 import { state } from '../state.js';
 import { $ } from '../util/dom.js';
-import { tierNum, fmtEpoch } from '../util/format.js';
-import { refreshSessions } from './sessions.js';
+import { tierNum, fmtEpoch, hasGps } from '../util/format.js';
+import { refreshSessions, setExploreLoader } from './sessions.js';
+import { parseScanLog } from '../data/parse.js';
 import { renderDetList, setScanMode } from './detections.js';
 import { openDetail } from './detail.js';
 
@@ -13,6 +14,7 @@ export function openExplore(){
   $("expMsg").textContent="Loading session list…";
   refreshSessions();
 }
+setExploreLoader((text, name)=>loadedExplore(parseScanLog(text), name));   // sessions.js fetches + joins a scan's parts
 let expName="";                              // name of the loaded session (state.expAll holds the rows)
 const TYPE_ORDER={"2.4":0,"5G":1,"BLE":2,"PRB":3,"154":4};
 export function loadedExplore(rows, name){
@@ -24,6 +26,28 @@ export function loadedExplore(rows, name){
   [t0,t1].forEach(t=>{ t.min=lo; t.max=hi; t.disabled=!ep.length; });
   t0.value=lo; t1.value=hi;
   applyExplore();
+}
+// The log re-logs a device every few minutes while it stays in range (fresh position/RSSI), so one
+// device can own many rows. Show ONE row per device (source+MAC): the latest row's fields, the
+// strongest RSSI, the highest-scoring tier/signature, first-seen order, and every GPS'd sighting
+// (r.sight, plotted as a trail by the detail modal).
+function collapseDevices(rows){
+  const m=new Map();
+  for(const r of rows){
+    const k=r.source+"|"+r.mac;
+    let g=m.get(k);
+    if(!g){ g={...r, nSeen:0, sight:[], rssiMax:r.rssi, best:r}; m.set(k,g); }
+    else Object.assign(g, r, {idx:g.idx, nSeen:g.nSeen, sight:g.sight, rssiMax:Math.max(g.rssiMax,r.rssi),
+                              best:(r.score>g.best.score ? r : g.best), firstEpoch:g.firstEpoch});
+    if(g.firstEpoch==null) g.firstEpoch=r.epoch;
+    g.nSeen++;
+    if(hasGps(r)) g.sight.push({lat:r.lat, lon:r.lon, tier:tierNum(r.tier), rssi:r.rssi, t:r.epoch>0?r.epoch*1000:0});
+  }
+  return [...m.values()].map(g=>{
+    g.rssi=g.rssiMax; g.tier=g.best.tier; g.score=g.best.score; g.signature=g.best.signature;
+    delete g.best; delete g.rssiMax;
+    return g;
+  });
 }
 function distLabel(v){
   return (v<=-100 ? "All" : v<=-80 ? "Far" : v<=-60 ? "Mid" : "Near")+" (≥ "+v+" dBm)";
@@ -40,6 +64,8 @@ export function applyExplore(){   // filter -> sort -> render (no re-download)
     on[r.source]!==false && (!thr || tierNum(r.tier)>0) && r.rssi>=minR &&
     (r.epoch>0 ? (r.epoch>=t0 && r.epoch<=t1) : full) &&
     (!q || (r.name||"").toLowerCase().includes(q) || (r.mac||"").toLowerCase().includes(q)));
+  const nRows=rows.length;
+  rows=collapseDevices(rows);
   const ty=r=>TYPE_ORDER[r.source]??9, byIdx=(a,b)=>a.idx-b.idx;
   const cmp={
     old:byIdx, new:(a,b)=>b.idx-a.idx,
@@ -49,7 +75,7 @@ export function applyExplore(){   // filter -> sort -> render (no re-download)
     za:(a,b)=>(b.name||"").localeCompare(a.name||"")||a.idx-b.idx
   }[$("expSort").value]||byIdx;
   rows=rows.slice().sort(cmp);
-  $("expMsg").textContent = expName ? expName+": "+rows.length+" of "+state.expAll.length+" detections. Tap a row for details." : "";
+  $("expMsg").textContent = expName ? expName+": "+rows.length+" device(s) ("+nRows+" of "+state.expAll.length+" rows). Tap a row for details." : "";
   setScanMode(false);   // viewing a loaded log, not the live scan
   renderDetList($("scanViewer"), rows, {mode:"viewer", empty:"No detections match.", onRowClick:openDetail});
 }

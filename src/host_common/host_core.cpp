@@ -630,19 +630,13 @@ ScanCycleResult core::runScanCycle() {
   computeFollowScores();
   updateEvents();   // deauth / evil-twin alert hold + rate-limited event log lines
   applyScanLed();   // alert / follow / link LED (works headless)
-  if (bgCtx() && g_bg.seenCount >= MAX_SEEN - 32) {
-    // The bg stream never ends on its own, and once its dedup set is full new devices would be
-    // re-logged every cycle: roll to a fresh bg session (also a cap-rotation trigger).
-    beginSessionNamed(g_bg, true);
-    enforceLogCap();
-  }
   int newCount = logNewDetections();
   logRidEvents();   // rate-limited per-MAC Remote-ID event lines
   logFollowEvents(); // rate-limited per-MAC FOLLOWING event lines
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
-                g_detCount, n24, n5, nble, nprb, n154, newCount, activeStream().seenCount,
+                g_detCount, n24, n5, nble, nprb, n154, newCount, (int)activeStream().uniqCount,
                 susp, lk, conf, sigdb::loaded());
   res.newCount = newCount;
   res.n24 = n24; res.n5 = n5; res.nble = nble; res.nprb = nprb; res.n154 = n154;

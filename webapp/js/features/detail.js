@@ -63,9 +63,12 @@ export function openDetail(r){
   if(r.uuid && !/^0+$/.test(r.uuid)) rowsKv.push(["Service UUID",r.uuid]);
   rowsKv.push(["Time", r.epoch>0 ? fmtEpoch(r.epoch) : "unsynced (+"+Math.round(r.ms/1000)+"s since boot)"]);
   rowsKv.push(["GPS", hasGps(r) ? r.lat.toFixed(6)+", "+r.lon.toFixed(6) : "none"]);
+  if(r.nSeen>1) rowsKv.push(["Sightings", r.nSeen+" rows in this log"+(r.firstEpoch>0 && r.epoch>0 ? " ("+fmtEpoch(r.firstEpoch).slice(11)+" – "+fmtEpoch(r.epoch).slice(11)+")" : "")]);
   $("detInfo").innerHTML=rowsKv.map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
   fillDetailWhitelist(r.mac, !!r.wl);
-  renderDetailMap(hasGps(r) ? [{lat:r.lat,lon:r.lon,tier:tn,rssi:r.rssi,t:r.epoch>0?r.epoch*1000:0}] : [],
+  // A collapsed Explore row carries every GPS'd sighting of the device (r.sight) -> plotted as a trail.
+  renderDetailMap(r.sight && r.sight.length ? r.sight
+                  : hasGps(r) ? [{lat:r.lat,lon:r.lon,tier:tn,rssi:r.rssi,t:r.epoch>0?r.epoch*1000:0}] : [],
                   "No GPS fix for this detection.");
   $("detDlg").showModal();
 }

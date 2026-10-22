@@ -366,6 +366,65 @@ summary {
   font-weight: 600;
 }
 
+.sessbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  margin: 0.5em 0 0.2em;
+  font-size: 0.9rem;
+}
+
+.sessbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  cursor: pointer;
+}
+
+.sesslist {
+  max-height: 45vh;
+  overflow: auto;
+  margin: 0.2em 0 0.5em;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #0b0e13;
+}
+
+.sessrow {
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+  padding: 0.55em 0.7em;
+  cursor: pointer;
+  border-bottom: 1px solid #30363d;
+}
+.sessrow:last-child {
+  border-bottom: none;
+}
+.sessrow input {
+  width: 1.15em;
+  height: 1.15em;
+  accent-color: #aa00aa;
+  flex: none;
+  margin: 0;
+}
+
+.sessmain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sesst {
+  font-weight: 600;
+}
+
+.sesssub {
+  font-size: 0.8rem;
+  color: #8b949e;
+}
+
 dialog {
   background: #161b22;
   color: #e6edf3;

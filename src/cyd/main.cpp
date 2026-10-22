@@ -686,7 +686,7 @@ static void drawScanInfo() {
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(buf, sizeof(buf), "Sess: %s", sb);
   tft.drawString(buf, 4, 44, 1);
-  snprintf(buf, sizeof(buf), "U:%d", g_fg.seenCount);
+  snprintf(buf, sizeof(buf), "U:%lu", (unsigned long)g_fg.uniqCount);
   tft.setTextDatum(TR_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(buf, tft.width() - 4, 44, 1);
@@ -1243,12 +1243,14 @@ static int scanSetTouch() {
 // one index pass stores a 12-byte record per data row; only the visible rows are re-read
 // and parsed per frame. The index + session list live in one heap block that exists only
 // while in Explore (live scan and Explore are mutually exclusive) — see exploreFree().
-static constexpr int MAX_LOG_ROWS = 512;  // 6 KB index; later rows are not indexed (truncated)
+static constexpr int MAX_LOG_ROWS = 512;  // 8 KB index of DEVICES; devices past this are not indexed (truncated)
 static constexpr int MAX_SESS     = 48;
 static constexpr int PICK_VIS     = FILE_LIST_VIS;  // picker rows on screen (ROW_STEP geometry)
 static constexpr int DET_MAX_LINES = 28;
 
-struct LogIdx { uint32_t offset; uint32_t epoch; int16_t rssi; uint8_t srcType; uint8_t tier; };  // 12 B
+// One entry per DEVICE (src+MAC): the log re-logs a device every few minutes, so the index keeps the
+// newest row's offset/epoch, the strongest RSSI and the highest tier. key = FNV-1a of src+MAC.
+struct LogIdx { uint32_t offset; uint32_t epoch; uint32_t key; int16_t rssi; uint8_t srcType; uint8_t tier; };  // 16 B
 struct SessEnt { char name[20]; uint32_t wr; uint32_t size; bool jl; };  // basename w/o ext; FS write time; bytes; .jsonl (else legacy .csv)
 struct ExploreMem { LogIdx idx[MAX_LOG_ROWS]; SessEnt sess[MAX_SESS]; uint16_t view[MAX_LOG_ROWS]; };
 static ExploreMem* g_ex = nullptr;
@@ -1583,7 +1585,7 @@ static void drawViewer() {
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString(g_viewName, 4, 44, 1);
   char b[48];
-  snprintf(b, sizeof(b), g_idxTrunc ? "showing %d of %d (first %d)" : "showing %d of %d",
+  snprintf(b, sizeof(b), g_idxTrunc ? "%d of %d devices (first %d)" : "%d of %d devices",
            g_viewN, g_idxN, MAX_LOG_ROWS);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(b, 4, 54, 1);
@@ -1592,7 +1594,8 @@ static void drawViewer() {
   drawViewerList(false);
 }
 
-// One streaming pass over the file -> compact per-row index (first MAX_LOG_ROWS rows).
+// One streaming pass over the file -> compact per-DEVICE index (first MAX_LOG_ROWS devices; repeat
+// rows of an indexed device keep updating it, so a long session never hides its later sightings).
 static bool buildIndex(const char* name) {
   char path[48];
   snprintf(path, sizeof(path), "/logs/%s.%s", name, g_viewJl ? "jsonl" : "csv");
@@ -1605,9 +1608,21 @@ static bool buildIndex(const char* name) {
   while (readLogLine(g_viewFile, line, sizeof(line), &pos)) {
     LogRow r;
     if (!parseLogLine(line, r)) continue;
-    if (g_idxN >= MAX_LOG_ROWS) { g_idxTrunc = true; break; }
+    uint32_t key = 2166136261u;
+    for (const char* q = r.src; *q; q++) key = (key ^ (uint8_t)*q) * 16777619u;
+    for (const char* q = r.mac; *q; q++) key = (key ^ (uint8_t)*q) * 16777619u;
+    int k = -1;
+    for (int i = g_idxN - 1; i >= 0; i--) if (g_ex->idx[i].key == key) { k = i; break; }
+    if (k >= 0) {  // repeat sighting: newest row wins, keep the strongest RSSI / highest tier
+      LogIdx& e = g_ex->idx[k];
+      e.offset = pos; e.epoch = r.epoch;
+      if (r.rssi > e.rssi) e.rssi = (int16_t)r.rssi;
+      if (r.tier > e.tier) e.tier = (uint8_t)r.tier;
+      continue;
+    }
+    if (g_idxN >= MAX_LOG_ROWS) { g_idxTrunc = true; continue; }  // keep scanning: indexed devices still update
     LogIdx& e = g_ex->idx[g_idxN++];
-    e.offset = pos; e.epoch = r.epoch; e.rssi = (int16_t)r.rssi;
+    e.offset = pos; e.epoch = r.epoch; e.key = key; e.rssi = (int16_t)r.rssi;
     e.srcType = srcTypeOf(r.src); e.tier = (uint8_t)r.tier;
   }
   return true;

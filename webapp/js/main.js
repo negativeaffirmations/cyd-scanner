@@ -3,9 +3,9 @@
 import { $, log } from './util/dom.js';
 import { connect } from './ble/connection.js';
 import { toggleScan, newSession, reloadDb, toggleWifi, setBrightness, setLock, sendSrcMask, syncTime } from './ble/commands.js';
-import { downloadLog, downloadFiltered, downloadFilteredWifi } from './ble/download.js';
+import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';
 import { gpsOnce } from './gps.js';
-import { refreshSessions, downloadSession, deleteSession, wipeAllLogs, mapSelectedSession, fetchSession } from './features/sessions.js';
+import { refreshSessions, downloadSession, downloadSessionRange, deleteSession, wipeAllLogs, mapSelectedSession, exploreSelected, uploadSelectedSessions, selectAllSessions } from './features/sessions.js';
 import { openExplore, applyExplore } from './features/explore.js';
 import { openWhitelist, wlCmd, refreshWhitelist, addWhitelistRule, wlKindChanged } from './features/whitelist.js';
 import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
@@ -15,7 +15,7 @@ import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
 import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
-import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession, uploadSelectedSession } from './features/remote.js';
+import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -58,7 +58,7 @@ $("pauseBtn").onclick = togglePause;
 $("newSessBtn").onclick = newSession;
 $("scanNavBtn").onclick = ()=>{ const p=$("scanPanel"); p.style.display = p.style.display==="none" ? "" : "none"; };
 $("exploreBtn").onclick = openExplore;
-$("expSel").addEventListener("change", ()=>fetchSession("explore"));
+$("expSel").addEventListener("change", exploreSelected);
 ["expSort","ef24","ef5","efble","efprb","ef154","efThreats","efDist","efText"].forEach(id=>
   $(id).addEventListener(id==="efText"?"input":"change", applyExplore));
 $("efDist").addEventListener("input", applyExplore);
@@ -88,9 +88,10 @@ $("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
 $("expRange").addEventListener("change", ()=>{ $("expCustom").style.display = $("expRange").value==="2" ? "" : "none"; });
-$("dlfBleBtn").onclick = ()=>downloadFiltered("");
+$("dlfBleBtn").onclick = downloadFilteredAll;
 $("dlfWifiBtn").onclick = downloadFilteredWifi;
-$("sessDlfBtn").onclick = ()=>{ const p=$("sessSel").value; if(p && !p.startsWith("—")) downloadFiltered(p); };
+$("sessDlfBtn").onclick = downloadSessionRange;
+$("sessAll").addEventListener("change", e=>selectAllSessions(e.target.checked));
 $("wifiBtn").onclick = toggleWifi;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
@@ -111,7 +112,7 @@ $("rsPairBtn").onclick = pairFromForm;
 $("rsUnpairBtn").onclick = unpair;
 $("rsUploadCurBtn").onclick = uploadCurrentSession;
 $("rsLive").addEventListener("change", toggleLive);
-$("sessUploadBtn").onclick = uploadSelectedSession;
+$("sessUploadBtn").onclick = uploadSelectedSessions;
 $("mapBtn").onclick = openMap;   // retired hidden button -> Map page (openMap sizes Leaflet)
 $("mapCurBtn").onclick = mapCurrent;
 $("sessMapBtn").onclick = mapSelectedSession;

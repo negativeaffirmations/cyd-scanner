@@ -7,6 +7,7 @@
 #include <esp_random.h>
 #include "phone.h"
 #include "logfilter.h"
+#include "host_log.h"  // g_fg/g_bg (live files), sessionMetaLine()
 
 namespace {
 
@@ -48,7 +49,9 @@ void handleRoot() {
     dir.close();
   }
   if (!n) h += "<li><small>no sessions yet</small></li>";
-  h += "</ul></body></html>";
+  h += "</ul><h3>All sessions, by time range</h3><ul>"
+       "<li><a href='/dlf?f=all&mode=1'>Past 24 hours (all logs)</a></li>"
+       "<li><a href='/dlf?f=all&mode=0'>Since boot (all logs)</a></li></ul></body></html>";
   g_server.send(200, "text/html", h);
 }
 
@@ -72,9 +75,38 @@ void handleDl() {
 // Time-filtered download: /dlf?f=<basename|current>&mode=<0|1|2>&arg=<minutes>. mode 0 = whole file,
 // 1 = past 24 h, 2 = past <arg> minutes. The CYD filters line-by-line (logfilter.h) and streams only
 // the matching lines with chunked transfer encoding, so a filtered pull never sends the whole file.
+// /dlf?f=all&mode=&arg= : the window across EVERY /logs/ file, joined into one NDJSON download
+// (logfilter::MultiExport -- same dating/filtering as the BLE "T:...:*" export).
+void handleDlfAll(int mode, uint32_t arg) {
+  const char* boot[12];
+  int nb = thisBootFiles(boot, 12);
+  logfilter::MultiExport mx(mode, arg, epochLocal(), millis(), boot, nb);
+  int nf = mx.begin();
+  const char* fname = mode == 1 ? "all-last24h.jsonl" : mode == 2 ? "all-range.jsonl" : "all-sinceboot.jsonl";
+  g_server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  g_server.sendHeader("Content-Disposition", String("attachment; filename=") + fname);
+  g_server.send(200, "application/x-ndjson", "");
+  static struct Out { char b[1024]; size_t n; uint32_t total; } o;  // static: off the handler stack
+  o.n = 0; o.total = 0;
+  auto put = [](const char* p, size_t len) {
+    if (o.n + len > sizeof(o.b)) { g_server.sendContent(o.b, o.n); o.total += o.n; o.n = 0; }
+    memcpy(o.b + o.n, p, len);
+    o.n += len;
+    return (bool)g_server.client().connected();  // browser cancelled -> stop reading the card
+  };
+  char meta[160];
+  int metaN = sessionMetaLine(meta, sizeof(meta));
+  if (metaN) put(meta, metaN);
+  mx.run(put);
+  if (o.n) { g_server.sendContent(o.b, o.n); o.total += o.n; }
+  g_server.sendContent("");
+  Serial.printf("[webshare] /dlf all mode=%d: %d file(s), %u bytes\n", mode, nf, (unsigned)o.total);
+}
+
 void handleDlf() {
   String f = g_server.arg("f");
   String path;
+  if (f == "all") { handleDlfAll(g_server.arg("mode").toInt(), (uint32_t)g_server.arg("arg").toInt()); return; }
   if (!f.length() || f == "current") {
     path = g_logPath;
   } else {
@@ -87,7 +119,7 @@ void handleDlf() {
   if (!SD.exists(path)) { g_server.send(404, "text/plain", "not found"); return; }
   File file = SD.open(path, "r");
   if (!file) { g_server.send(500, "text/plain", "open failed"); return; }
-  logfilter::Cutoff c = logfilter::make(mode, arg, phone::epochNow(), millis());
+  logfilter::Cutoff c = logfilter::make(mode, arg, epochLocal(), millis());
   String base = path.substring(path.lastIndexOf('/') + 1);
   g_server.setContentLength(CONTENT_LENGTH_UNKNOWN);  // chunked: the filtered size isn't known up front
   g_server.sendHeader("Content-Disposition", "attachment; filename=" + base);

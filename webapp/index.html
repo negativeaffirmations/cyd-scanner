@@ -10,7 +10,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="js/vendor/qrcode.js"></script>  <!-- vendored qrcode-generator (MIT, Kazuhiko Arase); sets global `qrcode` -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261021c">
+<link rel="stylesheet" href="style.css?v=20261022a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -60,7 +60,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-21&nbsp;·&nbsp;link-nobg</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-22&nbsp;·&nbsp;scan-groups</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -141,9 +141,10 @@
         <div class="sub" style="margin-top:.4em">Scan with your camera to join, then <a id="apUrl" href="#" target="_blank" rel="noopener">open the log index</a> (a separate tab &mdash; this page can't reach the device over HTTPS).</div>
       </div>
       <details id="filterBox">
-        <summary>Download a time range (filtered on the device)</summary>
+        <summary>Download a time range &mdash; all logs</summary>
+        <div class="sub" style="margin:.3em 0">Collects every row in the range from <em>every</em> log on the card (scans, background, earlier boots) into one file, filtered on the device.</div>
         <select id="expRange">
-          <option value="0">Since boot (whole session)</option>
+          <option value="0">Since boot</option>
           <option value="1">Past 24 hours</option>
           <option value="2">Custom&hellip;</option>
         </select>
@@ -152,19 +153,20 @@
           <label>Hours <input type="number" id="expH" min="0" max="23" value="1"></label>
           <label>Minutes <input type="number" id="expM" min="0" max="59" value="0"></label>
         </div>
-        <button id="dlfBleBtn" disabled>Download filtered &mdash; current session (BLE)</button>
-        <button id="dlfWifiBtn" class="secondary">Download filtered over Wi-Fi (join the device AP first)</button>
+        <button id="dlfBleBtn" disabled>Download range &mdash; all logs (BLE)</button>
+        <button id="dlfWifiBtn" class="secondary">Download range &mdash; all logs over Wi-Fi (join the device AP first)</button>
       </details>
 
       <details id="sessionsBox">
         <summary>Session logs</summary>
         <button id="listBtn" class="secondary" disabled>Refresh session list</button>
-        <select id="sessSel" disabled><option>— connect and refresh —</option></select>
-        <button id="sessDlBtn" disabled>Download selected session</button>
+        <div class="sessbar"><label><input type="checkbox" id="sessAll"> Select all</label><span id="sessSelInfo" class="sub"></span></div>
+        <div id="sessList" class="sesslist"><div class="sub">— connect and refresh —</div></div>
+        <button id="sessDlBtn" disabled>Download selected (joined into one file)</button>
         <button id="sessDlfBtn" class="secondary" disabled>Download selected &mdash; time range (see above)</button>
-        <button id="sessMapBtn" class="secondary" disabled>Map selected session</button>
-        <button id="sessUploadBtn" class="secondary" disabled>Upload selected to server</button>
-        <button id="sessDelBtn" class="danger" disabled>Delete selected session</button>
+        <button id="sessMapBtn" class="secondary" disabled>Map selected</button>
+        <button id="sessUploadBtn" class="secondary" disabled>Upload selected to server (one upload per scan)</button>
+        <button id="sessDelBtn" class="danger" disabled>Delete selected</button>
         <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
       </details>
     </section>

@@ -18,7 +18,7 @@ void pushStatus() {
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d;"
            "sid=%s;fw=%s;dbgen=%lu",
-           g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, activeStream().seenCount,
+           g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, (int)activeStream().uniqCount,
            timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, (int)hostboard::brightness(), (int)g_srcMask,

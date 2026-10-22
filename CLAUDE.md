@@ -254,8 +254,16 @@ back (5 GHz included). Things that matter, learned the hard way:
   (`/logs/sess-NNNNN.jsonl`, renamed to `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync) and a dedicated
   **background** stream for the always-on background scan (`/logs/bg-NNNNN.jsonl` → `/logs/bg-…`).
   The headless background cycle (any screen but `SCR_SCAN`) logs to the bg stream; the on-screen scan
-  logs to the fg stream. First-seen devices (dedup by source+MAC per session) are appended, one object
-  each; optional keys omitted when blank:
+  logs to the fg stream. **One scan = one file, and logging never stops:** each stream's dedup table
+  (`MAX_SEEN`=400 per stream, `SeenKey` with `lastSeen`/`lastLogged`) is an **LRU** — when full, the
+  least-recently-*seen* device is evicted (and simply logged again if it returns), so a dense drive
+  never fills it. (Before 2026-10-22 a full set *skipped* new MACs and rotated to a new file at most
+  every 5 min — data gaps + a 13-file drive; both removed.) A device is appended on first sight and
+  **re-logged every `RELOG_MS` (5 min)** while still/again in range (fresh position + RSSI), so a
+  file can hold several rows per MAC (web Explore collapses them to one device with a sighting trail;
+  scan-analyzer takes many rows per MAC). The file only changes on a boot or "New Session".
+  `LogStream.uniqCount` (devices first-logged this session; STATUS `uniq`, CYD `U:`) and `rowCount`
+  replace the old `seenCount` readouts. One object per row; optional keys omitted when blank:
   `{"epoch":…,"ms":…,"lat":…,"lon":…,"src":"…","mac":"…","rssi":…,"ch":…,"ie":"…","cid":"…","uuid":"…","pan":"…","name":"…","score":…,"tier":"…","sig":"…","wl":0|1,"flags":"…"}`.
   `src` is `2.4`/`5G`/`BLE`/`PRB`/`154`; `ie` the 8-hex IE fingerprint; `cid`/`uuid`/`pan` the BLE
   company ID / service UUID / 802.15.4 PAN; `name` JSON-escaped; `wl` 1 when whitelisted; **`flags`**
@@ -309,7 +317,20 @@ back (5 GHz included). Things that matter, learned the hard way:
   only matching lines, filtered **on the CYD** (two-pass, never the whole 512 MB file): BLE CMD
   `T:<mode>[:min][:path]` and HTTP `/dlf?f=&mode=&arg=` — mode `0` = since boot (whole file), `1` =
   past 24 h, `2` = custom minutes. Before the phone syncs time it falls back to `ms`-since-boot.
-  Filtering lives in `src/cyd/logfilter.h`.
+  **All-logs range export** (the web app's time-range download): path **`*`** (`T:<mode>[:min]:*`) /
+  `/dlf?f=all` — `logfilter::MultiExport` collects the window from **every** `/logs/*.jsonl` (fg + bg,
+  New Session, earlier boots) into ONE NDJSON stream: files picked by their tail epoch (cheap 1 KB
+  head/tail reads), each file's pre-sync `epoch:0` rows **rewritten** with the epoch backfilled from
+  that file's own timesync anchor (a live file with no anchor uses the current clock; undatable rows
+  from old never-synced files are dropped; "this boot" = the live fg/bg files plus up to 8 earlier
+  ones ended by New Session/bg toggle (`thisBootFiles()`), and `renameSessionOnSync` also appends a
+  timesync anchor to those if they ended pre-sync; tail epochs only count complete numbers so a torn
+  last line can't misdate a file; a short send pass is newline-padded to the SIZE= header), per-file meta/timesync lines dropped and ONE fresh meta
+  line written first, files oldest-first (cap 64, newest kept). Mode 0 = since this boot (epoch ≥
+  now − uptime). With no clock at all only this boot's live files are exported (ms cutoff).
+  The **session list** (`Q` → `SESS=`) lines are `path\tsize\tflag\tfirstEpoch\tlastEpoch` (the
+  file's dated span, 0 = unknown, `MultiExport::fileSpan`) so the phone can group parts into scans.
+  Filtering lives in `src/host_common/logfilter.h`.
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
   UI would need a software-SPI touch driver first. The physical BOOT button drives a
@@ -396,7 +417,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   `fol`. A planted Find-My/tracker device is exempt (it carries a flag/tier). CYD-only, no protocol
   bump. Proper long-term fix for signature-less RPA trackers is IRK/bonding (backlogged).
   **Scan** opens a **Scan menu** (`SCR_SCANMENU`: Start Scan / Explore Scan / Scan Settings) —
-  the scan-flow redesign; the live scanner, the SD-log Explore Viewer (pick/filter/sort/detail),
+  the scan-flow redesign; the live scanner, the SD-log Explore Viewer (pick/filter/sort/detail; indexes one entry per device — newest row, strongest RSSI — up to 512 devices),
   per-band Scan Settings, the Phase-5 follow-me drill-down, and the whitelist manager are all
   screens in the `main.cpp` state machine. App screens use a full-width `< BACK` bar; menus keep
   the menu style. Scanning can also be started/stopped from the web app (CMD `G`/`X`).
@@ -414,7 +435,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     refuses the live session) · `"B:<0-100>"` set brightness · `"K1"/"K0"` lock / unlock the CYD
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
-    2 = custom minutes; optional `/logs/` path; filtered on-device) · `"W…"` whitelist · `"E…"`
+    2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
   - `…0004` STATUS (read/notify) — `key=val;…`:
     `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,sid,fw,dbgen`
@@ -499,9 +520,15 @@ back (5 GHz included). Things that matter, learned the hard way:
       `calc(100dvh − chrome)`. **`#map` sets `position:relative; z-index:0`** to make its own stacking
       context — otherwise Leaflet's internal panes/controls (z-index up to ~800) paint OVER the fixed
       bottom navbar (z-index 20).
-    - **Data** — download current session (BLE `L`), Wi-Fi download mode, **time-range export** (since
-      boot / 24 h / custom, BLE `T:` or Wi-Fi `/dlf`), and the session-logs list (download/delete/
-      map/wipe).
+    - **Data** — download current session (BLE `L`), Wi-Fi download mode, **time-range export of ALL
+      logs** (since boot / 24 h / custom; BLE `T:…:*` or Wi-Fi `/dlf?f=all`), and the **Session logs**
+      list: a checkbox **multi-select of scans** (`features/sessions.js` groups same-stream files whose
+      dated spans are ≤ 6 min apart — older firmware split drives into parts — labelled "Oct 22, 2:05 PM
+      – 3:09 PM · Scan · 13 parts · 914 KB"). Download / time-range / Map act on the selection; parts
+      are fetched one at a time (`ble/transfer.js` `bleFetch`, a promise over the LOGDATA stream) and
+      joined by `parse.js` `joinLogParts` (per-part timesync backfill, one meta line) into ONE file;
+      Upload sends ONE `/api/v1/uploads` body per scan; Delete queues `D:` per file. The Explore picker
+      lists the same groups.
     - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager.
   Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
   follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS
