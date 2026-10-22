@@ -288,6 +288,17 @@ back (5 GHz included). Things that matter, learned the hard way:
   tells a Find-My iPhone from a car device) are omitted when blank. The web Map pins it (magenta `F`).
   The follower + deauth/evil-twin alerts also show on the **HOME** screens: a CYD band at y=120 on HOME
   (tappable → follow drill-down) and the web banners, which live under the app bar so every page shows them.
+  **Departure (presence) lines — `"evt":"lastseen"`** (fw 0.11.0, schema owner-approved with scan-analyzer
+  2026-10-22): one per device presence period, for ALL device types, written when a present LRU entry has
+  not been refreshed for `DEPART_MS` (60 s), when it is evicted from the LRU, and for every present entry
+  on New Session (`beginSessionNamed` flush; a reboot loses them — accepted):
+  `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"lastseen","src":"…","mac":"…","pan":"…","first_ms":…,"last_ms":…,"rssi_max":N}`
+  — `epoch`/`ms` = write time; `first_ms`/`last_ms` = first/last heard on the SAME boot clock (reader:
+  `epoch − (ms − x)/1000`; `last_ms` may run up to the C5's 30 s TTL late); `rssi_max` the period's
+  strongest RSSI; `pan` only for 802.15.4 short addresses. A returning device starts a new period.
+  **File log only** (not DETS / live-POST). The web Map skips it (not a pin); joins/exports keep it.
+  The per-stream `SeenKey` tables (24 B × `MAX_SEEN` × 2) are now **heap-allocated** in
+  `beginSessionNamed` — they no longer fit the CYD's static DRAM.
   **Time backfill — `{"epoch":…,"ms":…,"evt":"timesync"}` anchor.** Rows logged before the phone syncs
   the clock carry `epoch:0` (only `ms`, ms-since-boot, is meaningful). When the phone sets the time,
   `renameStreamOnSync` appends ONE `timesync` anchor line (the sync epoch + its `ms`) to any stream that

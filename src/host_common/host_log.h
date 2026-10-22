@@ -10,9 +10,27 @@ static constexpr size_t LOG_LINE = 512;  // max log line (NDJSON lines are ~100-
 extern bool g_sdOk;
 
 // One entry of a stream's recent-device table. lastSeen drives LRU eviction (the table never fills up
-// and stops logging); lastLogged drives the RELOG_MS re-sighting rows.
-// Packed: 17 B instead of 20 (x MAX_SEEN x 2 streams on the no-PSRAM CYD).
-struct __attribute__((packed)) SeenKey { uint32_t lastSeen; uint32_t lastLogged; uint16_t pan; uint8_t source; uint8_t mac[6]; };
+// and stops logging); lastLogged drives the RELOG_MS re-sighting rows. firstSeen / rssiMax / present
+// track the CURRENT presence period for the {"evt":"lastseen"} departure line (see DEPART_MS).
+// Packed: 24 B (x MAX_SEEN x 2 streams on the no-PSRAM CYD).
+struct __attribute__((packed)) SeenKey {
+  uint32_t lastSeen, lastLogged, firstSeen;  // millis()
+  uint16_t pan;
+  uint8_t  source, mac[6];
+  int8_t   rssiMax;   // strongest RSSI this presence period
+  uint8_t  srcType;   // srcTypeOf(srcTag()) at first sighting: 0=2.4 1=5G 2=BLE 3=PRB 4=154
+  uint8_t  present;   // 1 = in a presence period (no lastseen line written for it yet)
+};
+
+// Departure line: once a present device has not been heard for DEPART_MS (or is evicted from the LRU,
+// or the session ends via New Session) one line is written for that presence period:
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"lastseen","src":"..","mac":"..",["pan":".."],
+//    "first_ms":..,"last_ms":..,"rssi_max":N}
+// first_ms/last_ms are on the same boot clock as ms (reader: epoch - (ms - x)/1000). last_ms can be up
+// to the C5's 30 s table TTL later than the device's last packet. A device that comes back starts a
+// new period. File log only (never in the live DETS / live-POST path). Schema owner-approved
+// 2026-10-22 with scan-analyzer (rotating-address linking + dwell time).
+static constexpr uint32_t DEPART_MS = 60UL * 1000;
 
 // A device already logged this session is logged AGAIN once RELOG_MS has passed since its last row
 // while it is still (or again) in range, so a drive / long session gets periodic location points
@@ -32,7 +50,8 @@ struct LogStream {
   char     path[48];   // current session file (NDJSON)
   bool     named;      // true once renamed to the date-time form
   bool     started;    // true once the file is actually created (first row)
-  SeenKey  seen[MAX_SEEN];
+  SeenKey* seen;       // MAX_SEEN entries, heap-allocated on the first beginSessionNamed() (~9.6 KB per
+                       // stream: too big for the CYD's static DRAM); nullptr only if that malloc failed
   int      seenCount;  // occupied table slots (<= MAX_SEEN)
   uint32_t uniqCount;  // distinct devices logged this session (STATUS uniq / U:); a device evicted
                        // from the LRU and seen again later counts again, so it's a close upper bound
@@ -63,7 +82,7 @@ inline constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2:
                                        // 5: expanded 'cidname,' BLE company makers + Garmin ID fix (2026-10-15)
 // Human-facing firmware version, distinct from the CYD<->C5 PROTOCOL_VERSION and the sig-DB DB_GEN.
 // Emitted in the per-session {"evt":"meta"} provenance anchor and the STATUS characteristic.
-inline constexpr char FW_VERSION[] = "0.10.0";  // 0.10.0: LRU never-stop logging + 5-min relog, unit names
+inline constexpr char FW_VERSION[] = "0.11.0";  // 0.10.0: LRU never-stop logging + 5-min relog, unit names; 0.11.0: lastseen departure lines
 
 const char* scannerIdHex();
 // Human-friendly unit name, e.g. "CFLO-MINI-KOBALI": board tag + a pronounceable 6-letter word

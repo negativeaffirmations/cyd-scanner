@@ -77,10 +77,18 @@ static int seenFind(const LogStream& st, const Detection& d) {
     if (st.seen[i].source == d.source && st.seen[i].pan == pan && memcmp(st.seen[i].mac, d.mac, 6) == 0) return i;
   return -1;
 }
+// Evicted entries still inside a presence period: their lastseen lines are written by
+// logNewDetections() after it closes the cycle's file handle (one handle per file at a time).
+// Bounded; in the (extreme) overflow case the oldest victims' lines are skipped, never their rows.
+static constexpr int EVICT_Q = 16;  // a PRESENT victim means 400 devices heard within DEPART_MS: rare
+static SeenKey g_evicted[EVICT_Q];
+static int     g_evictedN = 0;
+
 // Insert a device; when the table is full, evict the least-recently-SEEN entry (a device that is
 // still in range is refreshed every cycle, so it is never the victim). Never fails. The new entry is
 // "due" (lastLogged = ms - RELOG_MS); the caller stamps lastLogged once its row is actually written.
 static int seenInsert(LogStream& st, const Detection& d, uint32_t ms) {
+  if (!st.seen) return -1;  // table allocation failed at boot: can't dedup, so don't log (never spam)
   int idx = st.seenCount;
   if (idx < MAX_SEEN) {
     st.seenCount++;
@@ -88,13 +96,17 @@ static int seenInsert(LogStream& st, const Detection& d, uint32_t ms) {
     idx = 0;
     for (int i = 1; i < MAX_SEEN; i++)
       if ((uint32_t)(ms - st.seen[i].lastSeen) > (uint32_t)(ms - st.seen[idx].lastSeen)) idx = i;
+    if (st.seen[idx].present && g_evictedN < EVICT_Q) g_evicted[g_evictedN++] = st.seen[idx];
   }
   SeenKey& k = st.seen[idx];
   k.source = d.source;
   k.pan = seenPan(d);
   memcpy(k.mac, d.mac, 6);
-  k.lastSeen = ms;
+  k.lastSeen = k.firstSeen = ms;
   k.lastLogged = ms - RELOG_MS;
+  k.rssiMax = d.rssi;
+  k.srcType = srcTypeOf(srcTag(d));
+  k.present = 1;
   st.uniqCount++;
   return idx;
 }
@@ -157,8 +169,14 @@ int thisBootFiles(const char** out, int cap) {
   return n;
 }
 
+static void writeDepartures(LogStream& st, uint32_t ms, bool all);  // below, with the line writers
 void beginSessionNamed(LogStream& st, bool bg) {
+  writeDepartures(st, millis(), true);  // close out every presence period in the outgoing file
   rememberBootFile(st);
+  if (!st.seen) {
+    st.seen = (SeenKey*)calloc(MAX_SEEN, sizeof(SeenKey));
+    if (!st.seen) Serial.printf("[CYD] %s seen table: out of memory (logging disabled)\n", bg ? "bg" : "fg");
+  }
   Preferences p; p.begin("cydscan", false);
   const char* key = bg ? "bgcnt" : "bootcnt";
   uint32_t n = p.getULong(key, 0) + 1;
@@ -364,10 +382,14 @@ int logNewDetections() {
     const Detection& d = g_dets[i];
     int si = seenFind(st, d);
     if (si >= 0) {
-      st.seen[si].lastSeen = ms;
-      if (ms - st.seen[si].lastLogged < RELOG_MS) continue;  // logged recently: no new row yet
+      SeenKey& k = st.seen[si];
+      if (!k.present) { k.present = 1; k.firstSeen = ms; k.rssiMax = d.rssi; }  // back: new presence period
+      else if (d.rssi > k.rssiMax) k.rssiMax = d.rssi;
+      k.lastSeen = ms;
+      if (ms - k.lastLogged < RELOG_MS) continue;  // logged recently: no new row yet
     } else {                                                  // (else: a due re-sighting row)
       si = seenInsert(st, d, ms);
+      if (si < 0) continue;
       n++;  // "new" = first sighting this session
     }
     if (!f && ensureLogFile(st)) f = SD.open(st.path, FILE_APPEND);
@@ -416,7 +438,54 @@ int logNewDetections() {
     st.rowCount++;
   }
   if (f) f.close();
+  // Departure lines: LRU victims from this cycle, then devices quiet for DEPART_MS -- in BOTH streams
+  // (the inactive stream's devices go quiet too and are closed out into its own file).
+  writeDepartures(st, ms, false);
+  LogStream& other = (&st == &g_fg) ? g_bg : g_fg;
+  if (other.seenCount) writeDepartures(other, ms, false);
   return n;
+}
+
+// One {"evt":"lastseen"} line for a presence period (see DEPART_MS in host_log.h).
+static void lastSeenLine(File& f, const SeenKey& k, uint32_t epoch, uint32_t ms, bool gps) {
+  static const char* const kTag[] = {"2.4", "5G", "BLE", "PRB", "154"};
+  char ln[LOG_LINE];
+  int n = 0;
+  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epoch, (unsigned long)ms);
+  if (gps && isfinite(posLat()) && isfinite(posLon()))
+    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+  lnAppend(ln, n, ",\"evt\":\"lastseen\",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
+           kTag[k.srcType < 5 ? k.srcType : 0], k.mac[0], k.mac[1], k.mac[2], k.mac[3], k.mac[4], k.mac[5]);
+  if (k.source == (uint8_t)Source::Ieee802154 && k.pan) lnAppend(ln, n, ",\"pan\":\"%04X\"", k.pan);
+  lnAppend(ln, n, ",\"first_ms\":%lu,\"last_ms\":%lu,\"rssi_max\":%d}\n",
+           (unsigned long)k.firstSeen, (unsigned long)k.lastSeen, (int)k.rssiMax);
+  if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+}
+
+// Close out presence periods in `st`: the queued LRU victims (active stream only), plus every present
+// entry quiet for >= DEPART_MS -- or ALL present entries when `all` (session end).
+static void writeDepartures(LogStream& st, uint32_t ms, bool all) {
+  bool evict = (&st == &activeStream()) && g_evictedN > 0;
+  bool any = evict;
+  for (int i = 0; i < st.seenCount && !any; i++)
+    if (st.seen[i].present && (all || ms - st.seen[i].lastSeen >= DEPART_MS)) any = true;
+  if (!any) return;
+  if (!g_sdOk || !st.path[0] || !ensureLogFile(st)) { if (evict) g_evictedN = 0; return; }
+  File f = SD.open(st.path, FILE_APPEND);
+  if (!f) { if (evict) g_evictedN = 0; return; }
+  uint32_t epoch = epochLocal();
+  bool gps = posHasFix();
+  if (evict) {
+    for (int i = 0; i < g_evictedN; i++) lastSeenLine(f, g_evicted[i], epoch, ms, gps);
+    g_evictedN = 0;
+  }
+  for (int i = 0; i < st.seenCount; i++) {
+    SeenKey& k = st.seen[i];
+    if (!k.present || !(all || ms - k.lastSeen >= DEPART_MS)) continue;
+    lastSeenLine(f, k, epoch, ms, gps);
+    k.present = 0;
+  }
+  f.close();
 }
 
 // Append one event line to the current session log:
