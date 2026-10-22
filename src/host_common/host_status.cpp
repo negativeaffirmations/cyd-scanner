@@ -17,7 +17,7 @@ void pushStatus() {
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;dl=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d;"
-           "sid=%s;fw=%s;dbgen=%lu",
+           "sid=%s;fw=%s;dbgen=%lu;name=%s",
            g_linkOk ? 1 : 0, n24, n5, nble, nprb, n154, (int)activeStream().uniqCount,
            timeHasSync() ? 1 : 0, posHasFix() ? 1 : 0,
            webshare::active() ? 1 : 0, susp, lk, conf, sigdb::loaded() ? 1 : 0,
@@ -25,7 +25,7 @@ void pushStatus() {
            whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
            (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
            hostboard::batteryPercent(), posSource(), (int)g_onbSats, timeSource(),
-           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
+           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN, scannerName());
   if (webshare::active()) {  // Wi-Fi download AP up: hand the join credentials to the phone (web app draws the QR)
     size_t n = strlen(s);
     snprintf(s + n, sizeof(s) - n, ";apssid=%s;appsk=%s;apurl=%s",

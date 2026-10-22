@@ -302,11 +302,30 @@ const char* scannerIdHex() {
   return id;
 }
 
+const char* scannerName() {
+  static char nm[24] = {0};
+  if (!nm[0]) {
+    static const char kCons[] = "BDFGHKLMNPRSTVZ";  // 15 (no C/J/Q/W/X/Y: unambiguous when read aloud)
+    static const char kVow[]  = "AEIOU";
+    uint64_t mac = ESP.getEfuseMac();
+    uint32_t h = 2166136261u;                       // FNV-1a over the 6 MAC bytes
+    for (int i = 0; i < 6; i++) h = (h ^ (uint8_t)(mac >> (8 * i))) * 16777619u;
+    char w[7];
+    for (int i = 0; i < 3; i++) {                   // 3 consonant-vowel syllables: 75^3 = 421,875 words
+      w[2 * i]     = kCons[h % 15]; h /= 15;
+      w[2 * i + 1] = kVow[h % 5];   h /= 5;
+    }
+    w[6] = 0;
+    snprintf(nm, sizeof(nm), "CFLO-%s-%s", hostboard::boardTag(), w);
+  }
+  return nm;
+}
+
 // Provenance anchor written as the first line of every session stream (see ensureLogFile). scanner_name
-// is omitted for v1 — no per-unit user label exists yet (planned NVS-settable label from the phone).
+// = scannerName() (the advertised unit name; scanner_id stays the stable key).
 static void writeSessionMeta(File& f) {
-  f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
-           scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
+  f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"scanner_name\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
+           scannerIdHex(), scannerName(), FW_VERSION, (unsigned long)DB_GEN);
 }
 
 void initSD() {
@@ -652,8 +671,8 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
 // The scan-provenance meta line (same shape as writeSessionMeta) into a buffer, for exports that
 // join several files and so drop each file's own meta line.
 int sessionMetaLine(char* out, size_t cap) {
-  int w = snprintf(out, cap, "{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
-                   scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN);
+  int w = snprintf(out, cap, "{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"scanner_name\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
+                   scannerIdHex(), scannerName(), FW_VERSION, (unsigned long)DB_GEN);
   return (w > 0 && (size_t)w < cap) ? w : 0;
 }
 

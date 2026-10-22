@@ -233,7 +233,7 @@ void begin(const char* devName) {
   adv->addServiceUUID(SVC_UUID);       // service UUID in the adv packet (filterable)
   adv->setName(devName);
   // The 128-bit service UUID fills the adv packet, so put the name in an explicit
-  // scan response so Chrome shows "COINTEL-FLO" instead of "Unknown device".
+  // scan response so Chrome shows the unit name (CFLO-<board>-<word>) instead of "Unknown device".
   NimBLEAdvertisementData scanResp;
   scanResp.setName(devName);
   adv->setScanResponseData(scanResp);

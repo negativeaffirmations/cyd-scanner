@@ -13,4 +13,5 @@ uint8_t brightness();                      // CYD: backlight %; S3: 100 (reporte
 bool    rtcPresent();                      // CYD: false (no DS3231); S3: DS3231 probe result
 bool    foregroundScan();                  // true -> log to g_fg + run the live-scan path. CYD: g_screen == SCR_SCAN
 bool    pipelineAllowed();                 // headless cycle may run now. CYD: false on Explore/drill-down screens
+const char* boardTag();                    // short board kind in the device name: "CYD" / "MINI"
 }

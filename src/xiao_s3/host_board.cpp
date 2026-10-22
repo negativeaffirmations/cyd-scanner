@@ -62,4 +62,5 @@ int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
 bool    hostboard::rtcPresent()     { return s_rtcPresent; }
 bool    hostboard::foregroundScan() { return g_fgScan; }
+const char* hostboard::boardTag() { return "MINI"; }
 bool    hostboard::pipelineAllowed() { return true; }

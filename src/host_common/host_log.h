@@ -66,6 +66,11 @@ inline constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2:
 inline constexpr char FW_VERSION[] = "0.9.0";
 
 const char* scannerIdHex();
+// Human-friendly unit name, e.g. "CFLO-MINI-KOBALI": board tag + a pronounceable 6-letter word
+// derived from the factory eFuse MAC, so it is unique per unit and stable across reflashes / NVS
+// wipes. Used as the BLE advertised name (phone picker), STATUS name=, the CYD screens, and the
+// session meta line's scanner_name.
+const char* scannerName();
 int sessionMetaLine(char* out, size_t cap);
 // Every session file written THIS boot: the live fg/bg files plus earlier ones this boot (New Session,
 // bg toggles). Their ms-since-boot is still valid, so a time-window export can date them. Returns n.

@@ -10,12 +10,12 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="js/vendor/qrcode.js"></script>  <!-- vendored qrcode-generator (MIT, Kazuhiko Arase); sets global `qrcode` -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
-<link rel="stylesheet" href="style.css?v=20261022a">
+<link rel="stylesheet" href="style.css?v=20261022b">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
   <header class="appbar">
-    <span class="appbar-title">COINTEL-FLO</span>
+    <span class="appbar-title">COINTEL-FLO<span class="appbar-unit" id="unitName"></span></span>
     <span class="appbar-status" id="appbarStatus">
       <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span></span>
       <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span><span class="gpssats" id="gpsSats"></span></span>
@@ -60,7 +60,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-22&nbsp;·&nbsp;scan-groups</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-22&nbsp;·&nbsp;unit-names</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->

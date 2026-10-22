@@ -57,6 +57,7 @@ export async function connect(){
 }
 
 export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); state.connected=false;
+  state.scannerName = ""; $("unitName").textContent = "";
   clearSightings();   // drop the in-memory per-device sighting trails for this session
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; state.lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();

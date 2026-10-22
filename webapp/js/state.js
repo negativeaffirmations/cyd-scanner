@@ -18,6 +18,7 @@ export const state = {
 
   // --- scan provenance (STATUS sid/fw/dbgen) — tags live-POST batches so scan-analyzer knows which
   // scanner produced them (file uploads already carry the CYD's own {"evt":"meta"} first line) ---
+  scannerName: "",      // unit name of the connected scanner (STATUS name=, e.g. CFLO-CYD-KOBALI)
   scannerId: "",        // stable eFuse-MAC id of the connected CYD (opaque)
   scannerFw: "",        // CYD firmware version string
   scannerDbGen: 0,      // sig-DB generation

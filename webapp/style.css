@@ -516,6 +516,19 @@ select {
 .appbar-title {
   font-size: 1.15rem;
   font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.appbar-unit {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #8b949e;
+  letter-spacing: 0.03em;
+}
+.appbar-unit:empty {
+  display: none;
 }
 
 .appbar-status {

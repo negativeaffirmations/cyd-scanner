@@ -19,7 +19,6 @@
 #include "../host_common/host_phone_cmds.h"
 #include "../host_common/host_board.h"
 
-static const char* DEVICE_NAME = "COINTEL-FLO";
 
 uint8_t g_brightness = 100;   // phone slider value, persisted + echoed in STATUS (no backlight to drive)
 bool    g_fgScan     = false; // phone-started scan -> logs to the fg stream; boot/bg scan logs to the bg stream
@@ -57,7 +56,7 @@ void setup() {
   initSD();
   sigdb::begin();       // load /signatures.csv (seeds it if absent) or fall back
   whitelist::begin();   // load /whitelist.csv
-  phone::begin(DEVICE_NAME);
+  phone::begin(scannerName());  // CFLO-MINI-<word>, unique per unit (see scannerName)
   g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering
   g_linkOk = pingC5();
   if (g_linkOk) g_lastLinkOkMs = millis();

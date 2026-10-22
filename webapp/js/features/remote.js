@@ -145,6 +145,7 @@ let liveFailLogged = false; // only log the first failure in a run, then stay qu
 function metaLine(){
   if(!state.scannerId) return "";
   const o = { evt:"meta", scanner_id: state.scannerId };
+  if(state.scannerName) o.scanner_name = state.scannerName;
   if(state.scannerFw) o.fw = state.scannerFw;
   if(state.scannerDbGen) o.db_gen = state.scannerDbGen;
   return JSON.stringify(o);

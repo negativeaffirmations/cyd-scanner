@@ -43,7 +43,6 @@ using namespace link_protocol;
 #define LINK_MONITOR 0
 
 static constexpr uint8_t UI_ROTATION = 0;  // portrait 240x320 (90 CCW from landscape)
-static const char*       DEVICE_NAME = "COINTEL-FLO";
 // UI accent: the logo magenta #AA00AA in RGB565 ((0xAA>>3)<<11 | 0 | (0xAA>>3)). Used for selected
 // menu-item/button fills and the "< BACK" bar, replacing the old UI_ACCENT blue.
 static constexpr uint16_t UI_ACCENT = 0xA815;  // #AA00AA
@@ -819,9 +818,11 @@ static void drawAppQrScreen() {
   int ty = drawCenteredQr(APP_URL, 56) + 14;  // below the back bar (y24..42); +8px margin (QR quiet zone starts at qy-6)
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString("Scan to open the app", W / 2, ty, 2);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString(scannerName(), W / 2, ty + 20, 2);  // pick THIS name in the phone's Bluetooth list
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(g_touchOk ? "Tap BACK or press button" : "Press button: back",
-                 W / 2, ty + 20, 2);
+                 W / 2, ty + 40, 2);
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -2801,6 +2802,7 @@ int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
 bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
 bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN; }
+const char* hostboard::boardTag() { return "CYD"; }
 bool    hostboard::pipelineAllowed() { return !screenIsDrill() && !screenIsExplore(); }
 
 void hostui::onScanCycle(const ScanCycleResult&) {
@@ -2832,7 +2834,7 @@ void setup() {
   whitelist::begin();  // load /whitelist.csv (seeds a commented header if absent)
   g_touch.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN);
   g_touchOk = g_touch.loadCal();
-  phone::begin(DEVICE_NAME);
+  phone::begin(scannerName());  // CFLO-CYD-<word>, unique per unit (see scannerName)
   g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering
   g_linkOk = pingC5();  // check the C5 link so the menu dot is correct before any scan
   if (g_linkOk) g_lastLinkOkMs = millis();  // seed link stickiness for the first scan
