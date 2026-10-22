@@ -448,7 +448,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
-  - `…0004` STATUS (read/notify) — `key=val;…`:
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together). Keys:
     `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,sid,fw,dbgen`
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
@@ -463,7 +463,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     string, **`dbgen`** = sig-DB generation — the **scan-provenance** fields the web app prepends as a
     `{"evt":"meta",…}` record on each live-POST batch; file uploads carry the same meta as line 1 of
     the NDJSON)
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together). Keys:
+  - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
     `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
