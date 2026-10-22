@@ -463,7 +463,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     string, **`dbgen`** = sig-DB generation — the **scan-provenance** fields the web app prepends as a
     `{"evt":"meta",…}` record on each live-POST batch; file uploads carry the same meta as line 1 of
     the NDJSON)
-  - `…0005` LOGDATA (notify) — BLE log stream (`SIZE=<n>` header then raw chunks)
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together). Keys:
   - `…0006` DETS (notify) — **live detection list** mirroring the CYD screen, pushed each
     scan cycle. **v6 format:** a `D:<seq>:<count>` header then `<count>` tab-separated rows
     `seq\ttier\tmac\trssi\tie\tname\tsrcs\tftier\tfscore\tmuted\tflags\tcat` (top-of-list first, capped
