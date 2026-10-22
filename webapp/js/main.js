@@ -10,6 +10,7 @@ import { openExplore, applyExplore } from './features/explore.js';
 import { openWhitelist, wlCmd, refreshWhitelist, addWhitelistRule, wlKindChanged } from './features/whitelist.js';
 import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
 import { openFollowList } from './features/followers.js';
+import { openStatusInfo, renderStatusInfo } from './features/statusinfo.js';
 import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
 import { renderCatChips, renderScanCounts } from './features/categories.js';
@@ -35,6 +36,17 @@ window.addEventListener("scroll", updateToTop, { passive:true });
 $("toTop").onclick = ()=> window.scrollTo({ top:0, behavior:"smooth" });
 renderCatChips([]); // show the full threat taxonomy (all 0) from the start, so the colours are learnable
 renderScanCounts([]); // the Scanner threat strip starts populated (all dim) and tappable
+
+// App-bar status icons: tap any one -> the status-info modal (names, explains + shows each icon's state).
+$("appbarStatus").addEventListener("click", e=>{
+  const ic = e.target.closest(".si, .conn"); if(ic) openStatusInfo(ic.id);
+});
+$("statusClose").onclick = ()=> $("statusDlg").close();
+$("statusDlg").addEventListener("click", e=>{
+  if(e.target === $("statusDlg")) $("statusDlg").close();
+  else if(e.target.id === "siConnect"){ $("statusDlg").close(); connect(); }   // connect() needs this user gesture
+});
+new MutationObserver(renderStatusInfo).observe($("conn"), { attributes:true, childList:true });   // BT state -> modal
 
 // Whitelist "kind" select -> pattern length rules (+ initial pass).
 $("wlKind").addEventListener("change", wlKindChanged);

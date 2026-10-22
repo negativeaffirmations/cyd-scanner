@@ -4,6 +4,7 @@ import { $ } from '../util/dom.js';
 import { DEAUTH_ALERT } from '../config.js';
 import { updateScanBtn } from './commands.js';
 import { renderApCard } from '../features/wifiap.js';
+import { renderStatusInfo } from '../features/statusinfo.js';
 
 export function onStatus(ev){
   const txt = new TextDecoder().decode(ev.target.value);
@@ -14,14 +15,17 @@ export function onStatus(ev){
   if("prb" in kv) $("prb").textContent = kv.prb;
   if("z"   in kv) $("z154").textContent = kv.z;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
+  Object.assign(state.status, kv);   // latest value of every key, for the status-icon info modal
   if("link"in kv){ const up = kv.link==="1", el = $("linkState");   // host<->C5 scanner UART link (the headless host's only link readout)
-    el.style.color = up ? "#3fb950" : "#f85149"; el.style.opacity = "1";   // green up / red down, like the CYD link dot
+    // Classes, not el.style.color: the inner glyph has its own muted colour (.si .material-symbols-outlined),
+    // so an inline colour on the outer span never reached it and the icon stayed grey even when up.
+    el.classList.toggle("up", up); el.classList.toggle("down", !up);   // green up / red down, like the CYD link dot
     el.title = up ? "Scanner (C5) link: up" : "Scanner (C5) link: DOWN"; }
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
-  if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS)
+  if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS / 3 RTC)
     const ts = +kv.tsrc||0, el = $("timeState");
     el.classList.toggle("onboard", ts===2);        // cyan tint when the onboard GPS keeps time (no phone)
-    el.title = ts===2 ? "Time: onboard GPS" : ts===1 ? "Time: phone-synced" : "Time: not set";
+    el.title = ts===3 ? "Time: RTC" : ts===2 ? "Time: onboard GPS" : ts===1 ? "Time: phone-synced" : "Time: not set";
   }
   if("gps" in kv) $("gpsState").classList.toggle("on", kv.gps==="1");
   if("gpssrc" in kv || "sats" in kv){            // v9: which source is live (1 phone / 2 onboard) + module sats
@@ -87,4 +91,5 @@ export function onStatus(ev){
       el.title = "Battery: no cell / on USB";
     }
   }
+  renderStatusInfo();   // live-refresh the status-icon info modal if it's open
 }

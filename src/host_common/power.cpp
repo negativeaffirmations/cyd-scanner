@@ -1,6 +1,5 @@
-// power.cpp — CYD battery monitor. See power.h.
-#include "../host_common/power.h"
-#include "pins.h"
+// power.cpp — host battery monitor (CYD + XIAO-S3), shared. See power.h.
+#include "power.h"
 #include <Arduino.h>
 
 namespace {
@@ -20,7 +19,8 @@ namespace {
   // running on USB only. Treat as "no battery present" rather than 0 %.
   const int BAT_MIN_VALID_MV = 2500;
 
-  int g_mv = 0;  // smoothed battery mV (0 = never sampled)
+  int g_pin = -1; // ADC pin from init() (-1 = not initialised)
+  int g_mv = 0;   // smoothed battery mV (0 = never sampled)
 
   int mvToPct(int mv) {
     if (mv >= CURVE[0].mv)          return 100;
@@ -37,15 +37,17 @@ namespace {
 }
 
 namespace power {
-  void init() {
-    analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);  // full ~0-3.3 V span (divider tops out ~2.1 V)
+  void init(int adcPin) {
+    g_pin = adcPin;
+    analogSetPinAttenuation(g_pin, ADC_11db);  // full ~0-3.3 V span (divider tops out ~2.1 V)
     g_mv = 0;
   }
 
   void sample() {
+    if (g_pin < 0) return;
     uint32_t acc = 0;
     const int N = 8;                                 // average a few reads to settle ADC noise
-    for (int i = 0; i < N; i++) acc += analogReadMilliVolts(BAT_ADC_PIN);
+    for (int i = 0; i < N; i++) acc += analogReadMilliVolts(g_pin);
     int raw = (int)(acc / N) * 2;                    // undo the 100k/100k divider
     if (g_mv == 0) g_mv = raw;                       // seed on first sample
     else           g_mv += (raw - g_mv) / 4;         // EMA (~0.25 weight) to smooth load dips

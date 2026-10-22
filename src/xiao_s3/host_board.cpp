@@ -23,7 +23,9 @@ void hostboard::begin() {
   digitalWrite(SCAN_LED_PIN, HIGH);  // active low: off
 #endif
   hostlink::begin(LINK_RX_PIN, LINK_TX_PIN);  // UART1 on D7(RX)/D6(TX)
-  power::init();
+  power::init(BAT_ADC_PIN);  // 100k/100k divider on D3 (GPIO4)
+  power::sample();           // seed so STATUS bat= is valid immediately
+  Serial.printf("[S3] bat %d mV (%d%%)\n", power::voltageMv(), power::percent());
   // DS3231 on I2C D4/D5 (GPIO5/6): if it holds a valid time, latch it as the lowest-priority time source
   // and seed the system clock so a wall clock exists before any phone/GPS fix (docs/mini-build.md §6).
   Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
@@ -37,7 +39,14 @@ void hostboard::begin() {
   }
   Serial.printf("[S3] RTC %s\n", !s_rtcPresent ? "not found" : utc ? "valid (latched)" : "present, time not set");
 }
-void hostboard::sample() { power::sample(); }
+void hostboard::sample() {
+  power::sample();
+  static uint32_t lastLog = 0;  // console readout for checking against a multimeter (~30 s)
+  if (millis() - lastLog >= 30000) {
+    lastLog = millis();
+    Serial.printf("[S3] bat %d mV (%d%%)\n", power::voltageMv(), power::percent());
+  }
+}
 bool hostboard::sdBegin() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   return SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
@@ -49,7 +58,7 @@ void hostboard::setScanLed(bool r, bool g, bool b) {
   (void)r; (void)g; (void)b;  // GPIO21 is the SD chip-select; no LED
 #endif
 }
-int     hostboard::batteryPercent() { return power::percent(); }  // -1
+int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
 bool    hostboard::rtcPresent()     { return s_rtcPresent; }
 bool    hostboard::foregroundScan() { return g_fgScan; }

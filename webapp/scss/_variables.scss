@@ -26,6 +26,8 @@ $color-text-mono:   #9db4c9;  // monospace (log, RSSI)
 $color-accent: #aa00aa;  // primary button, range accent (COINTEL-FLO logo magenta)
 $color-danger: #a1222b;  // destructive button
 $color-warn:   #d29922;  // note / warning accent
+$color-ok:     #3fb950;  // healthy state text/icons (C5 link up, status "ok")
+$color-bad:    #f85149;  // failed/alarm state text/icons (C5 link down, low battery, status "bad")
 
 // --- Status pills -----------------------------------------------------------
 $color-pill-up:   #1a7f37;

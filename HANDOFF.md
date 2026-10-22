@@ -1,6 +1,86 @@
-# Handoff — 2026-10-20 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-21 (branch: `main`; it is the only branch / the trunk)
 
-## In progress — mini build soldered bring-up: C5 POWER REWIRE (2026-10-20, hardware rework pending)
+## Latest — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, NOT yet pushed)
+- **C5 link icon showed "down" while scanning worked: a WEB-APP bug, not the link.** The S3 console showed every
+  cycle succeeding (`g_linkOk` true → STATUS `link=1`). `status.js` set `el.style.color` on the outer `#linkState`
+  span, but `.si .material-symbols-outlined` gives the inner glyph its own muted colour, so the glyph never turned
+  green/red and stayed grey (= looks inactive). Since 10-18 it has never shown green. **Fix:** `.up`/`.down` classes
+  styled on BOTH spans (`_base.scss`), reset on disconnect. New SCSS tokens `$color-ok`/`$color-bad`.
+- **New: tap any app-bar status icon → "Status icons" modal** (`features/statusinfo.js`, `#statusDlg`): one row per
+  icon (clock, GPS, DB, C5 link, battery, Bluetooth), each with a clone of the live icon, its name, its current state
+  (green/amber/red), and a one-line description; the tapped row is highlighted; it re-renders live on each STATUS
+  notify + BT state change (MutationObserver on `#conn`); a Connect button when disconnected. STATUS keys merge into
+  `state.status`. Clock title now also names `tsrc=3` (RTC). `#uiver → status-info`, `style.css?v=20261021a`.
+  `node --check` + Sass clean; **not yet tested in a browser, not pushed** (needs a push to reach the phone via Pages).
+  The CYD's on-screen status bar is unchanged (it already has a GPS modal).
+- **Cell swap:** the mini build's LP103450 2000 mAh LiPo → a **1000 mAh** LiPo (case fit). Noted in
+  [docs/mini-build.md](docs/mini-build.md) charging section: runtime ≈ halves; the TP4056's 1 A default is now 1C →
+  consider `Rprog` ≈ 2.4 kΩ (0.5 A) unless the cell's datasheet allows 1C.
+- **Battery sense still reads wrong** (unchanged open item below): console `[S3] bat 344–358 mV (-1%)` on 10-21 evening.
+
+## RESUME HERE — mini build bring-up COMPLETE (link + RTC + GPS all PASS on battery); S3 back on `xiao_s3` (2026-10-21)
+The owner finished the §2.6 rewire (C5 fed from its BAT pads, no S3 3V3 → C5 3V3 wire).
+- **UPDATE (later 10-21): LINK PASS on battery.** Cell fitted; with the switch in circuit the probe still showed the C5
+  brownout-looping (identical to no-cell) → the **switch was faulty**. Switch removed, both XIAOs wired straight to
+  TP4056 OUT±: `xiao_s3_bringup` reports LINK PASS (0 miss, 134/134 bursts, C5 up 1449 s, resets 0). RTC still
+  `i2c: none` (open item). GPS: Status arrives, no fix yet (indoors). S3 currently runs `xiao_s3_bringup` → reflash
+  `xiao_s3` when done. **Switch since replaced + re-fitted by the owner (DONE, 10-21).**
+- **UPDATE (10-21 evening): RTC FIXED.** Owner swapped in a NEW DS3231 module (old one presumed faulty; all pins
+  had continuity). Bring-up now shows `[RTC ] PASS | i2c: 0x68` (no 0x57 EEPROM on this module, fine), temp 30.5 C.
+  Clock set via `s <epoch>` -> `2026-10-21 16:56:51 UTC osf=0`. Link still PASS. **Next: persistence test** (cut all
+  power ~30 s, re-check time + `osf=0`), then `x` stress with the RTC on the rail, then Stage 3 GPS.
+  **Persistence PASS (17:02 UTC):** all power cut 30+ s (LiPo removed too) -> RTC still correct to the second, `osf=0`,
+  so the coin cell holds. Coin-cell type (CR2032 vs LIR2032) still UNKNOWN - owner to check later re: the §2.4
+  charge-resistor note. Owner's multimeter read ~3.0-3.3 V (shaky probes) -> most likely a CR2032; this module has
+  no 0x57 EEPROM so it may not be a ZS-042 - check it for a charge resistor/diode before leaving a CR2032 in long-term.
+  **Stage 1 `x` stress with RTC on rail (LiPo in): PASS** - 75 pongs, 0 miss, 0 corrupt, all bursts ok, C5 resets 0.
+  **Stage 3 Test 1: PASS** - C5 console (COM23) `gps: bytes=67864 nmea_ok=1996 bad=0` climbing (clean 9600 NMEA,
+  GPS powered from S3 3V3 on battery). **Test 2: PASS** - 3D fix, 6 sats via the link (got it after the rig sat in the
+  window on battery; USB cable too short to reach). **ALL BRING-UP STAGES PASS.** S3 reflashed to production `xiao_s3`:
+  boots with RTC time (session `bg-20261021-135657` named at boot, pre-phone), logs `RTC disciplined from GPS`, bg scan
+  cycling (34 devices). Open items: coin cell likely CR2032 -> check module for a charge resistor; redraw wiring
+  diagrams; RTC persist test via the production path (phone/GPS sync -> power-cycle).
+- **S3 battery sense — FLASHED, but READING WRONG (open, owner debugging later; 10-21 night):** owner soldered the
+  100k/100k divider (switch output -> **S3 D3 = GPIO4**) + the power LED (3V3 -> 1k -> LED -> GND; works, no
+  firmware). `power.cpp` moved `src/cyd/` -> `src/host_common/` (one impl, `power::init(BAT_ADC_PIN)` per board; S3
+  stub deleted; CYD unchanged). Flashed `xiao_s3` (COM16; RAM 31.0% / Flash 41.0%) with two extra S3 fixes: the
+  **idle loop now calls `hostboard::sample()`** (before, with scan off, the reading never refreshed -> stale STATUS
+  `bat=`), `begin()` seeds a sample, and **`[S3] bat <mV> (<pct>%)` prints at boot + every ~30 s** (console check vs a
+  meter). **Symptom:** console reads Vbat ~0.56–0.79 V (≈0.3–0.4 V at the pin) -> `bat=-1`, drifting steadily DOWN
+  (794 -> 724 -> 706 -> 620 -> 561 mV) straight through the switch going off -> ON (switch on did power the C5:
+  link + scan fine, 80 uniq). Looks like a floating ADC input, yet the **owner's meter says the divider reads
+  correctly**. No GPIO4 conflict in `pins.h` / code. **Next:** meter **directly on the D3 pad** (not just the
+  divider midpoint) vs GND with the switch on; confirm the wire lands on D3 (4th pad, USB side: D0..D3) and not
+  D2; then if the pad is truly ~1.9–2.1 V, add a temp `[DIAG]` print of `analogRead(4)` raw +
+  `analogReadMilliVolts(4)` to rule out the ADC/attenuation path (revert after). Then check STATUS `bat=` in the
+  web app vs the meter. Owner's diagram shows the D3 wiring (still untracked).
+- **Flashed tonight, both production firmware:** S3 = `xiao_s3` (COM16, MAC 10:b4:1d:e7:ed:a0),
+  C5 = `xiao_c5` (COM23 that session, base MAC 10:bd:a3:cf:02:dc; identify with `esptool chip_id`, both
+  are 303A:1001). **Background scan is OFF** on this unit (no `[S3] cycle` prints) → press Start in the
+  web app to get detections.
+- **C5 alone on its own USB: boots + scans fine** (`reset=11`, usual non-fatal PSRAM cacheline error),
+  but `gps: bytes=0` (expected then: the GPS is powered from the S3's 3V3 and the S3 was off).
+- **S3 on USB: `link=down` + `RTC not found`.** The bring-up probe reported the C5 **REBOOTING** (D7
+  driven 10% / floating 89%). **Cause: there is NO battery fitted yet.** The two BAT pads are tied
+  together, so with the S3 on USB the C5's only "supply" is the S3's onboard charger (current-limited,
+  hunts with no cell) → C5 brownout loop. Same in reverse: the S3 rebooted ~45 times (session counter
+  sess-00013 → 00059) while the C5 was on USB. **Not a wiring fault; the design needs the cell.**
+  (The bring-up probe's "shared 3V3 sags" wording predates the rewire; it now means "BAT net can't supply".)
+- **Testing without a battery:** (a) bench supply 3.8–4.0 V on TP4056 `B+/B−` (best stand-in for the
+  cell), switch ON, TP4056 USB out; or (b) the temporary S3 5V → C5 5V jumper (gave link PASS on 10-20;
+  remove it before the cell goes in). TP4056 USB with no cell = a charger, not a supply: may half-work,
+  inconclusive. The owner may try (TP4056 only, both XIAO USBs out, check via the web app link icon).
+- **I2C is dead, separate from the power issue:** the bring-up scan saw **nothing on the bus** (not even
+  the ZS-042's 0x57 EEPROM) with the S3 on USB → the module is unpowered or both lines are open. Checklist
+  given to the owner: (1) ~3.3 V at DS3231 VCC (S3 3V3 joint, which the GPS shares too); (2) the RTC is on the
+  **S3's** D4/D5 (GPIO5/6), NOT the C5's D4/D5 (silk SDA/SCL = the C5 link UART); (3) continuity +
+  no bridges D4–D5–D6; (4) SDA/SCL swapped.
+- **Next:** owner fixes I2C + gets a cell (or a bench supply) → re-run [docs/mini-build-bringup.md](docs/mini-build-bringup.md)
+  Stage 1 (flash `xiao_s3_bringup`, `p` probe, `x` stress, battery run), Stage 2 (RTC), Stage 3 (GPS: expect
+  `gps: bytes>0` on the C5 console once the S3 powers it). Reflash `xiao_s3` afterwards.
+- Wiring diagrams in `hardware/diagrams/` are still untracked/stale; the owner is redrawing them, so don't commit them.
+
+## Earlier — mini build soldered bring-up: C5 POWER REWIRE (2026-10-20)
 The owner moved the mini build from a breadboard (each XIAO on its own USB) to a soldered rig with the
 TP4056 + switch. **Finding:** fed from the **S3's 3V3 pin into the C5's 3V3 pad** (the original
 mini-build.md §2.5 plan), the **C5 never starts its firmware**. Its pad reads 3.3 V and every wire

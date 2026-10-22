@@ -93,6 +93,7 @@ void loop() {
     static uint32_t lastIdle = 0;
     if (millis() - lastIdle > 2000) {
       lastIdle = millis();
+      hostboard::sample();  // keep the battery reading fresh while idle (runScanCycle samples otherwise)
       if (pingC5()) g_lastLinkOkMs = millis();
       g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
       pushStatus();

@@ -58,7 +58,7 @@ Exposed breakout pads (fixed by the board; well-established):
 | D0 | 1 | ADC | spare (alt link/host sensor) |
 | D1 | 2 | ADC | spare |
 | D2 | 3 | ADC | spare |
-| D3 | 4 | ADC | spare |
+| D3 | 4 | ADC1_CH3 | **battery sense** (100k/100k divider off switched Vbat, added 2026-10-21) |
 | D4 | 5 | **SDA** | **DS3231 SDA** (I2C) |
 | D5 | 6 | **SCL** | **DS3231 SCL** (I2C) |
 | D6 | 43 | U0TXD | **Link UART1 TX → XIAO-C5 RX** |
@@ -90,9 +90,9 @@ Rationale / coexistence:
 > collides with the onboard user LED: in that case move the status-LED function to a spare pad
 > (D0/GPIO1) or drop the LED. The host is headless, so the LED is cosmetic — do not let it block SD.
 
-> **Battery sense:** the XIAO exposes no battery divider GPIO (the CYD used input-only GPIO35,
-> which does not exist here). The mini build reports `bat=-1` (no cell sensed). A future XIAO
-> battery add-on (BAT pads + divider to a spare ADC pad D0–D3) can fill this in later; out of scope.
+> **Battery sense (added 2026-10-21):** the XIAO exposes no battery divider of its own, so a
+> 100 kΩ/100 kΩ divider from the switched battery rail feeds **D3 (GPIO4, ADC1_CH3)**, the same
+> design as the CYD's GPIO35. STATUS `bat=` reports 0–100 % (−1 below 2.5 V / no cell). See §2.5.
 
 ### 2.2 XIAO ESP32-C5 (scanner) — pin plan
 
@@ -159,6 +159,13 @@ deleted**, and an onboard charge IC charges over USB-C.
 - On battery the **5 V / VUSB pin floats** (live only on USB) — every peripheral must be 3.3 V-safe
   off-battery. DS3231 ✓; confirm the GY-NEO6MV2 runs at 3.3 V (most do via their onboard regulator).
 
+> **CELL CHANGE (2026-10-21):** the LP103450 **2000 mAh** cell was swapped for a smaller **1000 mAh**
+> LiPo (the 2000 mAh didn't fit the case; exact model not recorded). Same wiring/topology. What
+> changes: **runtime roughly halves**, and the TP4056's default **1 A** charge current (`Rprog` 1.2 kΩ)
+> is now **1C** — at or above the max charge rate of many small LiPos. Check the new cell's datasheet;
+> if it says ≤ 0.5C (or nothing), swap `Rprog` to **~2.4 kΩ (≈ 0.5 A)**. The 2000 mAh figures below
+> are kept as the original rationale. Battery-% mapping is voltage-only, so it needs no change.
+
 **Charging the LP103450 (2000 mAh) — DECIDED: external TP4056 charge path (no boost).** The XIAO
 onboard charger is small and fixed (~50–100 mA, IC is an SGM4056/TP4057 depending on rev, **not**
 program-resistor adjustable), so a **2000 mAh** cell would take **~20–40 h** to charge off it —
@@ -177,10 +184,12 @@ path only** (the boost/step-up is still deleted — the XIAO runs the cell nativ
   XIAO USB while running is harmless — its ~100 mA charger just trickles — but don't rely on it.)
 - Net BOM change vs. CYD: **TP4056 kept, boost/step-up removed.**
 
-**Battery sense:** the XIAO-S3 exposes no battery-voltage divider (the CYD used input-only GPIO35,
-absent here), so the host reports `bat=-1` (§2.1). (The XIAO-C5 has a BAT_VOLT sense and, since
-2026-10-20, sits on the cell too, but nothing reads it yet: it would need a link field.) A future divider to a spare S3 ADC pad (D0–D3) could
-fill `bat` in later; out of scope.
+**Battery sense (added 2026-10-21):** switch output (the rail feeding both XIAOs' B+) → 100 kΩ →
+**S3 D3** → 100 kΩ → GND. Tapping the switched side means the divider draws nothing when off.
+`Vbat = analogReadMilliVolts(D3) × 2`, mapped to % by the shared `src/host_common/power.cpp` curve.
+Caveat: with the switch OFF but the S3 on USB, the S3's own charger drives its B+ pad (= this rail), so
+the reading follows the charger, not the cell. (The XIAO-C5's BAT_VOLT sense is still unread: it would
+need a link field.)
 
 ### 2.6 Complete device wiring (pinout)
 
@@ -331,8 +340,8 @@ envs compile them: `sigdb.{h,cpp}`, `phone.{h,cpp}` (NimBLE; S3 has BLE), `websh
 (Wi-Fi SoftAP; S3 has Wi-Fi), `whitelist.{h,cpp}`, `logfilter.h`. Update their `#include` paths.
 
 Modules that are **board-specific** (header shared, impl per board): `power.h` → `host_common/`;
-`power.cpp` stays in `src/cyd/` (GPIO35 divider) and a **new `src/xiao_s3/power.cpp` stub** returns
-`present()=false`/`percent()=-1`. `pushStatus` calls `power::percent()` unchanged → `bat=-1` on S3.
+`power.cpp` was later (2026-10-21) moved to `host_common/` too: one implementation, each board passes its
+own `BAT_ADC_PIN` to `power::init()` (CYD GPIO35, S3 GPIO4/D3).
 
 Stays **CYD-only** in `src/cyd/` (UI; not compiled for S3): everything TFT/touch/BOOT — the
 `Screen` enum + `g_screen` + all `SCR_*` handling in `loop()`, `render`, `updateScan`,

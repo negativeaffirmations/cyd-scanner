@@ -2773,7 +2773,7 @@ static bool screenIsExplore() {
 
 void hostboard::begin() {
   initCommon();       // LED, TFT + backlight PWM, link UART
-  power::init();      // battery monitor on GPIO35 (voltage-only)
+  power::init(BAT_ADC_PIN);  // battery monitor on GPIO35 (voltage-only)
   power::sample();    // seed the reading so the status bar shows a level immediately
 }
 void hostboard::sample() { power::sample(); }

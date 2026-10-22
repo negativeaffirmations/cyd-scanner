@@ -12,6 +12,7 @@ export const state = {
   connected: false,
   wifiOn: false,        // Wi-Fi download mode toggle
   ap: null,             // {ssid,psk,url} of the device SoftAP while it is up (STATUS apssid/appsk/apurl), else null
+  status: {},           // latest STATUS key=val map (merged across notifies; cleared on disconnect)
   scanning: false,      // authoritative value comes back via STATUS scan=
   paused: false,        // live-list view frozen (counts/scanning keep running) — mirrors the CYD PAUSE
 

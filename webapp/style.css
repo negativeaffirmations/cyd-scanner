@@ -242,6 +242,82 @@ button:disabled {
   color: #39c0ed;
 }
 
+.si#linkState.up, .si#linkState.up .material-symbols-outlined {
+  color: #3fb950;
+}
+
+.si#linkState.down, .si#linkState.down .material-symbols-outlined {
+  color: #f85149;
+}
+
+.appbar-status .si, .appbar-status .conn {
+  cursor: pointer;
+}
+
+.sirow {
+  display: flex;
+  gap: 12px;
+  padding: 10px 8px;
+  border-top: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.sirow:first-child {
+  border-top: 0;
+}
+
+.sirow.focus {
+  background: #0b0e13;
+}
+
+.sirow .siicon {
+  flex: 0 0 24px;
+  padding-top: 1px;
+}
+
+.sirow .siicon .material-symbols-outlined {
+  font-size: 22px;
+}
+
+.sirow .sibody {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sirow .siname {
+  font-weight: 600;
+}
+
+.sirow .sistat {
+  font-size: 0.85rem;
+  margin: 2px 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.sirow .sistat.ok {
+  color: #3fb950;
+}
+
+.sirow .sistat.warn {
+  color: #d29922;
+}
+
+.sirow .sistat.bad {
+  color: #f85149;
+}
+
+.sirow .sidesc {
+  font-size: 0.78rem;
+  color: #8b949e;
+  line-height: 1.35;
+}
+
+.sirow .sibtn {
+  width: auto;
+  margin: 8px 0 0;
+  padding: 0.4em 1em;
+}
+
 #log {
   background: #0b0e13;
   border: 1px solid #30363d;

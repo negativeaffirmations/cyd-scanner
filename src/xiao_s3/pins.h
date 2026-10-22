@@ -17,6 +17,10 @@
 // and the LED is cosmetic (docs/mini-build.md §2.1). Set to a spare pad (e.g. 1 = D0) to re-enable.
 #define SCAN_LED_PIN -1
 
+// --- Battery monitor (voltage-only; 100k/100k divider off the switched Vbat rail, i.e. the switch output
+// that feeds both XIAOs' B+). Vbat(mV) = analogReadMilliVolts(BAT_ADC_PIN) * 2. ADC1_CH3 (Wi-Fi-safe).
+#define BAT_ADC_PIN 4   // D3
+
 // --- DS3231 RTC (Phase 3) ---
 #define RTC_SDA_PIN 5   // D4
 #define RTC_SCL_PIN 6   // D5
