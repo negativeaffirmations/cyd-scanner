@@ -1,23 +1,70 @@
-# Handoff — 2026-10-21 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-22 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, pushed `4f2b2f5`)
+## Latest — one scan = one file + never-stop logging; all-logs range export; grouped session picker; unit names; fw 0.10.0 (2026-10-22, BOTH HOSTS FLASHED, all pushed)
+Commits `5308308` (logging + export + picker), `ac1ffd8` (unit names), `777ae4f` (file-name display + range-export
+naming), `926c197` (`FW_VERSION` 0.9.0 → **0.10.0**). Flashed: **CYD** (COM14, `CFLO-CYD-TOLUBA`) and **mini S3**
+(COM16, `CFLO-MINI-GABAME`). C5 firmware unchanged (no protocol bump). Webapp live (`#uiver` = `range-names`,
+`style.css?v=20261022c`), owner phone-checked it ("looks good").
+- **Trigger:** an owner field drive produced **13 session files** (~72 KB each). Root cause: the per-stream dedup set
+  (`MAX_SEEN` 400) filled in ~1–2 min of driving → `logNewDetections()` SKIPPED new MACs until the 5-min
+  `SESS_ROTATE_MIN_MS` guard let it rotate (real data gaps), and the bg stream rotated at `MAX_SEEN-32`.
+- **Fix — LRU seen table, no rotation:** `SeenKey` (now packed, 17 B) gained `lastSeen`/`lastLogged`; when full the
+  least-recently-SEEN entry is evicted (`seenInsert`), so logging never stops; both rotations + `lastRotateMs` /
+  `SESS_ROTATE_MIN_MS` removed. A file changes only on boot / New Session. **Re-log every `RELOG_MS` = 5 min**
+  while a device stays (or returns) in range; `lastLogged` is stamped only after a successful write.
+  `uniqCount`/`rowCount` replace `seenCount` (STATUS `uniq`, CYD `U:`). The live view was never capped (C5 table
+  evicts its stalest entry); only logging was.
+- **All-logs time-range export:** `T:<mode>[:min]:*` (BLE) / `/dlf?f=all` (Wi-Fi) → `logfilter::MultiExport`
+  joins the window from EVERY `/logs/*.jsonl` (cheap 1 KB head/tail reads pick files; per-file timesync backfill
+  REWRITES `epoch:0` rows; one fresh meta line; cap 64 files). `thisBootFiles()` = live fg/bg + a ring of 8
+  files ended this boot (they get a timesync anchor on sync too). Torn-last-line-safe tail epochs; a short BLE send
+  is newline-padded to `SIZE=`. Exports are named **`YYYYMMDD-HHMMSS-YYYYMMDD-HHMMSS.jsonl`** from the first/last
+  dated row (owner wants name-sortable files; the on-card log names are UNCHANGED).
+- **Session list** lines gained `\tfirstEpoch\tlastEpoch`. **Webapp Session logs** = checkbox multi-select of
+  SCANS (`features/sessions.js` groups same-stream files ≤ 6 min apart); rows show the full file name(s), then the
+  human date span, then kind/parts/size. Download/Map/range join parts (`ble/transfer.js` `bleFetch` promise queue +
+  `parse.js` `joinLogParts`); **Upload = one `/api/v1/uploads` body per scan**; Delete queues `D:`. Explore picker
+  lists the same groups and collapses re-logged rows to one device with a sighting trail. 20 s idle watchdog for
+  stalled BLE transfers. CYD on-device Explore now indexes one entry per device (up to 512 devices).
+- **Unit names:** BLE name `CFLO-<CYD|MINI>-<WORD>` (`scannerName()`, 3 CV syllables from an FNV hash of the eFuse
+  MAC; stable across reflash/NVS wipe) — also STATUS `name=`, meta `scanner_name`, the CYD Phone Link QR screen and
+  the web app bar. `hostboard::boardTag()` added.
+- **Reviewer pass** done (REV-001…012); fixes applied. **Open:** the BLE all-logs export blocks `loop()` while it
+  streams (~12 KB/s → no logging for minutes on a big range; use Wi-Fi) — async export backlogged.
+- **scan-analyzer (bridge 2026-10-22):** no server change needed; `fw 0.10.0` marks relog-era sessions. **Gated,
+  NOT built:** a per-device `{"evt":"lastseen",…}` departure line for RPA linking — scan-analyzer will post the field
+  shape for owner approval first.
+- **Next:** field-test both units (CYD with SW2 on → C5 powered) — one file per scan, `uniq` climbs past 400,
+  "Past 24 h" spans every file; owner uploads the old 13-part drive as one scan. Old 0.9.0 files on the cards
+  still show grouped in the picker.
+
+## Earlier — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, pushed)
+Commits: `4f2b2f5` (modal + link fix + last session's S3 battery-sense fw + redrawn mini-build diagrams), `2d51a7d`
+(owner's link colours), `cd591d1` (green background removed). No firmware flashed this session (S3 already ran the
+battery-sense build; cyd + xiao_s3 both re-built green before committing). **Not yet browser-tested** — live on
+Pages once the footer `#uiver` reads `link-nobg` (`style.css?v=20261021c`).
 - **C5 link icon showed "down" while scanning worked: a WEB-APP bug, not the link.** The S3 console showed every
   cycle succeeding (`g_linkOk` true → STATUS `link=1`). `status.js` set `el.style.color` on the outer `#linkState`
-  span, but `.si .material-symbols-outlined` gives the inner glyph its own muted colour, so the glyph never turned
-  the intended colour and stayed grey (= looks inactive). **Fix:** classes
-  styled on BOTH spans (`_base.scss`), reset on disconnect. **Owner-chosen colours:** gray = down, white = up / not
-  scanning (`.linkup`), light blue `$color-scanning` #79c0ff = up + scanning (`.linkscan`; NOT `.up` — a generic `.up` pill rule paints a green background) — icon colour only, no background. New SCSS tokens `$color-ok`/`$color-bad`.
-- **New: tap any app-bar status icon → "Status icons" modal** (`features/statusinfo.js`, `#statusDlg`): one row per
-  icon (clock, GPS, DB, C5 link, battery, Bluetooth), each with a clone of the live icon, its name, its current state
-  (green/amber/red), and a one-line description; the tapped row is highlighted; it re-renders live on each STATUS
-  notify + BT state change (MutationObserver on `#conn`); a Connect button when disconnected. STATUS keys merge into
-  `state.status`. Clock title now also names `tsrc=3` (RTC). `#uiver → status-info`, `style.css?v=20261021a`.
-  `node --check` + Sass clean; **pushed `4f2b2f5`; not yet tested in a browser** (live on Pages once `#uiver` reads `status-info`).
-  The CYD's on-screen status bar is unchanged (it already has a GPS modal).
-- **Cell swap:** the mini build's LP103450 2000 mAh LiPo → a **1000 mAh** LiPo (case fit). Noted in
+  span, but `.si .material-symbols-outlined` gives the inner glyph its own muted colour, so it stayed grey.
+  **Fix:** classes styled on BOTH spans (`_base.scss`), cleared on disconnect.
+- **Owner-chosen link colours (icon colour only, NO background):** gray = down (the `.si` default), white = up / not
+  scanning (`.linkup`), light blue `$color-scanning` #79c0ff = up + scanning (`.linkscan`). Computed from the merged
+  `state.status` `link` + `scan` keys. **Gotcha:** don't name these classes `.up`/`.down`/`.wait` — `_base.scss` has
+  generic pill rules (`.up { background:$color-pill-up }`) that painted a green box behind the icon (fixed in `cd591d1`).
+- **New: tap any app-bar status icon → "Status icons" modal** (`features/statusinfo.js`, `#statusDlg`, wired in
+  `main.js` via a click on `#appbarStatus`): one row per icon (clock, GPS, DB, C5 link, battery, Bluetooth) with a
+  clone of the live icon, its name, current state (toned text: ok green / warn amber / bad red; the link row uses the
+  icon's own gray/white/light-blue), and a one-line description. Tapped row highlighted; re-renders live on each
+  STATUS notify + BT state change (MutationObserver on `#conn`); Connect button when disconnected. STATUS keys merge
+  into `state.status` (cleared on disconnect). Clock title now names `tsrc=3` (RTC). New SCSS tokens
+  `$color-ok`/`$color-bad`/`$color-scanning`. CYD on-screen status bar unchanged (it already has a GPS modal).
+- **Cell swap:** the mini build's LP103450 2000 mAh LiPo → a **1000 mAh** LiPo (case fit, model not recorded). Noted in
   [docs/mini-build.md](docs/mini-build.md) charging section: runtime ≈ halves; the TP4056's 1 A default is now 1C →
   consider `Rprog` ≈ 2.4 kΩ (0.5 A) unless the cell's datasheet allows 1C.
-- **Battery sense still reads wrong** (unchanged open item below): console `[S3] bat 344–358 mV (-1%)` on 10-21 evening.
+- **Wiring diagrams** `hardware/diagrams/mini-build_wiring_diagram{.png,.svg,_labeled.png}` are now COMMITTED
+  (owner's 10-21 redraw; supersedes the "stale, don't commit" notes below).
+- **Next:** owner checks the web app on the phone (icon colours + modal); battery sense still reads wrong (open item
+  below — console `[S3] bat 344–358 mV (-1%)` on 10-21 evening; meter the D3 pad next).
 
 ## RESUME HERE — mini build bring-up COMPLETE (link + RTC + GPS all PASS on battery); S3 back on `xiao_s3` (2026-10-21)
 The owner finished the §2.6 rewire (C5 fed from its BAT pads, no S3 3V3 → C5 3V3 wire).
@@ -1125,7 +1172,8 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
      which is exactly when you'd be driving/walking. Also still open: whether a given drive *should*
      flag anything depends on a stable non-RPA emitter moving with you ≥400 m — the own phone is
      excluded by design.
-7. **~~P3 log follow-ups~~ — DONE (2026-10-11, CYD FLASHED).** (a) **Dense-area thrash guard:** when a
+7. **~~P3 log follow-ups~~ — DONE (2026-10-11, CYD FLASHED).** (a) **SUPERSEDED 2026-10-22** by the LRU seen
+   table (no skip, no rotation — see Latest; the skip caused data gaps + multi-file drives). Original: **Dense-area thrash guard:** when a
    stream's dedup set (`MAX_SEEN` 400) fills, `logNewDetections()` now **skips** unknown MACs (was
    re-logging every ~2 s cycle) and **auto-rotates** to a fresh session so capture resumes — capped to
    once per `SESS_ROTATE_MIN_MS` (5 min) so a dense drive can't spew tiny files; `LogStream` gained
@@ -1147,6 +1195,9 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    reminder: before any phone has *ever* synced the fallback reads **UTC** — no tz; after the
    first-ever phone sync the tz offset persists in NVS `cydscan/tzoff` and it reads LOCAL.)
 11. **Remote-server upload to scan-analyzer — contract v0; WEB-APP CLIENT BUILT (2026-10-16).**
+   **2026-10-22:** "Upload selected" is now multi-select over grouped scans — one joined body per scan
+   (`uploadSelectedSessions` in `features/sessions.js`, replaces `remote.js` `uploadSelectedSession`); meta now
+   carries `scanner_name`; `fw` 0.10.0. scan-analyzer confirmed no server change.
    The CYD↔scan-analyzer API contract is locked at **DRAFT v0, owner-approved**. **Owner greenlit the
    build** (2026-10-16): scan-analyzer is implementing the server endpoints (bridge 11:19) and
    cyd-scanner's **web-app client is now built** (this session) against v0 — no shape changes.
