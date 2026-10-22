@@ -1,6 +1,6 @@
 # Handoff — 2026-10-22 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — one scan = one file + never-stop logging; all-logs range export; grouped session picker; unit names; fw 0.10.0 (2026-10-22, BOTH HOSTS FLASHED, all pushed)
+## Latest — one scan = one file + never-stop logging; all-logs range export; grouped session picker; unit names; lastseen lines; fw 0.11.0 (2026-10-22, BOTH HOSTS FLASHED, all pushed)
 Commits `5308308` (logging + export + picker), `ac1ffd8` (unit names), `777ae4f` (file-name display + range-export
 naming), `926c197` (`FW_VERSION` 0.9.0 → **0.10.0**). Flashed: **CYD** (COM14, `CFLO-CYD-TOLUBA`) and **mini S3**
 (COM16, `CFLO-MINI-GABAME`). C5 firmware unchanged (no protocol bump). Webapp live (`#uiver` = `range-names`,
@@ -31,12 +31,36 @@ naming), `926c197` (`FW_VERSION` 0.9.0 → **0.10.0**). Flashed: **CYD** (COM14,
   the web app bar. `hostboard::boardTag()` added.
 - **Reviewer pass** done (REV-001…012); fixes applied. **Open:** the BLE all-logs export blocks `loop()` while it
   streams (~12 KB/s → no logging for minutes on a big range; use Wi-Fi) — async export backlogged.
-- **scan-analyzer (bridge 2026-10-22):** no server change needed; `fw 0.10.0` marks relog-era sessions. **Gated,
-  NOT built:** a per-device `{"evt":"lastseen",…}` departure line for RPA linking — scan-analyzer will post the field
-  shape for owner approval first.
-- **Next:** field-test both units (CYD with SW2 on → C5 powered) — one file per scan, `uniq` climbs past 400,
-  "Past 24 h" spans every file; owner uploads the old 13-part drive as one scan. Old 0.9.0 files on the cards
-  still show grouped in the picker.
+- **scan-analyzer (bridge 2026-10-22):** no server change needed; `fw 0.10.0` marks relog-era sessions.
+- **Next:** field-test the CYD (SW2 on → C5 powered) — one file per scan, `uniq` climbs past 400, "Past 24 h"
+  spans every file; owner uploads the old 13-part drive as one scan. Old 0.9.0 files on the cards still show
+  grouped in the picker. Mini already walk-tested (below).
+
+### Same day, later — `lastseen` departure lines (fw 0.11.0), join-meta fix, dedup toast (BOTH HOSTS FLASHED, pushed)
+Commits `cc01e93` (lastseen + `FW_VERSION` **0.11.0**), `15f5e2e` (join-meta fix), `763d6ea` (dedup toast).
+Webapp `#uiver` = `dedup-toast` (no `style.css` change since `?v=20261022c`). Both units flashed + boot-checked
+(CYD reported `link=up` — C5 powered).
+- **`{"evt":"lastseen"}` departure line** (schema owner-approved directly to this session, spec from scan-analyzer's
+  bridge entry): `src,mac,[pan],first_ms,last_ms,rssi_max` per device presence period, ALL device types; written
+  after `DEPART_MS` 60 s unheard (both fg + bg streams swept each cycle), on LRU eviction of a present entry
+  (bounded `g_evicted[16]` queue, flushed after the cycle's file closes), and flushed for every present entry on
+  New Session (`beginSessionNamed` → `writeDepartures(st, …, true)` into the OUTGOING file). File log only (not
+  DETS/live-POST). `SeenKey` = 24 B packed (+`firstSeen`/`rssiMax`/`srcType`/`present`). **The seen tables no
+  longer fit the CYD's static DRAM (ld overflow by 7.4 KB) → now heap-allocated (`calloc`) on the first
+  `beginSessionNamed`**; a failed alloc disables logging for that stream rather than spamming. Web Map skips the
+  line (`parseScanEvents`). Documented in CLAUDE.md.
+- **Field test (owner walk, mini):** ingested fine — 1723 lastseen lines, **35 chains / 77 rotating addresses
+  linked** (6/12 without). Handoff gaps cluster at −33…−8 s = the C5 30 s TTL inflation (scan-analyzer's 35 s overlap
+  allowance is right).
+- **Bug found + fixed (webapp):** that joined upload (`bg-20261022-144217+8p.jsonl`) carried meta `fw 0.9.0`, no
+  `scanner_name`: `joinLogParts` kept only the FIRST part's meta, and the first part predated the mini's reflash
+  (groups can span reflashes). Now each DISTINCT meta line is kept in part order (server: last meta wins).
+  scan-analyzer patched session 22 server-side.
+- **Server dedup is now ROW-level** (scan-analyzer, owner request): re-joined/regrouped re-uploads store only new
+  rows; all-duplicate → `duplicate:true`, `session_id:null`, counts 0. So **re-uploads are safe** (files with a
+  `scanner_id` meta). The upload toast now says "Already on the server — nothing new in X" or "N new sighting(s),
+  M new event(s); K row(s) already on the server" (K = rows sent − stored, a client-side estimate).
+- **Owner-side, parked:** NordVPN on the server PC breaks the phone→PC Tailscale path ("Failed to fetch" on upload).
 
 ## Earlier — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, pushed)
 Commits: `4f2b2f5` (modal + link fix + last session's S3 battery-sense fw + redrawn mini-build diagrams), `2d51a7d`
