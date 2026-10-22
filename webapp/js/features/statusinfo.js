@@ -41,11 +41,11 @@ const ROWS = [
     } },
   { id:"linkState", name:"Scanner link (C5)",
     desc:"The wired link between the host and the C5 radio board, which does the actual Wi-Fi (2.4 + " +
-         "5 GHz), BLE and 802.15.4 scanning. Green = the C5 is answering, red = no reply for ~8 s.",
-    status(k){
-      const scan = k.scan === "1" ? " · scanning" : " · not scanning";
-      if(k.link === "1") return ["Up" + scan, "ok"];
-      return ["DOWN — the C5 isn't answering (power / wiring)" + scan, "bad"];
+         "5 GHz), BLE and 802.15.4 scanning. Light blue = up and scanning, white = up but not " +
+         "scanning, gray = down (no reply from the C5 for ~8 s).",
+    status(k){   // tones match the icon: light blue / white / gray
+      if(k.link !== "1") return ["Down — the C5 isn't answering (power / wiring)", "muted"];
+      return k.scan === "1" ? ["Up · scanning", "scan"] : ["Up · not scanning", "plain"];
     } },
   { id:"battState", name:"Battery",
     desc:"The scanner's battery level, read from its voltage divider. Red under 20 %. Grey = no " +

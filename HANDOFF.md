@@ -4,8 +4,9 @@
 - **C5 link icon showed "down" while scanning worked: a WEB-APP bug, not the link.** The S3 console showed every
   cycle succeeding (`g_linkOk` true → STATUS `link=1`). `status.js` set `el.style.color` on the outer `#linkState`
   span, but `.si .material-symbols-outlined` gives the inner glyph its own muted colour, so the glyph never turned
-  green/red and stayed grey (= looks inactive). Since 10-18 it has never shown green. **Fix:** `.up`/`.down` classes
-  styled on BOTH spans (`_base.scss`), reset on disconnect. New SCSS tokens `$color-ok`/`$color-bad`.
+  the intended colour and stayed grey (= looks inactive). **Fix:** classes
+  styled on BOTH spans (`_base.scss`), reset on disconnect. **Owner-chosen colours:** gray = down, white = up / not
+  scanning (`.up`), light blue `$color-scanning` #79c0ff = up + scanning (`.scanning`) — icon colour only, no background. New SCSS tokens `$color-ok`/`$color-bad`.
 - **New: tap any app-bar status icon → "Status icons" modal** (`features/statusinfo.js`, `#statusDlg`): one row per
   icon (clock, GPS, DB, C5 link, battery, Bluetooth), each with a clone of the live icon, its name, its current state
   (green/amber/red), and a one-line description; the tapped row is highlighted; it re-renders live on each STATUS

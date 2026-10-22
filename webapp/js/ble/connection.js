@@ -73,7 +73,7 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   state.lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
   { const bs=$("battState"); bs.classList.add("off"); bs.classList.remove("lowbat");  // reset battery indicator
     $("battPct").textContent=""; $("battIcon").textContent="battery_unknown"; bs.title="Battery"; }
-  { const ls=$("linkState"); ls.classList.remove("up","down"); ls.title="Scanner (C5) link"; }  // reset C5-link icon (gray)
+  { const ls=$("linkState"); ls.classList.remove("up","scanning"); ls.title="Scanner (C5) link"; }  // reset C5-link icon (gray)
   for(const k in state.status) delete state.status[k]; renderStatusInfo();   // status modal: back to "not connected"
   if(state.gpsWatch!==null){ navigator.geolocation.clearWatch(state.gpsWatch); state.gpsWatch=null; }
   releaseWake(); }

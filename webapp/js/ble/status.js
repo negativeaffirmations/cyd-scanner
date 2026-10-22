@@ -16,11 +16,12 @@ export function onStatus(ev){
   if("z"   in kv) $("z154").textContent = kv.z;
   if("uniq"in kv) $("uniq").textContent= kv.uniq;
   Object.assign(state.status, kv);   // latest value of every key, for the status-icon info modal
-  if("link"in kv){ const up = kv.link==="1", el = $("linkState");   // host<->C5 scanner UART link (the headless host's only link readout)
+  if("link"in kv || "scan"in kv){ const el = $("linkState");   // host<->C5 scanner UART link (the headless host's only link readout)
+    const up = state.status.link==="1", scanning = up && state.status.scan==="1";
     // Classes, not el.style.color: the inner glyph has its own muted colour (.si .material-symbols-outlined),
-    // so an inline colour on the outer span never reached it and the icon stayed grey even when up.
-    el.classList.toggle("up", up); el.classList.toggle("down", !up);   // green up / red down, like the CYD link dot
-    el.title = up ? "Scanner (C5) link: up" : "Scanner (C5) link: DOWN"; }
+    // so an inline colour on the outer span never reaches it. Gray down / white up / light blue up + scanning.
+    el.classList.toggle("up", up); el.classList.toggle("scanning", scanning);
+    el.title = scanning ? "Scanner (C5) link: up · scanning" : up ? "Scanner (C5) link: up · not scanning" : "Scanner (C5) link: DOWN"; }
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
   if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS / 3 RTC)
     const ts = +kv.tsrc||0, el = $("timeState");

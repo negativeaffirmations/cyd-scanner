@@ -243,11 +243,11 @@ button:disabled {
 }
 
 .si#linkState.up, .si#linkState.up .material-symbols-outlined {
-  color: #3fb950;
+  color: #e6edf3;
 }
 
-.si#linkState.down, .si#linkState.down .material-symbols-outlined {
-  color: #f85149;
+.si#linkState.scanning, .si#linkState.scanning .material-symbols-outlined {
+  color: #79c0ff;
 }
 
 .appbar-status .si, .appbar-status .conn {
@@ -304,6 +304,18 @@ button:disabled {
 
 .sirow .sistat.bad {
   color: #f85149;
+}
+
+.sirow .sistat.plain {
+  color: #e6edf3;
+}
+
+.sirow .sistat.muted {
+  color: #8b949e;
+}
+
+.sirow .sistat.scan {
+  color: #79c0ff;
 }
 
 .sirow .sidesc {

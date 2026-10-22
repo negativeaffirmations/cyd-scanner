@@ -72,10 +72,10 @@ button:disabled { opacity: .45; }
 .si#gpsState .gpssats { font-size:11px; font-variant-numeric:tabular-nums; }
 // Time source (v10): cyan tint when the onboard GPS keeps the clock (no phone synced).
 .si#timeState.onboard, .si#timeState.onboard .material-symbols-outlined { color:#39c0ed; }
-// Host<->C5 scanner link: green up / red down (gray before the first STATUS), like the CYD link dot.
+// Host<->C5 scanner link: gray down (the .si default) / white up / light blue up + scanning.
 // Must colour the inner glyph too: .si .material-symbols-outlined above sets its own muted colour.
-.si#linkState.up,   .si#linkState.up   .material-symbols-outlined { color:$color-ok; }
-.si#linkState.down, .si#linkState.down .material-symbols-outlined { color:$color-bad; }
+.si#linkState.up,       .si#linkState.up       .material-symbols-outlined { color:$color-text; }
+.si#linkState.scanning, .si#linkState.scanning .material-symbols-outlined { color:$color-scanning; }
 
 // Every app-bar status icon is tappable -> the status-info modal.
 .appbar-status .si, .appbar-status .conn { cursor:pointer; }
@@ -92,6 +92,9 @@ button:disabled { opacity: .45; }
 .sirow .sistat.ok   { color:$color-ok; }
 .sirow .sistat.warn { color:$color-warn; }
 .sirow .sistat.bad  { color:$color-bad; }
+.sirow .sistat.plain { color:$color-text; }
+.sirow .sistat.muted { color:$color-text-muted; }
+.sirow .sistat.scan  { color:$color-scanning; }
 .sirow .sidesc { font-size:.78rem; color:$color-text-muted; line-height:1.35; }
 .sirow .sibtn { width:auto; margin:8px 0 0; padding:.4em 1em; }
 
