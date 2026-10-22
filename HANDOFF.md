@@ -1,6 +1,6 @@
 # Handoff — 2026-10-21 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, NOT yet pushed)
+## Latest — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, pushed `4f2b2f5`)
 - **C5 link icon showed "down" while scanning worked: a WEB-APP bug, not the link.** The S3 console showed every
   cycle succeeding (`g_linkOk` true → STATUS `link=1`). `status.js` set `el.style.color` on the outer `#linkState`
   span, but `.si .material-symbols-outlined` gives the inner glyph its own muted colour, so the glyph never turned
@@ -11,7 +11,7 @@
   (green/amber/red), and a one-line description; the tapped row is highlighted; it re-renders live on each STATUS
   notify + BT state change (MutationObserver on `#conn`); a Connect button when disconnected. STATUS keys merge into
   `state.status`. Clock title now also names `tsrc=3` (RTC). `#uiver → status-info`, `style.css?v=20261021a`.
-  `node --check` + Sass clean; **not yet tested in a browser, not pushed** (needs a push to reach the phone via Pages).
+  `node --check` + Sass clean; **pushed `4f2b2f5`; not yet tested in a browser** (live on Pages once `#uiver` reads `status-info`).
   The CYD's on-screen status bar is unchanged (it already has a GPS modal).
 - **Cell swap:** the mini build's LP103450 2000 mAh LiPo → a **1000 mAh** LiPo (case fit). Noted in
   [docs/mini-build.md](docs/mini-build.md) charging section: runtime ≈ halves; the TP4056's 1 A default is now 1C →
