@@ -537,7 +537,7 @@ back (5 GHz included). Things that matter, learned the hard way:
       dated spans are ≤ 6 min apart — older firmware split drives into parts — labelled "Oct 22, 2:05 PM
       – 3:09 PM · Scan · 13 parts · 914 KB"). Download / time-range / Map act on the selection; parts
       are fetched one at a time (`ble/transfer.js` `bleFetch`, a promise over the LOGDATA stream) and
-      joined by `parse.js` `joinLogParts` (per-part timesync backfill, one meta line) into ONE file;
+      joined by `parse.js` `joinLogParts` (per-part timesync backfill; each distinct meta line kept in part order, since parts can span a reflash and readers take the last) into ONE file;
       Upload sends ONE `/api/v1/uploads` body per scan; Delete queues `D:` per file. The Explore picker
       lists the same groups.
     - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager.

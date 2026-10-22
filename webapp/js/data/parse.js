@@ -53,13 +53,16 @@ function backfillEpoch(items, sync){
 // Join several session files (a scan's parts, or several picked scans) into ONE NDJSON text that
 // stays self-consistent. Timesync anchors only date rows from their own boot, so each part's pre-sync
 // rows (epoch:0) are backfilled from THAT part's anchor and rewritten in place (same formula as
-// backfillEpoch); the consumed anchors are dropped. Only the first {"evt":"meta"} line is kept.
+// backfillEpoch); the consumed anchors are dropped. Each DISTINCT {"evt":"meta"} line is kept, in part
+// order (repeats dropped): a scan's parts can span a reflash, so the parts may carry different fw /
+// scanner_name, and readers (scan-analyzer: last meta wins) then see the newest firmware. Keeping
+// only the first meta mislabelled a 0.11.0 walk as 0.9.0 (2026-10-22).
 // Legacy CSV parts can't be merged with NDJSON: a lone CSV part passes through as-is, otherwise
 // CSV parts are skipped.
 export function joinLogParts(texts){
   const parts=(texts||[]).filter(t=>t && t.trim());
   if(parts.length===1 && parts[0].trimStart()[0]!=="{") return parts[0];
-  const out=[]; let haveMeta=false;
+  const out=[]; const metas=new Set();
   for(const t of parts){
     if(t.trimStart()[0]!=="{") continue;
     const lines=t.split(/\r?\n/);
@@ -69,7 +72,7 @@ export function joinLogParts(texts){
     }
     for(const ln of lines){
       if(!ln.trim()) continue;
-      if(ln.includes('"evt":"meta"')){ if(haveMeta) continue; haveMeta=true; out.push(ln); continue; }
+      if(ln.includes('"evt":"meta"')){ const k=ln.trim(); if(!metas.has(k)){ metas.add(k); out.push(ln); } continue; }
       if(sync && ln.includes('"evt":"timesync"')) continue;
       if(sync && ln.startsWith('{"epoch":0,')){
         const m=/"ms":(\d+)/.exec(ln);
