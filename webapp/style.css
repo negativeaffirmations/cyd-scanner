@@ -418,6 +418,13 @@ summary {
 
 .sesst {
   font-weight: 600;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.sessdate {
+  font-size: 0.9rem;
 }
 
 .sesssub {

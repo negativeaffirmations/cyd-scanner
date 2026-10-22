@@ -17,3 +17,15 @@ export function exportSpec(){
 export function exportCmd(sp, target){
   return "T:"+sp.mode+(sp.mode===2?":"+sp.arg:"")+(target?":"+target:"");
 }
+
+// File name for a time-range download: <first>-<last>.jsonl, both YYYYMMDD-HHMMSS (the same
+// stamp format as the device's log names, so saved exports sort chronologically by name), taken
+// from the first/last dated row actually in the file. The device's epochs are LOCAL time, so they
+// are formatted with UTC getters. Falls back to `fallback` when nothing in the file is dated.
+const stamp = e=>new Date(e*1000).toISOString().slice(0,19).replace(/[-:]/g,"").replace("T","-");
+export function rangeFileName(text, fallback){
+  let lo=Infinity, hi=0;
+  const re=/"epoch":(\d+)/g;
+  for(let m; (m=re.exec(text||"")); ){ const e=+m[1]; if(e>0){ if(e<lo) lo=e; if(e>hi) hi=e; } }
+  return hi ? stamp(lo)+"-"+stamp(hi)+".jsonl" : fallback;
+}

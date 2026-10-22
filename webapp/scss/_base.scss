@@ -130,7 +130,8 @@ summary { cursor:pointer; font-weight:600; }
   input { width:1.15em; height:1.15em; accent-color:$color-accent; flex:none; margin:0; }
 }
 .sessmain { display:flex; flex-direction:column; min-width:0; }
-.sesst { font-weight:600; }
+.sesst { font-weight:600; font-family:ui-monospace, monospace; font-size:.85rem; overflow-wrap:anywhere; }
+.sessdate { font-size:.9rem; }
 .sesssub { font-size:.8rem; color:$color-text-muted; }
 
 // --- Dialog / modal chrome (shared by all modals) ---

@@ -11,7 +11,7 @@ import { loadedExplore } from '../features/explore.js';
 import { populateSessions } from '../features/sessions.js';
 import { populateWhitelist } from '../features/whitelist.js';
 import { uploadSessionText } from '../features/remote.js';
-import { exportSpec, exportCmd } from '../features/timerange.js';
+import { exportSpec, exportCmd, rangeFileName } from '../features/timerange.js';
 import { resetDl } from './transfer.js';
 
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
@@ -81,6 +81,7 @@ export function onLogData(ev){
       if (state.dl.sink==="map") { blob.text().then(t=>plotCsvText(t, state.dl.name)); }
       else if (state.dl.sink==="explore") { const nm=state.dl.name; blob.text().then(t=>loadedExplore(parseScanLog(t), nm)); }
       else if (state.dl.sink==="upload") { const nm=state.dl.name; blob.text().then(t=>uploadSessionText(t, nm)); }
+      else if (state.dl.spanName) { const fb=state.dl.name; blob.text().then(t=>saveBlob(blob, rangeFileName(t, fb))); }
       else saveBlob(blob, state.dl.name);
     } else if (mode==="list") {
       blob.text().then(populateSessions);
@@ -107,7 +108,7 @@ export async function downloadLog(){
 // (A single selected session's range export lives in sessions.js.)
 export async function downloadFilteredAll(){
   const sp=exportSpec(); if(!sp) return;
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save"};
+  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true};  // saved as <first>-<last>.jsonl
     toast("Collecting "+sp.tag+" from all logs on the device…", {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode(exportCmd(sp, "*"))); log("Requesting "+state.dl.name+" (all logs, filtered on device)…"); }
   catch(e){ log("Filtered download failed: "+e.message); toast("Filtered download failed: "+e.message, {err:true}); }

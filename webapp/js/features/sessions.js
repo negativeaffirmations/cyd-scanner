@@ -11,7 +11,7 @@ import { openMap, plotCsvText } from './map.js';
 import { bleFetch } from '../ble/transfer.js';
 import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
-import { exportSpec, exportCmd } from './timerange.js';
+import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
 
 const GROUP_GAP_S = 6*60;          // next part starts within 6 min of the previous part's last row
 let groups = [];                   // [{key, kind, parts:[{path,base,size,flag,first,last}], start, end, size, flag}]
@@ -58,8 +58,14 @@ function buildGroups(text){
   out.sort((a,b)=>(b.flag?1:0)-(a.flag?1:0) || (b.end||0)-(a.end||0) || b.key.localeCompare(a.key));  // flagged, then newest
   return out;
 }
+// Row line 1: the real file name(s) on the card (first … last for a multi-part scan).
+function groupNames(g){
+  const ps=g.parts;
+  return ps.length===1 ? ps[0].base : ps[0].base+" … "+ps[ps.length-1].base;
+}
+// Row line 2: the human date/time span ("" when the files carry no time).
 function groupTitle(g){
-  if(!g.start) return g.parts[0].base;
+  if(!g.start) return "";
   const same = fmtDay(g.start).split(",")[0]===fmtDay(g.end).split(",")[0];
   return fmtDay(g.start)+(g.end-g.start>=60 ? " – "+(same?fmtTime(g.end):fmtDay(g.end)) : "");
 }
@@ -96,7 +102,8 @@ export function populateSessions(text){
   }
   for(const g of groups){
     const o=document.createElement("option"); o.value=g.key;
-    o.textContent=groupTitle(g)+"  ("+groupSub(g)+")"; ex.appendChild(o);
+    const t=groupTitle(g);
+    o.textContent=groupNames(g)+(t?"  — "+t:"")+"  ("+groupSub(g)+")"; ex.appendChild(o);
   }
   const nf=groups.reduce((s,g)=>s+g.parts.length,0);
   log(nf+" session file(s) in "+groups.length+" scan(s).");
@@ -108,7 +115,9 @@ function renderList(){
   box.innerHTML=groups.map((g,i)=>{
     const tip=g.parts.map(p=>p.base+" ("+fmtSize(p.size)+")").join("\n");
     return `<label class="sessrow" title="${esc(tip)}"><input type="checkbox" data-i="${i}"${selected.has(g.key)?" checked":""}>`+
-      `<span class="sessmain"><span class="sesst">${esc(groupTitle(g))}</span><span class="sesssub">${esc(groupSub(g))}</span></span></label>`;
+      `<span class="sessmain"><span class="sesst">${esc(groupNames(g))}</span>`+
+      (groupTitle(g) ? `<span class="sessdate">${esc(groupTitle(g))}</span>` : "")+
+      `<span class="sesssub">${esc(groupSub(g))}</span></span></label>`;
   }).join("");
   box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.addEventListener("change", ()=>{
     const g=groups[+cb.dataset.i]; if(!g) return;
@@ -173,7 +182,7 @@ export function downloadSessionRange(){
   runBusy("Filtered download", async()=>{
     const text=joinLogParts(await fetchGroups(gs, p=>exportCmd(sp, p.path)));
     if(!text){ toast("No rows in that time range.", {err:true}); return; }
-    saveBlob(new Blob([text], {type:"application/octet-stream"}), groupFileName(gs, sp.tag));
+    saveBlob(new Blob([text], {type:"application/octet-stream"}), rangeFileName(text, groupFileName(gs, sp.tag)));
   });
 }
 export function mapSelectedSession(){

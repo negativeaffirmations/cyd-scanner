@@ -75,6 +75,25 @@ void handleDl() {
 // Time-filtered download: /dlf?f=<basename|current>&mode=<0|1|2>&arg=<minutes>. mode 0 = whole file,
 // 1 = past 24 h, 2 = past <arg> minutes. The CYD filters line-by-line (logfilter.h) and streams only
 // the matching lines with chunked transfer encoding, so a filtered pull never sends the whole file.
+// Range-export file name <first>-<last>.jsonl (YYYYMMDD-HHMMSS each, the log files' own stamp
+// format, so saved exports sort chronologically), from the first/last dated row in the export;
+// `fallback` when nothing is dated. epochs are local time, so gmtime gives the local fields.
+String spanFileName(uint32_t lo, uint32_t hi, const char* fallback) {
+  if (!hi) return fallback;
+  char nm[48];
+  struct tm a, b;
+  time_t ta = (time_t)lo, tb = (time_t)hi;
+  gmtime_r(&ta, &a); gmtime_r(&tb, &b);
+  snprintf(nm, sizeof(nm), "%04d%02d%02d-%02d%02d%02d-%04d%02d%02d-%02d%02d%02d.jsonl",
+           a.tm_year + 1900, a.tm_mon + 1, a.tm_mday, a.tm_hour, a.tm_min, a.tm_sec,
+           b.tm_year + 1900, b.tm_mon + 1, b.tm_mday, b.tm_hour, b.tm_min, b.tm_sec);
+  return nm;
+}
+void spanOf(const char* line, uint32_t& lo, uint32_t& hi) {
+  uint32_t e = logfilter::fieldU32(line, "\"epoch\":");
+  if (e) { if (e < lo) lo = e; if (e > hi) hi = e; }
+}
+
 // /dlf?f=all&mode=&arg= : the window across EVERY /logs/ file, joined into one NDJSON download
 // (logfilter::MultiExport -- same dating/filtering as the BLE "T:...:*" export).
 void handleDlfAll(int mode, uint32_t arg) {
@@ -82,9 +101,11 @@ void handleDlfAll(int mode, uint32_t arg) {
   int nb = thisBootFiles(boot, 12);
   logfilter::MultiExport mx(mode, arg, epochLocal(), millis(), boot, nb);
   int nf = mx.begin();
-  const char* fname = mode == 1 ? "all-last24h.jsonl" : mode == 2 ? "all-range.jsonl" : "all-sinceboot.jsonl";
+  uint32_t lo = 0xFFFFFFFFUL, hi = 0;  // span pre-pass: the download is named by its contents
+  mx.run([&lo, &hi](const char* p, size_t) { spanOf(p, lo, hi); return true; });
+  String fname = spanFileName(lo, hi, mode == 1 ? "all-last24h.jsonl" : mode == 2 ? "all-range.jsonl" : "all-sinceboot.jsonl");
   g_server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  g_server.sendHeader("Content-Disposition", String("attachment; filename=") + fname);
+  g_server.sendHeader("Content-Disposition", "attachment; filename=" + fname);
   g_server.send(200, "application/x-ndjson", "");
   static struct Out { char b[1024]; size_t n; uint32_t total; } o;  // static: off the handler stack
   o.n = 0; o.total = 0;
@@ -121,6 +142,15 @@ void handleDlf() {
   if (!file) { g_server.send(500, "text/plain", "open failed"); return; }
   logfilter::Cutoff c = logfilter::make(mode, arg, epochLocal(), millis());
   String base = path.substring(path.lastIndexOf('/') + 1);
+  if ((mode == 1 || mode == 2) && base.endsWith(".jsonl")) {  // name a range by its contents' span
+    uint32_t lo = 0xFFFFFFFFUL, hi = 0;
+    char ln[logfilter::LINE_CAP];
+    size_t ll;
+    logfilter::LineReader pre(file);
+    while (pre.next(ln, ll)) if (logfilter::keep(ln, c)) spanOf(ln, lo, hi);
+    file.seek(0);
+    base = spanFileName(lo, hi, base.c_str());
+  }
   g_server.setContentLength(CONTENT_LENGTH_UNKNOWN);  // chunked: the filtered size isn't known up front
   g_server.sendHeader("Content-Disposition", "attachment; filename=" + base);
   g_server.send(200, base.endsWith(".jsonl") ? "application/x-ndjson" : "text/csv", "");
