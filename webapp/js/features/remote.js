@@ -118,7 +118,13 @@ export async function uploadSessionText(text, sessionName){
     if(!r.ok){ log("Remote: upload failed ("+r.status+" "+r.statusText+")."); toast("Upload failed ("+r.status+" "+r.statusText+").", {err:true}); return; }
     const j = await r.json().catch(()=>null);
     if(j){
-      const msg = "Uploaded "+(sessionName||"session")+": "+(j.sightings??"?")+" sighting(s), "+(j.events??"?")+" event(s)"+(j.duplicate?" — already had it (dedup)":"")+".";
+      // The server dedups per ROW (rows this scanner already sent are skipped); sightings/events = rows
+      // actually stored, duplicate:true = nothing new. Count what we sent to report the skipped rest.
+      const nm = sessionName||"session", s = j.sightings??0, ev = j.events??0;
+      const sent = text.split("\n").filter(l=>l[0]==="{" && !l.includes('"evt":"meta"') && !l.includes('"evt":"timesync"')).length;
+      const skipped = Math.max(0, sent - s - ev);
+      const msg = (j.duplicate && !s && !ev) ? "Already on the server — nothing new in "+nm+"."
+        : "Uploaded "+nm+": "+s+" new sighting(s), "+ev+" new event(s)"+(skipped ? "; "+skipped+" row(s) already on the server" : "")+".";
       log("Remote: "+msg); toast(msg);
     } else { log("Remote: upload accepted."); toast("Uploaded "+(sessionName||"session")+" — accepted."); }
   }catch(e){
