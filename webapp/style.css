@@ -242,11 +242,11 @@ button:disabled {
   color: #39c0ed;
 }
 
-.si#linkState.up, .si#linkState.up .material-symbols-outlined {
+.si#linkState.linkup, .si#linkState.linkup .material-symbols-outlined {
   color: #e6edf3;
 }
 
-.si#linkState.scanning, .si#linkState.scanning .material-symbols-outlined {
+.si#linkState.linkscan, .si#linkState.linkscan .material-symbols-outlined {
   color: #79c0ff;
 }
 

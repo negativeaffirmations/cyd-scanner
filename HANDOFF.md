@@ -6,7 +6,7 @@
   span, but `.si .material-symbols-outlined` gives the inner glyph its own muted colour, so the glyph never turned
   the intended colour and stayed grey (= looks inactive). **Fix:** classes
   styled on BOTH spans (`_base.scss`), reset on disconnect. **Owner-chosen colours:** gray = down, white = up / not
-  scanning (`.up`), light blue `$color-scanning` #79c0ff = up + scanning (`.scanning`) — icon colour only, no background. New SCSS tokens `$color-ok`/`$color-bad`.
+  scanning (`.linkup`), light blue `$color-scanning` #79c0ff = up + scanning (`.linkscan`; NOT `.up` — a generic `.up` pill rule paints a green background) — icon colour only, no background. New SCSS tokens `$color-ok`/`$color-bad`.
 - **New: tap any app-bar status icon → "Status icons" modal** (`features/statusinfo.js`, `#statusDlg`): one row per
   icon (clock, GPS, DB, C5 link, battery, Bluetooth), each with a clone of the live icon, its name, its current state
   (green/amber/red), and a one-line description; the tapped row is highlighted; it re-renders live on each STATUS

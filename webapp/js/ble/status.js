@@ -20,7 +20,7 @@ export function onStatus(ev){
     const up = state.status.link==="1", scanning = up && state.status.scan==="1";
     // Classes, not el.style.color: the inner glyph has its own muted colour (.si .material-symbols-outlined),
     // so an inline colour on the outer span never reaches it. Gray down / white up / light blue up + scanning.
-    el.classList.toggle("up", up); el.classList.toggle("scanning", scanning);
+    el.classList.toggle("linkup", up); el.classList.toggle("linkscan", scanning);
     el.title = scanning ? "Scanner (C5) link: up · scanning" : up ? "Scanner (C5) link: up · not scanning" : "Scanner (C5) link: DOWN"; }
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
   if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS / 3 RTC)
