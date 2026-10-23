@@ -266,7 +266,10 @@ bool peerMac(uint8_t out[6]) {
 void setStatus(const String& s) {
   if (!g_status) return;
   g_status->setValue((uint8_t*)s.c_str(), s.length());
-  if (g_connected) g_status->notify();
+  // Send THIS value explicitly. A bare notify() only schedules one (ble_gatts_chr_updated) and the stack
+  // reads the attribute when it transmits -- so pushStatus()'s two back-to-back parts collapsed into
+  // part 2 twice and part 1 (link/time/gps/scan/sess…) never reached the phone.
+  if (g_connected) g_status->notify((const uint8_t*)s.c_str(), s.length());
 }
 
 bool     connected()        { return g_connected; }
