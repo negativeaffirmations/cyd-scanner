@@ -528,6 +528,15 @@ select {
   line-height: 1.15;
 }
 
+.wordmark {
+  font-family: "Oswald", sans-serif;
+  font-weight: 200;
+  letter-spacing: 0.3em;
+  margin-right: -0.3em;
+  font-size: 1.3rem;
+  line-height: 1.1;
+}
+
 .appbar-unit {
   font-size: 0.7rem;
   font-weight: 500;
