@@ -531,8 +531,8 @@ select {
 .wordmark {
   font-family: "Oswald", sans-serif;
   font-weight: 200;
-  letter-spacing: 0.3em;
-  margin-right: -0.3em;
+  letter-spacing: 0.2em;
+  margin-right: -0.2em;
   font-size: 1.3rem;
   line-height: 1.1;
 }
