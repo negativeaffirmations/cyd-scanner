@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261022e">
+<link rel="stylesheet" href="style.css?v=20261022f">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -63,7 +63,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-22&nbsp;·&nbsp;wordmark-02</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-22&nbsp;·&nbsp;threat-card</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -79,7 +79,10 @@
         <button id="scanSetBtn" class="iconbtn" title="Scan settings" aria-label="Scan settings"><span class="material-symbols-outlined">settings</span></button>
       </div>
 
-      <div id="scanCounts" class="threatstrip" title="Tap for the threat breakdown" role="button" tabindex="0"></div>
+      <div class="card threatcard" id="threatCard" title="Tap for the threat breakdown" role="button" tabindex="0">
+        <div class="threathdr"><span class="cardhdr">Threats</span><span class="material-symbols-outlined">chevron_right</span></div>
+        <div id="scanCounts" class="threatpills"><span class="sub">No active threats</span></div>
+      </div>
 
       <h3 class="scanttl" style="margin:.6em 0 .3em">Scan
         <span class="material-symbols-outlined scanmode" id="scanModeIcon" title="Live scan">radar</span></h3>

@@ -117,18 +117,21 @@ function countCats(rows){
     if (r.muted || tn < 1 || !c || c > CAT_SHOWN) return; cnt[c] = (cnt[c]||0) + 1; });
   return cnt;
 }
-// Compact Scanner threat strip: a small color-coded pill for EVERY category (count shown when >0, dim
-// at 0), in one horizontally-scrollable row. The whole row is one tap target -> the breakdown modal.
+// Scanner "Threats" card: one labelled pill per ACTIVE category ("Flock 2", CAT_COL outline + tint),
+// most devices first, wrapping onto more lines as needed; "No active threats" when none. The whole
+// card is one tap target -> the breakdown modal listing every category.
 export function renderScanCounts(rows){
   const el = $("scanCounts"); if (!el) return;
   const cnt = countCats(rows);
-  let html = "";
-  for (let c = 1; c <= CAT_SHOWN; c++){ const n = cnt[c]||0, col = CAT_COL[c]||"#8b949e", hot = n>0;
-    html += `<span class="tpill${hot?" hot":""}" title="${esc(CAT_NAMES[c])}: ${n}" `+
-      `style="border-color:${col};${hot?`background:${col}33;color:${col}`:""}">${hot?n:""}</span>`;
-  }
-  el.innerHTML = html;
-  el.onclick = openThreatsModal;
+  const act = [];
+  for (let c = 1; c <= CAT_SHOWN; c++) if (cnt[c]) act.push(c);
+  act.sort((a,b)=> cnt[b]-cnt[a] || a-b);
+  el.innerHTML = act.length ? act.map(c=>{ const col = CAT_COL[c]||"#8b949e";
+      return `<span class="tpill" style="border-color:${col};background:${col}33;color:${col}">`+
+        `${esc(CAT_NAMES[c])} <b>${cnt[c]}</b></span>`; }).join("")
+    : '<span class="sub">No active threats</span>';
+  const card = $("threatCard");
+  if (card) card.onclick = openThreatsModal;
 }
 // Threats breakdown modal: every category as a row (color swatch + name + count), active (count>0)
 // first then enum order; tap a row -> that category's device list.

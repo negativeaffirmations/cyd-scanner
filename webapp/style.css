@@ -1019,29 +1019,50 @@ body {
   margin: 0.5em 0 0.2em;
 }
 
-.threatstrip {
-  display: flex;
-  gap: 5px;
-  overflow-x: auto;
-  padding: 3px 0 8px;
+.threatcard {
   cursor: pointer;
-  -webkit-overflow-scrolling: touch;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+}
+
+.threathdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #8b949e;
+}
+.threathdr .cardhdr {
+  margin: 0;
+}
+.threathdr .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.threatpills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 24px;
+  align-items: center;
 }
 
 .tpill {
   flex: 0 0 auto;
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px;
+  height: 24px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1.5px solid #30363d;
   background: #0b0e13;
   color: #8b949e;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.tpill b {
   font-family: ui-monospace, monospace;
-  font-size: 0.68rem;
   font-weight: 700;
 }
 
