@@ -45,3 +45,11 @@
 // Filter ONLY the tile layer (className "basemap" in newMap) -- filtering the map container or
 // .leaflet-pane would gray the markers too.
 .basemap { filter:grayscale(1) contrast(.85) brightness(1.08); }
+
+// Minimal map credit (matches scan-analyzer): small, faint, no box. style.css loads after leaflet.css,
+// so these win. Kept visible -- the OSM credit is required.
+.leaflet-container .leaflet-control-attribution {
+  margin:0 14px 1px 0; padding:0; background:transparent; font-size:9px; line-height:14px;
+  color:$color-text-muted; opacity:.75;
+  a { color:inherit; }
+}

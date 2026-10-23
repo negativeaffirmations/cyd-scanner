@@ -1370,3 +1370,16 @@ body {
 .basemap {
   filter: grayscale(1) contrast(0.85) brightness(1.08);
 }
+
+.leaflet-container .leaflet-control-attribution {
+  margin: 0 14px 1px 0;
+  padding: 0;
+  background: transparent;
+  font-size: 9px;
+  line-height: 14px;
+  color: #8b949e;
+  opacity: 0.75;
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: inherit;
+}

@@ -15,8 +15,11 @@ export function detByMac(mac){ return mapByMac.get(String(mac||"").toLowerCase()
 
 export function newMap(id){   // shared Leaflet setup (wardriving map + detail mini-map)
   const m=L.map(id);
+  m.attributionControl.setPrefix(false);   // minimal credit: no "Leaflet" link/flag (matches scan-analyzer)
+  // The OSM credit must stay visible (OSM tile policy / ODbL) -- only restyled small + faint (_map.scss).
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {maxZoom:19, attribution:"&copy; OpenStreetMap", className:"basemap"}).addTo(m);   // .basemap = grayscale tiles only (see _map.scss)
+    {maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+     className:"basemap"}).addTo(m);   // .basemap = grayscale tiles only (see _map.scss)
   m.setView([0,0],2);
   return m;
 }
