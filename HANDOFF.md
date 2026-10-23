@@ -62,6 +62,34 @@ Webapp `#uiver` = `dedup-toast` (no `style.css` change since `?v=20261022c`). Bo
   M new event(s); K row(s) already on the server" (K = rows sent − stored, a client-side estimate).
 - **Owner-side, parked:** NordVPN on the server PC breaks the phone→PC Tailscale path ("Failed to fetch" on upload).
 
+### Same day, last — STATUS split fix + webapp polish (BOTH HOSTS FLASHED; webapp `#uiver` = `map-credit`, `style.css?v=20261022h`)
+- **STATUS truncation fix (`c25a81b`, firmware, no fw bump):** STATUS had grown to ~273 B with `name=`, past the
+  BLE notify limit (MTU−3 ≈ 252 B; the web app only gets STATUS by notify, never a long read), so the tail was
+  silently cut — the phone never learned `name=` (live-POST meta had no `scanner_name`), and the Wi-Fi AP creds
+  (appended while a download AP is up) were likely cut too (AP-QR path NOT re-tested). `pushStatus()` now sends
+  TWO notifications: part 1 live counts/state (~215 B), part 2 `dl;sid;fw;dbgen;name[;apssid;appsk;apurl]`
+  (`dl` + creds stay together — `status.js` reads them from one notification). One-shot serial WARNING if a part
+  passes 240 B. Web app unchanged (it merges keys per notification). CLAUDE.md STATUS line documents it.
+- **13-part drive uploaded** as one scan (`20261022-111401+13p.jsonl`, 5200 sightings). A first attempt timed out
+  fetching part 1; a console capture showed the `F:` never reached the mini (stale GATT link right after the
+  reflash). The retry streamed every part with `SIZE=` == bytes sent. Not reproduced; if it recurs, add a single
+  auto-retry in `bleFetch` when nothing at all arrives.
+- **Webapp polish (owner, several relayed by scan-analyzer and confirmed with the owner):**
+  - "Refresh session list" feedback (`8303c7c`): button → "Refreshing…" + disabled, list placeholder, working
+    toast until `SESS=` lands (30 s timeout → error toast). The list is slower now that the device reads every
+    file's head/tail for its span — cache finished files' spans on the device if it gets too slow.
+  - COINTEL-FLO wordmark (`24d1958`, `bfc2ea7`): Oswald ExtraLight 200 from Google Fonts, `letter-spacing:.2em`,
+    1.3rem, title only (`.wordmark`) — scan-analyzer's map + admin pages use the same 0.2em.
+  - Scanner threat strip → **Threats card** (`bd104bb`): header + chevron, one labelled `CAT_COL` pill per ACTIVE
+    category (most first, wrapping), "No active threats" when none; tap → the full breakdown modal. Owner
+    approved ("looks okay"); the first view showed the old dots only because of the Pages cache.
+  - Grayscale basemap (`339cdb7`): `className:"basemap"` on the tile layer in the shared `newMap()` +
+    `.basemap{filter:grayscale(1) contrast(.85) brightness(1.08)}` — tiles only, so markers keep their colours.
+  - Minimal attribution (`991f5cc`): `attributionControl.setPrefix(false)`; the required "© OpenStreetMap
+    contributors" credit is kept (linked to osm.org/copyright), small and faint (`_map.scss`).
+- **Open (unchanged):** mini battery sense still reads ~206–216 mV (−1%) — meter the D3 pad; BLE all-logs export
+  blocks the loop (async backlogged); field-test the CYD with SW2 on.
+
 ## Earlier — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, pushed)
 Commits: `4f2b2f5` (modal + link fix + last session's S3 battery-sense fw + redrawn mini-build diagrams), `2d51a7d`
 (owner's link colours), `cd591d1` (green background removed). No firmware flashed this session (S3 already ran the
