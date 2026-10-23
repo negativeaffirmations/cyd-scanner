@@ -1,6 +1,40 @@
-# Handoff — 2026-10-22 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-23 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — one scan = one file + never-stop logging; all-logs range export; grouped session picker; unit names; lastseen lines; fw 0.11.0 (2026-10-22, BOTH HOSTS FLASHED, all pushed)
+## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
+Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
+Webapp `#uiver` = `wifi-role+data`, `style.css?v=20261023a`. `FW_VERSION` NOT bumped (still 0.11.0).
+- **Webapp role pill:** `wifiRoles(tags)` in `js/util/format.js` (2.4/5G → `AP`, PRB → `CLIENT`, both when a MAC
+  is heard both ways). Outlined `.sp.prole` pill after the band pills on live + Explore rows (`renderDetList`);
+  "Wi-Fi role" line in both detail modals (`openDetail`, `openLiveDetail`); PRB friendly name is now "Wi-Fi client
+  (probe / data frame)". No CYD UI change.
+- **Link v10 → v11:** `Detection.bssid[6]` appended (`sizeof(Detection)` 75 → **81**) + `FLAG_WIFI_DATA_CLIENT`
+  (bit 8) / `FLAG_WIFI_DATA_UPLINK` (bit 9). C5 `handleData` records the AP (addr1 on ToDS uplink, addr2 on
+  FromDS downlink); `mergeDetection` keeps a prior bssid when a later probe from the same MAC has none (flags were
+  already sticky).
+- **Log (PRB rows):** `flags` gains `data`, plus `dl` when no uplink frame was seen (the RSSI is then the AP's);
+  `"bssid":"AA:BB:…"` sits right after `mac` whenever `data` is set. Host: a no-label, no-tier `kFlagRules`
+  entry + the `dl` rule in `flagTokens()`; new `FLAGS_DATA` (host_core.h) is carried in `DevGroup.flags`, so the
+  DETS `flags` field and live-POST see 256/512, but it is NOT in `FLAGS_NOTABLE` (no tier floor, no follow-guard
+  exemption). Live-POST `flagStr()` emits `data`/`dl`; NO bssid in live rows (reduced shape). Explore detail
+  shows "Connected to AP" (`parse.js` reads `bssid`). `lastseen` lines unchanged.
+- **Flashed + checked:** CYD (COM14) + its C5 (COM18): link healthy, C5 console `dataClient=2`/`1` per window. Mini
+  xiao_c5 (COM23) + xiao_s3 (COM16; confirmed by console, not the ODID bench S3): link healthy on v11.
+- **Not yet verified:** an actual SD row carrying `bssid`/`data` (download a session, search for `"bssid"`). No
+  reviewer pass run on the firmware diff.
+- **Also landed just before (`382ad34`, firmware):** STATUS part 1 never reached the phone. A bare
+  `NimBLECharacteristic::notify()` only schedules a send and reads the value at transmit time, so setting part 1
+  then part 2 back to back sent part 2 twice (grey status icons, "Session: -", Start shown while scanning).
+  `pushStatus()` now sends each part with `notify(data, len)`.
+- **Recurrence-level rename (scan-analyzer side only, coordinated over the bridge):** their per-device recurrence
+  levels reused threat-tier words. The owner asked for distinct systems, and we kept OUR threat tiers
+  (suspect/likely/confirmed, in the log contract). scan-analyzer is renaming: `single-day`→`one-day`,
+  `possible`→`occasional`, `likely`→`frequent`, `confirmed`→`resident`, `mobile`→`roaming`, `no-fix` stays.
+  These levels are internal to their DB/API/UI, so there is no change in cyd-scanner.
+- **Next:** check a real log row; consider showing the bssid / "joined" state on the CYD detail screen + webapp
+  CLIENT pill (e.g. `CLIENT·joined`); still open from before: mini battery sense, async BLE all-logs export, CYD
+  field test with SW2 on.
+
+## Earlier — one scan = one file + never-stop logging; all-logs range export; grouped session picker; unit names; lastseen lines; fw 0.11.0 (2026-10-22, BOTH HOSTS FLASHED, all pushed)
 Commits `5308308` (logging + export + picker), `ac1ffd8` (unit names), `777ae4f` (file-name display + range-export
 naming), `926c197` (`FW_VERSION` 0.9.0 → **0.10.0**). Flashed: **CYD** (COM14, `CFLO-CYD-TOLUBA`) and **mini S3**
 (COM16, `CFLO-MINI-GABAME`). C5 firmware unchanged (no protocol bump). Webapp live (`#uiver` = `range-names`,
@@ -1247,6 +1281,8 @@ S3's hardcoded NYC operator fix, #5); (d) **onboard GPS time (v10)** — ~~DONE:
    reminder: before any phone has *ever* synced the fallback reads **UTC** — no tz; after the
    first-ever phone sync the tz offset persists in NVS `cydscan/tzoff` and it reads LOCAL.)
 11. **Remote-server upload to scan-analyzer — contract v0; WEB-APP CLIENT BUILT (2026-10-16).**
+   **2026-10-23:** PRB rows now carry `flags` `data`/`dl` + `bssid` (link v11, see Latest); live-POST carries
+   the `data`/`dl` flags only. Agreed with scan-analyzer; no server change needed.
    **2026-10-22:** "Upload selected" is now multi-select over grouped scans — one joined body per scan
    (`uploadSelectedSessions` in `features/sessions.js`, replaces `remote.js` `uploadSelectedSession`); meta now
    carries `scanner_name`; `fw` 0.10.0. scan-analyzer confirmed no server change.
