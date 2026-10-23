@@ -1366,3 +1366,7 @@ body {
   background: #0b0e13;
   margin-top: 0.7em;
 }
+
+.basemap {
+  filter: grayscale(1) contrast(0.85) brightness(1.08);
+}
