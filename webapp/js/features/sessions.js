@@ -86,12 +86,33 @@ function groupFileName(gs, tag){
   return first+many+(tag?"-"+tag:"")+ext;
 }
 
+// The device reads every log file's head/tail to build the list, so a refresh takes a few seconds on a
+// full card: show it's in progress (button, list placeholder, working toast) until the list lands.
+const LIST_TIMEOUT_MS = 30000;
+let listWait = null;   // timeout handle while a refresh is pending
+function endListWait(ok){
+  if(!listWait) return;
+  clearTimeout(listWait); listWait=null;
+  const b=$("listBtn"); b.textContent="Refresh session list"; b.disabled=!state.connected;
+  if(!ok){ toast("Session list didn't arrive — try again.", {err:true}); renderList(); }
+}
 export async function refreshSessions(){
+  if(listWait) return;   // already waiting
+  const b=$("listBtn"); b.disabled=true; b.textContent="Refreshing…";
+  $("sessList").innerHTML='<div class="sub">Loading session list from the device…</div>';
+  toast("Loading session list…", {work:true, sticky:true});
+  listWait=setTimeout(()=>endListWait(false), LIST_TIMEOUT_MS);
   try{ await state.chars.cmd.writeValue(new TextEncoder().encode("Q")); log("Requesting session list…"); }
-  catch(e){ log("List failed: "+e.message); }
+  catch(e){ log("List failed: "+e.message); endListWait(true); toast("List failed: "+e.message, {err:true}); renderList(); }
 }
 export function populateSessions(text){
+  const wasRefresh = !!listWait;
+  endListWait(true);
   groups=buildGroups(text);
+  if(wasRefresh){   // replace the sticky "Loading…" toast with the result
+    const nf=groups.reduce((s,g)=>s+g.parts.length,0);
+    toast(groups.length ? groups.length+" scan(s), "+nf+" file(s)." : "No sessions on the device.");
+  }
   for(const k of [...selected]) if(!groups.some(g=>g.key===k)) selected.delete(k);
   renderList();
   const ex=$("expSel"); ex.innerHTML="";
