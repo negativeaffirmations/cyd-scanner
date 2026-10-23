@@ -422,6 +422,9 @@ int logNewDetections() {
              ",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"rssi\":%d,\"ch\":%d",
              srcTag(d), d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
              d.rssi, d.channel);
+    if (d.flags & FLAG_WIFI_DATA_CLIENT)  // the AP this associated client talks to (v11)
+      lnAppend(ln, n2, ",\"bssid\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
+               d.bssid[0], d.bssid[1], d.bssid[2], d.bssid[3], d.bssid[4], d.bssid[5]);
     if (d.ie_hash)   lnAppend(ln, n2, ",\"ie\":\"%08lX\"", (unsigned long)d.ie_hash);
     if (d.companyId) lnAppend(ln, n2, ",\"cid\":\"%04X\"", d.companyId);
     if (uuidStr[0])  lnAppend(ln, n2, ",\"uuid\":\"%s\"", uuidStr);

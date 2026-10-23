@@ -1,6 +1,15 @@
 // Pure formatting / geometry helpers (no DOM, no state).
 import { FLAG_BADGES } from '../config.js';
 
+// Wi-Fi role from source tags (no contract field): 2.4/5G = beacon / probe-response -> the MAC is an AP
+// BSSID; PRB = probe request or associated-client data frame -> a client. A MAC heard both ways
+// (hotspot / Wi-Fi Direct) gets both. BLE / 802.15.4 -> [].
+export function wifiRoles(tags){
+  const r = [];
+  if (tags.some(t=>t==="2.4"||t==="5G")) r.push("AP");
+  if (tags.includes("PRB")) r.push("CLIENT");
+  return r;
+}
 export function tierNum(t){ return t==="confirmed"?3 : t==="likely"?2 : t==="suspect"?1 : 0; }
 
 export const hasGps = r => isFinite(r.lat) && isFinite(r.lon) && !(r.lat===0 && r.lon===0);

@@ -11,6 +11,7 @@
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
 import { tierNum, fmtTimecode, flagBadges } from '../util/format.js';
+import { wifiRoles } from '../util/format.js';
 import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
 import { recordSightings } from './sightings.js';
 import { maybePostLive } from './remote.js';
@@ -104,6 +105,7 @@ export function renderDetList(el, rows, opts){
     const srcs = (viewer ? [{tag:r.source, rssi:r.rssi}] : (r.sources||[])).slice().sort((a,b)=>b.rssi-a.rssi);
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
     const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
+    const roles = wifiRoles(tags).map(x=>`<span class="sp prole">${x}</span>`).join("");  // AP / CLIENT pill(s)
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
     const extra = [esc(r.mac || "")];
     if (!viewer && r.cid) extra.push(`<span class="mk">${esc(r.cid)}</span>`);  // BLE company maker, in addition to the MAC
@@ -113,7 +115,7 @@ export function renderDetList(el, rows, opts){
            `<span class="tiercol"><span class="badge b${tn}"></span></span>`+
            `<div class="detmain">`+
              `<div class="r1"><span class="nm t${tn}">${nm}</span><span class="rssi">${r.rssi} dBm</span></div>`+
-             `<div class="r2"><span class="sigcol">${pills}</span><span class="r2sub">${extra.filter(Boolean).join("  ·  ")}</span></div>`+
+             `<div class="r2"><span class="sigcol">${pills}${roles}</span><span class="r2sub">${extra.filter(Boolean).join("  ·  ")}</span></div>`+
            `</div></div>`;
   }).join("");
   el.querySelectorAll(".detrow[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick && opts.onRowClick(rows[+d.dataset.ri]); });

@@ -201,7 +201,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   `phone::tzOffsetMin()`), to show LOCAL time with no phone after the first-ever sync (UTC until then); the
   status-bar clock + web time icon are **cyan when GPS keeps time**, white when phone-synced. With no module
   fitted the Status carries `gpsFix=0`/`gpsEpoch=0`, so behaviour is identical to phone-only.
-  (`PROTOCOL_VERSION` 9→10, `sizeof(Status)`=28; both boards flash together.)
+  (`PROTOCOL_VERSION` 9→10, `sizeof(Status)`=28; both boards flash together.) **v11** (2026-10-23) adds
+  `Detection.bssid[6]` (`sizeof(Detection)`=81) + the data-client flag bits — see the SD-log `bssid`/`data` notes.
 - **C5 behavioral detectors (added in protocol v6; link now v9 — see onboard GPS above).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
@@ -264,11 +265,15 @@ back (5 GHz included). Things that matter, learned the hard way:
   scan-analyzer takes many rows per MAC). The file only changes on a boot or "New Session".
   `LogStream.uniqCount` (devices first-logged this session; STATUS `uniq`, CYD `U:`) and `rowCount`
   replace the old `seenCount` readouts. One object per row; optional keys omitted when blank:
-  `{"epoch":…,"ms":…,"lat":…,"lon":…,"src":"…","mac":"…","rssi":…,"ch":…,"ie":"…","cid":"…","uuid":"…","pan":"…","name":"…","score":…,"tier":"…","sig":"…","wl":0|1,"flags":"…"}`.
+  `{"epoch":…,"ms":…,"lat":…,"lon":…,"src":"…","mac":"…","bssid":"…","rssi":…,"ch":…,"ie":"…","cid":"…","uuid":"…","pan":"…","name":"…","score":…,"tier":"…","sig":"…","wl":0|1,"flags":"…"}`.
   `src` is `2.4`/`5G`/`BLE`/`PRB`/`154`; `ie` the 8-hex IE fingerprint; `cid`/`uuid`/`pan` the BLE
   company ID / service UUID / 802.15.4 PAN; `name` JSON-escaped; `wl` 1 when whitelisted; **`flags`**
   is a `+`-joined list of behavioral-detector hits (`ibeacon`/`findmy`/`pwnagotchi`/`eviltwin`/`droneid`,
-  omitted when none). Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
+  plus the non-threat **`data`** = a `PRB` client heard in an associated DATA frame and **`dl`** = such a
+  client heard only downlink, so its `rssi` is the AP's; omitted when none). **`bssid`** (v11, `PRB` rows
+  with `data` only) = the AP that client talks to, from `Detection.bssid[]` (`FLAG_WIFI_DATA_CLIENT`/
+  `_UPLINK`, bits 8/9; not notable: no tier floor, but carried in DETS `flags` + live-POST). Schema
+  agreed with scan-analyzer 2026-10-23. Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
   rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N}`
   and `{…,"evt":"eviltwin","count":N[,"ssid":"…","macs":"aa:bb:…,cc:dd:…"]}` (eviltwin also names the
   suspect SSID + its BSSIDs — up to 8, comma-joined — from the live detections carrying

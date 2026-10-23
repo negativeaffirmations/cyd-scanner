@@ -3,7 +3,7 @@
 // device detail modal (reuses the detDlg modal; no per-detection GPS in the live stream).
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
-import { tierNum, flagBadges } from '../util/format.js';
+import { tierNum, flagBadges, wifiRoles } from '../util/format.js';
 import { TIER_COL, TIER_NAMES, FLAG_BADGES, CAT_COL } from '../config.js';
 import { fillDetailWhitelist } from './whitelist.js';
 import { renderDetailMap } from './detail.js';
@@ -86,6 +86,7 @@ export function openLiveDetail(r){
   const rowsKv = [["Name", r.name||r.mac||"<hidden>"], ["MAC", r.mac],
     ["Category", CAT_NAMES[r.cat||0] || "Other"],
     ["Signals", sig],
+    ...(()=>{ const ro = wifiRoles((r.sources||[]).map(s=>s.tag)); return ro.length ? [["Wi-Fi role", ro.join(" + ")]] : []; })(),
     ["Strongest RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
   if (r.cid) rowsKv.push(["BLE company", r.cid]);

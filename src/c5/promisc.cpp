@@ -79,9 +79,9 @@ void handleData(const uint8_t* f, int len, const wifi_promiscuous_pkt_t* pkt) {
   // 0x03 are skipped — neither is a simple infrastructure client.) Note: a downlink frame's RSSI is
   // the AP's, not the client's, so a downlink-only client carries an approximate RSSI.
   uint8_t ds = f[1] & 0x03;
-  const uint8_t* client;
-  if      (ds == 0x01) client = f + 10;   // ToDS   uplink   -> addr2 = client source
-  else if (ds == 0x02) client = f + 4;    // FromDS downlink -> addr1 = client destination
+  const uint8_t *client, *bssid;
+  if      (ds == 0x01) { client = f + 10; bssid = f + 4;  }  // ToDS   uplink   -> addr2 = client, addr1 = BSSID
+  else if (ds == 0x02) { client = f + 4;  bssid = f + 10; }  // FromDS downlink -> addr1 = client, addr2 = BSSID
   else return;
   if (client[0] & 0x01) return;         // group/multicast/broadcast is never an individual client
   if (seenRecently(client)) return;     // throttle a chatty station
@@ -91,6 +91,8 @@ void handleData(const uint8_t* f, int len, const wifi_promiscuous_pkt_t* pkt) {
   d.channel = pkt->rx_ctrl.channel;
   d.rssi    = (int8_t)pkt->rx_ctrl.rssi;
   memcpy(d.mac, client, 6);
+  memcpy(d.bssid, bssid, 6);
+  d.flags = FLAG_WIFI_DATA_CLIENT | (ds == 0x01 ? FLAG_WIFI_DATA_UPLINK : 0);
   g_cb(d);                              // feeds the same mutex-guarded table as everything else
 }
 

@@ -72,6 +72,9 @@ void countBands(int& n24, int& n5, int& nble, int& nprb, int& n154);
 // --- C5 behavioral-detector flags: the notable set (rules/labels live in host_core.cpp) ---
 constexpr uint16_t FLAGS_NOTABLE = FLAG_BLE_IBEACON | FLAG_BLE_FINDMY | FLAG_WIFI_PWNAGOTCHI |
                                    FLAG_WIFI_EVILTWIN | FLAG_BLE_ODID;
+// Data-frame client bits: carried in DevGroup.flags (DETS / live-POST "data"/"dl") but NOT notable
+// (no tier floor, no follow-guard exemption).
+constexpr uint16_t FLAGS_DATA = FLAG_WIFI_DATA_CLIENT | FLAG_WIFI_DATA_UPLINK;
 
 // --- Threat categories. A SquachWatch-style grouping of each device's sigdb label + behavioral
 // flags into a small fixed taxonomy, used for the HOME-menu category readout + drill-down and

@@ -857,6 +857,12 @@ body {
   color: #9af0b8;
 }
 
+.prole {
+  background: transparent;
+  color: #8b949e;
+  border: 1px solid currentColor;
+}
+
 .tcol {
   flex: 0 0 4.4em;
   text-align: right;

@@ -22,7 +22,8 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 10;      // v10: Status gains gpsEpoch (UTC secs from NEO-6M RMC) so the CYD can keep time with no phone
+static constexpr uint8_t  PROTOCOL_VERSION = 11;      // v11: Detection.bssid[6] (AP an associated data-frame client talks to) + FLAG_WIFI_DATA_CLIENT/_UPLINK
+                                                      // v10: Status gains gpsEpoch (UTC secs from NEO-6M RMC) so the CYD can keep time with no phone
                                                       // v9: Status gains onboard C5 GPS fix (NEO-6M) - gpsLat/gpsLon (deg*1e7) + alt/sats/fix; phone GPS preferred, onboard is fallback
                                                           // (v8: Reply::RemoteId frame + RemoteId struct - decoded Remote-ID (ASTM F3411)
                                                           //     broadcast keyed to a Detection by MAC)
@@ -85,7 +86,10 @@ enum DetFlags : uint16_t {
   FLAG_WIFI_PWNAGOTCHI= 1 << 5,  // 802.11 beacon SSID/IE carries a Pwnagotchi identity
   FLAG_WIFI_EVILTWIN  = 1 << 6,  // AP shares an SSID with another BSSID at different encryption
   FLAG_BLE_ODID       = 1 << 7,  // OpenDroneID / Remote-ID emitter seen (presence; full decode = phase 2)
-  // bits 8..15 reserved for future detectors
+  FLAG_WIFI_DATA_CLIENT = 1 << 8, // v11: Wi-Fi client heard in an associated DATA frame (bssid[] = its AP)
+  FLAG_WIFI_DATA_UPLINK = 1 << 9, // v11: ...at least one of them an uplink (ToDS) frame, so rssi is the
+                                  //      client's own; DATA_CLIENT without it = downlink-only (AP's rssi)
+  // bits 10..15 reserved for future detectors
 };
 
 #pragma pack(push, 1)
@@ -111,6 +115,7 @@ struct Detection {
   char     name[32];   // SSID or BLE name, NUL-terminated (may be empty)
   uint16_t svc16[SVC16_MAX];  // v7: extra advertised 16-bit BLE service UUIDs, host order
                               //     (0 = unused slot); the primary 128-bit UUID is in svc[]
+  uint8_t  bssid[6];   // v11: AP BSSID a data-frame client was talking to (all 0 = none / not a data client)
 };
 
 // Decoded Remote-ID (ASTM F3411) broadcast for one emitter (Reply::RemoteId payload), v8.
@@ -163,7 +168,7 @@ struct FrameHeader {
 
 #pragma pack(pop)
 
-static_assert(sizeof(Detection) == 75, "Detection wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(Detection) == 81, "Detection wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(RemoteId)  == 75, "RemoteId wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(Status)    == 28, "Status wire size changed - bump PROTOCOL_VERSION");
 

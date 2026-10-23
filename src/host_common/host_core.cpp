@@ -102,6 +102,7 @@ static const FlagRule kFlagRules[] = {
   { FLAG_WIFI_EVILTWIN,   sigdb::Tier::Likely,  "Evil Twin",  "eviltwin"   },
   { FLAG_BLE_ODID,        sigdb::Tier::Suspect, "Drone RID",  "droneid"    },
   { FLAG_BLE_IBEACON,     sigdb::Tier::None,    "iBeacon",    "ibeacon"    },
+  { FLAG_WIFI_DATA_CLIENT,sigdb::Tier::None,    "",           "data"       },  // log token only (no label)
 };
 static char g_flagLabel[MAX_DET][16];  // aligned with g_dets; "" when no notable flag
 
@@ -121,6 +122,10 @@ void flagTokens(uint16_t flags, char* out, size_t cap) {
     int w = snprintf(out + o, cap - o, o ? "+%s" : "%s", r.token);
     if (w < 0 || (size_t)w >= cap - o) { out[o] = 0; break; }
     o += w;
+  }
+  // "dl": a data-frame client never heard uplink -> its logged rssi is the AP's, not the client's.
+  if ((flags & FLAG_WIFI_DATA_CLIENT) && !(flags & FLAG_WIFI_DATA_UPLINK) && cap - o > 3) {
+    snprintf(out + o, cap - o, o ? "+dl" : "dl");
   }
 }
 
@@ -336,7 +341,7 @@ int buildGroups() {
     if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
     if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
-    g.flags |= (uint16_t)(d.flags & FLAGS_NOTABLE);
+    g.flags |= (uint16_t)(d.flags & (FLAGS_NOTABLE | FLAGS_DATA));
     g.srcMask |= (uint8_t)(1u << srcTypeOf(srcTag(d)));
   }
   // Whitelist check per device (before the sort, which uses it): union of member sources,

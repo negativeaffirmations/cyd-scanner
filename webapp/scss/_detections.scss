@@ -50,6 +50,7 @@
 .pble{ background:rgba($src-ble,.22);    color:$src-ble-text; }
 .pprb{ background:rgba($src-probe,.22);  color:$src-probe-text; }
 .p154{ background:rgba($src-154,.22);    color:$src-154-text; }
+.prole{ background:transparent; color:$color-text-muted; border:1px solid currentColor; }  // Wi-Fi AP / CLIENT role
 
 .tcol    { flex:0 0 4.4em; text-align:right; font-family:ui-monospace,monospace; color:$color-text-muted; }
 .det.clk { cursor:pointer; } .det.clk:active { filter:brightness(1.3); }

@@ -136,6 +136,8 @@ static void mergeDetection(const Detection& d) {
       g_table[i].d.companyId = keepCid;
       g_table[i].d.panId     = keepPan;
       if (!haveSvc) memcpy(g_table[i].d.svc, prev.svc, 16);  // keep prior UUID
+      static const uint8_t kZero6[6] = {0};
+      if (!memcmp(d.bssid, kZero6, 6)) memcpy(g_table[i].d.bssid, prev.bssid, 6);  // a probe keeps the client's AP
       // Union the extra 16-bit UUID sets (adv + scan-response reports each carry a subset).
       for (int p = 0; p < SVC16_MAX && prev.svc16[p]; p++) {
         bool have = false;

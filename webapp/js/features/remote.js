@@ -138,8 +138,13 @@ export async function uploadSessionText(text, sessionName){
 // --- live-POST (Phase 3, opt-in) ----------------------------------------------------------------
 // Decimal DetFlags bits -> the NDJSON log's `+`-joined flag names (matches the SD-log schema so the
 // reduced live rows validate the same way).
-const FLAG_NAMES = [[8,"ibeacon"],[16,"findmy"],[32,"pwnagotchi"],[64,"eviltwin"],[128,"droneid"]];
-function flagStr(bits){ return FLAG_NAMES.filter(f=>bits&f[0]).map(f=>f[1]).join("+"); }
+// 256 = data-frame client ("data"); "dl" when it was never heard uplink (512), i.e. the rssi is the AP's.
+const FLAG_NAMES = [[8,"ibeacon"],[16,"findmy"],[32,"pwnagotchi"],[64,"eviltwin"],[128,"droneid"],[256,"data"]];
+function flagStr(bits){
+  const t = FLAG_NAMES.filter(f=>bits&f[0]).map(f=>f[1]);
+  if((bits&256) && !(bits&512)) t.push("dl");
+  return t.join("+");
+}
 
 let livePosting = false;    // in-flight guard (don't pile POSTs if the network lags behind the ~2 s snapshot cadence)
 let liveFailLogged = false; // only log the first failure in a run, then stay quiet until a success

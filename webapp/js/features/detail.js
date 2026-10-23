@@ -1,12 +1,12 @@
 // Detection detail modal (info + GPS mini-map). Used by the Explore Scan Viewer rows.
 import { $, esc } from '../util/dom.js';
-import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
+import { tierNum, hasGps, fmtEpoch, wifiRoles } from '../util/format.js';
 import { TIER_COL, CAT_COL } from '../config.js';
 import { newMap } from './map.js';
 import { fillDetailWhitelist } from './whitelist.js';
 
 let detMap=null, detLayer=null;
-const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"Probe request","154":"802.15.4 (Zigbee/Thread)"};
+const SRC_FRIENDLY={"2.4":"Wi-Fi 2.4 GHz","5G":"Wi-Fi 5 GHz","BLE":"BLE","PRB":"Wi-Fi client (probe / data frame)","154":"802.15.4 (Zigbee/Thread)"};
 
 // Shared detDlg mini-map renderer — OWNS the single Leaflet instance on #detMap, so both the Explore
 // detail (one point) and the live detail (a sighting trail) reuse it (two Leaflet maps on one div
@@ -54,10 +54,12 @@ export function openDetail(r){
   const tierTxt=(tn?r.tier.charAt(0).toUpperCase()+r.tier.slice(1):"None")+(r.score?" (score "+r.score+")":"")+
     (r.signature?" — "+r.signature:"");
   const rowsKv=[["Name",r.name||r.mac||"<hidden>"],["MAC",r.mac],["Source",SRC_FRIENDLY[r.source]||r.source||"?"],
+    ...(wifiRoles([r.source]).length?[["Wi-Fi role",wifiRoles([r.source]).join(" + ")]]:[]),
     ["RSSI",r.rssi+" dBm"],["Channel",r.channel||"–"],["Threat tier",tierTxt]];
   if(r.wl) rowsKv.push(["Whitelisted","yes (muted)"]);
   if(r.flags) rowsKv.push(["Flags",r.flags.replace(/\+/g,", ")]);
   if(r.pan) rowsKv.push(["PAN ID",r.pan]);
+  if(r.bssid) rowsKv.push(["Connected to AP",r.bssid]);   // v11 data-frame client's BSSID
   if(r.ie && !/^0+$/.test(r.ie)) rowsKv.push(["IE fingerprint",r.ie]);
   if(r.cid && !/^0+$/.test(r.cid)) rowsKv.push(["BLE company ID",r.cid]);
   if(r.uuid && !/^0+$/.test(r.uuid)) rowsKv.push(["Service UUID",r.uuid]);

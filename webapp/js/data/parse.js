@@ -36,7 +36,7 @@ export function parseScanNdjson(text){
     rows.push({epoch:parseInt(o.epoch,10)||0, ms:parseInt(o.ms,10)||0,
       lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon),
       source:s(o.src), mac:s(o.mac), rssi:parseInt(o.rssi,10)||0, channel:s(o.ch),
-      ie:s(o.ie), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
+      ie:s(o.ie), bssid:s(o.bssid), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
       score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig),
       flags:s(o.flags), wl:(o.wl==1||o.wl===true)});
   }
