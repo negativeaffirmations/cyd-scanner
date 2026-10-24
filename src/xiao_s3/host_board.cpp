@@ -23,7 +23,7 @@ void hostboard::begin() {
   digitalWrite(SCAN_LED_PIN, HIGH);  // active low: off
 #endif
   hostlink::begin(LINK_RX_PIN, LINK_TX_PIN);  // UART1 on D7(RX)/D6(TX)
-  power::init(BAT_ADC_PIN);  // 100k/100k divider on D3 (GPIO4)
+  power::init(BAT_ADC_PIN);  // 100k/100k divider on D1 (GPIO2)
   power::sample();           // seed so STATUS bat= is valid immediately
   Serial.printf("[S3] bat %d mV (%d%%)\n", power::voltageMv(), power::percent());
   // DS3231 on I2C D4/D5 (GPIO5/6): if it holds a valid time, latch it as the lowest-priority time source

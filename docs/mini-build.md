@@ -56,9 +56,9 @@ Exposed breakout pads (fixed by the board; well-established):
 | Pad | GPIO | Alt | Mini-build use |
 |-----|------|-----|----------------|
 | D0 | 1 | ADC | spare (alt link/host sensor) |
-| D1 | 2 | ADC | spare |
+| D1 | 2 | ADC1_CH1 | **battery sense** (100k/100k divider off switched Vbat; moved here from D3 2026-10-23) |
 | D2 | 3 | ADC | spare |
-| D3 | 4 | ADC1_CH3 | **battery sense** (100k/100k divider off switched Vbat, added 2026-10-21) |
+| D3 | 4 | ADC1_CH3 | spare (was battery sense; read ~0.1-0.4 V with a good divider, 2026-10-23) |
 | D4 | 5 | **SDA** | **DS3231 SDA** (I2C) |
 | D5 | 6 | **SCL** | **DS3231 SCL** (I2C) |
 | D6 | 43 | U0TXD | **Link UART1 TX → XIAO-C5 RX** |
@@ -91,7 +91,7 @@ Rationale / coexistence:
 > (D0/GPIO1) or drop the LED. The host is headless, so the LED is cosmetic — do not let it block SD.
 
 > **Battery sense (added 2026-10-21):** the XIAO exposes no battery divider of its own, so a
-> 100 kΩ/100 kΩ divider from the switched battery rail feeds **D3 (GPIO4, ADC1_CH3)**, the same
+> 100 kΩ/100 kΩ divider from the switched battery rail feeds **D1 (GPIO2, ADC1_CH1)** (moved from D3 2026-10-23), the same
 > design as the CYD's GPIO35. STATUS `bat=` reports 0–100 % (−1 below 2.5 V / no cell). See §2.5.
 
 ### 2.2 XIAO ESP32-C5 (scanner) — pin plan
@@ -185,8 +185,8 @@ path only** (the boost/step-up is still deleted — the XIAO runs the cell nativ
 - Net BOM change vs. CYD: **TP4056 kept, boost/step-up removed.**
 
 **Battery sense (added 2026-10-21):** switch output (the rail feeding both XIAOs' B+) → 100 kΩ →
-**S3 D3** → 100 kΩ → GND. Tapping the switched side means the divider draws nothing when off.
-`Vbat = analogReadMilliVolts(D3) × 2`, mapped to % by the shared `src/host_common/power.cpp` curve.
+**S3 D1** → 100 kΩ → GND. Tapping the switched side means the divider draws nothing when off.
+`Vbat = analogReadMilliVolts(D1) × 2`, mapped to % by the shared `src/host_common/power.cpp` curve.
 Caveat: with the switch OFF but the S3 on USB, the S3's own charger drives its B+ pad (= this rail), so
 the reading follows the charger, not the cell. (The XIAO-C5's BAT_VOLT sense is still unread: it would
 need a link field.)
@@ -341,7 +341,7 @@ envs compile them: `sigdb.{h,cpp}`, `phone.{h,cpp}` (NimBLE; S3 has BLE), `websh
 
 Modules that are **board-specific** (header shared, impl per board): `power.h` → `host_common/`;
 `power.cpp` was later (2026-10-21) moved to `host_common/` too: one implementation, each board passes its
-own `BAT_ADC_PIN` to `power::init()` (CYD GPIO35, S3 GPIO4/D3).
+own `BAT_ADC_PIN` to `power::init()` (CYD GPIO35, S3 GPIO2/D1).
 
 Stays **CYD-only** in `src/cyd/` (UI; not compiled for S3): everything TFT/touch/BOOT — the
 `Screen` enum + `g_screen` + all `SCR_*` handling in `loop()`, `render`, `updateScan`,

@@ -174,6 +174,12 @@ The owner finished the §2.6 rewire (C5 fed from its BAT pads, no S3 3V3 → C5 
   boots with RTC time (session `bg-20261021-135657` named at boot, pre-phone), logs `RTC disciplined from GPS`, bg scan
   cycling (34 devices). Open items: coin cell likely CR2032 -> check module for a charge resistor; redraw wiring
   diagrams; RTC persist test via the production path (phone/GPS sync -> power-cycle).
+- **S3 battery sense — FIXED 2026-10-23 by moving it to D1 (GPIO2).** Every meter check on D3 passed, and a `[DIAG]`
+  print proved the firmware read GPIO4 correctly (`bus=ADC_ONESHOT`, raw and calibrated mV agreed): the pin really sat at
+  ~0.1–0.4 V, and a resolder made it worse. Bad pad or pin, cause unknown. Wire moved to **D1**, `BAT_ADC_PIN 2`: now
+  `gpio2 ≈ 2020 mV` → `[S3] bat 4041 mV (89%)`. D3 is marked a suspect spare. Also fixed in shared `power.cpp`:
+  `analogSetPinAttenuation()` was a silent no-op before the pin's first read (harmless here; 11 dB is the core default).
+  Original notes below.
 - **S3 battery sense — FLASHED, but READING WRONG (open, owner debugging later; 10-21 night):** owner soldered the
   100k/100k divider (switch output -> **S3 D3 = GPIO4**) + the power LED (3V3 -> 1k -> LED -> GND; works, no
   firmware). `power.cpp` moved `src/cyd/` -> `src/host_common/` (one impl, `power::init(BAT_ADC_PIN)` per board; S3

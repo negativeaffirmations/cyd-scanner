@@ -333,7 +333,7 @@ auto-reset flashing — no DevKit two-port gotcha.
 
 | Pad | GPIO | Mini-build use                                                      |
 |-----|------|--------------------------------------------------------------------|
-| D3  | 4    | **Battery sense** (100k/100k divider off switched Vbat; ADC1_CH3)  |
+| D1  | 2    | **Battery sense** (100k/100k divider off switched Vbat; ADC1_CH1)  |
 | D4  | 5    | **DS3231 SDA** (I2C `Wire`)                                         |
 | D5  | 6    | **DS3231 SCL** (I2C `Wire`)                                         |
 | D6  | 43   | **Link UART TX → XIAO-C5 RX** (U0TXD pad; UART1 matrixed here)      |
@@ -351,7 +351,7 @@ auto-reset flashing — no DevKit two-port gotcha.
   C5 RX until the C5 flushes stale RX (self-recovers).
 - **Reserved for the deferred camera — DO NOT USE:** GPIO10–18 (DVP + XCLK/PCLK) and GPIO38–48
   (VSYNC/HREF + SCCB SIOD/SIOC on 40/39). Nothing wired now; kept free so the camera drops in later.
-- **Battery sense on D3 (GPIO4, ADC1_CH3)** (added 2026-10-21): 100 kΩ/100 kΩ divider off the switched
+- **Battery sense on D1 (GPIO2, ADC1_CH1)** (added 2026-10-21 on D3; moved to D1 2026-10-23): 100 kΩ/100 kΩ divider off the switched
   battery rail (the switch output feeding both XIAOs' B+), same as the CYD's GPIO35. `BAT_ADC_PIN` in
   `src/xiao_s3/pins.h`; STATUS `bat=` 0–100 % (−1 = no cell).
 

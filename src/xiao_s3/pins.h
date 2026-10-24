@@ -18,8 +18,8 @@
 #define SCAN_LED_PIN -1
 
 // --- Battery monitor (voltage-only; 100k/100k divider off the switched Vbat rail, i.e. the switch output
-// that feeds both XIAOs' B+). Vbat(mV) = analogReadMilliVolts(BAT_ADC_PIN) * 2. ADC1_CH3 (Wi-Fi-safe).
-#define BAT_ADC_PIN 4   // D3
+// that feeds both XIAOs' B+). Vbat(mV) = analogReadMilliVolts(BAT_ADC_PIN) * 2. ADC1_CH1 (Wi-Fi-safe).
+#define BAT_ADC_PIN 2   // D1 (moved off D3/GPIO4 2026-10-23: D3 read ~0.1-0.4 V with a good divider)
 
 // --- DS3231 RTC (Phase 3) ---
 #define RTC_SDA_PIN 5   // D4

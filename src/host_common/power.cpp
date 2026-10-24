@@ -39,6 +39,9 @@ namespace {
 namespace power {
   void init(int adcPin) {
     g_pin = adcPin;
+    // The first read attaches the pin to the ADC; setting attenuation before that is silently ignored
+    // by the core ("Pin is not configured as analog channel").
+    (void)analogReadMilliVolts(g_pin);
     analogSetPinAttenuation(g_pin, ADC_11db);  // full ~0-3.3 V span (divider tops out ~2.1 V)
     g_mv = 0;
   }

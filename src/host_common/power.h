@@ -2,7 +2,7 @@
 //
 // The cell is sensed through a 100 kΩ / 100 kΩ divider off the *switched* battery rail, feeding an
 // ADC1 pin the board passes to init() (its BAT_ADC_PIN): CYD GPIO35 (input-only, ADC1_CH7; boost IN+
-// side), XIAO-S3 D3 = GPIO4 (ADC1_CH3; switch output that feeds both XIAOs' B+). So:
+// side), XIAO-S3 D1 = GPIO2 (ADC1_CH1; switch output that feeds both XIAOs' B+). So:
 //     Vbat(mV) = analogReadMilliVolts(BAT_ADC_PIN) * 2
 // ADC1 is unaffected by Wi-Fi/BLE, so this keeps working during scanning and the SoftAP.
 //
