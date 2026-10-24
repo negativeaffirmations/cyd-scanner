@@ -52,6 +52,12 @@
      `posSource()` branch on the pref; device-only also skips the phone in the held fallback + RTC discipline and
      greys the phone dot (`phoneGpsOk()`/`phoneTimeOk()`). `#uiver` = `src-prefs` (no CSS change).
    - Not yet phone-checked; not reviewed by an agent.
+   - **Webapp GPS cadence fix (same day):** owner saw the GPS icon flap phone/device every ~30 s while standing
+     still on "Prefer phone". Cause: the webapp sent a fix only after ~10 m of movement, else a 30 s keep-alive,
+     but 0.14.0 treats a phone fix > 10 s old as stale. `js/gps.js` now sends every real `watchPosition` update
+     at most every 5 s, moving or not, skips any position the phone reports as > 10 s old, and no longer logs each
+     send. Fresher positions, not hidden markers: rows only lose `fix_age` because the fix is actually current.
+     `#uiver` = `gps-5s`.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
