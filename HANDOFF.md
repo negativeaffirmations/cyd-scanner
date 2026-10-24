@@ -1,6 +1,19 @@
 # Handoff — 2026-10-24 (branch: `main`; it is the only branch / the trunk)
 
-## TODO 2026-10-24 — answer scan-analyzer's 10-23 18:21 bridge message (IN PROGRESS)
+## Latest — 2026-10-24: position/time source handling fw 0.12 → 0.16 + webapp polish (ALL DONE, pushed)
+**State at end of session:** CYD (COM14) + mini S3 (COM16) both run **fw 0.16.0**; both C5s unchanged (link v11, no
+reflash needed all day). Webapp `#uiver` = `js-ver`, `style.css?v=` + `main.js?v=` = `20261024d`. Bridge is
+current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides are built, commits pending the owner).
+**Open / next:**
+- Mini **DS3231 not detected** ("RTC not found" at boot with the switch on) — check its I2C / power wiring. Without it
+  the purple clock dot depends on the GPS alone and the mini has no clock after a reboot until GPS/phone sync.
+- Owner phone-check of: the source dots + Settings "Time & location sources" (incl. Prefer device / Device only),
+  the Home summary card + modal (needs the `js-ver` page; open `…/webapp/?r=1` to bypass the cache once).
+- A drive where Chrome keeps posting with the screen off (like drive 1) would exercise live rows on the onboard GPS.
+- Still open from before: webapp Explore/Map don't surface `fix_age`; async BLE all-logs export; CYD field test with
+  SW2 on; no reviewer-agent pass on today's firmware diffs.
+
+### Items (chronological)
 1. ~~Bump `FW_VERSION` `"0.11.0"` → `"0.12.0"`~~ — **DONE 2026-10-24** ([host_log.h:85](src/host_common/host_log.h#L85)).
    Flashed **CYD** (COM14: boot OK, `link=up`, detections flowing; its C5 not reflashed — FW_VERSION is host-only and
    the C5 was already v11) and **mini S3** (COM16, identified by esptool MAC `10:b4:1d:e7:ed:a0` = scanner_id
@@ -70,8 +83,19 @@
    screen off) → phone again, no freeze > 15 s, 0 `fix_age` (onboard was live). Live rows match the file (median 0 m,
    max 14 m). This time Chrome sent NO live rows while the screen was off (15:29:49–15:32:41), so the live-row
    onboard path wasn't exercised; the file log covers that stretch.
+8. **Webapp polish (2026-10-24, webapp-only).**
+   - `692cef1` COINTEL-FLO wordmark 1.3rem/.2em → **1.2rem/.1em** (margin-right −.1em): the source dots + sat count
+     had wrapped the title to two lines.
+   - `b0d6610` Home summary card: **unit name moved from the app bar into the card** (same `#unitName` id); second
+     row labels **PRB · UNIQ · SUSP · LKLY · CONF** (`white-space:nowrap`); **tap the card → `#countsDlg`** "Scan
+     summary", every count spelled out (`features/counts.js`, live-refreshed from `ble/status.js`, disabled sources
+     read "off"). Verified in headless Chromium over CDP (real pointer click → dialog opens, 9 rows, no errors).
+   - `e5bc851` Owner's phone showed the new page but the card did nothing: it had the new `index.html` with a cached
+     OLD `main.js` (no handler; closing the tab doesn't clear the HTTP cache). **`js/main.js?v=<token>` now carries
+     the same token as `style.css`, bumped every deploy** (see the cache section below).
+   - `54ea88b` removed the outdated `mini-build_wiring_diagram.png` (showed the 3V3 C5 feed); mini-build.md note updated.
 
-## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
+## Earlier — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
 Webapp `#uiver` = `wifi-role+data`, `style.css?v=20261023a`. `FW_VERSION` NOT bumped (still 0.11.0).
 - **Webapp role pill:** `wifiRoles(tags)` in `js/util/format.js` (2.4/5G → `AP`, PRB → `CLIENT`, both when a MAC
@@ -886,7 +910,7 @@ Two Map-page bugs the user hit:
   (mirrors the Scanner `#filtersDlg`). Recompiled `style.css`, bumped `?v=20261011b` + `#uiver` →
   `map-fit`. No firmware change.
 
-## Webapp cache / deploy-propagation (updated 2026-10-11)
+## Webapp cache / deploy-propagation (updated 2026-10-24)
 **GitHub Pages serves EVERY asset — `index.html` included — with `cache-control: max-age=600` (verified
 via `curl -D-`), and that real HTTP header overrides the `<meta http-equiv="Cache-Control" no-cache>`
 in the HTML (browsers largely ignore the meta for caching).** So after a push, an already-loaded /
@@ -897,11 +921,14 @@ unchanged on the phone for several minutes. Practical signals/levers:
   webapp deploy** (it's the human "is the new build live?" readout). Once the footer flips to the new
   value the HTML has refreshed, and since all assets share the same deploy time + max-age the matching
   JS is live too. It had been stale at `2026-10-10` through the whole redesign — keep it current.
-- **`style.css?v=<token>`** — **bump the token whenever `style.css` changes** so the (eventually
-  refreshed) HTML points at a new CSS URL. (JS modules can't be token-versioned without a build step —
-  static-import URLs are fixed — so they ride the 10-min max-age revalidation.)
-- To force-fresh on the phone now: wait ~10 min after the Pages build, then fully reload (reopen the
-  tab / clear site data). A soft refresh within the window still serves cache.
+- **`style.css?v=<token>` AND `js/main.js?v=<token>`** (one shared token, since 2026-10-24) — **bump it on
+  every webapp deploy** so a refreshed HTML pulls a fresh stylesheet AND entry module. Without the main.js
+  token, the 2026-10-24 Home-card change shipped a new page with a cached old main.js (dead click handler).
+  Modules that main.js imports still can't carry a token (static-import URLs are fixed, no build step) and
+  ride the 10-min revalidation — so new DOM wiring that must work immediately belongs in main.js or a NEW file.
+- To force-fresh on the phone now: open the app with a throwaway query (`…/webapp/?r=1`): a new HTML URL
+  skips the cached page, and its versioned main.js/css come fresh. Reopening the tab does NOT clear the
+  cache; otherwise wait ~10 min after the Pages build.
 
 ## Done — webapp redesign (Material bottom-nav), ALL PHASES COMPLETE (2026-10-11, webapp-only, pushed + Pages-deployed)
 Full plan in memory [[webapp-redesign-plan]]. Phased; reuse components per [[ui-component-reuse]].
