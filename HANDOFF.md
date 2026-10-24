@@ -121,7 +121,7 @@ Webapp `#uiver` = `dedup-toast` (no `style.css` change since `?v=20261022c`). Bo
     `.basemap{filter:grayscale(1) contrast(.85) brightness(1.08)}` — tiles only, so markers keep their colours.
   - Minimal attribution (`991f5cc`): `attributionControl.setPrefix(false)`; the required "© OpenStreetMap
     contributors" credit is kept (linked to osm.org/copyright), small and faint (`_map.scss`).
-- **Open (unchanged):** mini battery sense still reads ~206–216 mV (−1%) — meter the D3 pad; BLE all-logs export
+- **Open (unchanged):** ~~mini battery sense reads wrong~~ RESOLVED 2026-10-23 (moved to D1, see RESUME HERE); BLE all-logs export
   blocks the loop (async backlogged); field-test the CYD with SW2 on.
 
 ## Earlier — web C5-link icon fix + status-icon info modal; mini-build cell now 1000 mAh (2026-10-21 late, webapp-only, pushed)
@@ -149,7 +149,7 @@ Pages once the footer `#uiver` reads `link-nobg` (`style.css?v=20261021c`).
   consider `Rprog` ≈ 2.4 kΩ (0.5 A) unless the cell's datasheet allows 1C.
 - **Wiring diagrams** `hardware/diagrams/mini-build_wiring_diagram{.png,.svg,_labeled.png}` are now COMMITTED
   (owner's 10-21 redraw; supersedes the "stale, don't commit" notes below).
-- **Next:** owner checks the web app on the phone (icon colours + modal); battery sense still reads wrong (open item
+- **Next:** owner checks the web app on the phone (icon colours + modal); battery sense read wrong (RESOLVED 2026-10-23, moved to D1; open item
   below — console `[S3] bat 344–358 mV (-1%)` on 10-21 evening; meter the D3 pad next).
 
 ## RESUME HERE — mini build bring-up COMPLETE (link + RTC + GPS all PASS on battery); S3 back on `xiao_s3` (2026-10-21)
@@ -218,7 +218,7 @@ The owner finished the §2.6 rewire (C5 fed from its BAT pads, no S3 3V3 → C5 
 - **Next:** owner fixes I2C + gets a cell (or a bench supply) → re-run [docs/mini-build-bringup.md](docs/mini-build-bringup.md)
   Stage 1 (flash `xiao_s3_bringup`, `p` probe, `x` stress, battery run), Stage 2 (RTC), Stage 3 (GPS: expect
   `gps: bytes>0` on the C5 console once the S3 powers it). Reflash `xiao_s3` afterwards.
-- Wiring diagrams in `hardware/diagrams/` are still untracked/stale; the owner is redrawing them, so don't commit them.
+- Wiring diagrams: the `.svg` + `_labeled.png` were redrawn and committed 2026-10-23 (current wiring, battery sense on D1); the plain `.png` is an older render.
 
 ## Earlier — mini build soldered bring-up: C5 POWER REWIRE (2026-10-20)
 The owner moved the mini build from a breadboard (each XIAO on its own USB) to a soldered rig with the

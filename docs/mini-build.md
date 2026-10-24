@@ -197,8 +197,9 @@ All five components, net by net. The two XIAOs each run from the switched cell t
 regulator; the RTC and GPS share the S3's 3V3; single common ground. Wire and verify them one module
 at a time with the staged bring-up test: [mini-build-bringup.md](mini-build-bringup.md).
 
-> ⚠️ `hardware/diagrams/mini-build_wiring_diagram*.{png,svg}` still show the OLD S3 3V3 → C5 3V3
-> feed and are being redrawn. **This table is authoritative.**
+> Diagrams: `hardware/diagrams/mini-build_wiring_diagram.svg` and `_labeled.png` were redrawn
+> 2026-10-23 (current wiring, battery sense on D1). The plain `mini-build_wiring_diagram.png` is the
+> older render and still shows the S3 3V3 → C5 3V3 feed. **This table is authoritative.**
 
 | From | Pin | To | Pin | Net / purpose |
 |------|-----|----|-----|---------------|
@@ -222,6 +223,10 @@ at a time with the staged bring-up test: [mini-build-bringup.md](mini-build-brin
 | XIAO-S3 | **D7 / GPIO44 (link RX)** | XIAO-C5 | **GPIO23 (link TX)** | UART link: C5 → host |
 | XIAO-C5 | **GPIO1 (UART0 RX)** | NEO-6M | **TXD** | GPS NMEA → C5 (receive-only) |
 | XIAO-C5 | *(none)* | NEO-6M | **RXD** | leave unconnected (C5 GPS TX = −1) |
+| Switch | throw | 100 kΩ | — | battery-sense divider, top leg (switched cell) |
+| 100 kΩ / 100 kΩ | junction | XIAO-S3 | **D1 / GPIO2** | battery sense (ADC1_CH1). **Not D3** (bad pad, 2026-10-23) |
+| 100 kΩ | — | XIAO-S3 | **GND** | battery-sense divider, bottom leg |
+| XIAO-S3 | **3V3** | 1 kΩ → LED → GND | — | power LED (no firmware) |
 
 Notes:
 - **Link is a cross:** host TX→C5 RX and C5 TX→host RX (don't wire TX→TX). Keep the leads short and
