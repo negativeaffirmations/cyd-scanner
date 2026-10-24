@@ -47,9 +47,19 @@ bool               g_linkOk   = false;
 // --- Scan-source enable mask (ScanConfig.sources), persisted in NVS. The "2.4" toggle
 // covers probe-request capture too (both are 2.4 GHz Wi-Fi). 802.15.4 has its own toggle. ---
 uint8_t g_srcMask = (MASK_ALL & ~MASK_154);
-void loadSrcMask() {
+void loadSrcMask() {  // also loads the time/GPS source preferences (both boards call this once at boot)
   Preferences p; p.begin("cydui", true);
   g_srcMask = p.getUChar("srcmask", (MASK_ALL & ~MASK_154));
+  g_timePref = p.getUChar("tpref", SRC_PREFER_PHONE);
+  g_gpsPref  = p.getUChar("gpref", SRC_PREFER_PHONE);
+  p.end();
+  if (g_timePref > SRC_DEVICE_ONLY) g_timePref = SRC_PREFER_PHONE;
+  if (g_gpsPref  > SRC_DEVICE_ONLY) g_gpsPref  = SRC_PREFER_PHONE;
+}
+void saveSrcPrefs() {
+  Preferences p; p.begin("cydui", false);
+  p.putUChar("tpref", g_timePref);
+  p.putUChar("gpref", g_gpsPref);
   p.end();
 }
 void saveSrcMask() {
@@ -206,17 +216,27 @@ static bool onbLive() { return g_onbValid && g_onbAtMs && millis() - g_onbAtMs <
 // phone::hasGps() window (90 s). The phone stays the source (aging, marked fix_age) when onboard has no fix.
 static constexpr uint32_t PHONE_FIX_FRESH_MS = 10000;
 static constexpr uint32_t FIX_AGE_MARK_S     = 10;   // log fix_age once the fix in use is older than this
-// Held fallback = whichever source fixed most recently (wrap-safe age compare).
+// User source preference (web Settings, CMD "P:<t><g>", NVS): SRC_PREFER_PHONE (default) /
+// SRC_PREFER_DEVICE (the phone only fills in when the device has nothing) / SRC_DEVICE_ONLY (phone ignored).
+uint8_t g_timePref = SRC_PREFER_PHONE, g_gpsPref = SRC_PREFER_PHONE;
+static bool phoneGpsOk()  { return g_gpsPref != SRC_DEVICE_ONLY && phone::hasGps(); }
+static bool phoneGpsHad() { return g_gpsPref != SRC_DEVICE_ONLY && phone::hadGps(); }
+// Held fallback = whichever allowed source fixed most recently (wrap-safe age compare).
 static bool heldIsPhone() {
   if (!g_onbAtMs) return true;
-  if (!phone::hadGps()) return false;
+  if (!phoneGpsHad()) return false;
   return millis() - phone::gpsAtMs() <= millis() - g_onbAtMs;
 }
 int posSource() {  // 0 none / 1 phone / 2 onboard / 3 held
-  bool ph = phone::hasGps(), onb = onbLive();
-  if (ph && (!onb || millis() - phone::gpsAtMs() < PHONE_FIX_FRESH_MS)) return 1;
-  if (onb) return 2;
-  return (phone::hadGps() || g_onbAtMs) ? 3 : 0;
+  bool ph = phoneGpsOk(), onb = onbLive();
+  if (g_gpsPref == SRC_PREFER_PHONE) {
+    if (ph && (!onb || millis() - phone::gpsAtMs() < PHONE_FIX_FRESH_MS)) return 1;
+    if (onb) return 2;
+  } else {
+    if (onb) return 2;
+    if (ph)  return 1;  // prefer-device: the phone fills in only while the device has no fix
+  }
+  return (phoneGpsHad() || g_onbAtMs) ? 3 : 0;
 }
 static bool usePhoneFix() { int s = posSource(); return s == 1 || (s == 3 && heldIsPhone()); }
 bool  posLive()   { int s = posSource(); return s == 1 || s == 2; }
@@ -228,7 +248,7 @@ uint32_t posFixAgeS() {
   return (millis() - (usePhoneFix() ? phone::gpsAtMs() : g_onbAtMs)) / 1000;
 }
 bool posAged() { return posSource() == 3 || posFixAgeS() > FIX_AGE_MARK_S; }
-uint8_t posAvailMask() { return (phone::hasGps() ? 1 : 0) | (onbLive() ? 2 : 0); }
+uint8_t posAvailMask() { return (phoneGpsOk() ? 1 : 0) | (onbLive() ? 2 : 0); }  // a disabled phone reads unavailable
 
 // Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
 // is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
@@ -245,16 +265,32 @@ uint32_t g_rtcAtMs = 0;       // millis() when it was latched
 // RTC write hook, installed by the board (S3) only. A hook, not a direct rtc:: call, so boards without an
 // RTC (the CYD) never link the I2C driver (~32 KB) through this core.
 void (*g_rtcWrite)(uint32_t utc) = nullptr;
-bool     timeHasSync() { return phone::hasTime() || g_gpsEpochUtc != 0 || g_rtcEpochUtc != 0; }
-int      timeSource()  { return phone::hasTime() ? 1 : (g_gpsEpochUtc ? 2 : (g_rtcEpochUtc ? 3 : 0)); }  // 0 none / 1 phone / 2 GPS / 3 RTC
-uint8_t  timeAvailMask() { return (phone::hasTime() ? 1 : 0) | ((g_gpsEpochUtc || g_rtcEpochUtc) ? 2 : 0); }
+// The device clock is READY (a fallback that can be trusted right now) while the onboard GPS is
+// supplying time (a Status carried gpsEpoch within ONB_STALE_MS) or the RTC holds a valid time. A GPS
+// epoch latched earlier keeps free-running and is still used as a last resort, but isn't "ready".
+static bool phoneTimeOk()  { return g_timePref != SRC_DEVICE_ONLY && phone::hasTime(); }
+static bool gpsTimeFresh() { return g_gpsEpochUtc && millis() - g_gpsEpochAtMs < ONB_STALE_MS; }
+static bool rtcTimeOk()    { return g_rtcEpochUtc != 0; }
+int timeSource() {  // 0 none / 1 phone / 2 GPS / 3 RTC
+  if (g_timePref == SRC_PREFER_PHONE) {
+    if (phoneTimeOk()) return 1;
+    return g_gpsEpochUtc ? 2 : (rtcTimeOk() ? 3 : 0);
+  }
+  if (gpsTimeFresh()) return 2;
+  if (rtcTimeOk())    return 3;
+  if (phoneTimeOk())  return 1;  // prefer-device: the phone fills in only while the device clock isn't ready
+  return g_gpsEpochUtc ? 2 : 0;  // last resort: the free-running latched GPS clock
+}
+bool     timeHasSync() { return timeSource() != 0; }
+uint8_t  timeAvailMask() { return (phoneTimeOk() ? 1 : 0) | ((gpsTimeFresh() || rtcTimeOk()) ? 2 : 0); }
 uint32_t epochLocal() {
-  if (phone::hasTime()) return phone::epochNow();
-  if (g_gpsEpochUtc) {
+  int s = timeSource();
+  if (s == 1) return phone::epochNow();
+  if (s == 2) {
     uint32_t utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
     return utc - (uint32_t)(phone::tzOffsetMin() * 60);  // UTC-local offset -> local
   }
-  if (g_rtcEpochUtc) {
+  if (s == 3) {
     uint32_t utc = g_rtcEpochUtc + (millis() - g_rtcAtMs) / 1000;
     return utc - (uint32_t)(phone::tzOffsetMin() * 60);  // RTC holds UTC: same offset convention as GPS
   }
@@ -271,13 +307,14 @@ void disciplineRtc() {
   static uint32_t lastMs = 0;
   if (done && millis() - lastMs < 3600000UL) return;
   uint32_t utc = 0;
-  if (phone::hasTime()) utc = phone::epochNow() + (uint32_t)(phone::tzOffsetMin() * 60);  // local -> UTC
+  bool fromPhone = phoneTimeOk();  // device-only: the phone's time never reaches the RTC either
+  if (fromPhone) utc = phone::epochNow() + (uint32_t)(phone::tzOffsetMin() * 60);  // local -> UTC
   else if (g_gpsEpochUtc) utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
   if (utc < 1700000000UL) return;  // nothing trustworthy yet (before ~2023)
   g_rtcWrite(utc);
   g_rtcEpochUtc = utc; g_rtcAtMs = millis();
   done = true; lastMs = millis();
-  Serial.printf("[CYD] RTC disciplined from %s (utc %lu)\n", phone::hasTime() ? "phone" : "GPS", (unsigned long)utc);
+  Serial.printf("[CYD] RTC disciplined from %s (utc %lu)\n", fromPhone ? "phone" : "GPS", (unsigned long)utc);
 }
 uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
 uint8_t  g_evilShown = 0;

@@ -42,6 +42,16 @@
      `style.css?v=20261024a`, `#uiver` = `src-dots`. Not yet seen on a phone.
    - **Pending:** flash the mini S3 (0.13.0 → 0.14.0); owner phone check of the dots; next drive should show
      `fix_age` only on stretches with no onboard fix. Webapp Explore/Map don't surface `fix_age` yet.
+6. **fw 0.15.0 — time/GPS source preferences + device-clock dot rule (2026-10-24, CYD FLASHED COM14 + boot OK;
+   mini S3 NOT yet — still 0.13.0, unplugged).** Owner requests:
+   - **Purple clock dot** = "on-device fallback ready": onboard GPS supplying time now (gpsEpoch within 10 s) OR
+     the RTC holds a valid time. A free-running latched GPS clock alone reads grey (still used as last resort).
+   - **Settings → "Time & location sources"**: two selects (Prefer phone / Prefer device / Device only) → CMD
+     `P:<t><g>`, NVS `cydui/tpref`,`gpref` (loaded in `loadSrcMask()`), echoed in STATUS part 2 `tpref`/`gpref`;
+     selects enabled only once STATUS reports them (older fw never gets `P:`). host_core: `timeSource()` /
+     `posSource()` branch on the pref; device-only also skips the phone in the held fallback + RTC discipline and
+     greys the phone dot (`phoneGpsOk()`/`phoneTimeOk()`). `#uiver` = `src-prefs` (no CSS change).
+   - Not yet phone-checked; not reviewed by an agent.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.

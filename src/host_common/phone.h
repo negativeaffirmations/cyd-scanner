@@ -83,6 +83,10 @@ bool lockRequested(bool* outLock);
 // True once if the app set the scan-source mask ("S:<decimal SourceMask>"); fills `out`.
 bool srcMaskRequested(uint8_t* out);
 
+// True once if the app set the time / GPS source preference ("P:<t><g>", each 0 prefer phone /
+// 1 prefer device / 2 device only); fills both.
+bool sourcePrefRequested(uint8_t* timePref, uint8_t* gpsPref);
+
 // Whitelist commands, each true once (consumed on read): "W" reload, "Y" list,
 // "A:<csv rule line>" add (fills `out`), "E:<index>" remove the Nth active rule.
 bool wlReloadRequested();

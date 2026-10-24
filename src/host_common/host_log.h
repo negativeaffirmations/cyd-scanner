@@ -82,7 +82,7 @@ inline constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2:
                                        // 5: expanded 'cidname,' BLE company makers + Garmin ID fix (2026-10-15)
 // Human-facing firmware version, distinct from the CYD<->C5 PROTOCOL_VERSION and the sig-DB DB_GEN.
 // Emitted in the per-session {"evt":"meta"} provenance anchor and the STATUS characteristic.
-inline constexpr char FW_VERSION[] = "0.14.0";  // 0.10.0: LRU never-stop logging + 5-min relog, unit names; 0.11.0: lastseen departure lines; 0.12.0: link v11 bssid + data/dl flags; 0.13.0: phone-GPS staleness + held fix "fix_age"; 0.14.0: phone fix preferred only while < 10 s old, fix_age on any fix > 10 s, STATUS gav/tav
+inline constexpr char FW_VERSION[] = "0.15.0";  // 0.10.0: LRU never-stop logging + 5-min relog, unit names; 0.11.0: lastseen departure lines; 0.12.0: link v11 bssid + data/dl flags; 0.13.0: phone-GPS staleness + held fix "fix_age"; 0.14.0: phone fix preferred only while < 10 s old, fix_age on any fix > 10 s, STATUS gav/tav; 0.15.0: time/GPS source prefs (P: cmd), device dot = GPS-time-fresh or RTC
 
 const char* scannerIdHex();
 // Human-friendly unit name, e.g. "CFLO-MINI-KOBALI": board tag + a pronounceable 6-letter word

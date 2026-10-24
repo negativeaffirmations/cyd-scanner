@@ -2,7 +2,7 @@
 // which is deferred, so the DOM is ready by the time this runs.
 import { $, log } from './util/dom.js';
 import { connect } from './ble/connection.js';
-import { toggleScan, newSession, reloadDb, toggleWifi, setBrightness, setLock, sendSrcMask, syncTime } from './ble/commands.js';
+import { toggleScan, newSession, reloadDb, toggleWifi, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
 import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';
 import { gpsOnce } from './gps.js';
 import { refreshSessions, downloadSession, downloadSessionRange, deleteSession, wipeAllLogs, mapSelectedSession, exploreSelected, uploadSelectedSessions, selectAllSessions } from './features/sessions.js';
@@ -100,6 +100,8 @@ $("sessWipeBtn").onclick = wipeAllLogs;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
 $("lockBtn").onclick = ()=> setLock($("lockBtn").dataset.locked !== "1");   // toggle vs current (from STATUS lock=)
+$("tPrefSel").addEventListener("change", sendSourcePref);   // both selects go in one "P:<t><g>" command
+$("gPrefSel").addEventListener("change", sendSourcePref);
 $("settingsBtn").onclick = ()=> showPage('settings');   // retired hidden button -> Settings page
 $("wlBtn").onclick = openWhitelist;
 $("scanSetWlBtn").onclick = openWhitelist;

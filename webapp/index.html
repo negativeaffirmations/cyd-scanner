@@ -63,7 +63,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-24&nbsp;·&nbsp;src-dots</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-24&nbsp;·&nbsp;src-prefs</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -187,6 +187,20 @@
         <label class="k" for="briSlider" style="display:block;margin-top:.5em">Brightness: <span id="briVal">–</span>%</label>
         <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
         <button id="lockBtn" class="secondary" disabled data-locked="0" style="margin-top:.6em">Lock display</button>
+      </div>
+
+      <!-- Time / location source preference (CMD "P:<t><g>", saved on the scanner; enabled once STATUS reports it) -->
+      <div class="card" style="margin-top:12px">
+        <strong class="cardhdr">Time &amp; location sources</strong>
+        <div class="sub" style="margin:.3em 0 .4em">Which clock and GPS the scanner stamps logs with. "Prefer device" uses the phone only when the scanner's own GPS / RTC has nothing; "Device only" ignores the phone.</div>
+        <label class="k" for="tPrefSel" style="display:block">Time</label>
+        <select id="tPrefSel" disabled>
+          <option value="0">Prefer phone</option><option value="1">Prefer device</option><option value="2">Device only</option>
+        </select>
+        <label class="k" for="gPrefSel" style="display:block;margin-top:.5em">Location (GPS)</label>
+        <select id="gPrefSel" disabled>
+          <option value="0">Prefer phone</option><option value="1">Prefer device</option><option value="2">Device only</option>
+        </select>
       </div>
 
       <!-- Data & sync -->

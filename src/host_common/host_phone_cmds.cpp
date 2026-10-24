@@ -44,6 +44,10 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       g_srcMask = m; saveSrcMask();
       f.srcMaskChanged = true;
     } }
+  { uint8_t t, g; if (phone::sourcePrefRequested(&t, &g)) {  // web-app time / GPS source preference
+      g_timePref = t; g_gpsPref = g; saveSrcPrefs();
+      pushStatus();  // the Settings selects + source icons reflect it right away
+    } }
   if (phone::newSessionRequested()) { startNewSession(); f.newSession = true; }  // web-app "New Session"
   renameSessionOnSync();  // give each live session a date-time filename once time is known (also syncs the share path)
   syncSharePath();        // the screen context (fg/bg) may have changed

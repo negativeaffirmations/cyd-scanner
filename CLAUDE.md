@@ -204,6 +204,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   recent fix** of either (3). Log lines carry `"fix_age":<s>` when held OR the fix in use is > 10 s old
   (`posAged()`; see the SD-log notes). (0.13.0 kept a stale phone fix "live" for the whole 90 s — the
   2026-10-24 mini drive froze 86 s unmarked before onboard took over.) Follow scoring ignores fixes > 90 s old.
+  **Source preference (fw 0.15.0, `g_timePref`/`g_gpsPref`, CMD `P:`):** *prefer phone* = the rules above
+  (default); *prefer device* = live onboard fix / ready device clock (fresh GPS time, else valid RTC) first,
+  the phone only while the device has nothing; *device only* = the phone's fix/time is ignored entirely (also
+  for the held fallback and RTC discipline; the phone's tz offset is still learned).
   GPS time is UTC, so the CYD adds the **last phone tz offset, persisted in NVS** (`cydscan/tzoff`,
   `phone::tzOffsetMin()`), to show LOCAL time with no phone after the first-ever sync (UTC until then); the
   CYD status-bar clock is **cyan when GPS keeps time**, white when phone-synced (the web icons use source
@@ -463,13 +467,17 @@ back (5 GHz included). Things that matter, learned the hard way:
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
-    whitelist-remove
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2). Keys:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,sid,fw,dbgen`
-    (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device (onboard GPS; GPS
-    clock or RTC). The web app bar draws them as two stacked dots right of the location / clock icon — blue
-    phone on top, purple device below, grey when unavailable — and tints the icon with the source in use
-    (`gpssrc`/`tsrc`; orange GPS icon = held; `renderSourceIcons()` in `js/ble/status.js`.)
+    whitelist-remove · **`"P:<t><g>"`** time / GPS source preference (fw 0.15.0; each digit 0 prefer phone /
+    1 prefer device / 2 device only; NVS `cydui/tpref`,`gpref`; web Settings "Time & location sources")
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2). Keys:
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,sid,fw,dbgen`
+    (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device. Device GPS = a live
+    onboard fix; device clock (0.15.0) = the onboard GPS is supplying time right now OR the RTC holds a valid
+    time — i.e. "an on-device fallback is ready"; a disabled (device-only) phone reads unavailable. The web app
+    bar draws them as two stacked dots right of the location / clock icon — blue phone on top, purple device
+    below, grey when unavailable — and tints the icon with the source in use (`gpssrc`/`tsrc`; orange GPS
+    icon = held; `renderSourceIcons()` in `js/ble/status.js`). **`tpref`/`gpref`** (0.15.0) = the source
+    preference; the web Settings selects stay disabled until they arrive.)
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),

@@ -58,6 +58,13 @@ export async function setLock(lock){
   catch(e){ log("Lock command failed: "+e.message); }
 }
 
+// Time / GPS source preference: "P:<t><g>", each 0 prefer phone / 1 prefer device / 2 device only.
+// Authoritative values come back via STATUS tpref= / gpref=.
+export async function sendSourcePref(){
+  try{ await state.chars.cmd.writeValue(enc.encode("P:" + $("tPrefSel").value + $("gPrefSel").value)); }
+  catch(e){ log("Source setting failed: "+e.message); }
+}
+
 // Scan-source mask: BLE=2, Wi-Fi 2.4G = WIFI24(1)+PROBE(8), Wi-Fi 5G=16, 802.15.4=4.
 export async function sendSrcMask(){
   const m = ($("sBle").checked?2:0) | ($("s24").checked?9:0) | ($("s5").checked?16:0) | ($("s154").checked?4:0);

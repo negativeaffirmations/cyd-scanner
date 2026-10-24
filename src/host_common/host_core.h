@@ -61,8 +61,14 @@ uint8_t     srcTypeOf(const char* tag);   // 0=2.4, 1=5G, 2=BLE, 3=PRB, 4=154
 // --- scan-source enable mask + background-scan flag (NVS-persisted) ---
 extern uint8_t g_srcMask;
 constexpr uint8_t SRC_24_BITS = MASK_WIFI24 | MASK_PROBE;
-void loadSrcMask();
+void loadSrcMask();   // + the time/GPS source preferences below
 void saveSrcMask();
+// Time / GPS source preference (web Settings, CMD "P:<t><g>", NVS "tpref"/"gpref"; STATUS tpref/gpref).
+constexpr uint8_t SRC_PREFER_PHONE  = 0;  // phone first, device as fallback (default)
+constexpr uint8_t SRC_PREFER_DEVICE = 1;  // device first, the phone only fills in when the device has nothing
+constexpr uint8_t SRC_DEVICE_ONLY   = 2;  // the phone's time / GPS is ignored
+extern uint8_t g_timePref, g_gpsPref;
+void saveSrcPrefs();
 extern bool g_bgScan;
 void loadBgScan();
 void saveBgScan();

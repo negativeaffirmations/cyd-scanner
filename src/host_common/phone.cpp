@@ -53,6 +53,8 @@ int      g_expArg     = 0;
 char     g_expPath[48]= {0};
 bool     g_srcReq     = false;
 uint8_t  g_srcVal     = 0;
+bool     g_prefReq    = false;  // "P:<t><g>" time / GPS source preference
+uint8_t  g_prefT = 0, g_prefG = 0;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -160,6 +162,12 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_srcVal = (uint8_t)atoi(val.c_str() + colon + 1);
           g_srcReq = true;
           Serial.printf("[phone] cmd src mask %u\n", g_srcVal);
+        }
+      } else if (c0 == 'P' || c0 == 'p') {           // "P:<t><g>" time / GPS source pref, digits 0 prefer phone / 1 prefer device / 2 device only
+        if (val.size() >= 4 && val[1] == ':' && val[2] >= '0' && val[2] <= '2' && val[3] >= '0' && val[3] <= '2') {
+          g_prefT = (uint8_t)(val[2] - '0'); g_prefG = (uint8_t)(val[3] - '0');
+          g_prefReq = true;
+          Serial.printf("[phone] cmd source pref time=%u gps=%u\n", g_prefT, g_prefG);
         }
       } else if (c0 == 'T' || c0 == 't') {           // "T:<mode>[:<minutes>][:<path>]" filtered export
         // mode 0 = whole file, 1 = past 24 h, 2 = past <minutes>. Optional /logs/ path (default =
@@ -341,6 +349,13 @@ bool srcMaskRequested(uint8_t* out) {
   if (!g_srcReq) return false;
   g_srcReq = false;
   *out = g_srcVal;
+  return true;
+}
+
+bool sourcePrefRequested(uint8_t* timePref, uint8_t* gpsPref) {
+  if (!g_prefReq) return false;
+  g_prefReq = false;
+  *timePref = g_prefT; *gpsPref = g_prefG;
   return true;
 }
 

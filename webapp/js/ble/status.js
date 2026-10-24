@@ -89,6 +89,10 @@ export function onStatus(ev){
     // Gray the scan-type tiles that aren't being collected under the current config (MASK bits).
     $("st24").classList.toggle("off", !(m&1));  $("st5").classList.toggle("off", !(m&16));
     $("stble").classList.toggle("off", !(m&2)); $("st154").classList.toggle("off", !(m&4)); }
+  // Time / GPS source preference (fw >= 0.15). The selects stay disabled until the scanner reports it,
+  // so older firmware never receives a "P:" it doesn't understand.
+  if("tpref" in kv) { $("tPrefSel").value = kv.tpref; $("tPrefSel").disabled = false; }
+  if("gpref" in kv) { $("gPrefSel").value = kv.gpref; $("gPrefSel").disabled = false; }
   if("bri" in kv){ $("briVal").textContent = kv.bri;
     if(document.activeElement !== $("briSlider")) $("briSlider").value = kv.bri; }
   if("lock"in kv){ const locked = kv.lock==="1"; const b = $("lockBtn");
