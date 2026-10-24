@@ -64,7 +64,11 @@
    the page (BLE + POSTs kept going). Fix: STATUS part 2 gains `pos=lat,lon` + `pfa=<fix_age|-1>` (what the file log
    stamps now); `scannerFix()` in `js/gps.js` → live rows (`remote.js`, + `fix_age` when ≥ 0, owner-approved
    contract addition, bridge note posted) and the sighting trail (`sightings.js`, live fixes only). Older fw: phone
-   fix only while < 10 s old. No C5 change. `#uiver` = `live-pos`. Not yet field-tested.
+   fix only while < 10 s old. No C5 change. `#uiver` = `live-pos`.
+   **Field-tested (mini drive 2, sessions 33 live / 34 file):** file log phone ~6 s → onboard 2 s (15:30–15:32,
+   screen off) → phone again, no freeze > 15 s, 0 `fix_age` (onboard was live). Live rows match the file (median 0 m,
+   max 14 m). This time Chrome sent NO live rows while the screen was off (15:29:49–15:32:41), so the live-row
+   onboard path wasn't exercised; the file log covers that stretch.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
