@@ -5,6 +5,7 @@ import { DEAUTH_ALERT } from '../config.js';
 import { updateScanBtn } from './commands.js';
 import { renderApCard } from '../features/wifiap.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
+import { renderCounts } from '../features/counts.js';
 
 // Clock + location icons: two stacked source dots (blue = phone on top, purple = device below; grey when
 // that source is unavailable) and the icon tinted with the source in use. Built from the merged
@@ -116,4 +117,5 @@ export function onStatus(ev){
     }
   }
   renderStatusInfo();   // live-refresh the status-icon info modal if it's open
+  renderCounts();       // ...and the Home scan-summary modal
 }

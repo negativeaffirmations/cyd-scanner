@@ -15,8 +15,6 @@ $nav-h: 60px;
 // Title only (body text keeps the system font). The negative right margin cancels the tracking
 // after the last letter so the title doesn't push the status icons.
 .wordmark { font-family:"Oswald", sans-serif; font-weight:200; letter-spacing:.1em; margin-right:-.1em; font-size:1.2rem; line-height:1.1; }
-// The connected scanner's unit name (STATUS name=, e.g. CFLO-MINI-KOBALI) under the title.
-.appbar-unit { font-size:.7rem; font-weight:500; color:$color-text-muted; letter-spacing:.03em; &:empty { display:none; } }
 
 // Right-side status cluster in the app bar: time/GPS/DB icons + the Bluetooth connection icon.
 .appbar-status { display:flex; align-items:center; gap:9px; }

@@ -13,12 +13,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261024b">
+<link rel="stylesheet" href="style.css?v=20261024c">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
   <header class="appbar">
-    <span class="appbar-title"><span class="wordmark">COINTEL-FLO</span><span class="appbar-unit" id="unitName"></span></span>
+    <span class="appbar-title"><span class="wordmark">COINTEL-FLO</span></span>
     <span class="appbar-status" id="appbarStatus">
       <span class="si" id="timeState" title="Time synced"><span class="material-symbols-outlined">schedule</span><span class="srcdots"><i class="dot ph"></i><i class="dot dev"></i></span></span>
       <span class="si" id="gpsState" title="GPS fix"><span class="material-symbols-outlined">location_on</span><span class="srcdots"><i class="dot ph"></i><i class="dot dev"></i></span><span class="gpssats" id="gpsSats"></span></span>
@@ -38,8 +38,10 @@
     <section class="page visible" id="page-home">
       <button id="connectBtn">Connect to scanner</button>
 
-      <!-- One summary card: device counts (4 cols) above a divider, then probe/unique + threat tiers (5 cols) -->
-      <div class="card hometop">
+      <!-- One summary card: the connected unit's name, device counts (4 cols) above a divider, then
+           probe/unique + threat tiers (5 cols). Tap it for the spelled-out list (#countsDlg). -->
+      <div class="card hometop" id="homeTop" role="button" tabindex="0" title="Show all counts">
+        <div class="hometop-unit" id="unitName"></div>
         <!-- Scan types: 4 centered columns (title over count); a column grays out when its source is off -->
         <div class="scantypes">
           <div class="st" id="st24"><span class="k">2.4</span><span class="v" id="w24">–</span></div>
@@ -48,13 +50,14 @@
           <div class="st" id="st154"><span class="k">15.4</span><span class="v" id="z154">–</span></div>
         </div>
         <div class="hrule"></div>
-        <!-- Probe/Unique + threat tiers: all 5 in a single row of equal-width columns -->
+        <!-- Probe/Unique + threat tiers: all 5 in a single row of equal-width columns (short labels so
+             none wraps; the modal spells them out) -->
         <div class="statcard">
-          <div class="st"><span class="k">Probe reqs</span><span class="v" id="prb">–</span></div>
-          <div class="st"><span class="k">Unique</span><span class="v" id="uniq">–</span></div>
-          <div class="st"><span class="k">Suspect</span><span class="v" id="susp">–</span></div>
-          <div class="st"><span class="k">Likely</span><span class="v" id="lk">–</span></div>
-          <div class="st"><span class="k">Confirmed</span><span class="v" id="conf">–</span></div>
+          <div class="st"><span class="k">PRB</span><span class="v" id="prb">–</span></div>
+          <div class="st"><span class="k">UNIQ</span><span class="v" id="uniq">–</span></div>
+          <div class="st"><span class="k">SUSP</span><span class="v" id="susp">–</span></div>
+          <div class="st"><span class="k">LKLY</span><span class="v" id="lk">–</span></div>
+          <div class="st"><span class="k">CONF</span><span class="v" id="conf">–</span></div>
         </div>
       </div>
 
@@ -63,7 +66,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-24&nbsp;·&nbsp;wordmark</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-24&nbsp;·&nbsp;summary-card</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -360,6 +363,14 @@
   </dialog>
 
   <!-- Status-icon info: tap any app-bar icon -> what each icon means + its live state (features/statusinfo.js) -->
+  <dialog id="countsDlg">
+    <div class="modalhdr">
+      <strong>Scan summary <span class="sub" id="countsUnit"></span></strong>
+      <button id="countsClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div id="countsList"></div>
+  </dialog>
+
   <dialog id="statusDlg">
     <div class="modalhdr">
       <strong>Status icons</strong>

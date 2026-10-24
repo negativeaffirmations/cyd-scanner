@@ -43,14 +43,24 @@ button:disabled { opacity: .45; }
 
 // Stat cell = a centered column (title over count). Reused by the scan-types card + the counts card.
 .st { display:flex; flex-direction:column; align-items:center; text-align:center; gap:2px; }
-.st .k { color:$color-text-muted; font-size:.72rem; }
+.st .k { color:$color-text-muted; font-size:.72rem; white-space:nowrap; }   // short labels; never wrap (keeps counts aligned)
 .st .v { font-size:1.2rem; font-weight:600; }
 .st.off { opacity:.3; }                                // scan source not collected under the current config
 .st.off .v { color:$color-text-muted; }
 
 .scantypes { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
 .statcard  { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }  // Probe/Unique/Suspect/Likely/Confirmed, one equal-width row
-.hometop { margin:12px 0; }                                     // merged top summary card
+.hometop { margin:12px 0; cursor:pointer; }                     // merged top summary card (tap -> #countsDlg)
+.hometop:focus-visible { outline:2px solid $color-accent; outline-offset:2px; }
+// The connected scanner's unit name (STATUS name=, e.g. CFLO-MINI-KOBALI), atop the summary card.
+.hometop-unit { text-align:center; font-size:.75rem; font-weight:500; color:$color-text-muted; letter-spacing:.03em;
+                margin-bottom:8px; &:empty { display:none; } }
+// Scan-summary modal rows: verbose label left, count right.
+.cnrow { display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:9px 4px;
+         border-top:1px solid $color-border; }
+.cnrow:first-child { border-top:0; }
+.cnrow .cnval { font-size:1.1rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.cnrow.off { opacity:.45; }                                       // source switched off in Scan settings
 .hometop .hrule { border-top:1px solid $color-border; margin:10px 0; }   // divider: device counts | the rest
 
 // App-bar status icons (time / GPS / DB): small, white when active / gray when not.

@@ -11,6 +11,7 @@ import { openWhitelist, wlCmd, refreshWhitelist, addWhitelistRule, wlKindChanged
 import { openMap, mapCurrent, renderMap, plotCsvText } from './features/map.js';
 import { openFollowList } from './features/followers.js';
 import { openStatusInfo, renderStatusInfo } from './features/statusinfo.js';
+import { openCounts } from './features/counts.js';
 import { reacquireWake } from './wakelock.js';
 import { showPage } from './nav.js';
 import { renderCatChips, renderScanCounts } from './features/categories.js';
@@ -47,6 +48,12 @@ $("statusDlg").addEventListener("click", e=>{
   else if(e.target.id === "siConnect"){ $("statusDlg").close(); connect(); }   // connect() needs this user gesture
 });
 new MutationObserver(renderStatusInfo).observe($("conn"), { attributes:true, childList:true });   // BT state -> modal
+
+// Home summary card: tap (or Enter/Space) -> the scan-summary modal with every count spelled out.
+$("homeTop").onclick = openCounts;
+$("homeTop").addEventListener("keydown", e=>{ if(e.key === "Enter" || e.key === " "){ e.preventDefault(); openCounts(); } });
+$("countsClose").onclick = ()=> $("countsDlg").close();
+$("countsDlg").addEventListener("click", e=>{ if(e.target === $("countsDlg")) $("countsDlg").close(); });
 
 // Whitelist "kind" select -> pattern length rules (+ initial pass).
 $("wlKind").addEventListener("change", wlKindChanged);

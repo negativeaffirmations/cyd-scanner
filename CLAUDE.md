@@ -529,8 +529,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   **app bar** holds the title, the **time / GPS / DB status icons** (small; white when active, gray
   when not), and the **Bluetooth connection icon** (gray `bluetooth_disabled` / yellow searching /
   white connected). The five pages:
-    - **Home** — scan-type counts (4 centered columns; a column grays when its source is off in Scan
-      Settings), a counts/tiers card (Probe + Unique over Suspect/Likely/Confirmed), and the
+    - **Home** — one summary card: the connected **unit name** (STATUS `name=`, moved here from the app
+      bar 2026-10-24) over the scan-type counts (4 centered columns; a column grays when its source is off
+      in Scan Settings) and a short-label row **PRB · UNIQ · SUSP · LKLY · CONF** (labels never wrap);
+      **tap the card → `#countsDlg`** "Scan summary" listing every count spelled out (`features/counts.js`,
+      live-refreshed from `ble/status.js`; disabled sources read "off"); and the
       **Threats** readout: the full 12-category taxonomy as color-coded cards (**3/row × 4 rows**,
       matching the CYD HOME tile layout) —
       each card's **outline is its category colour at all times** (per-category palette **`CAT_COL`**
