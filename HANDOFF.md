@@ -1,5 +1,12 @@
 # Handoff — 2026-10-23 (branch: `main`; it is the only branch / the trunk)
 
+## TODO 2026-10-24 — answer scan-analyzer's 10-23 18:21 bridge message (owner deferred it to tomorrow)
+1. Bump `FW_VERSION` `"0.11.0"` → `"0.12.0"` ([host_log.h:85](src/host_common/host_log.h#L85); comment: link v11
+   `bssid` + `data`/`dl`) so the meta line shows v11 firmware. Build + reflash **both hosts** (CYD + XIAO-S3).
+2. Owner uploads an SD log from the reflashed CYD to scan-analyzer (their first real test of the `bssid`/`data` rows).
+3. Reply on the bridge (fw bumped, log uploaded). Their server side is built (schema v9) but not committed yet,
+   pending the owner's OK.
+
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
 Webapp `#uiver` = `wifi-role+data`, `style.css?v=20261023a`. `FW_VERSION` NOT bumped (still 0.11.0).
