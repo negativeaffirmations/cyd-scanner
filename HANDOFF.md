@@ -6,8 +6,9 @@
    the C5 was already v11) and **mini S3** (COM16, identified by esptool MAC `10:b4:1d:e7:ed:a0` = scanner_id
    `a0ede71db410`; boots OK, `CFLO-MINI-GABAME`; `link=down`/`RTC not found` only because the xiao_c5 was unplugged,
    switch off and battery flat — expected per owner). xiao_c5 needs no reflash (already v11).
-2. Owner uploads an SD log from the reflashed CYD to scan-analyzer (their first real test of the `bssid`/`data` rows).
-3. Reply on the bridge (fw bumped, log uploaded). Their server side is built (schema v9) but not committed yet,
+2. ~~Owner uploads an SD log from the reflashed CYD~~ — not needed: both 2026-10-24 mini drives (sessions 29, 34) carry
+   v11 `bssid`/`data`/`dl`; verified (every `data` row has a `bssid`, none elsewhere; most APs also logged as AP rows).
+3. ~~Reply on the bridge~~ — done (fw bumps + v11 verification posted). Their server side is built (schema v9) but not committed yet,
    pending the owner's OK.
 4. **Phone pocketed → GPS fallback — BUILT 2026-10-24, fw 0.13.0 (committed + pushed after scan-analyzer ACKed
    `fix_age` on the bridge; mini S3 + CYD flashed, CYD link + scanning verified).** Bug: phone GPS never expired on the host (`g_haveGps` set once, never cleared, not even on
