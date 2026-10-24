@@ -589,11 +589,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   Code task). **Edit the SCSS**, not the generated-but-committed `style.css` (Pages doesn't run Sass;
   `node_modules/` git-ignored). **Deploy caching:** GitHub Pages serves every asset (HTML included)
   with `cache-control: max-age=600`, which overrides the HTML's `<meta http-equiv>` no-cache — so a
-  fresh push can look unchanged on an already-loaded phone for ~10 min. **BUMP `style.css?v=<token>`
-  whenever `style.css` changes, and BUMP the `#uiver` footer string on EVERY webapp deploy** (the
-  human "is the new build live?" readout; once it flips, that deploy's JS is live too). JS modules
-  can't be token-versioned (no build step) — they ride the 10-min revalidation. See HANDOFF "Webapp
-  cache / deploy-propagation". **JS = native ES modules** (`<script type="module" src="js/main.js">`,
+  fresh push can look unchanged on an already-loaded phone for ~10 min. **On EVERY webapp deploy BUMP
+  the shared `?v=<token>` on BOTH `style.css?v=` and the entry `js/main.js?v=` (2026-10-24: a new page
+  with a cached old main.js left the new Home card dead), plus the `#uiver` footer string** (the
+  human "is the new build live?" readout). Only the entry module can carry the token (no build step):
+  modules it imports still ride the 10-min revalidation, so put a feature's DOM wiring in main.js (or a
+  NEW file) when it must work the moment the page updates. See HANDOFF "Webapp
+  cache / deploy-propagation". **JS = native ES modules** (`<script type="module" src="js/main.js?v=…">`,
   no bundler): `config.js`, `state.js` (the one cross-module mutable-state object — ESM exports are
   read-only live bindings), `nav.js`, `wakelock.js`, `util/` (`dom`,`format`), `ble/` (`connection`,
   `status`,`commands`,`download`), `gps.js`, `data/parse.js`, `features/` (`detections`,`categories`,
