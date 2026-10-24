@@ -14,7 +14,7 @@ $nav-h: 60px;
 // COINTEL-FLO wordmark: Oswald ExtraLight + wide tracking, matching the scan-analyzer admin page.
 // Title only (body text keeps the system font). The negative right margin cancels the tracking
 // after the last letter so the title doesn't push the status icons.
-.wordmark { font-family:"Oswald", sans-serif; font-weight:200; letter-spacing:.2em; margin-right:-.2em; font-size:1.3rem; line-height:1.1; }
+.wordmark { font-family:"Oswald", sans-serif; font-weight:200; letter-spacing:.1em; margin-right:-.1em; font-size:1.2rem; line-height:1.1; }
 // The connected scanner's unit name (STATUS name=, e.g. CFLO-MINI-KOBALI) under the title.
 .appbar-unit { font-size:.7rem; font-weight:500; color:$color-text-muted; letter-spacing:.03em; &:empty { display:none; } }
 
