@@ -1,11 +1,21 @@
 # Handoff — 2026-10-23 (branch: `main`; it is the only branch / the trunk)
 
-## TODO 2026-10-24 — answer scan-analyzer's 10-23 18:21 bridge message (owner deferred it to tomorrow)
-1. Bump `FW_VERSION` `"0.11.0"` → `"0.12.0"` ([host_log.h:85](src/host_common/host_log.h#L85); comment: link v11
-   `bssid` + `data`/`dl`) so the meta line shows v11 firmware. Build + reflash **both hosts** (CYD + XIAO-S3).
+## TODO 2026-10-24 — answer scan-analyzer's 10-23 18:21 bridge message (IN PROGRESS)
+1. ~~Bump `FW_VERSION` `"0.11.0"` → `"0.12.0"`~~ — **DONE 2026-10-24** ([host_log.h:85](src/host_common/host_log.h#L85)).
+   Flashed **CYD** (COM14: boot OK, `link=up`, detections flowing; its C5 not reflashed — FW_VERSION is host-only and
+   the C5 was already v11) and **mini S3** (COM16, identified by esptool MAC `10:b4:1d:e7:ed:a0` = scanner_id
+   `a0ede71db410`; boots OK, `CFLO-MINI-GABAME`; `link=down`/`RTC not found` only because the xiao_c5 was unplugged,
+   switch off and battery flat — expected per owner). xiao_c5 needs no reflash (already v11).
 2. Owner uploads an SD log from the reflashed CYD to scan-analyzer (their first real test of the `bssid`/`data` rows).
 3. Reply on the bridge (fw bumped, log uploaded). Their server side is built (schema v9) but not committed yet,
    pending the owner's OK.
+4. **Open question raised 2026-10-24 (phone pocketed → GPS):** phone GPS NEVER expires on the host
+   (`phone::g_haveGps` is set on the first write and never cleared, not even on disconnect), so once a phone has sent
+   one fix `posLat()/posLon()` keep returning that frozen fix and the onboard NEO-6M fallback never takes over. A
+   screen-off Android Chrome page stops `watchPosition`, so a pocketed phone pins every later row to the last fix.
+   Time is fine (phone epoch free-runs on `millis()`). Proposed fix (not built, awaiting owner): treat phone GPS as
+   stale after ~60–90 s without a write (the webapp keeps-alive every 30 s while moving) and on disconnect, then fall
+   back to onboard.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
