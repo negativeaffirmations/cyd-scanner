@@ -408,13 +408,14 @@ static void drawBatteryGlyph() {
 // when it comes from the onboard NEO-6M module. Dim-grey pin with no badge when there's no fix.
 // Colour also tracks source (white = phone, cyan = module) to match the old text. Tapping it opens
 // the GPS modal (serviceGpsModal). Footprint sits ~6 px left of the battery so the right cluster
-// (GPS / battery / lock / phone / link-dot) stays evenly spaced.
+// (GPS / battery / lock / phone / link-dot) stays evenly spaced. An orange pin with no badge = no live
+// fix, the last known position is being held (logged rows carry "fix_age").
 static int gpsX() { return (lockCx() - 30) - 22; }   // left edge of the GPS glyph footprint
 static void drawGpsGlyph() {
   int xo = gpsX();
   tft.fillRect(xo - 2, 2, 20, 17, TFT_BLACK);        // clear the footprint (source badge changes)
-  int src = posSource();                             // 0 none / 1 phone / 2 module
-  uint16_t c = src == 0 ? 0x4208 : (src == 2 ? TFT_CYAN : TFT_WHITE);
+  int src = posSource();                             // 0 none / 1 phone / 2 module / 3 held
+  uint16_t c = src == 0 ? 0x4208 : src == 3 ? TFT_ORANGE : (src == 2 ? TFT_CYAN : TFT_WHITE);
   int cx = xo + 4, cy = 7, r = 3;                    // map-pin head + point
   tft.fillCircle(cx, cy, r, c);
   tft.fillTriangle(cx - r, cy + 1, cx + r, cy + 1, cx, cy + 8, c);
@@ -2724,8 +2725,8 @@ static void drawGpsModal() {
   tft.setTextColor(UI_ACCENT, TFT_BLACK);
   tft.drawString("GPS", bx + bw / 2, by + 8, 4);
   int src = posSource();
-  const char* srcName = src == 2 ? "Module (NEO-6M)" : src == 1 ? "Phone (linked)" : "No fix";
-  uint16_t    sc      = src == 2 ? TFT_CYAN          : src == 1 ? TFT_WHITE         : TFT_DARKGREY;
+  const char* srcName = src == 3 ? "Last known" : src == 2 ? "Module (NEO-6M)" : src == 1 ? "Phone (linked)" : "No fix";
+  uint16_t    sc      = src == 3 ? TFT_ORANGE   : src == 2 ? TFT_CYAN          : src == 1 ? TFT_WHITE         : TFT_DARKGREY;
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   tft.drawString("Source:", bx + 12, by + 44, 2);
@@ -2737,6 +2738,8 @@ static void drawGpsModal() {
     snprintf(b, sizeof(b), "Lat: %.6f", posLat()); tft.drawString(b, bx + 12, by + 68, 2);
     snprintf(b, sizeof(b), "Lon: %.6f", posLon()); tft.drawString(b, bx + 12, by + 88, 2);
     if (src == 2) { snprintf(b, sizeof(b), "Satellites: %u", (unsigned)g_onbSats);
+                    tft.drawString(b, bx + 12, by + 106, 1); }
+    if (src == 3) { snprintf(b, sizeof(b), "No live fix - held %lus", (unsigned long)posFixAgeS());
                     tft.drawString(b, bx + 12, by + 106, 1); }
   } else {
     tft.drawString("No position fix yet.", bx + 12, by + 72, 2);

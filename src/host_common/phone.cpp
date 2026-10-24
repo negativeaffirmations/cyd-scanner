@@ -25,6 +25,7 @@ bool     g_haveTime   = false;
 int      g_tzOffMin   = 0;   // UTC-local offset (min); loaded from NVS at begin(), updated on sync
 float    g_lat = 0, g_lon = 0;
 bool     g_haveGps    = false;
+uint32_t g_gpsMs      = 0;      // millis() of the last phone GPS write (freshness, see hasGps())
 bool     g_download   = false;
 bool     g_reload     = false;
 bool     g_logReq     = false;
@@ -103,7 +104,7 @@ class WriteCB : public NimBLECharacteristicCallbacks {
       // Reject nan/inf/out-of-range so the NDJSON log never gets a non-JSON lat/lon.
       if (sscanf(val.c_str(), "%f,%f", &la, &lo) == 2 && isfinite(la) && isfinite(lo) &&
           la >= -90.0f && la <= 90.0f && lo >= -180.0f && lo <= 180.0f) {
-        g_lat = la; g_lon = lo; g_haveGps = true;
+        g_lat = la; g_lon = lo; g_haveGps = true; g_gpsMs = millis();
         Serial.printf("[phone] gps: %.5f,%.5f\n", la, lo);
       }
     } else if (uuid == CMD_UUID) {
@@ -276,7 +277,12 @@ bool     connected()        { return g_connected; }
 bool     hasTime()          { return g_haveTime; }
 uint32_t epochNow()         { return g_haveTime ? g_epochBase + (millis() - g_baseMillis) / 1000 : 0; }
 int      tzOffsetMin()      { return g_tzOffMin; }
-bool     hasGps()           { return g_haveGps; }
+// A phone fix is LIVE only while the phone is connected and wrote one within PHONE_GPS_STALE_MS: a
+// pocketed (screen-off) Android Chrome page stops watchPosition, so without this its last fix would pin
+// every later row. The webapp keeps-alive every 30 s while moving, so 90 s won't flap on a live phone.
+bool     hasGps()           { return g_haveGps && g_connected && millis() - g_gpsMs < PHONE_GPS_STALE_MS; }
+bool     hadGps()           { return g_haveGps; }
+uint32_t gpsAtMs()          { return g_gpsMs; }
 float    lat()              { return g_lat; }
 float    lon()              { return g_lon; }
 bool     downloadRequested(){ return g_download; }

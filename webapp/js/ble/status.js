@@ -29,12 +29,13 @@ export function onStatus(ev){
     el.title = ts===3 ? "Time: RTC" : ts===2 ? "Time: onboard GPS" : ts===1 ? "Time: phone-synced" : "Time: not set";
   }
   if("gps" in kv) $("gpsState").classList.toggle("on", kv.gps==="1");
-  if("gpssrc" in kv || "sats" in kv){            // v9: which source is live (1 phone / 2 onboard) + module sats
+  if("gpssrc" in kv || "sats" in kv){            // v9: which source is live (1 phone / 2 onboard / 3 held last-known) + module sats
     const src = +kv.gpssrc||0, sats = +kv.sats||0, el = $("gpsState"), sl = $("gpsSats");
     el.classList.toggle("onboard", src===2);     // cyan tint when the onboard NEO-6M is the active fix
     sl.textContent = (src===2 && sats>0) ? sats : "";   // show sat count only when onboard is driving
     el.title = src===2 ? ("GPS: onboard · "+sats+" sat"+(sats===1?"":"s"))
              : src===1 ? "GPS: phone"
+             : src===3 ? "GPS: no live fix · logging the last known position"
              : (sats>0 ? ("GPS: no fix · onboard "+sats+" sat"+(sats===1?"":"s")+" in view") : "GPS: no fix");
   }
   // Gray the sync button once both time and GPS are synced.

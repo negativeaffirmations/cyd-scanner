@@ -108,13 +108,16 @@ void updateEvents();
 // --- Unified position + wall-clock (phone preferred, onboard C5 GPS fallback) ---
 extern bool     g_onbValid;
 extern float    g_onbLat, g_onbLon;
+extern uint32_t g_onbAtMs;       // millis() of the last Status carrying an onboard fix (0 = never)
 extern uint8_t  g_onbSats;
 extern uint32_t g_gpsEpochUtc;   // last UTC epoch from Status.gpsEpoch (0 = never)
 extern uint32_t g_gpsEpochAtMs;  // millis() when it was latched
-bool     posHasFix();
+bool     posLive();              // a live fix right now (fresh phone, else live onboard)
+bool     posHasFix();            // any position: live, or the held last-known fix
 float    posLat();
 float    posLon();
-int      posSource();            // 0 none / 1 phone / 2 onboard
+int      posSource();            // 0 none / 1 phone / 2 onboard / 3 held (last known, not live)
+uint32_t posFixAgeS();           // seconds since the held fix was current; 0 while live (or no fix)
 bool     timeHasSync();
 int      timeSource();           // 0 none / 1 phone / 2 GPS / 3 RTC
 uint32_t epochLocal();

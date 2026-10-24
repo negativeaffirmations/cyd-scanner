@@ -190,15 +190,40 @@ void computeScores() {
 uint16_t g_deauthRecent = 0;
 uint8_t  g_evilCount = 0, g_ridCount = 0;
 
-// Unified position: phone GPS is PREFERRED, the C5's onboard NEO-6M fix (Status, v9) is the
-// FALLBACK. With no onboard GPS the Status carries gpsFix=0, so this is phone-only as before.
-bool    g_onbValid = false;
-float   g_onbLat = 0, g_onbLon = 0;
-uint8_t g_onbSats = 0;   // satellites the onboard NEO-6M reports (0 = none; nonzero even pre-fix during acquisition)
-bool  posHasFix() { return phone::hasGps() || g_onbValid; }
-float posLat()    { return phone::hasGps() ? phone::lat() : g_onbLat; }
-float posLon()    { return phone::hasGps() ? phone::lon() : g_onbLon; }
-int   posSource() { return phone::hasGps() ? 1 : (g_onbValid ? 2 : 0); }  // 0 none / 1 phone / 2 onboard
+// Unified position: a LIVE phone fix is PREFERRED, a live onboard NEO-6M fix (Status, v9) is the
+// FALLBACK, and with neither live the most recent fix from either source is HELD (rows keep a
+// position, marked "fix_age" in the log so readers know it is inferred). With no onboard GPS the
+// Status carries gpsFix=0, so this is phone-only as before.
+bool     g_onbValid = false;   // the C5's last Status reported a fix
+float    g_onbLat = 0, g_onbLon = 0;   // last onboard fix (kept after it is lost: the held fallback)
+uint32_t g_onbAtMs = 0;        // millis() of the last Status carrying an onboard fix (0 = never)
+uint8_t  g_onbSats = 0;   // satellites the onboard NEO-6M reports (0 = none; nonzero even pre-fix during acquisition)
+// Status arrives every ~2 s poll; a dropped link must not leave the last onboard fix looking live.
+static constexpr uint32_t ONB_STALE_MS = 10000;
+static bool onbLive() { return g_onbValid && g_onbAtMs && millis() - g_onbAtMs < ONB_STALE_MS; }
+// Held fallback = whichever source fixed most recently (wrap-safe age compare).
+static bool heldIsPhone() {
+  if (!g_onbAtMs) return true;
+  if (!phone::hadGps()) return false;
+  return millis() - phone::gpsAtMs() <= millis() - g_onbAtMs;
+}
+bool  posLive()   { return phone::hasGps() || onbLive(); }
+bool  posHasFix() { return posLive() || phone::hadGps() || g_onbAtMs; }
+float posLat() {
+  if (phone::hasGps()) return phone::lat();
+  if (onbLive())       return g_onbLat;
+  return heldIsPhone() ? phone::lat() : g_onbLat;
+}
+float posLon() {
+  if (phone::hasGps()) return phone::lon();
+  if (onbLive())       return g_onbLon;
+  return heldIsPhone() ? phone::lon() : g_onbLon;
+}
+int posSource() { return phone::hasGps() ? 1 : onbLive() ? 2 : posHasFix() ? 3 : 0; }  // 0 none / 1 phone / 2 onboard / 3 held
+uint32_t posFixAgeS() {
+  if (posLive() || !posHasFix()) return 0;
+  return (millis() - (heldIsPhone() ? phone::gpsAtMs() : g_onbAtMs)) / 1000;
+}
 
 // Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
 // is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
@@ -467,7 +492,7 @@ void updateFollowState() {
   g_followCount = w;
 
   uint32_t nowWin = now / FOLLOW_WINDOW_MS;
-  bool  gps = posHasFix();
+  bool  gps = posLive();  // a held (last-known) fix would read as "not moving": spatial scoring uses live fixes only
   float lat = 0, lon = 0, cosLat = 1.0f;
   int32_t qLat = 0, qLon = 0;
   if (gps) {

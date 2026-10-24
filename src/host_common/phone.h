@@ -38,7 +38,10 @@ int      tzOffsetMin();  // last phone tz offset (UTC-local minutes, JS getTimez
                          // in NVS so a GPS-only (phone-less) boot can still show local time. 0 until set.
 
 // GPS
-bool  hasGps();
+constexpr uint32_t PHONE_GPS_STALE_MS = 90000;  // phone fix older than this (or phone gone) is not live
+bool     hasGps();    // a LIVE phone fix: connected + written within PHONE_GPS_STALE_MS
+bool     hadGps();    // the phone has sent a fix at some point this boot (lat()/lon() hold the last one)
+uint32_t gpsAtMs();   // millis() of the last phone fix
 float lat();
 float lon();
 

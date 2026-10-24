@@ -370,6 +370,15 @@ static void lnAppend(char* ln, int& n, const char* fmt, ...) {
   else n += w;
 }
 
+// Scanner position for a log line: ,"lat":..,"lon":.. when any fix exists, plus ,"fix_age":<s> when that
+// fix is HELD (no live phone or onboard fix; the last known one is reused), so readers can tell an
+// inferred position from a live one. Omitted entirely with no fix ever.
+static void appendPos(char* ln, int& n) {
+  if (!posHasFix() || !isfinite(posLat()) || !isfinite(posLon())) return;
+  lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+  if (!posLive()) lnAppend(ln, n, ",\"fix_age\":%lu", (unsigned long)posFixAgeS());
+}
+
 int logNewDetections() {
   int n = 0;
   LogStream& st = activeStream();  // headless bg cycle -> bg stream; on-screen scan -> fg stream
@@ -377,7 +386,6 @@ int logNewDetections() {
   File f;  // opened lazily on the first new detection so idle boots write no file
   uint32_t ms = millis();
   uint32_t epoch = epochLocal();
-  bool gps = posHasFix();
   for (int i = 0; i < g_detCount; i++) {
     const Detection& d = g_dets[i];
     int si = seenFind(st, d);
@@ -416,8 +424,7 @@ int logNewDetections() {
     char ln[LOG_LINE];
     int n2 = 0;
     lnAppend(ln, n2, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epoch, (unsigned long)ms);
-    if (gps && isfinite(posLat()) && isfinite(posLon()))
-      lnAppend(ln, n2, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+    appendPos(ln, n2);
     lnAppend(ln, n2,
              ",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"rssi\":%d,\"ch\":%d",
              srcTag(d), d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
@@ -450,13 +457,12 @@ int logNewDetections() {
 }
 
 // One {"evt":"lastseen"} line for a presence period (see DEPART_MS in host_log.h).
-static void lastSeenLine(File& f, const SeenKey& k, uint32_t epoch, uint32_t ms, bool gps) {
+static void lastSeenLine(File& f, const SeenKey& k, uint32_t epoch, uint32_t ms) {
   static const char* const kTag[] = {"2.4", "5G", "BLE", "PRB", "154"};
   char ln[LOG_LINE];
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epoch, (unsigned long)ms);
-  if (gps && isfinite(posLat()) && isfinite(posLon()))
-    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+  appendPos(ln, n);
   lnAppend(ln, n, ",\"evt\":\"lastseen\",\"src\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
            kTag[k.srcType < 5 ? k.srcType : 0], k.mac[0], k.mac[1], k.mac[2], k.mac[3], k.mac[4], k.mac[5]);
   if (k.source == (uint8_t)Source::Ieee802154 && k.pan) lnAppend(ln, n, ",\"pan\":\"%04X\"", k.pan);
@@ -477,15 +483,14 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all) {
   File f = SD.open(st.path, FILE_APPEND);
   if (!f) { if (evict) g_evictedN = 0; return; }
   uint32_t epoch = epochLocal();
-  bool gps = posHasFix();
   if (evict) {
-    for (int i = 0; i < g_evictedN; i++) lastSeenLine(f, g_evicted[i], epoch, ms, gps);
+    for (int i = 0; i < g_evictedN; i++) lastSeenLine(f, g_evicted[i], epoch, ms);
     g_evictedN = 0;
   }
   for (int i = 0; i < st.seenCount; i++) {
     SeenKey& k = st.seen[i];
     if (!k.present || !(all || ms - k.lastSeen >= DEPART_MS)) continue;
-    lastSeenLine(f, k, epoch, ms, gps);
+    lastSeenLine(f, k, epoch, ms);
     k.present = 0;
   }
   f.close();
@@ -507,8 +512,7 @@ void logEvent(const char* evt, int count) {
   char ln[LOG_LINE];
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
-  if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-    lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+  appendPos(ln, n);
   lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d", evt, count);
   if (!strcmp(evt, "eviltwin")) {
     static constexpr int EVIL_MAX_BSSID = 8;
@@ -565,8 +569,7 @@ void logRidEvents() {
     char ln[LOG_LINE];
     int n = 0;
     lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
-    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+    appendPos(ln, n);
     lnAppend(ln, n, ",\"evt\":\"rid\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"",
              r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
     if (uas[0]) lnAppend(ln, n, ",\"uas\":\"%s\"", uas);
@@ -633,8 +636,7 @@ void logFollowEvents() {
     char ln[LOG_LINE];
     int n = 0;
     lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
-    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-      lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
+    appendPos(ln, n);
     lnAppend(ln, n, ",\"evt\":\"follow\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"score\":%d,\"ftier\":2",
              fs.mac[0], fs.mac[1], fs.mac[2], fs.mac[3], fs.mac[4], fs.mac[5], (int)fs.score);
     if (safe[0])    lnAppend(ln, n, ",\"name\":\"%s\"", safe);

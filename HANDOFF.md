@@ -9,13 +9,25 @@
 2. Owner uploads an SD log from the reflashed CYD to scan-analyzer (their first real test of the `bssid`/`data` rows).
 3. Reply on the bridge (fw bumped, log uploaded). Their server side is built (schema v9) but not committed yet,
    pending the owner's OK.
-4. **Open question raised 2026-10-24 (phone pocketed → GPS):** phone GPS NEVER expires on the host
-   (`phone::g_haveGps` is set on the first write and never cleared, not even on disconnect), so once a phone has sent
-   one fix `posLat()/posLon()` keep returning that frozen fix and the onboard NEO-6M fallback never takes over. A
-   screen-off Android Chrome page stops `watchPosition`, so a pocketed phone pins every later row to the last fix.
-   Time is fine (phone epoch free-runs on `millis()`). Proposed fix (not built, awaiting owner): treat phone GPS as
-   stale after ~60–90 s without a write (the webapp keeps-alive every 30 s while moving) and on disconnect, then fall
-   back to onboard.
+4. **Phone pocketed → GPS fallback — BUILT 2026-10-24, fw 0.13.0 (committed + pushed after scan-analyzer ACKed
+   `fix_age` on the bridge; mini S3 flashed, CYD NOT yet — it was unplugged).** Bug: phone GPS never expired on the host (`g_haveGps` set once, never cleared, not even on
+   disconnect), so a pocketed phone (screen-off Chrome stops `watchPosition`) pinned every later row to its last fix
+   and the onboard NEO-6M never took over. Time was always fine (phone epoch free-runs on `millis()`).
+   Fix (owner-approved; owner chose "hold the last fix when no GPS, and mark it"):
+   - `phone::hasGps()` = connected AND written within `PHONE_GPS_STALE_MS` 90 s; `hadGps()`/`gpsAtMs()` added.
+     Onboard is live only while a Status carried a fix within 10 s (`g_onbAtMs`; a dropped link no longer leaves it live).
+   - Order: live phone > live onboard > HELD most-recent fix of either (`posSource()`=3). `posLive()` +
+     `posFixAgeS()` in host_core.
+   - **Log: `"fix_age":<s>` right after `lon` on EVERY line carrying lat/lon, only when held** (new `appendPos()`
+     helper in host_log.cpp replaced 6 copies). Absent = live.
+   - Follow scoring uses `posLive()` only. STATUS `gps=` = live only; `gpssrc=3` = held. CYD: orange GPS pin,
+     modal "Last known · No live fix - held Ns". Webapp: icon tooltip + status-info text for gpssrc 3; `#uiver`
+     = `gps-held` (no CSS change).
+   - scan-analyzer ACK (bridge 2026-10-24): name/shape fine; keep it absent for a live fix (never `"fix_age":0` for
+     live) — already the case. Their column + down-weighting of held rows is planned, not built.
+   - **Pending:** flash the CYD;
+     field-check (connect phone, let it send a fix, turn screen off, wait >90 s, confirm rows gain `fix_age` and the
+     CYD pin turns orange, or cyan if the onboard GPS has sky). Webapp Explore/Map don't surface `fix_age` yet.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.

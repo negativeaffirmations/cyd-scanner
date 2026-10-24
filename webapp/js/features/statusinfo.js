@@ -25,10 +25,13 @@ const ROWS = [
     } },
   { id:"gpsState", name:"Position (GPS)",
     desc:"The location stamped on each logged detection (used by the Map). The phone's GPS is " +
-         "preferred; the scanner's onboard GPS module is the fallback (cyan, with its satellite count).",
+         "preferred; the scanner's onboard GPS module is the fallback (cyan, with its satellite count). " +
+         "With neither live (e.g. the phone screen is off), the last known position is reused and those " +
+         "log rows are marked with how old it is.",
     status(k){
       const src = +k.gpssrc || 0, sats = +k.sats || 0;
       const lg = state.lastGps, phone = lg && lg.t ? " · phone fix " + lg.lat.toFixed(5) + ", " + lg.lon.toFixed(5) + " (" + ago(lg.t) + ")" : "";
+      if(src === 3) return ["No live fix · logging the last known position" + (sats ? " · onboard " + sats + " sat" + (sats === 1 ? "" : "s") + " in view" : "") + phone, "warn"];
       if(k.gps !== "1") return ["No fix" + (sats ? " · onboard " + sats + " sat" + (sats === 1 ? "" : "s") + " in view" : "") + phone, "warn"];
       return [(src === 2 ? "Fix · onboard GPS, " + sats + " sat" + (sats === 1 ? "" : "s") : "Fix · phone") + phone, "ok"];
     } },

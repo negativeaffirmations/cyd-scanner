@@ -92,7 +92,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
         g_onbValid = (st->gpsFix != 0) && (st->gpsLat != 0 || st->gpsLon != 0);  // v9 onboard GPS
         g_onbSats  = st->gpsSats;  // sats-in-use, even pre-fix (useful for "is the module seeing sky?")
-        if (g_onbValid) { g_onbLat = st->gpsLat / 1e7; g_onbLon = st->gpsLon / 1e7; }  // divide in double, then store
+        if (g_onbValid) { g_onbLat = st->gpsLat / 1e7; g_onbLon = st->gpsLon / 1e7; g_onbAtMs = millis(); }  // divide in double, then store
         if (st->gpsEpoch != 0) { g_gpsEpochUtc = st->gpsEpoch; g_gpsEpochAtMs = millis(); }  // v10: latch GPS UTC clock
         if (st->scanning != 0) sawStart = true;
         else                   done     = true;

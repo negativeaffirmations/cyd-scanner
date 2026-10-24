@@ -197,6 +197,11 @@ back (5 GHz included). Things that matter, learned the hard way:
   unified `posHasFix()/posLat()/posLon()` accessor and **time through `timeHasSync()/epochLocal()/
   timeSource()`** (log NDJSON, status bar clock, STATUS `gps=`/`time=`/`tsrc=`, follow scoring, session
   rename). **Phone is PREFERRED for both** (it fuses A-GPS/cell); the onboard fix/clock is the **fallback**.
+  **Position freshness (fw 0.13.0):** a phone fix is LIVE only while the phone is connected AND wrote one within
+  `PHONE_GPS_STALE_MS` (90 s) — a pocketed screen-off Android Chrome page stops `watchPosition` — and an onboard
+  fix only while a Status carried it within 10 s. With neither live, `posLat()/posLon()` **hold the most recent
+  fix** from either source (`posSource()`=3) and every log line marks it with `"fix_age":<s>` (see the SD-log
+  notes). Follow scoring uses LIVE fixes only (`posLive()`), so a held fix can't read as "stopped moving".
   GPS time is UTC, so the CYD adds the **last phone tz offset, persisted in NVS** (`cydscan/tzoff`,
   `phone::tzOffsetMin()`), to show LOCAL time with no phone after the first-ever sync (UTC until then); the
   status-bar clock + web time icon are **cyan when GPS keeps time**, white when phone-synced. With no module
@@ -285,7 +290,9 @@ back (5 GHz included). Things that matter, learned the hard way:
   `dlat`/`dlon` the drone position, `olat`/`olon` the
   operator position (deg), `h`/`alt` height/geo-alt (m), `spd` m/s, `hdg` deg, `uas`/`oid` the UAS ID /
   operator ID (JSON-escaped); unknown fields omitted. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
-  once GPS is sent; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
+  once GPS is sent; **`fix_age`** (fw 0.13.0, every line that carries `lat`/`lon`, right after `lon`) = seconds
+  since that position was current, present ONLY when it is a HELD last-known fix (no live phone or onboard GPS) —
+  absent = live; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
   **Follower** events: each device at follow tier 2 (FOLLOWING) gets an `"evt":"follow"` line, rate-limited
   ~once/30 s per MAC (`logFollowEvents`): `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"follow","mac":"AA:BB:…","score":N,"ftier":2,"name":"…","src":"…","flags":"…"}`
   — `lat`/`lon` the scanner's own fix; `score` the 0..100 follow score; `name` (JSON-escaped), `src` (the
@@ -461,9 +468,9 @@ back (5 GHz included). Things that matter, learned the hard way:
     `sess` = current session name, **`deauth`** = recent observed deauth/disassoc rate,
     **`evil`** = evil-twin SSID count, **`rid`** = Remote-ID emitters seen, **`bg`** = background
     scan on/off, **`lock`** = display/touch lock state 0/1, **`bat`** = battery % (−1 = no cell / on
-    USB), **`gpssrc`** = active position source 0 none/1 phone/2 onboard, **`sats`** = onboard-GPS
+    USB), **`gpssrc`** = active position source 0 none/1 phone/2 onboard/3 held last-known, **`sats`** = onboard-GPS
     satellites in use, **`tsrc`** = active time source 0 none/1 phone/2 onboard GPS (v10; `time` = 1
-    when EITHER source has the clock); `gps` = 1 when EITHER phone or onboard has a fix;
+    when EITHER source has the clock); `gps` = 1 when EITHER phone or onboard has a LIVE fix (0 while held);
     **`sid`** = stable scanner id (eFuse base MAC, 12 hex lc — opaque), **`fw`** = firmware version
     string, **`dbgen`** = sig-DB generation — the **scan-provenance** fields the web app prepends as a
     `{"evt":"meta",…}` record on each live-POST batch; file uploads carry the same meta as line 1 of
