@@ -17,6 +17,7 @@
 import { state } from '../state.js';
 import { $, log, esc, toast } from '../util/dom.js';
 import { enc, TIER_NAMES } from '../config.js';
+import { scannerFix } from '../gps.js';
 
 // --- persisted config (localStorage) ------------------------------------------------------------
 const LS = { server:"rs.server", key:"rs.key", dev:"rs.deviceId", live:"rs.live" };
@@ -163,14 +164,15 @@ function metaLine(){
 }
 
 // Build one reduced, log-shaped NDJSON line from a live DETS row. Omits the fields the web app can't
-// produce (ch/ie/cid/uuid/pan/score/sig) per the contract; lat/lon = the phone's own fix (omitted
-// when there's no fix). epoch = LOCAL seconds, ms = phone wall-clock ms (unique per snapshot for the
-// server's session+ms dedup).
-function liveRow(r, sess, epoch, ms){
-  const g = state.lastGps, haveFix = !!(g && g.t && (g.lat || g.lon));
+// produce (ch/ie/cid/uuid/pan/score/sig) per the contract; lat/lon = the scanner's own position (the
+// one its file log stamps, via STATUS pos=; omitted with no fix) + fix_age when the log would mark it
+// held / aged. epoch = LOCAL seconds, ms = phone wall-clock ms (unique per snapshot for the server's
+// session+ms dedup).
+function liveRow(r, sess, epoch, ms, fix){
   const srcs = (r.sources||[]).slice().sort((a,b)=>b.rssi-a.rssi);
   const o = { live:1, session:sess, epoch, ms, src: srcs.length?srcs[0].tag:"", mac:r.mac, rssi:r.rssi };
-  if(haveFix){ o.lat = +g.lat.toFixed(6); o.lon = +g.lon.toFixed(6); }
+  if(fix){ o.lat = +fix.lat.toFixed(6); o.lon = +fix.lon.toFixed(6);
+    if(fix.fixAge !== undefined) o.fix_age = fix.fixAge; }
   if(r.name) o.name = r.name;
   const tn = typeof r.tier==="number" ? r.tier : 0;
   if(tn>0) o.tier = TIER_NAMES[tn];
@@ -187,7 +189,8 @@ export function maybePostLive(rows){
   const epoch = localEpoch();
   const baseMs = Date.now();
   const meta = metaLine();
-  const body = (meta ? meta+"\n" : "") + rows.map((r,i)=> liveRow(r, sess, epoch, baseMs+i)).join("\n") + "\n";
+  const fix = scannerFix();   // one position per snapshot, like the file log's per-cycle stamp
+  const body = (meta ? meta+"\n" : "") + rows.map((r,i)=> liveRow(r, sess, epoch, baseMs+i, fix)).join("\n") + "\n";
   livePosting = true;
   fetch(api("/api/v1/detections"), {
     method:"POST", headers: authHeaders({ "Content-Type":"application/x-ndjson" }), body

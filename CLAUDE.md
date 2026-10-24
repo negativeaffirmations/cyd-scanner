@@ -469,15 +469,21 @@ back (5 GHz included). Things that matter, learned the hard way:
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove · **`"P:<t><g>"`** time / GPS source preference (fw 0.15.0; each digit 0 prefer phone /
     1 prefer device / 2 device only; NVS `cydui/tpref`,`gpref`; web Settings "Time & location sources")
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2). Keys:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,sid,fw,dbgen`
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2). Keys:
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,pos,pfa,sid,fw,dbgen`
     (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device. Device GPS = a live
     onboard fix; device clock (0.15.0) = the onboard GPS is supplying time right now OR the RTC holds a valid
     time — i.e. "an on-device fallback is ready"; a disabled (device-only) phone reads unavailable. The web app
     bar draws them as two stacked dots right of the location / clock icon — blue phone on top, purple device
     below, grey when unavailable — and tints the icon with the source in use (`gpssrc`/`tsrc`; orange GPS
     icon = held; `renderSourceIcons()` in `js/ble/status.js`). **`tpref`/`gpref`** (0.15.0) = the source
-    preference; the web Settings selects stay disabled until they arrive.)
+    preference; the web Settings selects stay disabled until they arrive. **`pos`/`pfa`** (0.16.0) = the
+    position the scanner is stamping on its log right now (`lat,lon`, empty with no fix) + the `fix_age` the
+    log would carry (−1 = live); always sent so a merged stale `pfa` can't stick. The web app stamps
+    **live-POST rows** (`features/remote.js`, adds `fix_age` when ≥ 0 — contract addition agreed with
+    scan-analyzer 2026-10-24) and the device-modal **sighting trail** (live fixes only) with it via
+    `scannerFix()` in `js/gps.js` — NOT the phone's last fix, which froze ~10.7 min of live rows on the
+    2026-10-24 drive after screen-off. Older firmware: phone fix only while < 10 s old.)
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),

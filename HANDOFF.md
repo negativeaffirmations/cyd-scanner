@@ -58,6 +58,13 @@
      at most every 5 s, moving or not, skips any position the phone reports as > 10 s old, and no longer logs each
      send. Fresher positions, not hidden markers: rows only lose `fix_age` because the fix is actually current.
      `#uiver` = `gps-5s`.
+7. **fw 0.16.0 — live-POST rows use the SCANNER's position (2026-10-24, CYD + mini S3 FLASHED, links up).**
+   scan-analyzer found the mini drive's live rows frozen 13:38:39→13:49:21 (~10.7 min, 84 rows, no marker): the
+   webapp stamped live rows with the phone's last fix (`state.lastGps`), and screen-off stopped geolocation but not
+   the page (BLE + POSTs kept going). Fix: STATUS part 2 gains `pos=lat,lon` + `pfa=<fix_age|-1>` (what the file log
+   stamps now); `scannerFix()` in `js/gps.js` → live rows (`remote.js`, + `fix_age` when ≥ 0, owner-approved
+   contract addition, bridge note posted) and the sighting trail (`sightings.js`, live fixes only). Older fw: phone
+   fix only while < 10 s old. No C5 change. `#uiver` = `live-pos`. Not yet field-tested.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.

@@ -18,7 +18,7 @@ void pushStatus() {
   // Wi-Fi AP credentials while a download AP is up -- was silently cut off. The web app handles each
   // notification's keys on their own and merges them, so splitting is backward compatible; keys that
   // are read together (dl + apssid/appsk/apurl) stay in the same part.
-  //   part 1: live counts / state (~215 B)   part 2: dl + gav/tav/tpref/gpref + identity (+ AP creds) (<= ~203 B)
+  //   part 1: live counts / state (~215 B)   part 2: dl + gav/tav/tpref/gpref + identity + pos/pfa (+ AP creds) (<= ~200 B)
   char s[300];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;"
@@ -37,6 +37,17 @@ void pushStatus() {
                     webshare::active() ? 1 : 0,
                     (int)posAvailMask(), (int)timeAvailMask(), (int)g_timePref, (int)g_gpsPref,
                     scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN, scannerName());
+  // pos = the position the scanner is stamping on its log right now (same source order as the file
+  // log; empty with no fix), pfa = the fix_age the log would carry (-1 = live, no marker). The web app
+  // stamps live-POST rows with these, so they match the file log instead of the phone's last fix.
+  // Always sent (pfa=-1 too): the web app merges keys across notifications, so a stale pfa would stick.
+  if (n2 > 0 && n2 < (int)sizeof(s2)) {
+    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
+      n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=%.6f,%.6f;pfa=%ld", posLat(), posLon(),
+                     posAged() ? (long)posFixAgeS() : -1L);
+    else
+      n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=;pfa=-1");
+  }
   if (webshare::active() && n2 > 0 && n2 < (int)sizeof(s2))  // download AP up: the phone draws the join QR from these
     snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s",
              webshare::ssid(), webshare::apPass(), webshare::url());

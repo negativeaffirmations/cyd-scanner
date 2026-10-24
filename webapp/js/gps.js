@@ -3,6 +3,24 @@ import { state } from './state.js';
 import { enc } from './config.js';
 import { log } from './util/dom.js';
 
+// The position the SCANNER is stamping on its log right now: STATUS pos=lat,lon + pfa=<fix_age> (fw >=
+// 0.16; same source order as the file log: fresh phone, else onboard GPS, else held). Returns
+// {lat, lon, fixAge} with fixAge = seconds when the log would mark it held/aged (undefined = live), or
+// null with no fix. Older firmware doesn't send pos: fall back to the phone's own fix, only while < 10 s
+// old, so a frozen phone fix (screen off) is never stamped as current.
+export function scannerFix(){
+  const s = state.status;
+  if ("pos" in s){
+    const [la, lo] = (s.pos || "").split(",").map(Number);
+    if (!s.pos || !isFinite(la) || !isFinite(lo)) return null;
+    const pfa = +s.pfa;
+    return { lat: la, lon: lo, fixAge: pfa >= 0 ? pfa : undefined };
+  }
+  const g = state.lastGps;
+  if (!g || !g.t || (!g.lat && !g.lon) || Date.now() - g.t > 10000) return null;
+  return { lat: g.lat, lon: g.lon, fixAge: undefined };
+}
+
 export async function sendGps(pos, quiet=false){   // quiet: the ~5 s continuous feed doesn't log each send
   try{ const s=pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
     await state.chars.gps.writeValue(enc.encode(s)); if(!quiet) log("GPS sent "+s); }
