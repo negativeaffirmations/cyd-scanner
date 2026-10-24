@@ -197,14 +197,17 @@ back (5 GHz included). Things that matter, learned the hard way:
   unified `posHasFix()/posLat()/posLon()` accessor and **time through `timeHasSync()/epochLocal()/
   timeSource()`** (log NDJSON, status bar clock, STATUS `gps=`/`time=`/`tsrc=`, follow scoring, session
   rename). **Phone is PREFERRED for both** (it fuses A-GPS/cell); the onboard fix/clock is the **fallback**.
-  **Position freshness (fw 0.13.0):** a phone fix is LIVE only while the phone is connected AND wrote one within
-  `PHONE_GPS_STALE_MS` (90 s) — a pocketed screen-off Android Chrome page stops `watchPosition` — and an onboard
-  fix only while a Status carried it within 10 s. With neither live, `posLat()/posLon()` **hold the most recent
-  fix** from either source (`posSource()`=3) and every log line marks it with `"fix_age":<s>` (see the SD-log
-  notes). Follow scoring uses LIVE fixes only (`posLive()`), so a held fix can't read as "stopped moving".
+  **Position freshness (fw 0.13.0, tightened 0.14.0):** the phone is an AVAILABLE source while connected and it
+  wrote a fix within `PHONE_GPS_STALE_MS` (90 s) — a pocketed screen-off Android Chrome page stops
+  `watchPosition` — and the onboard GPS while a Status carried a fix within 10 s. `posSource()`: the phone if
+  its fix is < 10 s old (`PHONE_FIX_FRESH_MS`) or onboard has none; else live onboard; else **hold the most
+  recent fix** of either (3). Log lines carry `"fix_age":<s>` when held OR the fix in use is > 10 s old
+  (`posAged()`; see the SD-log notes). (0.13.0 kept a stale phone fix "live" for the whole 90 s — the
+  2026-10-24 mini drive froze 86 s unmarked before onboard took over.) Follow scoring ignores fixes > 90 s old.
   GPS time is UTC, so the CYD adds the **last phone tz offset, persisted in NVS** (`cydscan/tzoff`,
   `phone::tzOffsetMin()`), to show LOCAL time with no phone after the first-ever sync (UTC until then); the
-  status-bar clock + web time icon are **cyan when GPS keeps time**, white when phone-synced. With no module
+  CYD status-bar clock is **cyan when GPS keeps time**, white when phone-synced (the web icons use source
+  dots — see STATUS `gav`/`tav`). With no module
   fitted the Status carries `gpsFix=0`/`gpsEpoch=0`, so behaviour is identical to phone-only.
   (`PROTOCOL_VERSION` 9→10, `sizeof(Status)`=28; both boards flash together.) **v11** (2026-10-23) adds
   `Detection.bssid[6]` (`sizeof(Detection)`=81) + the data-client flag bits — see the SD-log `bssid`/`data` notes.
@@ -291,7 +294,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   operator position (deg), `h`/`alt` height/geo-alt (m), `spd` m/s, `hdg` deg, `uas`/`oid` the UAS ID /
   operator ID (JSON-escaped); unknown fields omitted. `epoch` is LOCAL time once synced (0 before); `lat`/`lon`
   once GPS is sent; **`fix_age`** (fw 0.13.0, every line that carries `lat`/`lon`, right after `lon`) = seconds
-  since that position was current, present ONLY when it is a HELD last-known fix (no live phone or onboard GPS) —
+  since that position was current, present ONLY when it is a HELD last-known fix (no live phone or onboard GPS)
+  or, from fw 0.14.0, when the fix in use is > 10 s old (a phone between sparse updates) —
   absent = live; `score`/`tier`/`sig` from the signature DB (tier also floored by any flag hit).
   **Follower** events: each device at follow tier 2 (FOLLOWING) gets an `"evt":"follow"` line, rate-limited
   ~once/30 s per MAC (`logFollowEvents`): `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"follow","mac":"AA:BB:…","score":N,"ftier":2,"name":"…","src":"…","flags":"…"}`
@@ -460,8 +464,12 @@ back (5 GHz included). Things that matter, learned the hard way:
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together). Keys:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,sid,fw,dbgen`
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;sid;fw;dbgen;name[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2). Keys:
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,sid,fw,dbgen`
+    (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device (onboard GPS; GPS
+    clock or RTC). The web app bar draws them as two stacked dots right of the location / clock icon — blue
+    phone on top, purple device below, grey when unavailable — and tints the icon with the source in use
+    (`gpssrc`/`tsrc`; orange GPS icon = held; `renderSourceIcons()` in `js/ble/status.js`.)
     (`prb` = probe count, `z` = 802.15.4 count, `scan` = 1 while scanning, `bri` = backlight %,
     `src` = scan-source mask, `wl` = whitelist rule count, `muted` = devices muted now,
     **`fol` = devices currently flagged as FOLLOWING** (drives the web follower banner),

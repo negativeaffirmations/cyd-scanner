@@ -66,12 +66,19 @@ button:disabled { opacity: .45; }
 .si.batt.off, .si.batt.off .material-symbols-outlined { color:$color-text-muted; }
 .si.batt.lowbat, .si.batt.lowbat .material-symbols-outlined { color:#f85149; }
 
-// GPS source: cyan tint + a small sat count when the onboard NEO-6M is the active fix.
-.si#gpsState { gap:2px; }
-.si#gpsState.onboard, .si#gpsState.onboard .material-symbols-outlined { color:#39c0ed; }
-.si#gpsState .gpssats { font-size:11px; font-variant-numeric:tabular-nums; }
-// Time source (v10): cyan tint when the onboard GPS keeps the clock (no phone synced).
-.si#timeState.onboard, .si#timeState.onboard .material-symbols-outlined { color:#39c0ed; }
+// Clock + GPS sources: two stacked dots right of the icon (phone on top, device below), coloured when
+// that source is available, grey when not; the icon takes the colour of the source in use. A held
+// last-known position (no live source) tints the GPS icon orange. Plus a small sat count on the GPS
+// icon while the device GPS drives.
+.si#gpsState, .si#timeState { gap:1px; }
+.srcdots { display:inline-flex; flex-direction:column; gap:2px; }
+.srcdots .dot { display:block; width:5px; height:5px; border-radius:50%; background:$color-src-off; }
+.srcdots .dot.ph.avail  { background:$color-src-phone; }
+.srcdots .dot.dev.avail { background:$color-src-device; }
+.si.src-ph,   .si.src-ph   .material-symbols-outlined { color:$color-src-phone; }
+.si.src-dev,  .si.src-dev  .material-symbols-outlined { color:$color-src-device; }
+.si.src-held, .si.src-held .material-symbols-outlined { color:$color-warn; }
+.si#gpsState .gpssats { font-size:11px; font-variant-numeric:tabular-nums; margin-left:1px; }
 // Host<->C5 scanner link: gray down (the .si default) / white up / light blue up + scanning. Own class
 // names (not .up): the generic .up pill rule above would paint a green background behind the icon.
 // Must colour the inner glyph too: .si .material-symbols-outlined above sets its own muted colour.

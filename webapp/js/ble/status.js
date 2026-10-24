@@ -6,6 +6,36 @@ import { updateScanBtn } from './commands.js';
 import { renderApCard } from '../features/wifiap.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
 
+// Clock + location icons: two stacked source dots (blue = phone on top, purple = device below; grey when
+// that source is unavailable) and the icon tinted with the source in use. Built from the merged
+// state.status because the keys arrive in different STATUS parts (tsrc/gpssrc part 1, tav/gav part 2).
+//   tsrc 0 none / 1 phone / 2 device GPS / 3 device RTC     tav bit0 phone, bit1 device
+//   gpssrc 0 none / 1 phone / 2 device GPS / 3 held          gav bit0 phone, bit1 device
+function setSrc(id, avail, use){
+  const el = $(id);
+  el.querySelector(".dot.ph").classList.toggle("avail", !!(avail & 1));
+  el.querySelector(".dot.dev").classList.toggle("avail", !!(avail & 2));
+  el.classList.toggle("src-ph",   use === "ph");
+  el.classList.toggle("src-dev",  use === "dev");
+  el.classList.toggle("src-held", use === "held");   // no live source: last known position is logged (orange)
+}
+function renderSourceIcons(){
+  const s = state.status, ts = +s.tsrc||0, gs = +s.gpssrc||0, sats = +s.sats||0;
+  // tav/gav come from fw >= 0.14; older firmware: infer availability from the source in use.
+  const tav = "tav" in s ? +s.tav : (ts===1 ? 1 : ts>=2 ? 2 : 0);
+  const gav = "gav" in s ? +s.gav : (gs===1 ? 1 : gs===2 ? 2 : 0);
+  setSrc("timeState", tav, ts===1 ? "ph" : ts>=2 ? "dev" : "");
+  setSrc("gpsState",  gav, gs===1 ? "ph" : gs===2 ? "dev" : gs===3 ? "held" : "");
+  const avail = m => [(m&1) && "phone", (m&2) && "device"].filter(Boolean).join(" + ") || "none";
+  $("timeState").title = "Time: " + (ts===3 ? "device RTC" : ts===2 ? "device GPS" : ts===1 ? "phone" : "not set")
+                       + " · available: " + avail(tav);
+  $("gpsSats").textContent = (gs===2 && sats>0) ? sats : "";   // sat count only while the device GPS drives
+  $("gpsState").title = "GPS: " + (gs===2 ? "device · "+sats+" sat"+(sats===1?"":"s")
+                                 : gs===1 ? "phone"
+                                 : gs===3 ? "no live fix · logging the last known position"
+                                 : "no fix") + " · available: " + avail(gav);
+}
+
 export function onStatus(ev){
   const txt = new TextDecoder().decode(ev.target.value);
   const kv = {}; txt.split(";").forEach(p=>{const[a,b]=p.split("=");if(a)kv[a]=b;});
@@ -23,21 +53,8 @@ export function onStatus(ev){
     el.classList.toggle("linkup", up); el.classList.toggle("linkscan", scanning);
     el.title = scanning ? "Scanner (C5) link: up · scanning" : up ? "Scanner (C5) link: up · not scanning" : "Scanner (C5) link: DOWN"; }
   if("time"in kv) $("timeState").classList.toggle("on", kv.time==="1");  // status icons: white when on
-  if("tsrc" in kv){                                // v10: which clock source is live (1 phone / 2 onboard GPS / 3 RTC)
-    const ts = +kv.tsrc||0, el = $("timeState");
-    el.classList.toggle("onboard", ts===2);        // cyan tint when the onboard GPS keeps time (no phone)
-    el.title = ts===3 ? "Time: RTC" : ts===2 ? "Time: onboard GPS" : ts===1 ? "Time: phone-synced" : "Time: not set";
-  }
   if("gps" in kv) $("gpsState").classList.toggle("on", kv.gps==="1");
-  if("gpssrc" in kv || "sats" in kv){            // v9: which source is live (1 phone / 2 onboard / 3 held last-known) + module sats
-    const src = +kv.gpssrc||0, sats = +kv.sats||0, el = $("gpsState"), sl = $("gpsSats");
-    el.classList.toggle("onboard", src===2);     // cyan tint when the onboard NEO-6M is the active fix
-    sl.textContent = (src===2 && sats>0) ? sats : "";   // show sat count only when onboard is driving
-    el.title = src===2 ? ("GPS: onboard · "+sats+" sat"+(sats===1?"":"s"))
-             : src===1 ? "GPS: phone"
-             : src===3 ? "GPS: no live fix · logging the last known position"
-             : (sats>0 ? ("GPS: no fix · onboard "+sats+" sat"+(sats===1?"":"s")+" in view") : "GPS: no fix");
-  }
+  if(["tsrc","tav","gpssrc","gav","sats"].some(k=>k in kv)) renderSourceIcons();
   // Gray the sync button once both time and GPS are synced.
   const bothSynced = $("timeState").classList.contains("on") && $("gpsState").classList.contains("on");
   $("syncBtn").disabled = !state.connected || bothSynced;

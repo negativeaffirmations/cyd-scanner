@@ -225,21 +225,48 @@ button:disabled {
   color: #f85149;
 }
 
-.si#gpsState {
+.si#gpsState, .si#timeState {
+  gap: 1px;
+}
+
+.srcdots {
+  display: inline-flex;
+  flex-direction: column;
   gap: 2px;
 }
 
-.si#gpsState.onboard, .si#gpsState.onboard .material-symbols-outlined {
-  color: #39c0ed;
+.srcdots .dot {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #484f58;
+}
+
+.srcdots .dot.ph.avail {
+  background: #388bfd;
+}
+
+.srcdots .dot.dev.avail {
+  background: #a371f7;
+}
+
+.si.src-ph, .si.src-ph .material-symbols-outlined {
+  color: #388bfd;
+}
+
+.si.src-dev, .si.src-dev .material-symbols-outlined {
+  color: #a371f7;
+}
+
+.si.src-held, .si.src-held .material-symbols-outlined {
+  color: #d29922;
 }
 
 .si#gpsState .gpssats {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-
-.si#timeState.onboard, .si#timeState.onboard .material-symbols-outlined {
-  color: #39c0ed;
+  margin-left: 1px;
 }
 
 .si#linkState.linkup, .si#linkState.linkup .material-symbols-outlined {

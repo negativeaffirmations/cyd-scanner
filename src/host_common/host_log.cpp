@@ -371,12 +371,13 @@ static void lnAppend(char* ln, int& n, const char* fmt, ...) {
 }
 
 // Scanner position for a log line: ,"lat":..,"lon":.. when any fix exists, plus ,"fix_age":<s> when that
-// fix is HELD (no live phone or onboard fix; the last known one is reused), so readers can tell an
-// inferred position from a live one. Omitted entirely with no fix ever.
+// fix is HELD (no live source; the last known one is reused) or the fix in use is > 10 s old (e.g. a
+// phone between sparse updates), so readers can tell an inferred position from a live one. Omitted
+// entirely with no fix ever.
 static void appendPos(char* ln, int& n) {
   if (!posHasFix() || !isfinite(posLat()) || !isfinite(posLon())) return;
   lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-  if (!posLive()) lnAppend(ln, n, ",\"fix_age\":%lu", (unsigned long)posFixAgeS());
+  if (posAged()) lnAppend(ln, n, ",\"fix_age\":%lu", (unsigned long)posFixAgeS());
 }
 
 int logNewDetections() {

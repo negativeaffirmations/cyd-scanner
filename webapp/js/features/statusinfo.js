@@ -16,18 +16,20 @@ function ago(ms){
 // One row per app-bar icon, in app-bar order. status() returns [text, tone] (tone: ok/warn/bad/"").
 const ROWS = [
   { id:"timeState", name:"Clock",
-    desc:"The scanner's clock, used to timestamp logged detections. White = phone-synced or RTC, " +
-         "cyan = kept by the onboard GPS, grey = not set. Rows logged before a sync are back-filled " +
-         "with real times once one arrives.",
+    desc:"The scanner's clock, used to timestamp logged detections. The two dots show which clocks are " +
+         "available (blue = phone, purple = the scanner's own GPS/RTC, grey = unavailable) and the icon " +
+         "takes the colour of the one in use. Rows logged before a sync are back-filled with real times " +
+         "once one arrives.",
     status(k){
       if(k.time !== "1") return ["Not set — rows carry time-since-boot only", "warn"];
       return ["Set · source: " + (TSRC[+k.tsrc || 0] || "unknown"), "ok"];
     } },
   { id:"gpsState", name:"Position (GPS)",
-    desc:"The location stamped on each logged detection (used by the Map). The phone's GPS is " +
-         "preferred; the scanner's onboard GPS module is the fallback (cyan, with its satellite count). " +
-         "With neither live (e.g. the phone screen is off), the last known position is reused and those " +
-         "log rows are marked with how old it is.",
+    desc:"The location stamped on each logged detection (used by the Map). The two dots show which GPS " +
+         "sources are available (blue = phone, purple = the scanner's onboard GPS, grey = unavailable) and " +
+         "the icon takes the colour of the one in use. A fresh phone fix is preferred; within ~10 s of the " +
+         "phone going quiet (e.g. screen off) the onboard GPS takes over. With neither live the last known " +
+         "position is reused (orange icon) and those log rows are marked with how old it is.",
     status(k){
       const src = +k.gpssrc || 0, sats = +k.sats || 0;
       const lg = state.lastGps, phone = lg && lg.t ? " · phone fix " + lg.lat.toFixed(5) + ", " + lg.lon.toFixed(5) + " (" + ago(lg.t) + ")" : "";

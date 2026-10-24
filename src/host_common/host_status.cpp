@@ -18,7 +18,7 @@ void pushStatus() {
   // Wi-Fi AP credentials while a download AP is up -- was silently cut off. The web app handles each
   // notification's keys on their own and merges them, so splitting is backward compatible; keys that
   // are read together (dl + apssid/appsk/apurl) stay in the same part.
-  //   part 1: live counts / state (~215 B)   part 2: dl + identity (+ AP creds) (<= ~175 B)
+  //   part 1: live counts / state (~215 B)   part 2: dl + gav/tav + identity (+ AP creds) (<= ~187 B)
   char s[300];
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;"
@@ -30,8 +30,11 @@ void pushStatus() {
            whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
            (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
            hostboard::batteryPercent(), posSource(), (int)g_onbSats, timeSource());
+  // gav/tav = per-source availability (bit0 phone, bit1 device) for the web status dots. In part 2:
+  // part 1's worst case already sits near the notify limit.
   char s2[300];
-  int n2 = snprintf(s2, sizeof(s2), "dl=%d;sid=%s;fw=%s;dbgen=%lu;name=%s", webshare::active() ? 1 : 0,
+  int n2 = snprintf(s2, sizeof(s2), "dl=%d;gav=%d;tav=%d;sid=%s;fw=%s;dbgen=%lu;name=%s", webshare::active() ? 1 : 0,
+                    (int)posAvailMask(), (int)timeAvailMask(),
                     scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN, scannerName());
   if (webshare::active() && n2 > 0 && n2 < (int)sizeof(s2))  // download AP up: the phone draws the join QR from these
     snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s",

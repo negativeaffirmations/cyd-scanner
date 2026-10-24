@@ -201,29 +201,34 @@ uint8_t  g_onbSats = 0;   // satellites the onboard NEO-6M reports (0 = none; no
 // Status arrives every ~2 s poll; a dropped link must not leave the last onboard fix looking live.
 static constexpr uint32_t ONB_STALE_MS = 10000;
 static bool onbLive() { return g_onbValid && g_onbAtMs && millis() - g_onbAtMs < ONB_STALE_MS; }
+// A phone fix is preferred only while it is FRESH (< PHONE_FIX_FRESH_MS); past that a live onboard fix
+// wins, so a pocketed phone hands over within ~10 s instead of freezing the position for the whole
+// phone::hasGps() window (90 s). The phone stays the source (aging, marked fix_age) when onboard has no fix.
+static constexpr uint32_t PHONE_FIX_FRESH_MS = 10000;
+static constexpr uint32_t FIX_AGE_MARK_S     = 10;   // log fix_age once the fix in use is older than this
 // Held fallback = whichever source fixed most recently (wrap-safe age compare).
 static bool heldIsPhone() {
   if (!g_onbAtMs) return true;
   if (!phone::hadGps()) return false;
   return millis() - phone::gpsAtMs() <= millis() - g_onbAtMs;
 }
-bool  posLive()   { return phone::hasGps() || onbLive(); }
-bool  posHasFix() { return posLive() || phone::hadGps() || g_onbAtMs; }
-float posLat() {
-  if (phone::hasGps()) return phone::lat();
-  if (onbLive())       return g_onbLat;
-  return heldIsPhone() ? phone::lat() : g_onbLat;
+int posSource() {  // 0 none / 1 phone / 2 onboard / 3 held
+  bool ph = phone::hasGps(), onb = onbLive();
+  if (ph && (!onb || millis() - phone::gpsAtMs() < PHONE_FIX_FRESH_MS)) return 1;
+  if (onb) return 2;
+  return (phone::hadGps() || g_onbAtMs) ? 3 : 0;
 }
-float posLon() {
-  if (phone::hasGps()) return phone::lon();
-  if (onbLive())       return g_onbLon;
-  return heldIsPhone() ? phone::lon() : g_onbLon;
-}
-int posSource() { return phone::hasGps() ? 1 : onbLive() ? 2 : posHasFix() ? 3 : 0; }  // 0 none / 1 phone / 2 onboard / 3 held
+static bool usePhoneFix() { int s = posSource(); return s == 1 || (s == 3 && heldIsPhone()); }
+bool  posLive()   { int s = posSource(); return s == 1 || s == 2; }
+bool  posHasFix() { return posSource() != 0; }
+float posLat()    { return usePhoneFix() ? phone::lat() : g_onbLat; }
+float posLon()    { return usePhoneFix() ? phone::lon() : g_onbLon; }
 uint32_t posFixAgeS() {
-  if (posLive() || !posHasFix()) return 0;
-  return (millis() - (heldIsPhone() ? phone::gpsAtMs() : g_onbAtMs)) / 1000;
+  if (!posHasFix()) return 0;
+  return (millis() - (usePhoneFix() ? phone::gpsAtMs() : g_onbAtMs)) / 1000;
 }
+bool posAged() { return posSource() == 3 || posFixAgeS() > FIX_AGE_MARK_S; }
+uint8_t posAvailMask() { return (phone::hasGps() ? 1 : 0) | (onbLive() ? 2 : 0); }
 
 // Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
 // is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
@@ -242,6 +247,7 @@ uint32_t g_rtcAtMs = 0;       // millis() when it was latched
 void (*g_rtcWrite)(uint32_t utc) = nullptr;
 bool     timeHasSync() { return phone::hasTime() || g_gpsEpochUtc != 0 || g_rtcEpochUtc != 0; }
 int      timeSource()  { return phone::hasTime() ? 1 : (g_gpsEpochUtc ? 2 : (g_rtcEpochUtc ? 3 : 0)); }  // 0 none / 1 phone / 2 GPS / 3 RTC
+uint8_t  timeAvailMask() { return (phone::hasTime() ? 1 : 0) | ((g_gpsEpochUtc || g_rtcEpochUtc) ? 2 : 0); }
 uint32_t epochLocal() {
   if (phone::hasTime()) return phone::epochNow();
   if (g_gpsEpochUtc) {
@@ -492,7 +498,9 @@ void updateFollowState() {
   g_followCount = w;
 
   uint32_t nowWin = now / FOLLOW_WINDOW_MS;
-  bool  gps = posLive();  // a held (last-known) fix would read as "not moving": spatial scoring uses live fixes only
+  // A long-held fix would read as "not moving": spatial scoring ignores fixes older than 90 s (a phone
+  // that only re-sends every ~30 s while standing still still counts).
+  bool  gps = posHasFix() && posFixAgeS() <= 90;
   float lat = 0, lon = 0, cosLat = 1.0f;
   int32_t qLat = 0, qLon = 0;
   if (gps) {

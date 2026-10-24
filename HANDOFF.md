@@ -1,4 +1,4 @@
-# Handoff — 2026-10-23 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-24 (branch: `main`; it is the only branch / the trunk)
 
 ## TODO 2026-10-24 — answer scan-analyzer's 10-23 18:21 bridge message (IN PROGRESS)
 1. ~~Bump `FW_VERSION` `"0.11.0"` → `"0.12.0"`~~ — **DONE 2026-10-24** ([host_log.h:85](src/host_common/host_log.h#L85)).
@@ -25,9 +25,23 @@
      = `gps-held` (no CSS change).
    - scan-analyzer ACK (bridge 2026-10-24): name/shape fine; keep it absent for a live fix (never `"fix_age":0` for
      live) — already the case. Their column + down-weighting of held rows is planned, not built.
-   - **Pending:**
-     field-check (connect phone, let it send a fix, turn screen off, wait >90 s, confirm rows gain `fix_age` and the
-     CYD pin turns orange, or cyan if the onboard GPS has sky). Webapp Explore/Map don't surface `fix_age` yet.
+   - **Field-checked (mini drive, scan-analyzer session 29, log in the bridge folder):** phone fixes every ~6 s,
+     screen off at ~13:38:34, position FROZEN 86–90 s with no marker, then onboard every 2 s; 0 `fix_age` rows. The
+     phone did stop sending; the 90 s phone window was too long → fixed in 0.14.0 below.
+5. **fw 0.14.0 — 10 s phone preference + web source dots (2026-10-24, CYD FLASHED COM14; mini S3 NOT yet — unplugged).**
+   - `posSource()`: phone if `phone::hasGps()` (connected, < 90 s) AND (its fix < 10 s old `PHONE_FIX_FRESH_MS`, or
+     onboard not live); else live onboard; else held (3). `posAged()` = held OR fix in use > 10 s → log `fix_age`
+     (so a phone-only walk between sparse 30 s keep-alives gets `fix_age` 10–30). Follow scoring: fixes ≤ 90 s old.
+     Today's drive would have handed over ~10 s after screen-off instead of 90 s.
+   - STATUS part 2 gains **`gav`/`tav`** (available sources, bit0 phone / bit1 device). Part 1 worst case was already
+     ~252 B (the notify limit), hence part 2. `timeAvailMask()`: device = GPS clock or RTC latched.
+   - **Webapp app bar (owner request):** clock + location icons each get two stacked dots (blue phone on top, purple
+     device below, grey = unavailable) and the icon takes the colour of the source in use; orange GPS icon = held.
+     Older firmware without gav/tav: availability inferred from the source in use. Colours `$color-src-phone`
+     `#388bfd` / `$color-src-device` `#a371f7` / `$color-src-off`; old cyan `.onboard` rules removed.
+     `style.css?v=20261024a`, `#uiver` = `src-dots`. Not yet seen on a phone.
+   - **Pending:** flash the mini S3 (0.13.0 → 0.14.0); owner phone check of the dots; next drive should show
+     `fix_age` only on stretches with no onboard fix. Webapp Explore/Map don't surface `fix_age` yet.
 
 ## Latest — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
