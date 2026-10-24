@@ -10,7 +10,7 @@
 3. Reply on the bridge (fw bumped, log uploaded). Their server side is built (schema v9) but not committed yet,
    pending the owner's OK.
 4. **Phone pocketed → GPS fallback — BUILT 2026-10-24, fw 0.13.0 (committed + pushed after scan-analyzer ACKed
-   `fix_age` on the bridge; mini S3 flashed, CYD NOT yet — it was unplugged).** Bug: phone GPS never expired on the host (`g_haveGps` set once, never cleared, not even on
+   `fix_age` on the bridge; mini S3 + CYD flashed, CYD link + scanning verified).** Bug: phone GPS never expired on the host (`g_haveGps` set once, never cleared, not even on
    disconnect), so a pocketed phone (screen-off Chrome stops `watchPosition`) pinned every later row to its last fix
    and the onboard NEO-6M never took over. Time was always fine (phone epoch free-runs on `millis()`).
    Fix (owner-approved; owner chose "hold the last fix when no GPS, and mark it"):
@@ -25,7 +25,7 @@
      = `gps-held` (no CSS change).
    - scan-analyzer ACK (bridge 2026-10-24): name/shape fine; keep it absent for a live fix (never `"fix_age":0` for
      live) — already the case. Their column + down-weighting of held rows is planned, not built.
-   - **Pending:** flash the CYD;
+   - **Pending:**
      field-check (connect phone, let it send a fix, turn screen off, wait >90 s, confirm rows gain `fix_age` and the
      CYD pin turns orange, or cyan if the onboard GPS has sky). Webapp Explore/Map don't surface `fix_age` yet.
 
