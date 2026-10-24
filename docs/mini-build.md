@@ -198,8 +198,8 @@ regulator; the RTC and GPS share the S3's 3V3; single common ground. Wire and ve
 at a time with the staged bring-up test: [mini-build-bringup.md](mini-build-bringup.md).
 
 > Diagrams: `hardware/diagrams/mini-build_wiring_diagram.svg` and `_labeled.png` were redrawn
-> 2026-10-23 (current wiring, battery sense on D1). The plain `mini-build_wiring_diagram.png` is the
-> older render and still shows the S3 3V3 → C5 3V3 feed. **This table is authoritative.**
+> 2026-10-23 (current wiring, battery sense on D1). The older plain `mini-build_wiring_diagram.png`
+> (it still showed the S3 3V3 → C5 3V3 feed) was removed 2026-10-24. **This table is authoritative.**
 
 | From | Pin | To | Pin | Net / purpose |
 |------|-----|----|-----|---------------|
