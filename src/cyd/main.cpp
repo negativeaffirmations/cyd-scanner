@@ -2715,16 +2715,37 @@ static bool gpsModalAllowed() {
   }
 }
 
+// What the modal body shows; it is repainted only when this changes (no 1 Hz flicker while static).
+struct GpsModalView { int src; int32_t qLat, qLon; uint8_t sats; uint32_t heldS; };
+static GpsModalView g_gpsModalShown;
+static GpsModalView gpsModalView(const PosFix& pf) {
+  GpsModalView v = {};
+  v.src = pf.src;
+  if (pf.src) { v.qLat = (int32_t)lroundf(pf.lat * 1e6f); v.qLon = (int32_t)lroundf(pf.lon * 1e6f); }  // as printed
+  v.sats  = g_onbSats;
+  v.heldS = pf.src == 3 ? pf.ageMs / 1000 : 0;
+  return v;
+}
+static bool sameView(const GpsModalView& a, const GpsModalView& b) {
+  return a.src == b.src && a.qLat == b.qLat && a.qLon == b.qLon && a.sats == b.sats && a.heldS == b.heldS;
+}
+
 // Centered popup: GPS source (phone / onboard module / none) + the current coordinates + sat count.
-static void drawGpsModal() {
+// full = frame + title too (on open); otherwise only the body is cleared and redrawn (live refresh).
+static void drawGpsModal(bool full = true) {
   const int bw = 196, bh = 124, bx = (tft.width() - bw) / 2, by = 80;
-  tft.fillRoundRect(bx, by, bw, bh, 8, TFT_BLACK);
-  tft.drawRoundRect(bx,     by,     bw,     bh,     8, UI_ACCENT);
-  tft.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 8, UI_ACCENT);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(UI_ACCENT, TFT_BLACK);
-  tft.drawString("GPS", bx + bw / 2, by + 8, 4);
+  if (full) {
+    tft.fillRoundRect(bx, by, bw, bh, 8, TFT_BLACK);
+    tft.drawRoundRect(bx,     by,     bw,     bh,     8, UI_ACCENT);
+    tft.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 8, UI_ACCENT);
+    tft.setTextDatum(TC_DATUM);
+    tft.setTextColor(UI_ACCENT, TFT_BLACK);
+    tft.drawString("GPS", bx + bw / 2, by + 8, 4);
+  } else {
+    tft.fillRect(bx + 4, by + 42, bw - 8, bh - 46, TFT_BLACK);  // body only (inside the frame, below the title)
+  }
   PosFix pf = posSnapshot();  // one snapshot: source, lat/lon and held age all describe the same fix
+  g_gpsModalShown = gpsModalView(pf);
   int src = pf.src;
   const char* srcName = src == 3 ? "Last known" : src == 2 ? "Module (NEO-6M)" : src == 1 ? "Phone (linked)" : "No fix";
   uint16_t    sc      = src == 3 ? TFT_ORANGE   : src == 2 ? TFT_CYAN          : src == 1 ? TFT_WHITE         : TFT_DARKGREY;
@@ -2749,7 +2770,7 @@ static void drawGpsModal() {
   }
   tft.setTextDatum(BC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("tap to close", bx + bw / 2, by + bh - 4, 1);
+  tft.drawString("tap to close", bx + bw / 2, by + bh - 4, 1);  // also inside the body clear: always redrawn
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -2762,7 +2783,15 @@ static bool serviceGpsModal(BtnEv ev) {
   bool rise = now && !prev;
   prev = now;
   if (g_gpsModal) {                       // open: any fresh tap or BOOT closes it
-    if (rise || ev != BTN_NONE) { g_gpsModal = false; redrawScreen(); }
+    if (rise || ev != BTN_NONE) { g_gpsModal = false; redrawScreen(); return true; }
+    // Live refresh: a phone connecting / the module getting a fix / the held age ticking all show
+    // without closing and reopening. Checked ~2x/s; the body is repainted only when its content changed.
+    static uint32_t lastCheck = 0;
+    if (millis() - lastCheck >= 500) {
+      lastCheck = millis();
+      GpsModalView v = gpsModalView(posSnapshot());
+      if (!sameView(v, g_gpsModalShown)) drawGpsModal(false);
+    }
     return true;                          // own input until closed
   }
   if (rise && gpsModalAllowed()) {        // closed: did the tap land on the GPS glyph?
@@ -2811,8 +2840,9 @@ bool    hostboard::pipelineAllowed() { return !screenIsDrill() && !screenIsExplo
 
 void hostui::onScanCycle(const ScanCycleResult&) {
   if (!g_viewFrozen) buildScanView();  // a paused view keeps its snapshot while scanning continues
-  if (g_screen == SCR_SCAN)
+  if (g_screen == SCR_SCAN && !g_gpsModal)  // under the GPS modal: no list repaint; its close does a full render()
     updateScan();  // per-cycle partial repaint (status bar + info band + list); chrome persists from entry
+  else if (g_gpsModal) drawStatusBar();     // the bar sits above the popup: keep its clock / icons live
 }
 void hostui::onBusyMiss() {
   if (g_screen == SCR_SCAN) drawStatusBar();  // link dot + clock only (never touches the list region)
@@ -2943,9 +2973,15 @@ void loop() {
   }
 
   // GPS info modal: tap the status-bar GPS glyph to open it, tap/BOOT to close. While it's up it
-  // owns input. The scan cycle is NOT run underneath (updateScan()'s list repaint would paint over
-  // the popup); it's a brief tap-to-peek, and capture resumes the moment it's dismissed.
-  if (serviceGpsModal(ev)) { delay(10); return; }
+  // owns input. On the live Scan screen the cycle keeps running underneath (capture + logging + the
+  // C5 Status the modal's onboard fix comes from); onScanCycle() skips the list repaint while it's up.
+  if (serviceGpsModal(ev)) {
+    if (g_gpsModal && g_screen == SCR_SCAN && g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
+      g_lastCycleMs = millis();
+      core::runScanCycle();
+    }
+    delay(10); return;
+  }
 
   switch (g_screen) {
     case SCR_MENU: {

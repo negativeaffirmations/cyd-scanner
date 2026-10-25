@@ -1,7 +1,7 @@
 # Handoff — 2026-10-24 (branch: `main`; it is the only branch / the trunk)
 
 ## Latest — 2026-10-24: position/time source handling fw 0.12 → 0.16 + webapp polish (ALL DONE, pushed)
-**State at end of session:** CYD (COM14) + mini S3 (COM16) both run **fw 0.16.1** (item 9); both C5s unchanged (link v11, no
+**State at end of session:** CYD (COM14) + mini S3 (COM16) both run **fw 0.16.2** (items 9–10); both C5s unchanged (link v11, no
 reflash needed all day). Webapp `#uiver` = `gps-sent`, `style.css?v=` + `main.js?v=` = `20261024e`. Bridge is
 current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides are built, commits pending the owner).
 **Open / next:**
@@ -111,6 +111,12 @@ current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides a
      first skipped stale fix is logged (a skewed phone clock would otherwise drop every update silently).
    - Checked, no change: rows with `epoch:0` after a timesync anchor are backfilled by both `parse.js` and
      `logfilter` (device-only with no device clock is safe). Ignored: 49.7-day `millis()` wrap.
+10. **fw 0.16.2 — CYD GPS modal refreshes live (2026-10-24, CYD + mini S3 FLASHED).** Owner: the modal was drawn
+   once, so connecting the phone with it open still read "No fix" until closed + reopened. `serviceGpsModal()` now
+   re-checks ~2×/s and repaints only the body when source / lat-lon / sats / held age changed (`GpsModalView`).
+   On the live Scan screen the scan cycle now keeps running under the modal (it used to pause, which would have let
+   the onboard fix go stale and flip the live modal to "Last known"); `onScanCycle()` skips the list repaint while
+   it's up and keeps the status bar live. Not yet re-checked on-device by the owner.
 
 ## Earlier — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.
