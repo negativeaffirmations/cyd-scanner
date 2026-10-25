@@ -42,9 +42,10 @@ void pushStatus() {
   // stamps live-POST rows with these, so they match the file log instead of the phone's last fix.
   // Always sent (pfa=-1 too): the web app merges keys across notifications, so a stale pfa would stick.
   if (n2 > 0 && n2 < (int)sizeof(s2)) {
-    if (posHasFix() && isfinite(posLat()) && isfinite(posLon()))
-      n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=%.6f,%.6f;pfa=%ld", posLat(), posLon(),
-                     posAged() ? (long)posFixAgeS() : -1L);
+    PosFix f = posSnapshot();
+    if (f.src && isfinite(f.lat) && isfinite(f.lon))
+      n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=%.6f,%.6f;pfa=%ld", f.lat, f.lon,
+                     f.aged ? (long)(f.ageMs / 1000) : -1L);
     else
       n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=;pfa=-1");
   }

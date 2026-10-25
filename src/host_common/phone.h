@@ -41,9 +41,9 @@ int      tzOffsetMin();  // last phone tz offset (UTC-local minutes, JS getTimez
 constexpr uint32_t PHONE_GPS_STALE_MS = 90000;  // phone fix older than this (or phone gone) is not live
 bool     hasGps();    // a LIVE phone fix: connected + written within PHONE_GPS_STALE_MS
 bool     hadGps();    // the phone has sent a fix at some point this boot (lat()/lon() hold the last one)
-uint32_t gpsAtMs();   // millis() of the last phone fix
-float lat();
-float lon();
+// The last phone fix as one consistent snapshot (written from the NimBLE task); false = none yet.
+bool     gpsFix(float* lat, float* lon, uint32_t* atMs);
+uint32_t gpsAgeMs();  // ms since the last phone fix (UINT32_MAX = none; never wraps negative)
 
 // Wi-Fi log-download mode requested by the app.
 bool downloadRequested();

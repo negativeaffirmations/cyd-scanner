@@ -210,45 +210,46 @@ uint32_t g_onbAtMs = 0;        // millis() of the last Status carrying an onboar
 uint8_t  g_onbSats = 0;   // satellites the onboard NEO-6M reports (0 = none; nonzero even pre-fix during acquisition)
 // Status arrives every ~2 s poll; a dropped link must not leave the last onboard fix looking live.
 static constexpr uint32_t ONB_STALE_MS = 10000;
-static bool onbLive() { return g_onbValid && g_onbAtMs && millis() - g_onbAtMs < ONB_STALE_MS; }
 // A phone fix is preferred only while it is FRESH (< PHONE_FIX_FRESH_MS); past that a live onboard fix
 // wins, so a pocketed phone hands over within ~10 s instead of freezing the position for the whole
 // phone::hasGps() window (90 s). The phone stays the source (aging, marked fix_age) when onboard has no fix.
 static constexpr uint32_t PHONE_FIX_FRESH_MS = 10000;
-static constexpr uint32_t FIX_AGE_MARK_S     = 10;   // log fix_age once the fix in use is older than this
+static constexpr uint32_t FIX_AGE_MARK_MS    = 10000;   // log fix_age once the fix in use is older than this
 // User source preference (web Settings, CMD "P:<t><g>", NVS): SRC_PREFER_PHONE (default) /
 // SRC_PREFER_DEVICE (the phone only fills in when the device has nothing) / SRC_DEVICE_ONLY (phone ignored).
 uint8_t g_timePref = SRC_PREFER_PHONE, g_gpsPref = SRC_PREFER_PHONE;
-static bool phoneGpsOk()  { return g_gpsPref != SRC_DEVICE_ONLY && phone::hasGps(); }
-static bool phoneGpsHad() { return g_gpsPref != SRC_DEVICE_ONLY && phone::hadGps(); }
-// Held fallback = whichever allowed source fixed most recently (wrap-safe age compare).
-static bool heldIsPhone() {
-  if (!g_onbAtMs) return true;
-  if (!phoneGpsHad()) return false;
-  return millis() - phone::gpsAtMs() <= millis() - g_onbAtMs;
+// The source is decided ONCE per snapshot from one consistent phone read (lat / lon / stamp taken
+// together under the phone's lock, stamps read before millis()), so a caller needing several fields
+// can't mix a phone latitude with an onboard longitude, or take fix_age from a different source.
+PosFix posSnapshot() {
+  PosFix f = {};
+  float pla = 0, plo = 0; uint32_t pat = 0;
+  bool phHad = g_gpsPref != SRC_DEVICE_ONLY && phone::gpsFix(&pla, &plo, &pat);  // device-only: phone ignored
+  uint32_t now = millis();
+  int32_t  d = (int32_t)(now - pat);
+  uint32_t phAge  = phHad ? (d > 0 ? (uint32_t)d : 0) : UINT32_MAX;
+  uint32_t onbAge = g_onbAtMs ? now - g_onbAtMs : UINT32_MAX;  // set by the link poll on this task
+  f.phoneOk = phHad && phone::connected() && phAge < phone::PHONE_GPS_STALE_MS;
+  f.onbOk   = g_onbValid && onbAge < ONB_STALE_MS;
+  if (g_gpsPref == SRC_PREFER_PHONE && f.phoneOk && (!f.onbOk || phAge < PHONE_FIX_FRESH_MS)) f.src = 1;
+  else if (f.onbOk)   f.src = 2;
+  else if (f.phoneOk) f.src = 1;  // prefer-device: the phone fills in only while the device has no fix
+  else if (phHad || g_onbAtMs) f.src = 3;
+  if (!f.src) return f;
+  // Held fallback = whichever allowed source fixed most recently (ties -> phone).
+  bool usePhone = f.src == 1 || (f.src == 3 && phHad && phAge <= onbAge);
+  f.lat   = usePhone ? pla : g_onbLat;
+  f.lon   = usePhone ? plo : g_onbLon;
+  f.ageMs = usePhone ? phAge : onbAge;
+  f.live  = f.src == 1 || f.src == 2;
+  f.aged  = f.src == 3 || f.ageMs > FIX_AGE_MARK_MS;
+  return f;
 }
-int posSource() {  // 0 none / 1 phone / 2 onboard / 3 held
-  bool ph = phoneGpsOk(), onb = onbLive();
-  if (g_gpsPref == SRC_PREFER_PHONE) {
-    if (ph && (!onb || millis() - phone::gpsAtMs() < PHONE_FIX_FRESH_MS)) return 1;
-    if (onb) return 2;
-  } else {
-    if (onb) return 2;
-    if (ph)  return 1;  // prefer-device: the phone fills in only while the device has no fix
-  }
-  return (phoneGpsHad() || g_onbAtMs) ? 3 : 0;
-}
-static bool usePhoneFix() { int s = posSource(); return s == 1 || (s == 3 && heldIsPhone()); }
-bool  posLive()   { int s = posSource(); return s == 1 || s == 2; }
-bool  posHasFix() { return posSource() != 0; }
-float posLat()    { return usePhoneFix() ? phone::lat() : g_onbLat; }
-float posLon()    { return usePhoneFix() ? phone::lon() : g_onbLon; }
-uint32_t posFixAgeS() {
-  if (!posHasFix()) return 0;
-  return (millis() - (usePhoneFix() ? phone::gpsAtMs() : g_onbAtMs)) / 1000;
-}
-bool posAged() { return posSource() == 3 || posFixAgeS() > FIX_AGE_MARK_S; }
-uint8_t posAvailMask() { return (phoneGpsOk() ? 1 : 0) | (onbLive() ? 2 : 0); }  // a disabled phone reads unavailable
+int      posSource()    { return posSnapshot().src; }
+bool     posLive()      { return posSnapshot().live; }
+bool     posHasFix()    { return posSnapshot().src != 0; }
+uint32_t posFixAgeS()   { return posSnapshot().ageMs / 1000; }
+uint8_t  posAvailMask() { PosFix f = posSnapshot(); return (f.phoneOk ? 1 : 0) | (f.onbOk ? 2 : 0); }  // a disabled phone reads unavailable
 
 // Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
 // is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
@@ -271,15 +272,15 @@ void (*g_rtcWrite)(uint32_t utc) = nullptr;
 static bool phoneTimeOk()  { return g_timePref != SRC_DEVICE_ONLY && phone::hasTime(); }
 static bool gpsTimeFresh() { return g_gpsEpochUtc && millis() - g_gpsEpochAtMs < ONB_STALE_MS; }
 static bool rtcTimeOk()    { return g_rtcEpochUtc != 0; }
+// Device clocks rank the same under every preference: fresh GPS > RTC > the free-running latched GPS
+// clock. Prefer-phone puts the phone above all three; prefer-device puts it below, so once the device
+// has ever had GPS time it keeps it (a 10 s Status gap can't flip the clock GPS -> phone -> GPS).
 int timeSource() {  // 0 none / 1 phone / 2 GPS / 3 RTC
-  if (g_timePref == SRC_PREFER_PHONE) {
-    if (phoneTimeOk()) return 1;
-    return g_gpsEpochUtc ? 2 : (rtcTimeOk() ? 3 : 0);
-  }
+  if (g_timePref == SRC_PREFER_PHONE && phoneTimeOk()) return 1;
   if (gpsTimeFresh()) return 2;
   if (rtcTimeOk())    return 3;
-  if (phoneTimeOk())  return 1;  // prefer-device: the phone fills in only while the device clock isn't ready
-  return g_gpsEpochUtc ? 2 : 0;  // last resort: the free-running latched GPS clock
+  if (g_gpsEpochUtc)  return 2;
+  return phoneTimeOk() ? 1 : 0;  // prefer-device: the phone fills in only while the device has no clock at all
 }
 bool     timeHasSync() { return timeSource() != 0; }
 uint8_t  timeAvailMask() { return (phoneTimeOk() ? 1 : 0) | ((gpsTimeFresh() || rtcTimeOk()) ? 2 : 0); }
@@ -298,16 +299,18 @@ uint32_t epochLocal() {
 }
 
 // Write-back sink: when the phone OR the onboard GPS has the time, discipline the RTC with that UTC —
-// first chance after boot, then at most hourly. Live-read priority stays phone > GPS > RTC (the RTC is
-// never a source for itself). No-op unless the board has an RTC. Called every loop from
-// core::servicePhoneCommands().
+// first chance after boot, then at most hourly. Prefer-phone takes the phone first, then GPS; prefer-device
+// takes a fresh GPS time first, then the phone, then the latched GPS clock (the RTC is never a source for
+// itself; see timeSource() for the live-read order). No-op unless the board has an RTC. Called every loop
+// from core::servicePhoneCommands().
 void disciplineRtc() {
   if (!g_rtcWrite || !hostboard::rtcPresent()) return;
   static bool     done = false;
   static uint32_t lastMs = 0;
   if (done && millis() - lastMs < 3600000UL) return;
   uint32_t utc = 0;
-  bool fromPhone = phoneTimeOk();  // device-only: the phone's time never reaches the RTC either
+  // device-only: the phone's time never reaches the RTC either (phoneTimeOk() is false)
+  bool fromPhone = phoneTimeOk() && (g_timePref == SRC_PREFER_PHONE || !gpsTimeFresh());
   if (fromPhone) utc = phone::epochNow() + (uint32_t)(phone::tzOffsetMin() * 60);  // local -> UTC
   else if (g_gpsEpochUtc) utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
   if (utc < 1700000000UL) return;  // nothing trustworthy yet (before ~2023)
@@ -536,12 +539,13 @@ void updateFollowState() {
 
   uint32_t nowWin = now / FOLLOW_WINDOW_MS;
   // A long-held fix would read as "not moving": spatial scoring ignores fixes older than 90 s (a phone
-  // that only re-sends every ~30 s while standing still still counts).
-  bool  gps = posHasFix() && posFixAgeS() <= 90;
+  // between its ~5 s updates, or briefly aging, still counts).
+  PosFix pf = posSnapshot();
+  bool  gps = pf.src && pf.ageMs <= 90000;
   float lat = 0, lon = 0, cosLat = 1.0f;
   int32_t qLat = 0, qLon = 0;
   if (gps) {
-    lat = posLat(); lon = posLon();
+    lat = pf.lat; lon = pf.lon;
     cosLat = cosf(lat * (float)M_PI / 180.0f);  // once per cycle; lat barely changes
     qLat = (int32_t)lroundf(lat * FOLLOW_QUANT);
     qLon = (int32_t)lroundf(lon * FOLLOW_QUANT);

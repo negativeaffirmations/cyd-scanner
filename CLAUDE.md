@@ -205,7 +205,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   (`posAged()`; see the SD-log notes). (0.13.0 kept a stale phone fix "live" for the whole 90 s — the
   2026-10-24 mini drive froze 86 s unmarked before onboard took over.) Follow scoring ignores fixes > 90 s old.
   **Source preference (fw 0.15.0, `g_timePref`/`g_gpsPref`, CMD `P:`):** *prefer phone* = the rules above
-  (default); *prefer device* = live onboard fix / ready device clock (fresh GPS time, else valid RTC) first,
+  (default); *prefer device* = live onboard fix / any device clock (fresh GPS time > valid RTC > the free-running latched GPS clock, the same device order prefer-phone uses below the phone) first,
   the phone only while the device has nothing; *device only* = the phone's fix/time is ignored entirely (also
   for the held fallback and RTC discipline; the phone's tz offset is still learned).
   GPS time is UTC, so the CYD adds the **last phone tz offset, persisted in NVS** (`cydscan/tzoff`,

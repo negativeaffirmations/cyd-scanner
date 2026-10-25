@@ -45,7 +45,7 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       f.srcMaskChanged = true;
     } }
   { uint8_t t, g; if (phone::sourcePrefRequested(&t, &g)) {  // web-app time / GPS source preference
-      g_timePref = t; g_gpsPref = g; saveSrcPrefs();
+      if (t != g_timePref || g != g_gpsPref) { g_timePref = t; g_gpsPref = g; saveSrcPrefs(); }  // skip a no-op NVS write
       pushStatus();  // the Settings selects + source icons reflect it right away
     } }
   if (phone::newSessionRequested()) { startNewSession(); f.newSession = true; }  // web-app "New Session"

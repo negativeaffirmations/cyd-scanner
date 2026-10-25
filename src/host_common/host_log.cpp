@@ -375,9 +375,10 @@ static void lnAppend(char* ln, int& n, const char* fmt, ...) {
 // phone between sparse updates), so readers can tell an inferred position from a live one. Omitted
 // entirely with no fix ever.
 static void appendPos(char* ln, int& n) {
-  if (!posHasFix() || !isfinite(posLat()) || !isfinite(posLon())) return;
-  lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", posLat(), posLon());
-  if (posAged()) lnAppend(ln, n, ",\"fix_age\":%lu", (unsigned long)posFixAgeS());
+  PosFix f = posSnapshot();  // one snapshot: lat, lon and fix_age always describe the same fix
+  if (!f.src || !isfinite(f.lat) || !isfinite(f.lon)) return;
+  lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", f.lat, f.lon);
+  if (f.aged) lnAppend(ln, n, ",\"fix_age\":%lu", (unsigned long)(f.ageMs / 1000));
 }
 
 int logNewDetections() {

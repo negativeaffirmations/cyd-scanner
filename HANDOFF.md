@@ -1,8 +1,8 @@
 # Handoff — 2026-10-24 (branch: `main`; it is the only branch / the trunk)
 
 ## Latest — 2026-10-24: position/time source handling fw 0.12 → 0.16 + webapp polish (ALL DONE, pushed)
-**State at end of session:** CYD (COM14) + mini S3 (COM16) both run **fw 0.16.0**; both C5s unchanged (link v11, no
-reflash needed all day). Webapp `#uiver` = `js-ver`, `style.css?v=` + `main.js?v=` = `20261024d`. Bridge is
+**State at end of session:** CYD (COM14) + mini S3 (COM16) both run **fw 0.16.1** (item 9); both C5s unchanged (link v11, no
+reflash needed all day). Webapp `#uiver` = `gps-sent`, `style.css?v=` + `main.js?v=` = `20261024e`. Bridge is
 current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides are built, commits pending the owner).
 **Open / next:**
 - Mini **DS3231 not detected** ("RTC not found" at boot with the switch on) — check its I2C / power wiring. Without it
@@ -11,7 +11,7 @@ current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides a
   the Home summary card + modal (needs the `js-ver` page; open `…/webapp/?r=1` to bypass the cache once).
 - A drive where Chrome keeps posting with the screen off (like drive 1) would exercise live rows on the onboard GPS.
 - Still open from before: webapp Explore/Map don't surface `fix_age`; async BLE all-logs export; CYD field test with
-  SW2 on; no reviewer-agent pass on today's firmware diffs.
+  SW2 on. (The reviewer pass on today's firmware is DONE, see item 9.)
 
 ### Items (chronological)
 1. ~~Bump `FW_VERSION` `"0.11.0"` → `"0.12.0"`~~ — **DONE 2026-10-24** ([host_log.h:85](src/host_common/host_log.h#L85)).
@@ -94,6 +94,23 @@ current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides a
      OLD `main.js` (no handler; closing the tab doesn't clear the HTTP cache). **`js/main.js?v=<token>` now carries
      the same token as `style.css`, bumped every deploy** (see the cache section below).
    - `54ea88b` removed the outdated `mini-build_wiring_diagram.png` (showed the 3V3 C5 feed); mini-build.md note updated.
+9. **fw 0.16.1 — reviewer-pass fixes on 0.13–0.16 (2026-10-24, CYD + mini S3 FLASHED, links up; webapp `gps-sent`).**
+   - **Race: `fix_age` ≈ 4294967.** A phone GPS write (NimBLE task, core 0) landing between `millis()` and the
+     `g_gpsMs` read in loop() wrapped the age negative. Phone fix now lives under `g_gpsMux`; `phone::gpsFix()`
+     returns lat/lon/stamp together, `gpsAgeMs()` reads the stamp first and clamps; `hasGps()` uses it.
+   - **Mixed lat/lon/fix_age.** Every `posLat()`/`posLon()`/`posAged()` call re-chose the source. New
+     `PosFix posSnapshot()` (host_core.h) decides once; `appendPos`, STATUS `pos`/`pfa`, follow scoring and the
+     CYD GPS modal each take ONE snapshot. `posLat`/`posLon`/`posAged` removed; the single-field wrappers remain.
+   - `fix_age` threshold compared in ms (`FIX_AGE_MARK_MS`), so 10.0–10.99 s fixes are marked too.
+   - **Time ranking (owner choice):** device clocks rank fresh GPS > RTC > latched GPS under every pref; prefer-phone
+     puts the phone first, prefer-device puts it LAST (no GPS↔phone clock flapping on a 10 s Status gap). RTC
+     discipline in prefer-device takes fresh GPS first. Quirk: prefer-device with only a stale latched GPS shows the
+     device as `tsrc` while the purple dot is grey (dot = "fresh fallback ready").
+   - `P:` must be exactly 4 chars, both digits packed in one byte (no torn pair), NVS written only on change.
+   - Webapp `gps.js`: `lastGps` advances only after a successful BLE write (5 s throttle kept on attempts); the
+     first skipped stale fix is logged (a skewed phone clock would otherwise drop every update silently).
+   - Checked, no change: rows with `epoch:0` after a timesync anchor are backfilled by both `parse.js` and
+     `logfilter` (device-only with no device clock is safe). Ignored: 49.7-day `millis()` wrap.
 
 ## Earlier — Wi-Fi AP/CLIENT role pill + data-frame client flag + AP BSSID, link **v11** (2026-10-23, ALL FOUR BOARDS FLASHED, pushed `c4af4d6`)
 Requested by scan-analyzer over the bridge, approved by the owner. Schema agreed with scan-analyzer before commit.

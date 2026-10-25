@@ -2724,7 +2724,8 @@ static void drawGpsModal() {
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(UI_ACCENT, TFT_BLACK);
   tft.drawString("GPS", bx + bw / 2, by + 8, 4);
-  int src = posSource();
+  PosFix pf = posSnapshot();  // one snapshot: source, lat/lon and held age all describe the same fix
+  int src = pf.src;
   const char* srcName = src == 3 ? "Last known" : src == 2 ? "Module (NEO-6M)" : src == 1 ? "Phone (linked)" : "No fix";
   uint16_t    sc      = src == 3 ? TFT_ORANGE   : src == 2 ? TFT_CYAN          : src == 1 ? TFT_WHITE         : TFT_DARKGREY;
   tft.setTextDatum(TL_DATUM);
@@ -2734,12 +2735,12 @@ static void drawGpsModal() {
   tft.drawString(srcName, bx + 74, by + 44, 2);
   char b[32];
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  if (posHasFix()) {
-    snprintf(b, sizeof(b), "Lat: %.6f", posLat()); tft.drawString(b, bx + 12, by + 68, 2);
-    snprintf(b, sizeof(b), "Lon: %.6f", posLon()); tft.drawString(b, bx + 12, by + 88, 2);
+  if (src) {
+    snprintf(b, sizeof(b), "Lat: %.6f", pf.lat); tft.drawString(b, bx + 12, by + 68, 2);
+    snprintf(b, sizeof(b), "Lon: %.6f", pf.lon); tft.drawString(b, bx + 12, by + 88, 2);
     if (src == 2) { snprintf(b, sizeof(b), "Satellites: %u", (unsigned)g_onbSats);
                     tft.drawString(b, bx + 12, by + 106, 1); }
-    if (src == 3) { snprintf(b, sizeof(b), "No live fix - held %lus", (unsigned long)posFixAgeS());
+    if (src == 3) { snprintf(b, sizeof(b), "No live fix - held %lus", (unsigned long)(pf.ageMs / 1000));
                     tft.drawString(b, bx + 12, by + 106, 1); }
   } else {
     tft.drawString("No position fix yet.", bx + 12, by + 72, 2);

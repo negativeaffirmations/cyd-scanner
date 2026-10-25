@@ -23,6 +23,9 @@ uint32_t g_epochBase  = 0;   // epoch secs at g_baseMillis
 uint32_t g_baseMillis = 0;
 bool     g_haveTime   = false;
 int      g_tzOffMin   = 0;   // UTC-local offset (min); loaded from NVS at begin(), updated on sync
+// The phone fix is written by the NimBLE task and read from loop() on the other core: g_gpsMux keeps
+// lat / lon / stamp together (see gpsFix()).
+portMUX_TYPE g_gpsMux = portMUX_INITIALIZER_UNLOCKED;
 float    g_lat = 0, g_lon = 0;
 bool     g_haveGps    = false;
 uint32_t g_gpsMs      = 0;      // millis() of the last phone GPS write (freshness, see hasGps())
@@ -54,7 +57,7 @@ char     g_expPath[48]= {0};
 bool     g_srcReq     = false;
 uint8_t  g_srcVal     = 0;
 bool     g_prefReq    = false;  // "P:<t><g>" time / GPS source preference
-uint8_t  g_prefT = 0, g_prefG = 0;
+volatile uint8_t g_prefVal = 0;  // (t << 4) | g, one byte so the NimBLE task can't hand loop() a mixed pair
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -106,7 +109,10 @@ class WriteCB : public NimBLECharacteristicCallbacks {
       // Reject nan/inf/out-of-range so the NDJSON log never gets a non-JSON lat/lon.
       if (sscanf(val.c_str(), "%f,%f", &la, &lo) == 2 && isfinite(la) && isfinite(lo) &&
           la >= -90.0f && la <= 90.0f && lo >= -180.0f && lo <= 180.0f) {
-        g_lat = la; g_lon = lo; g_haveGps = true; g_gpsMs = millis();
+        uint32_t now = millis();
+        portENTER_CRITICAL(&g_gpsMux);
+        g_lat = la; g_lon = lo; g_haveGps = true; g_gpsMs = now;
+        portEXIT_CRITICAL(&g_gpsMux);
         Serial.printf("[phone] gps: %.5f,%.5f\n", la, lo);
       }
     } else if (uuid == CMD_UUID) {
@@ -164,10 +170,10 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           Serial.printf("[phone] cmd src mask %u\n", g_srcVal);
         }
       } else if (c0 == 'P' || c0 == 'p') {           // "P:<t><g>" time / GPS source pref, digits 0 prefer phone / 1 prefer device / 2 device only
-        if (val.size() >= 4 && val[1] == ':' && val[2] >= '0' && val[2] <= '2' && val[3] >= '0' && val[3] <= '2') {
-          g_prefT = (uint8_t)(val[2] - '0'); g_prefG = (uint8_t)(val[3] - '0');
+        if (val.size() == 4 && val[1] == ':' && val[2] >= '0' && val[2] <= '2' && val[3] >= '0' && val[3] <= '2') {
+          g_prefVal = (uint8_t)(((val[2] - '0') << 4) | (val[3] - '0'));
           g_prefReq = true;
-          Serial.printf("[phone] cmd source pref time=%u gps=%u\n", g_prefT, g_prefG);
+          Serial.printf("[phone] cmd source pref time=%c gps=%c\n", val[2], val[3]);
         }
       } else if (c0 == 'T' || c0 == 't') {           // "T:<mode>[:<minutes>][:<path>]" filtered export
         // mode 0 = whole file, 1 = past 24 h, 2 = past <minutes>. Optional /logs/ path (default =
@@ -287,12 +293,23 @@ uint32_t epochNow()         { return g_haveTime ? g_epochBase + (millis() - g_ba
 int      tzOffsetMin()      { return g_tzOffMin; }
 // A phone fix is LIVE only while the phone is connected and wrote one within PHONE_GPS_STALE_MS: a
 // pocketed (screen-off) Android Chrome page stops watchPosition, so without this its last fix would pin
-// every later row. The webapp keeps-alive every 30 s while moving, so 90 s won't flap on a live phone.
-bool     hasGps()           { return g_haveGps && g_connected && millis() - g_gpsMs < PHONE_GPS_STALE_MS; }
+// every later row. The webapp sends a fix every ~5 s, so 90 s won't flap on a live phone.
+bool gpsFix(float* lat, float* lon, uint32_t* atMs) {
+  portENTER_CRITICAL(&g_gpsMux);
+  bool had = g_haveGps;
+  *lat = g_lat; *lon = g_lon; *atMs = g_gpsMs;
+  portEXIT_CRITICAL(&g_gpsMux);
+  return had;
+}
+// Stamp read before millis() (via gpsFix) and clamped, so a write landing in between can't wrap the age.
+uint32_t gpsAgeMs() {
+  float la, lo; uint32_t at;
+  if (!gpsFix(&la, &lo, &at)) return UINT32_MAX;
+  int32_t age = (int32_t)(millis() - at);
+  return age > 0 ? (uint32_t)age : 0;
+}
+bool     hasGps()           { return g_connected && gpsAgeMs() < PHONE_GPS_STALE_MS; }
 bool     hadGps()           { return g_haveGps; }
-uint32_t gpsAtMs()          { return g_gpsMs; }
-float    lat()              { return g_lat; }
-float    lon()              { return g_lon; }
 bool     downloadRequested(){ return g_download; }
 bool     reloadRequested()  { bool r = g_reload; g_reload = false; return r; }
 bool     logRequested()       { bool r = g_logReq; g_logReq = false; return r; }
@@ -355,7 +372,8 @@ bool srcMaskRequested(uint8_t* out) {
 bool sourcePrefRequested(uint8_t* timePref, uint8_t* gpsPref) {
   if (!g_prefReq) return false;
   g_prefReq = false;
-  *timePref = g_prefT; *gpsPref = g_prefG;
+  uint8_t v = g_prefVal;
+  *timePref = v >> 4; *gpsPref = v & 0x0F;
   return true;
 }
 
