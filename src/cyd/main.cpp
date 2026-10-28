@@ -2109,7 +2109,7 @@ static void openScanConfirm() {
 
 static void backFromScan() {
   if (g_scanActive && !g_bgScan) { openScanConfirm(); return; }  // background scan keeps running: no confirm
-  setLed(!g_linkOk, g_linkOk, false);
+  showLinkLed();
   g_screen = SCR_SCANMENU;
   drawScanMenu();
   pushStatus();
@@ -2119,7 +2119,7 @@ static void activateScanConfirm(int sel) {
   if (sel == 0) {  // Stop scan -> Scan menu
     g_scanActive = false;
     g_viewFrozen = false;
-    setLed(!g_linkOk, g_linkOk, false);
+    showLinkLed();
     g_screen = SCR_SCANMENU;
     drawScanMenu();
     pushStatus();
@@ -2607,7 +2607,7 @@ static void activateScanSettings(int sel) {
     g_bgScan = !g_bgScan;
     saveBgScan();
     if (g_bgScan) { openBgSession(); syncSharePath(); g_scanActive = true; g_lastCycleMs = 0; }  // start now; first cycle right away
-    else          { g_scanActive = false; g_viewFrozen = false; setLed(!g_linkOk, g_linkOk, false); }
+    else          { g_scanActive = false; g_viewFrozen = false; showLinkLed(); }
     drawScanSettings();
     pushStatus();
     return;
@@ -2830,7 +2830,11 @@ bool hostboard::sdBegin() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   return SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
 }
-void    hostboard::setScanLed(bool r, bool g, bool b) { setLed(r, g, b); }
+void    hostboard::setScanLed(LedColor c) {  // on/off RGB: Amber shows as yellow
+  setLed(c == LedColor::Red   || c == LedColor::Magenta || c == LedColor::Amber,
+         c == LedColor::Green || c == LedColor::Cyan    || c == LedColor::Amber,
+         c == LedColor::Blue  || c == LedColor::Magenta || c == LedColor::Cyan);
+}
 int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
 bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
@@ -2879,6 +2883,7 @@ void setup() {
 }
 
 void loop() {
+  tickScanLed();  // alternating LED patterns (Axon red/blue, alert blink)
   // Phone commands are honored from any screen. The board-agnostic dispatch (BLE transfers, whitelist,
   // session/time-sync rename, ...) lives in host_common; below are the CYD's UI reactions to it.
   PhoneCmdFlags pf;
@@ -3267,7 +3272,7 @@ void loop() {
       if (bb == 0) {
         g_scanActive = !g_scanActive;
         if (g_scanActive) g_lastCycleMs = 0;  // first cycle runs right away
-        else              setLed(!g_linkOk, g_linkOk, false);
+        else              showLinkLed();
         render(); pushStatus();
         delay(20);
         return;

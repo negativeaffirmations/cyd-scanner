@@ -17,8 +17,39 @@ extern bool    g_fgScan;      // main.cpp: a phone-started ("G") foreground scan
 static SPIClass sdSPI(FSPI);
 static bool s_rtcPresent = false;
 
+#ifdef MINI_RGB_LED
+// Per-colour PWM duty (0..255) to balance the three dice. Red (470 ohm) is by far the weakest; at full
+// duty green/blue swamp it (magenta read purple, yellow read green). Tuned by eye on mini #2 (2026-10-27):
+// R+B 255/15 = true magenta, R+G 255/40 = true yellow.
+static const uint8_t kLedDuty[3] = { 255, 40, 15 };
+static const uint8_t kLedPin[3]  = { LED_R_PIN, LED_G_PIN, LED_B_PIN };
+
+// Per-LedColor channel levels (0..255, scaled by kLedDuty). Amber = yellow with ~40% of its green.
+static const uint8_t kLedLevel[][3] = {
+  {   0,   0,   0 },  // Off
+  { 255,   0,   0 },  // Red
+  {   0, 255,   0 },  // Green
+  {   0,   0, 255 },  // Blue
+  { 255,   0, 255 },  // Magenta
+  {   0, 255, 255 },  // Cyan
+  { 255, 100,   0 },  // Amber
+};
+
+static void writeRgb(LedColor c) {  // active high (common cathode)
+  const uint8_t* lv = kLedLevel[(int)c];
+  for (int i = 0; i < 3; i++) ledcWrite(kLedPin[i], (uint16_t)kLedDuty[i] * lv[i] / 255);
+}
+#endif
+
 void hostboard::begin() {
-#if SCAN_LED_PIN >= 0
+#ifdef MINI_RGB_LED
+  for (int i = 0; i < 3; i++) ledcAttach(kLedPin[i], 5000, 8);
+  // Boot self-test R -> G -> B so a miswired or dead leg is obvious at power-up.
+  writeRgb(LedColor::Red);   delay(250);
+  writeRgb(LedColor::Green); delay(250);
+  writeRgb(LedColor::Blue);  delay(250);
+  writeRgb(LedColor::Off);
+#elif SCAN_LED_PIN >= 0
   pinMode(SCAN_LED_PIN, OUTPUT);
   digitalWrite(SCAN_LED_PIN, HIGH);  // active low: off
 #endif
@@ -51,11 +82,13 @@ bool hostboard::sdBegin() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   return SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
 }
-void hostboard::setScanLed(bool r, bool g, bool b) {
-#if SCAN_LED_PIN >= 0
-  digitalWrite(SCAN_LED_PIN, (r || g || b) ? LOW : HIGH);
+void hostboard::setScanLed(LedColor c) {
+#ifdef MINI_RGB_LED
+  writeRgb(c);
+#elif SCAN_LED_PIN >= 0
+  digitalWrite(SCAN_LED_PIN, c != LedColor::Off ? LOW : HIGH);
 #else
-  (void)r; (void)g; (void)b;  // GPIO21 is the SD chip-select; no LED
+  (void)c;  // GPIO21 is the SD chip-select; no LED
 #endif
 }
 int     hostboard::batteryPercent() { return power::percent(); }

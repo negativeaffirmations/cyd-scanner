@@ -165,6 +165,10 @@ deleted**, and an onboard charge IC charges over USB-C.
 > is now **1C** — at or above the max charge rate of many small LiPos. Check the new cell's datasheet;
 > if it says ≤ 0.5C (or nothing), swap `Rprog` to **~2.4 kΩ (≈ 0.5 A)**. The 2000 mAh figures below
 > are kept as the original rationale. Battery-% mapping is voltage-only, so it needs no change.
+>
+> **Mini #2 (2026-10-27)** — a second unit on a new perfboard/case footprint — is back on a
+> **2000 mAh** cell, so the 2000 mAh figures below apply to it (TP4056 1 A ≈ 0.5C). It adds the RGB
+> status LED (`[env:xiao_s3_rgb]`, see hardware/PINOUT.md §6a) and drops the power LED.
 
 **Charging the LP103450 (2000 mAh) — DECIDED: external TP4056 charge path (no boost).** The XIAO
 onboard charger is small and fixed (~50–100 mA, IC is an SGM4056/TP4057 depending on rev, **not**
@@ -226,7 +230,11 @@ at a time with the staged bring-up test: [mini-build-bringup.md](mini-build-brin
 | Switch | throw | 100 kΩ | — | battery-sense divider, top leg (switched cell) |
 | 100 kΩ / 100 kΩ | junction | XIAO-S3 | **D1 / GPIO2** | battery sense (ADC1_CH1). **Not D3** (bad pad, 2026-10-23) |
 | 100 kΩ | — | XIAO-S3 | **GND** | battery-sense divider, bottom leg |
-| XIAO-S3 | **3V3** | 1 kΩ → LED → GND | — | power LED (no firmware) |
+| XIAO-S3 | **3V3** | 1 kΩ → LED → GND | — | power LED (no firmware) — mini #1 only; dropped on mini #2 |
+| XIAO-S3 | **D0 / GPIO1** | 470 Ω → RGB LED **R** | — | status LED red (mini #2, `[env:xiao_s3_rgb]`) |
+| XIAO-S3 | **D2 / GPIO3** | 100 Ω → RGB LED **G** | — | status LED green (mini #2) |
+| XIAO-S3 | **D3 / GPIO4** | 100 Ω → RGB LED **B** | — | status LED blue (mini #2; 68 Ω planned) |
+| XIAO-S3 | **GND** | RGB LED **common cathode** | — | status LED common (mini #2) |
 
 Notes:
 - **Link is a cross:** host TX→C5 RX and C5 TX→host RX (don't wire TX→TX). Keep the leads short and

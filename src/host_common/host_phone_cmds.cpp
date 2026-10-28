@@ -81,7 +81,7 @@ void core::servicePhoneScan(PhoneCmdFlags& f) {
   // (it just goes idle), so the user can review the list or restart.
   if (phone::scanStopRequested()) {
     g_scanActive = false;
-    hostboard::setScanLed(!g_linkOk, g_linkOk, false);
+    showLinkLed();
     f.scanStopped = true;
   }
 }

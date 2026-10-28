@@ -60,10 +60,12 @@ void setup() {
   g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering
   g_linkOk = pingC5();
   if (g_linkOk) g_lastLinkOkMs = millis();
+  showLinkLed();  // link LED from boot (no-op without an LED)
   Serial.printf("[S3] ready (link=%s, sd=%s)\n", g_linkOk ? "up" : "down", g_sdOk ? "ok" : "none");
 }
 
 void loop() {
+  tickScanLed();
   PhoneCmdFlags pf;
   core::servicePhoneCommands(pf);
   if (pf.brightnessChanged) {
@@ -95,6 +97,7 @@ void loop() {
       hostboard::sample();  // keep the battery reading fresh while idle (runScanCycle samples otherwise)
       if (pingC5()) g_lastLinkOkMs = millis();
       g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+      showLinkLed();  // headless: the LED is the only link readout
       pushStatus();
     }
   }

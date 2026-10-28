@@ -1,6 +1,63 @@
-# Handoff — 2026-10-24 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-27 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — 2026-10-24: position/time source handling fw 0.12 → 0.16 + webapp polish (ALL DONE, pushed)
+## Latest — 2026-10-27: MINI #2 built + `[env:xiao_s3_rgb]` RGB status LED (WORKING; not committed)
+**RESUME HERE.** The owner built a **second mini** ("mini #2", NOT the unit used on the 10-24 drives): new perfboard/case
+footprint, **2000 mAh** cell, **power LED removed** (redundant), and a **5 mm RGB status LED** on the S3. Wiring diagram:
+`hardware/diagrams/mini-build_led_wiring_diagram.svg` (untracked, owner's Cirkit export; it says 68 Ω for blue but **100 Ω is
+fitted**).
+
+**Hardware (mini #2):** S3 `10:b4:1d:eb:96:04` (BLE `CFLO-MINI-BEMOPU`), C5 `10:bd:a3:cf:a3:c8`. The USB serial number = the
+MAC, so ports are identifiable without esptool. LED: R → D0/GPIO1 via 470 Ω, G → D2/GPIO3 via 100 Ω, B → D3/GPIO4 via
+100 Ω, common → GND.
+
+**Firmware (built, NOT committed):**
+- New env **`[env:xiao_s3_rgb]`** = `extends env:xiao_s3` + `-D MINI_RGB_LED=1`. Mini #1 keeps plain `xiao_s3` (no LED,
+  unchanged). Flash mini #2's S3 with `xiao_s3_rgb` only.
+- `src/xiao_s3/pins.h`: `LED_R/G/B_PIN` 1/3/4 under `#ifdef MINI_RGB_LED`. `src/xiao_s3/host_board.cpp`: `writeRgb()`,
+  LEDC PWM 5 kHz/8-bit, `kLedDuty` = {255,40,15} (tuned by eye, see below), **active HIGH (common-cathode)**, R→G→B self-test at boot.
+  `hostboard::setScanLed()` → same semantics as the CYD via host_core `applyScanLed()` (green link up / red down / red
+  blink alert / magenta follower). `src/xiao_s3/main.cpp`: also sets the link LED after the boot ping and on the
+  idle tick (no-op on plain xiao_s3).
+- Docs updated: PINOUT.md §6a (LED rows + note), mini-build.md (wiring-table rows, mini #2 / 2000 mAh note).
+- Builds: xiao_s3_rgb 41.7% flash / 30.8% RAM; xiao_s3 + xiao_c5 still green.
+
+**Bench results (2026-10-27):** C5 flashed `xiao_c5`, S3 flashed `xiao_s3_rgb`. Link up, 2.4/5G/BLE/PRB streaming,
+RTC present (time not set yet), GPS NMEA clean (no fix indoors), bat ~3.9–4.0 V. The first SD mount failed with "no valid
+FAT volume" (fresh card, likely exFAT); on a later boot it mounted (`sd=ok`, sessions logging), so the owner presumably
+reformatted it to FAT32.
+
+**LED problem:** the LED stayed **dark**. A pad test proved D0/D2/D3 drive correctly (read-back follows the drive). A 7-step
+pattern (each pin high alone, all high, each pin low alone) stayed **dark throughout**. Every leg arrangement of a working
+CC LED would light on at least one step, so the cause is (a) a **common-ANODE part** with its common on GND (owner thinks
+this is likely; they own both types), (b) an open common/GND joint, or (c) a dead LED. **Owner is replacing it with a
+common-cathode part.**
+
+**Resolved:** the owner swapped in a **common-cathode** LED (the first one was very likely common-anode). The 7-step test
+then showed every colour correctly (pin mapping R/G/B = D0/D2/D3 confirmed). At full duty magenta looked purple and yellow
+looked green: red (470 Ω) is far weaker than G/B. A PWM tuning test picked **B=15** for true magenta and **G=40** for true
+yellow → `kLedDuty` {255,40,15}. (Pure blue is only used in the boot self-test, so it's dim there; that's expected.)
+
+**Threat-category LED colours (added same day, shared core → CYD too on its next flash; CYD NOT flashed):**
+`hostboard::setScanLed(bool,bool,bool)` → `setScanLed(LedColor)` (`enum class LedColor` in host_board.h; CYD maps to its on/off
+LED, Amber → yellow). host_core keeps a two-colour pattern: `applyScanLed()` picks it per cycle, new `tickScanLed()` (called at
+the top of both loops) alternates every `LED_ALT_MS` = **700 ms** (owner's choice), `showLinkLed()` resets to the link colour on
+scan stop/idle (replaced the CYD's 4 direct `setLed(link)` calls + host_phone_cmds). Priority: **Axon = red/blue alternating** >
+**Flock/ALPR = amber** > **Ring/Cam/Glass = cyan** > follower magenta > link green/red; a deauth/evil-twin alert alternates red with
+that base (now at 700 ms, was once per ~2 s cycle). Categories = `countCategories()` (non-whitelisted, ≥ Suspect, same as the HOME
+tiles), only while the link is up. Mini levels: `kLedLevel[]` in xiao_s3/host_board.cpp (Amber = R255 + 100/255 of the green duty).
+Owner approved the colours on a temporary demo build (removed). All of cyd / xiao_s3 / xiao_s3_rgb build.
+
+**Current device state:** mini #2's S3 runs the real **`xiao_s3_rgb`** with the tuned duties: link up, SD logging,
+scanning; LED solid green. The C5 runs `xiao_c5` (v11).
+
+**Next:**
+1. Owner eyeballs the live states: boot R→G→B, solid green (link up), red when the C5 is unpowered. Magenta (follower)
+   only shows if `FOLLOW_ALERTS_ENABLED` is flipped on; red blink needs a deauth/evil-twin event.
+2. Commit (platformio.ini, src/xiao_s3/*, PINOUT.md, mini-build.md, HANDOFF.md; ask about the untracked diagram SVG,
+   which still says 68 Ω for blue). Diff platformio.ini first (IDE clobber risk).
+- Power rule reminder: **only one XIAO USB at a time**, switch ON.
+
+## Earlier — 2026-10-24: position/time source handling fw 0.12 → 0.16 + webapp polish (ALL DONE, pushed)
 **State at end of session:** CYD (COM14) + mini S3 (COM16) both run **fw 0.16.2** (items 9–10); both C5s unchanged (link v11, no
 reflash needed all day). Webapp `#uiver` = `gps-sent`, `style.css?v=` + `main.js?v=` = `20261024e`. Bridge is
 current (scan-analyzer ACKed `fix_age` on file + live rows; their server sides are built, commits pending the owner).

@@ -669,19 +669,44 @@ bool isSelfDet(const Detection& d) {
 // can report it. The padlock glyph + 2-tap gesture live further down (drawLockGlyph/serviceTouchLock).
 bool g_touchLocked = false;
 
-// Scan-cycle LED (works headless). Event alert (deauth / evil twin) blinks red each cycle, alternating
-// with magenta when a follow alert is also up, else with the link colour; follow alone = solid
-// magenta; otherwise link green/red.
-void applyScanLed() {
-  static bool phase = false;
-  phase = !phase;
-  if (eventAlertActive()) {
-    if (phase) hostboard::setScanLed(true, false, false);
-    else if (followAlertN() > 0) hostboard::setScanLed(true, false, true);
-    else hostboard::setScanLed(!g_linkOk, g_linkOk, false);
-  } else if (followAlertN() > 0) hostboard::setScanLed(true, false, true);
-  else hostboard::setScanLed(!g_linkOk, g_linkOk, false);
+// Scan-cycle LED (works headless). The core keeps a two-colour pattern (A == B = solid) that
+// applyScanLed() picks once per cycle and tickScanLed() alternates every LED_ALT_MS. Priority:
+// Axon = red/blue; else a base colour of Flock/ALPR = amber > Ring/Cam/Glass = cyan > follow = magenta
+// > link green/red; an event alert (deauth / evil twin) alternates red with that base. Threat colours
+// use the same per-category counts as the HOME tiles, and only while the link is up (stale otherwise).
+static constexpr uint32_t LED_ALT_MS = 700;
+static LedColor s_ledA = LedColor::Off, s_ledB = LedColor::Off;
+static bool     s_ledPhase = false;
+static uint32_t s_ledAtMs  = 0;
+
+static LedColor linkColor() { return g_linkOk ? LedColor::Green : LedColor::Red; }
+
+static void setLedPattern(LedColor a, LedColor b) {
+  if (a == s_ledA && b == s_ledB) return;  // unchanged: keep an alternation's rhythm across cycles
+  s_ledA = a; s_ledB = b; s_ledPhase = false; s_ledAtMs = millis();
+  hostboard::setScanLed(a);
 }
+
+void applyScanLed() {
+  int cnt[CAT_N] = {0}, worst[CAT_N], smax[CAT_N];
+  if (g_linkOk) countCategories(cnt, worst, smax);
+  if (cnt[CAT_AXON]) { setLedPattern(LedColor::Red, LedColor::Blue); return; }
+  LedColor base = linkColor();
+  if (cnt[CAT_FLOCK] || cnt[CAT_ALPR])                   base = LedColor::Amber;
+  else if (cnt[CAT_RING] || cnt[CAT_CAM] || cnt[CAT_GLASS]) base = LedColor::Cyan;
+  else if (followAlertN() > 0)                           base = LedColor::Magenta;
+  if (eventAlertActive()) setLedPattern(LedColor::Red, base);
+  else                    setLedPattern(base, base);
+}
+
+void tickScanLed() {
+  if (s_ledA == s_ledB || millis() - s_ledAtMs < LED_ALT_MS) return;
+  s_ledAtMs = millis();
+  s_ledPhase = !s_ledPhase;
+  hostboard::setScanLed(s_ledPhase ? s_ledB : s_ledA);
+}
+
+void showLinkLed() { setLedPattern(linkColor(), linkColor()); }
 
 // One scan → score → log → render cycle, also mirrored to the phone app. The board's UI work is done
 // through the hostboard:: / hostui:: hooks (CYD repaints; the headless host does nothing).

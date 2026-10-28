@@ -333,7 +333,10 @@ auto-reset flashing — no DevKit two-port gotcha.
 
 | Pad | GPIO | Mini-build use                                                      |
 |-----|------|--------------------------------------------------------------------|
+| D0  | 1    | **RGB LED red** (mini-build-rgb only; 470 Ω, active high)          |
 | D1  | 2    | **Battery sense** (100k/100k divider off switched Vbat; ADC1_CH1)  |
+| D2  | 3    | **RGB LED green** (mini-build-rgb only; 100 Ω; strapping pin)      |
+| D3  | 4    | **RGB LED blue** (mini-build-rgb only; 100 Ω)                      |
 | D4  | 5    | **DS3231 SDA** (I2C `Wire`)                                         |
 | D5  | 6    | **DS3231 SCL** (I2C `Wire`)                                         |
 | D6  | 43   | **Link UART TX → XIAO-C5 RX** (U0TXD pad; UART1 matrixed here)      |
@@ -346,6 +349,14 @@ auto-reset flashing — no DevKit two-port gotcha.
 - **microSD CS = GPIO21**, SCK/MISO/MOSI = 7/8/9 (verified: card mounts, DB loads from it). GPIO21 is
   also the onboard user LED, so **the status LED is dropped** (`SCAN_LED_PIN = -1`); the host is
   headless, LED cosmetic. The Sense SD + camera share one B2B SPI group — treat as one bus.
+- **mini-build-rgb (`[env:xiao_s3_rgb]`, `-DMINI_RGB_LED`, mini #2, 2026-10-27):** an external 5 mm
+  **common-cathode** RGB LED on D0/D2/D3 (common → GND, one resistor per colour: R 470 Ω, G 100 Ω,
+  B 100 Ω — 68 Ω was planned, 100 Ω fitted), LEDC PWM with per-colour duty balance (`kLedDuty` in
+  `host_board.cpp`). Same status meaning as the CYD's onboard RGB: green = C5 link up, red = link down,
+  red blink = deauth/evil-twin alert, magenta = follower, plus threat colours: Axon = red/blue alternating, Flock/ALPR =
+  amber, Ring/Cam/Glass = cyan. R→G→B self-test flash at boot. `LED_*_PIN` in
+  `src/xiao_s3/pins.h`. Mini #2 has **no power LED** (dropped as redundant). Plain `[env:xiao_s3]`
+  is unchanged (no LED).
 - **Console is USB-CDC** (`ARDUINO_USB_CDC_ON_BOOT=1`), freeing the UART0 pads (43/44) for the link
   via `HardwareSerial(1)`. Note: the S3 ROM boot log prints on GPIO43 at power-up → brief noise on the
   C5 RX until the C5 flushes stale RX (self-recovers).
