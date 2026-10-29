@@ -7,6 +7,7 @@
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
+import { gattWrite } from '../ble/gattq.js';
 
 const REPLY_MS = 25000;   // the device may be mid scan cycle before it services the request
 const CHUNK = 240;        // upload bytes per "U" write: one ATT packet at Android's usual MTU
@@ -69,7 +70,7 @@ function fsReq(build){
       resolve: t => t.startsWith("ERR\t") ? reject(new Error(t.slice(4).trim() || "device error")) : resolve(t),
       reject,
       timer: setTimeout(()=>{ pending = null; reject(new Error("no reply from the device")); }, REPLY_MS) };
-    state.chars.cmd.writeValue(build(seq)).catch(e=>{ if (pending) { clearTimeout(pending.timer); pending = null; } reject(e); });
+    gattWrite(state.chars.cmd, build(seq)).catch(e=>{ if (pending) { clearTimeout(pending.timer); pending = null; } reject(e); });
   });
 }
 const zCmd = (op, arg) => fsReq(seq => enc.encode("Z" + seq + ":" + op + ":" + (arg || "")));
@@ -206,7 +207,7 @@ export async function fsDownload(){
   const mine = { mode:null, expect:0, got:0, chunks:[], name:e.name, sink:"save" };
   state.dl = mine;
   setBusy(true); msg("Downloading " + e.name + "…");
-  try { await state.chars.cmd.writeValue(enc.encode("F:" + p)); }
+  try { await gattWrite(state.chars.cmd, enc.encode("F:" + p)); }
   catch (err) { msg("Download failed: " + err.message, true); setBusy(false); return; }
   const t0 = Date.now();
   // download.js fills `mine` (expect from SIZE=, got per chunk) and swaps state.dl for a fresh object
@@ -244,9 +245,6 @@ export async function fsUpload(ev){
                    : "Upload " + file.name + " (" + fmtSize(file.size) + ") to " + p + "?")) return;
   const buf = new Uint8Array(await file.arrayBuffer());
   setBusy(true); cancelUpload = false;
-  // Android rejects a GATT write while another is in flight ("GATT operation failed for unknown reason"),
-  // and the ~5 s GPS feed would collide with one of the hundreds of chunk writes: hold it for the upload.
-  state.gpsHold = true;
   try {
     await zCmd("u", buf.length + ":" + p);
     const t0 = Date.now();
@@ -260,7 +258,6 @@ export async function fsUpload(ev){
     log("Uploaded " + p + " (" + fmtSize(buf.length) + ")");
     toast("Uploaded " + file.name + ".");
   } catch (err) { msg("Upload failed: " + err.message, true); setBusy(false); return; }
-  finally { state.gpsHold = false; }
   setBusy(false);
   if ($("filesDlg").open) refresh(cwd);
 }

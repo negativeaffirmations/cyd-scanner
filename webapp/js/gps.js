@@ -2,6 +2,7 @@
 import { state } from './state.js';
 import { enc } from './config.js';
 import { log } from './util/dom.js';
+import { gattWrite } from './ble/gattq.js';
 
 // The position the SCANNER is stamping on its log right now: STATUS pos=lat,lon + pfa=<fix_age> (fw >=
 // 0.16; same source order as the file log: fresh phone, else onboard GPS, else held). Returns
@@ -23,7 +24,7 @@ export function scannerFix(){
 
 export async function sendGps(pos, quiet=false){   // quiet: the ~5 s continuous feed doesn't log each send
   try{ const s=pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
-    await state.chars.gps.writeValue(enc.encode(s)); if(!quiet) log("GPS sent "+s); return true; }
+    await gattWrite(state.chars.gps, enc.encode(s)); if(!quiet) log("GPS sent "+s); return true; }
   catch(e){ log("GPS send failed: "+e.message); return false; }
 }
 
@@ -34,7 +35,7 @@ export async function sendGps(pos, quiet=false){   // quiet: the ~5 s continuous
 let gpsBusy = false, staleLogged = false, lastTry = 0;
 export async function onGpsWatch(pos){
   const now=Date.now(), la=pos.coords.latitude, lo=pos.coords.longitude;
-  if(gpsBusy || state.gpsHold || now-lastTry < 5000) return;
+  if(gpsBusy || now-lastTry < 5000) return;
   if(pos.timestamp && now-pos.timestamp > 10000){   // a cached / stale fix: don't present it as current
     // Logged once: a phone clock skewed > 10 s from its fix times would otherwise drop EVERY update silently.
     if(!staleLogged){ staleLogged=true; log("GPS: skipping a fix "+Math.round((now-pos.timestamp)/1000)+" s old"); }
