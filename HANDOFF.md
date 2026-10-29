@@ -4,7 +4,7 @@
 DETS rows append `cid` (4-hex) / `uuid` (4-hex short or 32-hex) / `sig` (`host_status.cpp` `pushDetections`); the web app
 (`features/remote.js` `liveRow`) forwards them plus `ie`, and drops fallback names (`realName()`). **Flashed: CYD + mini #1
 (`xiao_s3`) + mini #2 (`xiao_s3_rgb`) — all hosts on 0.19.0.** Web app pushed (`?v=20261029f`). Server already
-expands short UUIDs on ingest. Next: confirm with scan-analyzer that a live session carries the new keys.
+expands short UUIDs on ingest. **Verified end-to-end 2026-10-29** by scan-analyzer (s42–s45 + odid-tx: live sig/tier/flags match the file log). Done.
 
 ## Earlier — 2026-10-29: fw 0.18.0 (explorer + BLE auth Phase A) on ALL THREE HOSTS; explorer upload fixes (webapp, pushed)
 **RESUME HERE.** Explorer + auth Phase A committed and pushed as `6145c18` (web app live on Pages). **Every host is now on
