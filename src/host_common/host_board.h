@@ -13,6 +13,8 @@ bool    sdBegin();                         // bring up the SD bus on the board's
 void    setScanLed(LedColor c);            // CYD: on/off RGB on 4/16/17 (Amber shows yellow); S3: PWM RGB or no-op
 int     batteryPercent();                  // power::percent() (-1 = no battery sensed)
 uint8_t brightness();                      // CYD: backlight %; S3: 100 (reported in STATUS only)
+int     ledBrightness();                   // status-LED brightness % (STATUS led=); -1 = no dimmable LED (CYD, mini #1)
+void    setLedBrightness(int pct);         // "I:<pct>": clamp, apply, persist (NVS cydui/ledbri); no-op without a dimmable LED
 bool    rtcPresent();                      // CYD: false (no DS3231); S3: DS3231 probe result
 bool    foregroundScan();                  // true -> log to g_fg + run the live-scan path. CYD: g_screen == SCR_SCAN
 bool    pipelineAllowed();                 // headless cycle may run now. CYD: false on Explore/drill-down screens

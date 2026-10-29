@@ -463,14 +463,14 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
     a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
-    refuses the live session) · `"B:<0-100>"` set brightness · `"K1"/"K0"` lock / unlock the CYD
+    refuses the live session) · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 25) · `"K1"/"K0"` lock / unlock the CYD
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove · **`"P:<t><g>"`** time / GPS source preference (fw 0.15.0; each digit 0 prefer phone /
     1 prefer device / 2 device only; NVS `cydui/tpref`,`gpref`; web Settings "Time & location sources")
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2). Keys:
-    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,pos,pfa,sid,fw,dbgen`
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden). Keys:
+    `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,led,pos,pfa,sid,fw,dbgen`
     (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device. Device GPS = a live
     onboard fix; device clock (0.15.0) = the onboard GPS is supplying time right now OR the RTC holds a valid
     time — i.e. "an on-device fallback is ready"; a disabled (device-only) phone reads unavailable. The web app

@@ -2837,6 +2837,8 @@ void    hostboard::setScanLed(LedColor c) {  // on/off RGB: Amber shows as yello
 }
 int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
+int     hostboard::ledBrightness()  { return -1; }     // on/off RGB only (no PWM)
+void    hostboard::setLedBrightness(int) {}
 bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
 bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN; }
 const char* hostboard::boardTag() { return "CYD"; }

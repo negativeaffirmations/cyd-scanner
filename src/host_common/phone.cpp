@@ -42,6 +42,8 @@ bool     g_delReq     = false;
 char     g_delFile[48]= {0};
 bool     g_briReq     = false;
 int      g_briVal     = 100;
+bool     g_ledReq     = false;  // "I:<0-100>" status-LED brightness
+int      g_ledVal     = 25;
 bool     g_lockReq    = false;
 bool     g_lockVal    = false;
 bool     g_wlReload   = false;
@@ -157,6 +159,13 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_briVal = atoi(val.c_str() + colon + 1);
           g_briReq = true;
           Serial.printf("[phone] cmd brightness %d\n", g_briVal);
+        }
+      } else if (c0 == 'I' || c0 == 'i') {           // "I:<0-100>" status-LED brightness ('L' is the log download)
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          g_ledVal = atoi(val.c_str() + colon + 1);
+          g_ledReq = true;
+          Serial.printf("[phone] cmd LED brightness %d\n", g_ledVal);
         }
       } else if (c0 == 'K' || c0 == 'k') {           // "K1"/"K0" lock / unlock the CYD display
         g_lockVal = (val.size() > 1 && val[1] == '1');
@@ -381,6 +390,13 @@ bool brightnessRequested(int* outPct) {
   if (!g_briReq) return false;
   g_briReq = false;
   *outPct = g_briVal;
+  return true;
+}
+
+bool ledBrightnessRequested(int* outPct) {
+  if (!g_ledReq) return false;
+  g_ledReq = false;
+  *outPct = g_ledVal;
   return true;
 }
 

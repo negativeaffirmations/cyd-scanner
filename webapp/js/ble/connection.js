@@ -62,7 +62,7 @@ export function onDisconnect(){ setConn("disconnected"); log("Disconnected."); s
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; state.lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
   $("connectBtn").style.display = "";
-  ["scanNavBtn","scanBtn","pauseBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn","tPrefSel","gPrefSel"]
+  ["scanNavBtn","scanBtn","pauseBtn","newSessBtn","syncBtn","reloadBtn","dlBtn","wifiBtn","listBtn","sessDlBtn","sessDlfBtn","sessDelBtn","sessMapBtn","sessWipeBtn","expSel","briSlider","lockBtn","settingsBtn","mapCurBtn","sBle","s24","s5","s154","dlfBleBtn","tPrefSel","gPrefSel","ledSlider"]
     .forEach(id=>$(id).disabled=true);
   $("sessUploadBtn").disabled=true; renderRemoteUI(); updateSessButtons();   // disable session/current upload (no link)
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();

@@ -8,6 +8,7 @@
 #include "../host_common/host_core.h"
 #include <Wire.h>
 #include <sys/time.h>
+#include <Preferences.h>
 #include "../host_common/power.h"
 #include "../host_common/rtc.h"
 
@@ -35,15 +36,49 @@ static const uint8_t kLedLevel[][3] = {
   { 255, 100,   0 },  // Amber
 };
 
+// Overall brightness % (web Settings "LED brightness", CMD "I:", NVS cydui/ledbri). 100 = the tuned duty
+// above; the default 25 because full duty is glaring at night. PWM is 12-bit so the dim green/blue
+// channels keep enough steps to hold the colour balance when scaled down.
+static constexpr int kLedPwmBits = 12, kLedPwmMax = (1 << kLedPwmBits) - 1;
+static uint8_t  s_ledPct = 25;
+static LedColor s_ledColor = LedColor::Off;
+
 static void writeRgb(LedColor c) {  // active high (common cathode)
+  s_ledColor = c;
   const uint8_t* lv = kLedLevel[(int)c];
-  for (int i = 0; i < 3; i++) ledcWrite(kLedPin[i], (uint16_t)kLedDuty[i] * lv[i] / 255);
+  for (int i = 0; i < 3; i++) {
+    uint32_t d = (uint32_t)kLedDuty[i] * lv[i] * s_ledPct;           // <= 255*255*100
+    uint32_t v = (uint32_t)((uint64_t)d * kLedPwmMax / (255u * 255u * 100u));
+    if (d && !v) v = 1;  // a lit channel never rounds to fully off
+    ledcWrite(kLedPin[i], v);
+  }
 }
 #endif
 
+int hostboard::ledBrightness() {
+#ifdef MINI_RGB_LED
+  return s_ledPct;
+#else
+  return -1;
+#endif
+}
+void hostboard::setLedBrightness(int pct) {
+#ifdef MINI_RGB_LED
+  pct = constrain(pct, 0, 100);
+  if (pct == s_ledPct) return;  // skip a no-op NVS write
+  s_ledPct = (uint8_t)pct;
+  writeRgb(s_ledColor);         // re-apply the current colour at the new level
+  Preferences p; p.begin("cydui", false); p.putUChar("ledbri", s_ledPct); p.end();
+#else
+  (void)pct;
+#endif
+}
+
 void hostboard::begin() {
 #ifdef MINI_RGB_LED
-  for (int i = 0; i < 3; i++) ledcAttach(kLedPin[i], 5000, 8);
+  { Preferences p; p.begin("cydui", true); s_ledPct = p.getUChar("ledbri", 25); p.end();
+    if (s_ledPct > 100) s_ledPct = 25; }
+  for (int i = 0; i < 3; i++) ledcAttach(kLedPin[i], 5000, kLedPwmBits);
   // Boot self-test R -> G -> B so a miswired or dead leg is obvious at power-up.
   writeRgb(LedColor::Red);   delay(250);
   writeRgb(LedColor::Green); delay(250);

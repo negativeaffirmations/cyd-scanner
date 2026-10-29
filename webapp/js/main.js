@@ -17,6 +17,8 @@ import { showPage } from './nav.js';
 import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
+import { state } from './state.js';
+import { enc } from './config.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -106,7 +108,13 @@ $("sessDelBtn").onclick = deleteSession;
 $("sessWipeBtn").onclick = wipeAllLogs;
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
-$("lockBtn").onclick = ()=> setLock($("lockBtn").dataset.locked !== "1");   // toggle vs current (from STATUS lock=)
+// Status-LED brightness "I:<0-100>" (fw >= 0.17, mini RGB). The card only shows once STATUS reports led>=0.
+// Sent from here, not commands.js: the entry module is the one that updates the moment the page does.
+$("ledSlider").addEventListener("input", e=>{ $("ledVal").textContent = e.target.value; });
+$("ledSlider").addEventListener("change", async e=>{
+  try{ await state.chars.cmd.writeValue(enc.encode("I:"+e.target.value)); }
+  catch(err){ log("LED brightness failed: "+err.message); } });
+$("lockBtn").onclick =()=> setLock($("lockBtn").dataset.locked !== "1");   // toggle vs current (from STATUS lock=)
 $("tPrefSel").addEventListener("change", sendSourcePref);   // both selects go in one "P:<t><g>" command
 $("gPrefSel").addEventListener("change", sendSourcePref);
 $("settingsBtn").onclick = ()=> showPage('settings');   // retired hidden button -> Settings page

@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261024e">
+<link rel="stylesheet" href="style.css?v=20261028a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -66,7 +66,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-24&nbsp;·&nbsp;gps-sent</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-28&nbsp;·&nbsp;led-bri</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -190,6 +190,13 @@
         <label class="k" for="briSlider" style="display:block;margin-top:.5em">Brightness: <span id="briVal">–</span>%</label>
         <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
         <button id="lockBtn" class="secondary" disabled data-locked="0" style="margin-top:.6em">Lock display</button>
+      </div>
+
+      <!-- Status LED (mini RGB build, CMD "I:<pct>", saved on the scanner; shown once STATUS reports led>=0) -->
+      <div class="card" id="ledCard" style="margin-top:12px; display:none">
+        <strong class="cardhdr">Status LED</strong>
+        <label class="k" for="ledSlider" style="display:block;margin-top:.5em">LED brightness: <span id="ledVal">–</span>%</label>
+        <input type="range" id="ledSlider" min="0" max="100" step="5" value="25" disabled>
       </div>
 
       <!-- Time / location source preference (CMD "P:<t><g>", saved on the scanner; enabled once STATUS reports it) -->
@@ -399,6 +406,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261024e"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261028a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

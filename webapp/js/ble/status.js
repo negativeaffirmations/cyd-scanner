@@ -94,6 +94,9 @@ export function onStatus(ev){
   // so older firmware never receives a "P:" it doesn't understand.
   if("tpref" in kv) { $("tPrefSel").value = kv.tpref; $("tPrefSel").disabled = false; }
   if("gpref" in kv) { $("gPrefSel").value = kv.gpref; $("gPrefSel").disabled = false; }
+  if("led" in kv){ const v = +kv.led, has = Number.isFinite(v) && v >= 0;   // -1 = no dimmable LED (CYD / mini #1)
+    $("ledCard").style.display = has ? "" : "none"; $("ledSlider").disabled = !has;
+    if(has){ $("ledVal").textContent = v; if(document.activeElement !== $("ledSlider")) $("ledSlider").value = v; } }
   if("bri" in kv){ $("briVal").textContent = kv.bri;
     if(document.activeElement !== $("briSlider")) $("briSlider").value = kv.bri; }
   if("lock"in kv){ const locked = kv.lock==="1"; const b = $("lockBtn");

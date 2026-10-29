@@ -33,9 +33,11 @@ void pushStatus() {
   // gav/tav = per-source availability (bit0 phone, bit1 device) for the web status dots. In part 2:
   // part 1's worst case already sits near the notify limit.
   char s2[300];
-  int n2 = snprintf(s2, sizeof(s2), "dl=%d;gav=%d;tav=%d;tpref=%d;gpref=%d;sid=%s;fw=%s;dbgen=%lu;name=%s",
+  // led = status-LED brightness % (-1 = no dimmable LED: the web app hides its slider).
+  int n2 = snprintf(s2, sizeof(s2), "dl=%d;gav=%d;tav=%d;tpref=%d;gpref=%d;led=%d;sid=%s;fw=%s;dbgen=%lu;name=%s",
                     webshare::active() ? 1 : 0,
                     (int)posAvailMask(), (int)timeAvailMask(), (int)g_timePref, (int)g_gpsPref,
+                    hostboard::ledBrightness(),
                     scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN, scannerName());
   // pos = the position the scanner is stamping on its log right now (same source order as the file
   // log; empty with no fix), pfa = the fix_age the log would carry (-1 = live, no marker). The web app

@@ -36,6 +36,10 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
       f.brightnessChanged = true; f.brightnessPct = b;     // the board clamps, applies and saves it
     } }
+  { int b; if (phone::ledBrightnessRequested(&b)) {        // web-app status-LED brightness slider
+      hostboard::setLedBrightness(b);                      // the board clamps, applies and saves it (no-op without a dimmable LED)
+      pushStatus();
+    } }
   { bool lk; if (phone::lockRequested(&lk)) {              // web-app lock / unlock the display
       g_touchLocked = lk;
       f.lockChanged = true; f.lockState = lk;              // the board repaints + pushes status
