@@ -163,8 +163,18 @@ function metaLine(){
   return JSON.stringify(o);
 }
 
+// A DETS `name` is the CYD's display fallback when the device advertises none: the MAC as text or
+// "<OUI vendor> AA:BB" (AA:BB = the row's own MAC tail). Those aren't advertised names, so live rows
+// drop them (contract "Live-POST v-next": real names only, as the file log omits a blank name).
+function realName(r){
+  const n = (r.name||"").trim(), mac = (r.mac||"").toUpperCase();
+  if(!n || n.toUpperCase() === mac) return "";
+  if(mac.length === 17 && n.toUpperCase().endsWith(" "+mac.slice(12))) return "";
+  return n;
+}
+
 // Build one reduced, log-shaped NDJSON line from a live DETS row. Omits the fields the web app can't
-// produce (ch/ie/cid/uuid/pan/score/sig) per the contract; lat/lon = the scanner's own position (the
+// produce (ch/pan/score) per the contract; ie always, cid/uuid/sig from DETS v8 firmware; lat/lon = the scanner's own position (the
 // one its file log stamps, via STATUS pos=; omitted with no fix) + fix_age when the log would mark it
 // held / aged. epoch = LOCAL seconds, ms = phone wall-clock ms (unique per snapshot for the server's
 // session+ms dedup).
@@ -173,7 +183,11 @@ function liveRow(r, sess, epoch, ms, fix){
   const o = { live:1, session:sess, epoch, ms, src: srcs.length?srcs[0].tag:"", mac:r.mac, rssi:r.rssi };
   if(fix){ o.lat = +fix.lat.toFixed(6); o.lon = +fix.lon.toFixed(6);
     if(fix.fixAge !== undefined) o.fix_age = fix.fixAge; }
-  if(r.name) o.name = r.name;
+  const nm = realName(r); if(nm) o.name = nm;
+  if(r.ie && !/^0+$/.test(r.ie)) o.ie = r.ie;
+  if(r.cidHex) o.cid = r.cidHex;
+  if(r.uuid) o.uuid = r.uuid;
+  if(r.sig) o.sig = r.sig;
   const tn = typeof r.tier==="number" ? r.tier : 0;
   if(tn>0) o.tier = TIER_NAMES[tn];
   const fs = flagStr(r.flags||0); if(fs) o.flags = fs;

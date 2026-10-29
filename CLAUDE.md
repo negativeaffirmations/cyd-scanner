@@ -519,7 +519,10 @@ back (5 GHz included). Things that matter, learned the hard way:
     lat/lon decimal deg, height/geo-alt m, speed m/s, heading deg, UAS ID / operator ID; unknown
     fields empty) — the web app plots the drone + operator on the device-modal map and the Map page.
     Fields/blocks were appended across versions (follow in v3, `flags` in v4, `cat` in v5, the RID
-    block in v6); older parsers read the fixed detection fields / `count` rows and ignore the extras,
+    block in v6, the company label in v7, and **v8 (fw 0.19.0)** `cid` raw 4-hex / `uuid` primary service UUID,
+    4-hex when Bluetooth-base 16-bit else 32-hex / `sig` label — which the web app forwards on live-POST rows,
+    along with `ie`, dropping MAC-text / `"<vendor> AA:BB"` fallback names; contract "Live-POST v-next",
+    approved 2026-10-29); older parsers read the fixed detection fields / `count` rows and ignore the extras,
     and the web parser skips any unrecognized line. The web app renders the rows as the Scanner page's
     **tall, tappable live list** (tier-colored, follow + flag markers; tap a row → device modal) + the
     threat strip/breakdown. (DETS versioning is the CYD→phone stream's own; it is NOT the CYD↔C5 link

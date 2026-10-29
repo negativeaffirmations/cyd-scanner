@@ -1,6 +1,12 @@
 # Handoff — 2026-10-29 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — 2026-10-29: fw 0.18.0 (explorer + BLE auth Phase A) on ALL THREE HOSTS; explorer upload fixes (webapp, pushed)
+## Latest — 2026-10-29 (eve): fw 0.19.0 = DETS v8 + richer live-POST rows (scan-analyzer "Live-POST v-next", owner-approved)
+DETS rows append `cid` (4-hex) / `uuid` (4-hex short or 32-hex) / `sig` (`host_status.cpp` `pushDetections`); the web app
+(`features/remote.js` `liveRow`) forwards them plus `ie`, and drops fallback names (`realName()`). **Flashed: CYD + mini #1
+(`xiao_s3`). Mini #2 (`xiao_s3_rgb`) still on 0.18.0 — flash it next.** Web app pushed (`?v=20261029f`). Server already
+expands short UUIDs on ingest. Next: confirm with scan-analyzer that a live session carries the new keys.
+
+## Earlier — 2026-10-29: fw 0.18.0 (explorer + BLE auth Phase A) on ALL THREE HOSTS; explorer upload fixes (webapp, pushed)
 **RESUME HERE.** Explorer + auth Phase A committed and pushed as `6145c18` (web app live on Pages). **Every host is now on
 0.18.0** (owner's requests, for hardware testing — the no-flash-until-auth rule is satisfied):
 

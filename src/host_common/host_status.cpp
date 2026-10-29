@@ -81,6 +81,11 @@ void pushStatus() {
 // (sigdb::cidName of the device's company ID; empty when unknown/none) — shown on the web live list
 // IN ADDITION to the MAC, so a rotating-random-address device is still identifiable by its maker.
 // Older parsers read fields 0..10 (through <cat>) and ignore it.
+// v8 appends THREE more trailing per-row fields for the live-POST rows (scan-analyzer contract
+// "Live-POST v-next", 2026-10-29): <cid> the raw company ID as 4 hex (empty = none), <uuid> the
+// primary BLE service UUID — 4-hex short form when it is a Bluetooth-base 16-bit UUID, else 32 hex
+// (empty = none) — and <sig> the strongest-scoring member's detLabel (the file log's "sig").
+// Worst-case row stays under the ~252 B notify cap (sig <= 19 chars, LABEL_LEN).
 // v6 appends a trailing RID block AFTER the n detection rows, only while a Remote-ID emitter is
 // held: an "R:<ridCount>" header then ridCount rows of 11 tab-separated fields (always 11 columns,
 // unknown = empty): mac uas dlat dlon olat olon h alt spd hdg oid (lat/lon %.6f deg, h/alt m,
@@ -104,7 +109,7 @@ void pushDetections() {
     const DevGroup& g = g_groups[r];
     char name[24];
     sanitizeField(name, sizeof(name), groupName(&g));
-    char row[224];
+    char row[256];
     int len = snprintf(row, sizeof(row), "%u\t%d\t%02X:%02X:%02X:%02X:%02X:%02X\t%d\t%08lX\t%s\t",
                        (unsigned)g_detsSeq, g.tier,
                        g.mac[0], g.mac[1], g.mac[2], g.mac[3], g.mac[4], g.mac[5],
@@ -124,7 +129,34 @@ void pushDetections() {
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
     // v7 trailing: BLE company maker label (empty if unknown/none), shown on the web live list.
     char mk[24]; sanitizeField(mk, sizeof(mk), sigdb::cidName(g.companyId));
-    snprintf(row + len, sizeof(row) - len, "\t%s", mk);
+    len += snprintf(row + len, sizeof(row) - len, "\t%s", mk);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v8 trailing: raw cid / primary uuid / sig. g_dets is still this cycle's table (buildGroups ran
+    // just before), so scan the members: first non-zero svc, strongest-scoring member's label.
+    const uint8_t* svc = nullptr; int best = -1;
+    for (int i = 0; i < g_detCount; i++) {
+      if (memcmp(g_dets[i].mac, g.mac, 6) != 0) continue;
+      if (!svc) for (int j = 0; j < 16; j++) if (g_dets[i].svc[j]) { svc = g_dets[i].svc; break; }
+      if (best < 0 || g_score[i].score > g_score[best].score) best = i;
+    }
+    char cid[5] = "";
+    if (g.companyId) snprintf(cid, sizeof(cid), "%04X", g.companyId);
+    char uuid[33] = "";
+    if (svc) {
+      static const uint8_t kBase[12] = {0x00,0x00,0x10,0x00,0x80,0x00,0x00,0x80,0x5F,0x9B,0x34,0xFB};
+      if (svc[0] == 0 && svc[1] == 0 && memcmp(svc + 4, kBase, 12) == 0)
+        snprintf(uuid, sizeof(uuid), "%02X%02X", svc[2], svc[3]);
+      else
+        for (int j = 0; j < 16; j++) sprintf(uuid + j * 2, "%02X", svc[j]);
+    }
+    char sig[24] = "";  // tab/control-safe only: keep commas so it equals the file log's sig
+    if (best >= 0) {
+      const char* l = detLabel(best);
+      size_t k = 0;
+      for (; l && l[k] && k + 1 < sizeof(sig); k++) sig[k] = ((uint8_t)l[k] < 0x20 || l[k] == 0x7F) ? ' ' : l[k];
+      sig[k] = 0;
+    }
+    snprintf(row + len, sizeof(row) - len, "\t%s\t%s\t%s", cid, uuid, sig);
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }
