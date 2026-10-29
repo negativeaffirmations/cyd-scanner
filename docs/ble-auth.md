@@ -1,7 +1,7 @@
 # BLE phone-link authentication (SEC-H3) — design
 
-Status: **Phase A in progress** (2026-10-29). Unblocks the fw 0.18.0 SD-card file explorer, which must not be
-flashed to any unit or have its web app pushed until Phase A lands and passes review + hardware tests.
+Status: **Phase A built + reviewed; on all three hosts (fw 0.18.0, 2026-10-29), hardware testing in progress** — T2 and
+T3 (CYD) passed; see HANDOFF "Latest" for what remains. Phase A unblocked the fw 0.18.0 SD-card file explorer.
 
 ## Problem
 The host's (CYD / XIAO-S3 mini) phone GATT service has no pairing or auth. Any central in range that connects

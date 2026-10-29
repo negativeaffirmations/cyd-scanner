@@ -1,10 +1,24 @@
 # Handoff — 2026-10-29 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — 2026-10-29: fw 0.18.0 (explorer + BLE auth Phase A) FLASHED to the CYD; explorer upload fixes (webapp, pushed)
-**RESUME HERE.** Explorer + auth Phase A committed and pushed as `6145c18` (web app live on Pages). **CYD (COM14) flashed
-with 0.18.0** at the owner's request for hardware testing; **minis #1/#2 still on 0.17** (flash them only after the auth
-tests below pass). Owner tested on the CYD: pairing via the Phone-key QR works, the file explorer works (browse /
-download / upload / rename / mkdir / delete), and a 293 KB JPG upload completes.
+## Latest — 2026-10-29: fw 0.18.0 (explorer + BLE auth Phase A) on ALL THREE HOSTS; explorer upload fixes (webapp, pushed)
+**RESUME HERE.** Explorer + auth Phase A committed and pushed as `6145c18` (web app live on Pages). **Every host is now on
+0.18.0** (owner's requests, for hardware testing — the no-flash-until-auth rule is satisfied):
+
+| Host    | Env           | Port / MAC                    | Name               | sid            | Key gen | Pairing QR                                  |
+|---------|---------------|-------------------------------|--------------------|----------------|---------|---------------------------------------------|
+| CYD     | `cyd`         | COM14 (CH340)                 | (CYD Settings → Phone key) | —      | 1       | on the CYD screen                           |
+| Mini #1 | `xiao_s3`     | COM16, 10:b4:1d:e7:ed:a0      | CFLO-MINI-GABAME   | `a0ede71db410` | 1       | `qr-codes/CFLO-MINI-GABAME-pairing-qr.svg`  |
+| Mini #2 | `xiao_s3_rgb` | COM10, 10:b4:1d:eb:96:04      | CFLO-MINI-BEMOPU   | `0496eb1db410` | 1       | `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg`  |
+
+(COM numbers move on replug — identify the S3s by MAC with `esptool chip_id`.) **`qr-codes/` is git-ignored: each QR holds
+that device's secret key; never commit it.** The mini QRs encode the serial `key` link (read over USB-CDC with DTR high,
+RTS low so the board doesn't reset), rendered to SVG by the vendored `webapp/js/vendor/qrcode.js` under Node, with the name
++ sid as a caption. A rekey invalidates the QR — regenerate it the same way.
+
+**Tested by the owner so far:** T3 on the CYD (pairing via the Phone-key QR, authenticated connect); the file explorer on
+the CYD (browse / download / upload / rename / mkdir / delete; a 293 KB JPG upload completes); **T2 PASSED** (the current
+web app works with a 0.17 device — mini #2 before its flash; "Open file explorer" just shows the version error). Pairing
+the minis from their new QRs not yet confirmed.
 
 Web-app fixes this session (webapp-only, all pushed; tokens now `?v=20261029e`, `#uiver` `ble-auth e`):
 - `d8f819b` — upload confirmation added; first attempt at the upload failure (pausing GPS) — superseded.
@@ -19,21 +33,17 @@ Web-app fixes this session (webapp-only, all pushed; tokens now `?v=20261029e`, 
   old native prompt listed the file name twice and read like an overwrite warning; native `confirm()` titles can't be
   changed.) The explorer's **delete** prompt is still native `confirm()` — offered to convert, not asked for yet.
 
-**Later the same day:** T2 PASSED (owner: the current web app works with mini #2 on 0.17; "Open file explorer" just shows
-the version error). **Mini #2 then flashed with 0.18.0** (`xiao_s3_rgb`, S3 on COM10, MAC 10:b4:1d:eb:96:04): name
-**CFLO-MINI-BEMOPU**, sid `0496eb1db410`, key gen 1. Its pairing QR (the serial `key` link) was rendered with the vendored
-`webapp/js/vendor/qrcode.js` under Node to `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg` — **`qr-codes/` is git-ignored: each
-QR holds that device's secret key; never commit it.** **Mini #1 also flashed 0.18.0** (`xiao_s3`, COM16, MAC 10:b4:1d:e7:ed:a0): **CFLO-MINI-GABAME**, sid `a0ede71db410`, gen 1, QR `qr-codes/CFLO-MINI-GABAME-pairing-qr.svg`. All three hosts now on 0.18.0.
+**Next:** the remaining Phase A hardware tests from `docs/ble-auth.md` §"Hardware test plan" — pair each mini from its QR
+(T3/T4 on a screenless host), T4 deep link combined with `#server=`, T5 attacker with nRF Connect (no notifications, writes
+ignored, kicks, lockout), T6 replay rejected, T7 rekey (CYD NEW KEY + serial `rekey confirm`; then regenerate that QR), T8
+20 connect/disconnect cycles incl. mid-transfer, T9 explorer items (upload speed still unmeasured; `.upl` sweep after a
+mid-upload reboot; `max_files` handle budget). Optional: convert the explorer's delete prompt to `askConfirm`. Open issues
+list below still applies.
 
-**Next:** the remaining Phase A hardware tests from `docs/ble-auth.md` §"Hardware test plan" — T4 deep link from the serial `key` URL, T5 attacker with nRF
-Connect, T6 replay, T7 rekey (CYD + serial), T8 20 connect/disconnect cycles incl. mid-transfer, T9 explorer items (upload
-speed still unmeasured; `.upl` sweep; `max_files` handle budget) — then flash the minis. Open issues list below still
-applies.
-
-## Earlier — 2026-10-28 (late): SD card file explorer, fw 0.18.0 (now COMMITTED `6145c18` + pushed; CYD flashed 2026-10-29)
-⛔ Owner's rule (still in force for the minis): don't flash 0.18.0 to a device until BLE link security is handled — Phase A
-(below) is that fix and is now under hardware test on the CYD. The status text in this section is as of 2026-10-28/29
-morning; builds pass for `cyd`, `xiao_s3`, `xiao_s3_rgb`.
+## Earlier — 2026-10-28 (late): SD card file explorer, fw 0.18.0 (now COMMITTED `6145c18` + pushed; all hosts flashed 2026-10-29)
+Owner's rule was: don't flash 0.18.0 until BLE link security is handled — Phase A (below) is that fix; it is built, reviewed
+and now on all three hosts for hardware testing. The status text in this section is as of 2026-10-28/29 morning (the
+"Blocker" and "NOT flashed" notes are historical); builds pass for `cyd`, `xiao_s3`, `xiao_s3_rgb`.
 
 **What it is.** Owner-chosen scope: the WHOLE card, with browse / download / delete / upload / rename / new folder,
 from a Data-page card ("SD card files" → `#filesDlg`).
