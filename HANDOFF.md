@@ -1,9 +1,34 @@
-# Handoff — 2026-10-28 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-29 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — 2026-10-28 (late): SD card file explorer, fw 0.18.0 (BUILT, NOT FLASHED, NOT COMMITTED)
-**RESUME HERE — first agenda item 2026-10-29.** ⛔ **Owner's rule: do NOT flash 0.18.0 to ANY device (CYD, mini #1,
-mini #2) and do not push the web app until BLE link security is handled** (see Blocker below). Everything is
-uncommitted in the working tree; builds pass for `cyd`, `xiao_s3`, `xiao_s3_rgb`.
+## Latest — 2026-10-29: fw 0.18.0 (explorer + BLE auth Phase A) FLASHED to the CYD; explorer upload fixes (webapp, pushed)
+**RESUME HERE.** Explorer + auth Phase A committed and pushed as `6145c18` (web app live on Pages). **CYD (COM14) flashed
+with 0.18.0** at the owner's request for hardware testing; **minis #1/#2 still on 0.17** (flash them only after the auth
+tests below pass). Owner tested on the CYD: pairing via the Phone-key QR works, the file explorer works (browse /
+download / upload / rename / mkdir / delete), and a 293 KB JPG upload completes.
+
+Web-app fixes this session (webapp-only, all pushed; tokens now `?v=20261029e`, `#uiver` `ble-auth e`):
+- `d8f819b` — upload confirmation added; first attempt at the upload failure (pausing GPS) — superseded.
+- `822544b` — **uploads failed with "GATT operation failed for unknown reason"** (25–35 % in, later instantly): the ~5 s
+  phone-GPS write collided with a chunk write; Android runs ONE GATT op per connection and rejects a concurrent one.
+  New `webapp/js/ble/gattq.js` `gattWrite(ch, data)` serializes writes; `gps.js` (`sendGps`) and `features/files.js`
+  (`fsReq`, `F:` download) go through it. **Any future write that can run during a long transfer must use `gattWrite`**
+  (other one-off button writes in `commands.js` etc. still call `writeValue` directly — fine while the explorer dialog is
+  modal, but convert them if that changes).
+- `cb207c9` — upload prompt is now the shared in-app `askConfirm` dialog (auth.js `#secDlg`): title **"Confirm Upload"**,
+  "Upload selected to `<folder>/`?"; an existing name gets a separate red **"Replace file?"** prompt. (Owner feedback: the
+  old native prompt listed the file name twice and read like an overwrite warning; native `confirm()` titles can't be
+  changed.) The explorer's **delete** prompt is still native `confirm()` — offered to convert, not asked for yet.
+
+**Next:** the remaining Phase A hardware tests from `docs/ble-auth.md` §"Hardware test plan" — T2 (current web app vs a
+0.17 device — the web app is already live, so this matters), T4 deep link from the serial `key` URL, T5 attacker with nRF
+Connect, T6 replay, T7 rekey (CYD + serial), T8 20 connect/disconnect cycles incl. mid-transfer, T9 explorer items (upload
+speed still unmeasured; `.upl` sweep; `max_files` handle budget) — then flash the minis. Open issues list below still
+applies.
+
+## Earlier — 2026-10-28 (late): SD card file explorer, fw 0.18.0 (now COMMITTED `6145c18` + pushed; CYD flashed 2026-10-29)
+⛔ Owner's rule (still in force for the minis): don't flash 0.18.0 to a device until BLE link security is handled — Phase A
+(below) is that fix and is now under hardware test on the CYD. The status text in this section is as of 2026-10-28/29
+morning; builds pass for `cyd`, `xiao_s3`, `xiao_s3_rgb`.
 
 **What it is.** Owner-chosen scope: the WHOLE card, with browse / download / delete / upload / rename / new folder,
 from a Data-page card ("SD card files" → `#filesDlg`).
