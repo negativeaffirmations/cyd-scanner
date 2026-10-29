@@ -19,8 +19,13 @@ Web-app fixes this session (webapp-only, all pushed; tokens now `?v=20261029e`, 
   old native prompt listed the file name twice and read like an overwrite warning; native `confirm()` titles can't be
   changed.) The explorer's **delete** prompt is still native `confirm()` — offered to convert, not asked for yet.
 
-**Next:** the remaining Phase A hardware tests from `docs/ble-auth.md` §"Hardware test plan" — T2 (current web app vs a
-0.17 device — the web app is already live, so this matters), T4 deep link from the serial `key` URL, T5 attacker with nRF
+**Later the same day:** T2 PASSED (owner: the current web app works with mini #2 on 0.17; "Open file explorer" just shows
+the version error). **Mini #2 then flashed with 0.18.0** (`xiao_s3_rgb`, S3 on COM10, MAC 10:b4:1d:eb:96:04): name
+**CFLO-MINI-BEMOPU**, sid `0496eb1db410`, key gen 1. Its pairing QR (the serial `key` link) was rendered with the vendored
+`webapp/js/vendor/qrcode.js` under Node to `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg` — **`qr-codes/` is git-ignored: each
+QR holds that device's secret key; never commit it.** Mini #1 still on 0.17.
+
+**Next:** the remaining Phase A hardware tests from `docs/ble-auth.md` §"Hardware test plan" — T4 deep link from the serial `key` URL, T5 attacker with nRF
 Connect, T6 replay, T7 rekey (CYD + serial), T8 20 connect/disconnect cycles incl. mid-transfer, T9 explorer items (upload
 speed still unmeasured; `.upl` sweep; `max_files` handle budget) — then flash the minis. Open issues list below still
 applies.

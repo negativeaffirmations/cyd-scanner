@@ -38,3 +38,5 @@ webapp/*.css.map
 # Ignore Adobe files
 *.psd
 *.ai
+# Device pairing QR codes -- each encodes a scanner's secret phone-link key. Never commit.
+qr-codes/
