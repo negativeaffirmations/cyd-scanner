@@ -23,7 +23,7 @@ Web-app fixes this session (webapp-only, all pushed; tokens now `?v=20261029e`, 
 the version error). **Mini #2 then flashed with 0.18.0** (`xiao_s3_rgb`, S3 on COM10, MAC 10:b4:1d:eb:96:04): name
 **CFLO-MINI-BEMOPU**, sid `0496eb1db410`, key gen 1. Its pairing QR (the serial `key` link) was rendered with the vendored
 `webapp/js/vendor/qrcode.js` under Node to `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg` — **`qr-codes/` is git-ignored: each
-QR holds that device's secret key; never commit it.** Mini #1 still on 0.17.
+QR holds that device's secret key; never commit it.** **Mini #1 also flashed 0.18.0** (`xiao_s3`, COM16, MAC 10:b4:1d:e7:ed:a0): **CFLO-MINI-GABAME**, sid `a0ede71db410`, gen 1, QR `qr-codes/CFLO-MINI-GABAME-pairing-qr.svg`. All three hosts now on 0.18.0.
 
 **Next:** the remaining Phase A hardware tests from `docs/ble-auth.md` §"Hardware test plan" — T4 deep link from the serial `key` URL, T5 attacker with nRF
 Connect, T6 replay, T7 rekey (CYD + serial), T8 20 connect/disconnect cycles incl. mid-transfer, T9 explorer items (upload
