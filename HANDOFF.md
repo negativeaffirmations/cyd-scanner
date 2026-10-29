@@ -1,7 +1,28 @@
-# Handoff — 2026-10-27 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-28 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — 2026-10-27: MINI #2 built + `[env:xiao_s3_rgb]` RGB status LED (WORKING; not committed)
-**RESUME HERE.** The owner built a **second mini** ("mini #2", NOT the unit used on the 10-24 drives): new perfboard/case
+## Latest — 2026-10-28: status-LED brightness setting, fw 0.17.0 (DONE; mini #2 FLASHED, pushed `80bf283` + `cac0de7`)
+**RESUME HERE.** The mini #2 RGB LED was glaring at night, so its overall brightness is now a web-app setting.
+- **CMD `I:<0-100>`** (`phone.cpp` → `ledBrightnessRequested()`; `'L'` was taken by the log download) → core
+  `servicePhoneCommands` calls the new **`hostboard::setLedBrightness(pct)`** (board clamps 0–100, re-applies the current
+  colour, saves NVS **`cydui/ledbri`**; skips a no-op write) then `pushStatus()`.
+- **STATUS part 2 `led=<pct>`** from the new `hostboard::ledBrightness()`; **−1 = no dimmable LED** (CYD, mini #1 /
+  plain `xiao_s3`), which keeps the web card hidden.
+- `src/xiao_s3/host_board.cpp`: `writeRgb()` scales `kLedDuty × kLedLevel × s_ledPct`; LEDC moved **8 → 12-bit** so the
+  dim G/B channels keep their colour balance when scaled (a lit channel never rounds to 0). **Default `kLedDefaultPct` = 5**
+  (first shipped as 25 in `80bf283`; the owner found 25 still too bright in the dark, 5 still visible in daylight →
+  `cac0de7`). The boot R→G→B self-test runs at the saved level. A value already in NVS wins over the default.
+- Web app: Settings **"Status LED"** card (`#ledCard`, slider `#ledSlider` 0–100 step 5), shown only when STATUS
+  `led ≥ 0` (`ble/status.js`); the `I:` send lives in **`main.js`** (entry-module rule, so a stale cached `commands.js`
+  can't break the import). Token `?v=20261028a`, `#uiver` = `led-bri` (Pages confirmed live). The 5% default change only
+  touched the slider's placeholder value, so the token was not re-bumped.
+- `FW_VERSION` 0.17.0; CLAUDE.md CMD list + STATUS keys updated. Builds: cyd, xiao_s3, xiao_s3_rgb all green.
+- **Device state:** mini #2's S3 (`10:b4:1d:eb:96:04`, COM10 this session) runs `cac0de7` `xiao_s3_rgb`, boot-verified
+  (link up, scanning). **Owner confirmed the slider works.** CYD NOT reflashed (its change is only `led=-1` + stubs).
+- Still untracked: `hardware/diagrams/mini-build_led_wiring_diagram.svg` (says 68 Ω for blue; 100 Ω fitted) — ask before
+  committing.
+
+## Earlier — 2026-10-27: MINI #2 built + `[env:xiao_s3_rgb]` RGB status LED (DONE; committed + pushed `4fddba0`)
+The owner built a **second mini** ("mini #2", NOT the unit used on the 10-24 drives): new perfboard/case
 footprint, **2000 mAh** cell, **power LED removed** (redundant), and a **5 mm RGB status LED** on the S3. Wiring diagram:
 `hardware/diagrams/mini-build_led_wiring_diagram.svg` (untracked, owner's Cirkit export; it says 68 Ω for blue but **100 Ω is
 fitted**).
@@ -53,8 +74,7 @@ scanning; LED solid green. The C5 runs `xiao_c5` (v11).
 **Next:**
 1. Owner eyeballs the live states: boot R→G→B, solid green (link up), red when the C5 is unpowered. Magenta (follower)
    only shows if `FOLLOW_ALERTS_ENABLED` is flipped on; red blink needs a deauth/evil-twin event.
-2. Commit (platformio.ini, src/xiao_s3/*, PINOUT.md, mini-build.md, HANDOFF.md; ask about the untracked diagram SVG,
-   which still says 68 Ω for blue). Diff platformio.ini first (IDE clobber risk).
+2. ~~Commit~~ — done (`4fddba0`, pushed 2026-10-28). The diagram SVG is still untracked (see Latest).
 - Power rule reminder: **only one XIAO USB at a time**, switch ON.
 
 ## Earlier — 2026-10-24: position/time source handling fw 0.12 → 0.16 + webapp polish (ALL DONE, pushed)
