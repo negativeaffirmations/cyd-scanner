@@ -37,10 +37,12 @@ static const uint8_t kLedLevel[][3] = {
 };
 
 // Overall brightness % (web Settings "LED brightness", CMD "I:", NVS cydui/ledbri). 100 = the tuned duty
-// above; the default 25 because full duty is glaring at night. PWM is 12-bit so the dim green/blue
-// channels keep enough steps to hold the colour balance when scaled down.
+// above; the default is 5 (25 was still glaring in the dark, and 5 stays visible in daylight -- tested on
+// mini #2, 2026-10-28). PWM is 12-bit so the dim green/blue channels keep enough steps to hold the colour
+// balance when scaled down.
 static constexpr int kLedPwmBits = 12, kLedPwmMax = (1 << kLedPwmBits) - 1;
-static uint8_t  s_ledPct = 25;
+static constexpr uint8_t kLedDefaultPct = 5;
+static uint8_t  s_ledPct = kLedDefaultPct;
 static LedColor s_ledColor = LedColor::Off;
 
 static void writeRgb(LedColor c) {  // active high (common cathode)
@@ -76,8 +78,8 @@ void hostboard::setLedBrightness(int pct) {
 
 void hostboard::begin() {
 #ifdef MINI_RGB_LED
-  { Preferences p; p.begin("cydui", true); s_ledPct = p.getUChar("ledbri", 25); p.end();
-    if (s_ledPct > 100) s_ledPct = 25; }
+  { Preferences p; p.begin("cydui", true); s_ledPct = p.getUChar("ledbri", kLedDefaultPct); p.end();
+    if (s_ledPct > 100) s_ledPct = kLedDefaultPct; }
   for (int i = 0; i < 3; i++) ledcAttach(kLedPin[i], 5000, kLedPwmBits);
   // Boot self-test R -> G -> B so a miswired or dead leg is obvious at power-up.
   writeRgb(LedColor::Red);   delay(250);

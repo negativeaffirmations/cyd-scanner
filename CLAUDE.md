@@ -463,7 +463,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
     a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
-    refuses the live session) · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 25) · `"K1"/"K0"` lock / unlock the CYD
+    refuses the live session) · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · `"K1"/"K0"` lock / unlock the CYD
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
