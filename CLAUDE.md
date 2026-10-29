@@ -462,8 +462,15 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
-    a session file · `"D:<path>"` delete a session file (both restricted to `/logs/`; delete
-    refuses the live session) · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · `"K1"/"K0"` lock / unlock the CYD
+    any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · `"D:<path>"` delete a session file (restricted to
+    `/logs/`; refuses the live session) · **`"Z<seq>:<op>:<arg>"` + `"U<seq byte><bytes>"`** = the **SD file
+    explorer** (fw 0.18.0, `src/host_common/host_files.*`; op `l` list, paged ~4 KB / `m` mkdir / `r` rename
+    `from\tto` / `d` delete file or empty folder / `u` upload `<size>:<path>` / `a` abort; each answered with ONE
+    `FS=<n>:<seq>` LOGDATA payload `OK…`/`DONE…`/`ERR\t<why>`; uploads stage to `<path>.upl` then swap via
+    `.bak`, 8 MB cap; all guards case-insensitive — FAT aliases `/LOGS`, `/logs.` — and the live/held/streaming/
+    uploading files plus `/` and `/logs` can't be deleted, renamed or overwritten; `/logs/` names ≤ 47 chars for
+    the 48-B log-code buffers. Web: Data page "SD card files" → `features/files.js`, its own FS= listener)
+    · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · `"K1"/"K0"` lock / unlock the CYD
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
@@ -517,6 +524,25 @@ back (5 GHz included). Things that matter, learned the hard way:
     **tall, tappable live list** (tier-colored, follow + flag markers; tap a row → device modal) + the
     threat strip/breakdown. (DETS versioning is the CYD→phone stream's own; it is NOT the CYD↔C5 link
     `PROTOCOL_VERSION`.)
+  - `…0007` AUTH (read/write, **Phase A of SEC-H3, fw 0.18.0; design `docs/ble-auth.md`**) — per-connection HMAC
+    challenge-response with a per-device random 128-bit key (NVS `cydscan`/`blekey` + `blekeygen`; `src/host_common/devkey.*`).
+    Read = `v=1;sid=<12hex>;name=;fw=;sec=<PHONE_BLE_SEC, 0>;kg=<gen>;st=<0|1|2>[;n=<32hex>][;f=<fails>][;wait=<s>][;dp=<64hex>][;enc=0]`
+    (`st` 0 locked + nonce `n`, 1 authenticated (+`dp`), 2 rate-limited (`wait`)); write `H:<cn 32hex>:<mac 64hex>`
+    (exactly 99 B) with `mac = HMAC-SHA256(key, "CFLO-AUTH-1|sid|n|cn")` and the device proof
+    `dp = HMAC-SHA256(key, "CFLO-DEV-1|sid|n|cn")` (lowercase hex; the app checks `dp` before sending TIME/GPS). Limits: 30 s
+    to authenticate, 3 bad tries/connection → kick, 6 fails in 10 min → 60 s lockout doubling to 16 min. **Gate:** TIME/GPS/CMD
+    writes are ignored until authed; STATUS (attribute holds only `auth=0`) / LOGDATA / DETS are notified ONLY to the authed
+    connection handle (explicit-buffer notify); `phone::authed()` (not `connected()`, which stays for UI) gates the
+    transfers, DETS push and phone-GPS freshness; disconnect clears queued transfer requests; kicks/timeouts run from
+    `phone::service()` in loop, never in a callback. A STATUS push follows auth and the authed STATUS subscribe. Phase B/C
+    (bonding, `PHONE_BLE_SEC` 1/2) are NOT built: `linkEncrypted()` is false. **Key delivery/rekey:** CYD Settings →
+    **Phone key** (`SCR_PHONEKEY`: QR of `devkey::pairUrl()` = web app `#devkey=<32hex>&sid=<12hex>&kg=<gen>`, name +
+    `gen N`, key as 4×4 hex text, NEW KEY… → `SCR_REKEYCONFIRM` → `phone::rekeyAndKick()`); screenless minis use the USB
+    serial console (`src/host_common/host_serial.*`): `help`, `key` (name/sid/gen/key/link — never printed unprompted),
+    `rekey` then `rekey confirm` within 15 s. CYD BLE icon: grey connected-unauthed, blue authed; HOME phone icon green
+    only when authed. **Audit:** every phone-made change to card files / whitelist / DB, and each rekey, writes
+    `{"epoch","ms","lat","lon","evt":"phonecfg","op":"upload|delete|rename|mkdir|wladd|wlrm|reload|rekey"[,"path","to"]}`
+    to the active log stream (`logPhoneCfg()`; readers skip it by `evt`).
   - **Discovery gotcha (fixed):** NimBLE 2.x has scan response OFF by default, and the
     128-bit service UUID fills the adv packet, so the name overflows. We call
     `enableScanResponse(true)` + set the name in the scan response, and the web app
@@ -594,7 +620,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   with a cached old main.js left the new Home card dead), plus the `#uiver` footer string** (the
   human "is the new build live?" readout). Only the entry module can carry the token (no build step):
   modules it imports still ride the 10-min revalidation, so put a feature's DOM wiring in main.js (or a
-  NEW file) when it must work the moment the page updates. See HANDOFF "Webapp
+  NEW file) when it must work the moment the page updates. **Exception (2026-10-29):** main.js imports
+  `./ble/connection.js?v=<token>` — bump that token too whenever connection.js changes, and never import
+  connection.js from another module without the same token (a second, differently-keyed URL loads a second
+  module instance with its own listeners). See HANDOFF "Webapp
   cache / deploy-propagation". **JS = native ES modules** (`<script type="module" src="js/main.js?v=…">`,
   no bundler): `config.js`, `state.js` (the one cross-module mutable-state object — ESM exports are
   read-only live bindings), `nav.js`, `wakelock.js`, `util/` (`dom`,`format`), `ble/` (`connection`,

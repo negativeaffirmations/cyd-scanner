@@ -7,6 +7,7 @@
 #include "host_log.h"
 #include "host_board.h"
 #include "host_ui.h"
+#include "host_files.h"
 #include "logfilter.h"
 #include "phone.h"
 #include "webshare.h"
@@ -53,7 +54,7 @@ static const char* kLogHeader =
 
 LogStream g_fg;  // zero-init (.bss); path set by openSession()
 LogStream g_bg;
-char g_streamingPath[48] = "";
+char g_streamingPath[100] = "";
 
 bool bgCtx() { return g_bgScan && !hostboard::foregroundScan(); }
 LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
@@ -538,6 +539,31 @@ void logEvent(const char* evt, int count) {
   f.close();
 }
 
+// Audit line for a change the PHONE made to device config / card files (SEC-H3, docs/ble-auth.md):
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"phonecfg","op":"upload|delete|rename|mkdir|wladd|wlrm|reload|rekey"
+//    [,"path":"..."[,"to":"..."]]}   (rename = path + to; path omitted when not applicable)
+// Written to the active stream so the scan log records who-changed-what alongside the sightings.
+void logPhoneCfg(const char* op, const char* path, const char* to) {
+  LogStream& st = activeStream();
+  if (bgCtx() && !st.path[0]) openBgSession();
+  if (!g_sdOk || !ensureLogFile(st)) return;
+  File f = SD.open(st.path, FILE_APPEND);
+  if (!f) return;
+  char ln[LOG_LINE];
+  int n = 0;
+  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
+  appendPos(ln, n);
+  lnAppend(ln, n, ",\"evt\":\"phonecfg\",\"op\":\"%s\"", op);
+  char esc[200];
+  if (path && path[0]) { jsonEscape(esc, sizeof(esc), path); lnAppend(ln, n, ",\"path\":\"%s\"", esc); }
+  if (to && to[0])     { jsonEscape(esc, sizeof(esc), to);   lnAppend(ln, n, ",\"to\":\"%s\"", esc); }
+  if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
+    lnAppend(ln, n, "}\n");
+    if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  }
+  f.close();
+}
+
 // Log one "rid" event line per Remote-ID emitter, rate-limited per MAC to once per EVENT_LOG_GAP_MS.
 //   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"rid","mac":"..",["uas":..,"dlat":..,"dlon":..,"h":..,
 //    "alt":..,"spd":..,"hdg":..,"olat":..,"olon":..,"oid":..]}  (unknown fields omitted)
@@ -672,7 +698,8 @@ static void streamFileOverBle(const char* path) {
   delay(30);
   uint8_t buf[180];  // chunk < MTU-3 (Android negotiates a large MTU)
   size_t sent = 0;
-  while (f.available()) {
+  const uint32_t ep = phone::authEpoch();   // stop if the peer leaves / re-authenticates mid-transfer
+  while (f.available() && phone::transferAlive(ep)) {
     int n = f.read(buf, sizeof(buf));
     if (n <= 0) break;
     phone::logNotify(buf, n);
@@ -687,12 +714,12 @@ static void streamFileOverBle(const char* path) {
 // The phone reassembles until it has exactly SIZE= bytes. If a send pass came up short (an SD read
 // hiccup ended a file early), pad with newlines -- NDJSON readers skip blank lines -- so the phone's
 // transfer completes instead of hanging. (A dropped link can't be helped; the phone times out.)
-static void padToSize(uint32_t& sent, uint32_t total) {
-  if (sent >= total || !phone::connected()) return;
+static void padToSize(uint32_t& sent, uint32_t total, uint32_t ep) {
+  if (sent >= total || !phone::transferAlive(ep)) return;
   Serial.printf("[CYD] BLE export short by %u bytes: padding\n", (unsigned)(total - sent));
   uint8_t nl[180];
   memset(nl, '\n', sizeof(nl));
-  while (sent < total && phone::connected()) {
+  while (sent < total && phone::transferAlive(ep)) {
     uint32_t k = total - sent > sizeof(nl) ? sizeof(nl) : total - sent;
     phone::logNotify(nl, k);
     sent += k;
@@ -726,7 +753,8 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
   size_t on = 0;
   uint32_t sent = 0;
   logfilter::LineReader rd2(f);
-  while (rd2.next(line, len) && phone::connected()) {
+  const uint32_t ep = phone::authEpoch();
+  while (rd2.next(line, len) && phone::transferAlive(ep)) {
     if (!logfilter::keep(line, c)) continue;
     for (size_t off = 0; off < len; ) {
       size_t rem = len - off, avail = sizeof(out) - on;
@@ -737,7 +765,7 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
     }
   }
   if (on) { phone::logNotify(out, on); sent += on; }
-  padToSize(sent, total);
+  padToSize(sent, total, ep);
   f.close();
   g_streamingPath[0] = 0;
   Serial.printf("[CYD] BLE filtered sent %u/%u bytes (%u lines) of %s\n", (unsigned)sent, (unsigned)total,
@@ -775,7 +803,8 @@ static void streamMultiOverBle(int mode, int minutes) {
   if (!total) return;
   delay(30);
   struct Out { uint8_t b[180]; size_t n = 0; uint32_t sent = 0; } o;  // chunk < MTU-3
-  auto put = [&o](const char* p, size_t len) {
+  const uint32_t ep = phone::authEpoch();
+  auto put = [&o, ep](const char* p, size_t len) {
     for (size_t off = 0; off < len; ) {
       size_t rem = len - off, avail = sizeof(o.b) - o.n;
       size_t k = rem < avail ? rem : avail;
@@ -783,12 +812,12 @@ static void streamMultiOverBle(int mode, int minutes) {
       o.n += k; off += k;
       if (o.n == sizeof(o.b)) { phone::logNotify(o.b, o.n); o.sent += o.n; o.n = 0; delay(15); }
     }
-    return phone::connected();
+    return phone::transferAlive(ep);
   };
   put(meta, metaN);
   mx.run(put);
   if (o.n) { phone::logNotify(o.b, o.n); o.sent += o.n; o.n = 0; }
-  padToSize(o.sent, total);
+  padToSize(o.sent, total, ep);
   Serial.printf("[CYD] BLE multi export sent %u/%u bytes\n", (unsigned)o.sent, (unsigned)total);
 }
 
@@ -816,10 +845,10 @@ void transferFiltered(int mode, int minutes, const char* pathIn) {
   streamFilteredOverBle(path, c);
 }
 
-// Download a specific session file requested by the phone ("F:<path>"). Restricted to
-// /logs/ (no path traversal) so the phone can't pull arbitrary SD files.
+// Download a file the phone requested ("F:<path>"): any file on the card (the web file explorer),
+// gated by files::safePath (absolute, no traversal or FAT-illegal characters). A folder sends SIZE=0.
 void transferFile(const char* path) {
-  if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
+  if (!files::safePath(path) || files::isDir(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.printf("[CYD] BLE dl: rejected path %s\n", path);
     return;
@@ -830,24 +859,24 @@ void transferFile(const char* path) {
 
 // Delete a session file the phone selected ("D:<path>"). Restricted to /logs/ (no
 // traversal) and refuses the live session being written. Pushes the refreshed list back.
-static void wipeAllLogs();      // fwd decl ("D:*" bulk delete)
+static int wipeAllLogs();       // fwd decl ("D:*" bulk delete)
 void deleteSession(const char* path) {
   if (strcmp(path, "*") == 0 || strcmp(path, "/logs/*") == 0) {  // "D:*" = wipe all sessions
-    wipeAllLogs();
+    if (wipeAllLogs() > 0) logPhoneCfg("delete", "/logs/*");
     sendSessionList();
     return;
   }
-  if (strncmp(path, "/logs/", 6) != 0 || strstr(path, "..")) {
+  // Same guards as the file explorer: a /logs/ file only, safePath (no aliases / traversal), and the
+  // case-insensitive logPathProtected (live fg/bg, Explore-held, streaming, in-progress upload).
+  if (strncasecmp(path, "/logs/", 6) != 0 || !files::safePath(path)) {
     Serial.printf("[CYD] delete rejected (bad path) %s\n", path);
-  } else if (strcmp(path, g_fg.path) == 0 || strcmp(path, g_bg.path) == 0) {
-    Serial.println("[CYD] delete refused: that's a live session");
-  } else if (g_streamingPath[0] && strcmp(path, g_streamingPath) == 0) {
-    Serial.println("[CYD] delete refused: being downloaded");   // defense-in-depth (also covered by logProtected)
-  } else if (hostui::exploreHolds(path)) {
-    Serial.println("[CYD] delete refused: open in the scan viewer");
-  } else {
-    if (SD.exists(path)) SD.remove(path);
+  } else if (logPathProtected(path)) {
+    Serial.println("[CYD] delete refused: live session / open / downloading");
+  } else if (SD.exists(path) && SD.remove(path)) {
     Serial.printf("[CYD] deleted %s\n", path);
+    logPhoneCfg("delete", path);   // only a delete that really happened is audited
+  } else {
+    Serial.printf("[CYD] delete failed %s\n", path);
   }
   sendSessionList();  // refresh the phone's picker either way
 }
@@ -861,7 +890,7 @@ static String logBase(const String& nm) {  // dir entry -> bare basename (core m
 // open (same guards as deleteSession). Two-pass per batch (collect names, then remove) since
 // deleting while iterating a directory is unsafe; re-scans until a pass finds nothing left to
 // delete, bounded so a huge card can't spin forever.
-static void wipeAllLogs() {
+static int wipeAllLogs() {
   int removed = 0;
   for (int pass = 0; pass < 64; pass++) {       // up to 64 * 24 files
     File dir = SD.open("/logs");
@@ -883,6 +912,7 @@ static void wipeAllLogs() {
       if (SD.remove(victims[i])) { removed++; Serial.printf("[CYD] wiped %s\n", victims[i]); }
   }
   Serial.printf("[CYD] wipe all logs: %d file(s) removed (live session kept)\n", removed);
+  return removed;
 }
 
 // --- 512 MB /logs/ cap with oldest-first auto-rotation. Sums every /logs/ file and, while over the
@@ -890,9 +920,11 @@ static void wipeAllLogs() {
 // file the Explore viewer holds open, or one being streamed. Run only at low frequency (boot, each
 // session rotation, a ~10 min loop() timer) -- never per scan cycle. Bounded per call. ---
 static constexpr uint64_t LOG_CAP_BYTES = 512ULL * 1024 * 1024;
-static bool logProtected(const char* full) {
-  return strcmp(full, g_fg.path) == 0 || strcmp(full, g_bg.path) == 0 || hostui::exploreHolds(full) ||
-         (g_streamingPath[0] && strcmp(full, g_streamingPath) == 0);
+// Case-insensitive: FAT resolves "/LOGS/SESS-00007.JSONL" to the same file, and the web file explorer
+// can send any spelling (files::safePath already rejects the trailing-dot/space aliases).
+bool logPathProtected(const char* full) {
+  return strcasecmp(full, g_fg.path) == 0 || strcasecmp(full, g_bg.path) == 0 || hostui::exploreHolds(full) ||
+         (g_streamingPath[0] && strcasecmp(full, g_streamingPath) == 0) || files::uploadHolds(full);
 }
 void enforceLogCap() {
   if (!g_sdOk) return;
@@ -914,7 +946,7 @@ void enforceLogCap() {
         // the cap still trims deterministically down to size, and real wall-clock times (hence a
         // meaningful oldest-first order) apply to every file written after sync.
         time_t t = e.getLastWrite();
-        if (!logProtected(full) && (!oldest[0] || t < oldT)) { oldT = t; memcpy(oldest, full, sizeof(oldest)); }
+        if (!logPathProtected(full) && (!oldest[0] || t < oldT)) { oldT = t; memcpy(oldest, full, sizeof(oldest)); }
       }
       e.close();
     }

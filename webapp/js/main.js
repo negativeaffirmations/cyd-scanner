@@ -1,7 +1,8 @@
 // Entry point: wires every DOM event listener to its handler. Loaded as <script type="module">,
 // which is deferred, so the DOM is ready by the time this runs.
 import { $, log } from './util/dom.js';
-import { connect } from './ble/connection.js';
+import { connect, reconnect } from './ble/connection.js?v=20261029b';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
+import { handleDevKeyHash, addPasted, forgetKey, renderKeysUI, askConfirm, answerConfirm, mayShareLocation } from './ble/auth.js';
 import { toggleScan, newSession, reloadDb, toggleWifi, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
 import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';
 import { gpsOnce } from './gps.js';
@@ -19,6 +20,7 @@ import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
 import { enc } from './config.js';
+import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
 document.addEventListener("visibilitychange", reacquireWake);
@@ -93,7 +95,8 @@ $("threatsDlg").addEventListener("click", e=>{ if(e.target === $("threatsDlg")) 
 $("scanSetClose").onclick = ()=> $("scanSetDlg").close();
 $("scanSetDlg").addEventListener("click", e=>{ if(e.target === $("scanSetDlg")) $("scanSetDlg").close(); });
 ["sBle","s24","s5","s154"].forEach(id=>$(id).addEventListener("change", sendSrcMask));
-$("syncBtn").onclick = async () => { await syncTime(); gpsOnce(); };
+// Legacy (unauthenticated) firmware: only after the user agrees (re-asks after a remembered "no").
+$("syncBtn").onclick = async () => { if(!(await mayShareLocation(state.device && state.device.name, true))) return; await syncTime(); gpsOnce(); };
 $("reloadBtn").onclick = reloadDb;
 $("dlBtn").onclick = downloadLog;
 $("expRange").addEventListener("change", ()=>{ $("expCustom").style.display = $("expRange").value==="2" ? "" : "none"; });
@@ -106,6 +109,18 @@ $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
 $("sessDelBtn").onclick = deleteSession;
 $("sessWipeBtn").onclick = wipeAllLogs;
+// SD card file explorer (Data page; fw >= 0.18 — openFiles checks the version).
+$("filesBtn").onclick = openFiles;
+$("fsClose").onclick = closeFiles;
+$("filesDlg").addEventListener("close", onFilesClosed);
+$("fsUp").onclick = fsUp;
+$("fsRefresh").onclick = fsRefresh;
+$("fsMkdir").onclick = fsMkdir;
+$("fsList").addEventListener("click", fsListClick);
+$("fsDl").onclick = fsDownload;
+$("fsRen").onclick = fsRename;
+$("fsDel").onclick = fsDelete;
+$("fsFile").addEventListener("change", fsUpload);
 $("briSlider").addEventListener("input", e=>{ $("briVal").textContent = e.target.value; });
 $("briSlider").addEventListener("change", e=>{ setBrightness(e.target.value); });
 // Status-LED brightness "I:<0-100>" (fw >= 0.17, mini RGB). The card only shows once STATUS reports led>=0.
@@ -144,6 +159,37 @@ $("mapFile").addEventListener("change", e=>{
   rd.readAsText(f);
   e.target.value="";   // allow re-loading the same file
 });
-// Remote server: honor a QR deep link (#server=&token=) then paint the Settings card.
-handlePairHash().finally(renderRemoteUI);
+// Scanner keys (BLE phone-link auth, js/ble/auth.js). Add from the Settings paste field; Forget per row;
+// the #authDlg "Save & reconnect" stores the pasted key and reconnects to the same scanner (no chooser).
+$("keyAddBtn").onclick = async ()=>{ if(await addPasted($("keyPaste").value)) $("keyPaste").value = ""; };
+$("keyList").addEventListener("click", async e=>{
+  const b = e.target.closest(".keyforget"); if(!b) return;
+  if(!(await askConfirm({ title:"Forget scanner key?", msg:"Forget the key for scanner "+b.dataset.sid+
+      "? You'll need its QR / sticker to connect again.", ok:"Forget", cancel:"Keep", danger:true, kind:"forget" }))) return;
+  try{ await forgetKey(b.dataset.sid); log("Scanner key forgotten ("+b.dataset.sid+")."); }
+  catch(err){ log("Forget failed: "+err.message); }
+  renderKeysUI();
+});
+// #secDlg: the in-app confirm / notice (key replace, unsecured-firmware prompt, refusals). Any close
+// other than OK (X, backdrop, Esc) counts as "no".
+$("secOk").onclick = ()=> answerConfirm(true);
+$("secCancel").onclick = ()=> answerConfirm(false);
+$("secClose").onclick = ()=> answerConfirm(false);
+$("secDlg").addEventListener("click", e=>{ if(e.target === $("secDlg")) answerConfirm(false); });
+$("secDlg").addEventListener("close", ()=>{ if(!$("secDlg").open) answerConfirm(false); });   // Esc; no-op once answered or re-opened
+$("authClose").onclick = ()=> $("authDlg").close();
+$("authDlg").addEventListener("click", e=>{ if(e.target === $("authDlg")) $("authDlg").close(); });
+$("authSaveBtn").onclick = async ()=>{
+  const v = $("authPaste").value;
+  if(v.trim() && !(await addPasted(v))) return;   // empty = just retry (e.g. key added via a QR in another tab)
+  $("authPaste").value = ""; $("authDlg").close();
+  reconnect();
+};
+renderKeysUI();
+
+// Deep links: the scanner key (#devkey=&sid=&kg=) FIRST — it strips only its own params, so a combined
+// link's #server=&token= still reaches the remote-server pairing — then paint the Settings card.
+function handleHashLinks(){ return handleDevKeyHash().catch(()=>{}).then(()=> handlePairHash()).finally(renderRemoteUI); }
+handleHashLinks();
+window.addEventListener("hashchange", handleHashLinks);   // a key QR opened while this tab was already up
 if(!navigator.bluetooth) log("This browser has no Web Bluetooth. Use Chrome on Android.");

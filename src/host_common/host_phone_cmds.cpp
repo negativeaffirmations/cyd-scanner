@@ -5,32 +5,45 @@
 #include "host_log.h"
 #include "host_status.h"
 #include "host_board.h"
+#include "host_files.h"
+#include "host_serial.h"
 #include "phone.h"
 #include "sigdb.h"
 #include "webshare.h"
 #include "whitelist.h"
 
 void core::servicePhoneCommands(PhoneCmdFlags& f) {
+  hostserial::service();  // USB-serial `help` / `key` / `rekey` (non-blocking line reader)
+  phone::service();       // BLE auth timeout + queued kicks (disconnects happen here, never in a NimBLE callback)
+  {  // phone-link auth state: STATUS right after a central proves the key (or subscribes), UI on any change
+    static bool lastAuthed = false;
+    if (phone::authJustCompleted()) { pushStatus(); f.authChanged = true; }
+    bool a = phone::authed();
+    if (a != lastAuthed) { lastAuthed = a; f.authChanged = true; }
+  }
   disciplineRtc();  // phone/GPS time -> RTC write-back (no-op without an RTC)
   // Phone commands are honored from any screen.
-  if (phone::reloadRequested()) sigdb::reload();
+  if (phone::reloadRequested()) { sigdb::reload(); logPhoneCfg("reload"); }
   if (phone::logRequested())    transferLog();
   if (phone::listRequested())   sendSessionList();
   if (phone::wlReloadRequested()) { whitelist::reload(); pushStatus(); }
   if (phone::wlListRequested())   sendWhitelist();
+  files::service();               // web file explorer: Z: ops + upload chunks
   { char ln[96]; if (phone::wlAddRequested(ln, sizeof(ln))) {  // "A:<rule>": SD write in the loop, not mid-scan
       bool ok = true;
       for (const char* c = ln; *c; c++) if ((unsigned char)*c < 0x20) { ok = false; break; }  // one line only
       if (ok) ok = whitelist::add(ln);
+      if (ok) logPhoneCfg("wladd");
       Serial.printf("[CYD] whitelist add %s: %s\n", ok ? "ok" : "REJECTED", ln);
       sendWhitelist(); pushStatus();
     } }
   { int ix; if (phone::wlRemoveRequested(&ix)) {
       bool ok = whitelist::removeAt(ix);
+      if (ok) logPhoneCfg("wlrm");
       Serial.printf("[CYD] whitelist remove %d: %s\n", ix, ok ? "ok" : "FAILED");
       sendWhitelist(); pushStatus();
     } }
-  { char fn[48]; if (phone::fileRequested(fn, sizeof(fn)))   transferFile(fn); }
+  { char fn[100]; if (phone::fileRequested(fn, sizeof(fn)))  transferFile(fn); }
   { int m, a; char fn[48]; if (phone::exportRequested(&m, &a, fn, sizeof(fn))) transferFiltered(m, a, fn); }
   { char fn[48]; if (phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider

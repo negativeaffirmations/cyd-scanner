@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261028a">
+<link rel="stylesheet" href="style.css?v=20261029b">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -66,7 +66,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-28&nbsp;·&nbsp;led-bri</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-29&nbsp;·&nbsp;ble-auth&nbsp;b</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -178,6 +178,13 @@
         <button id="sessDelBtn" class="danger" disabled>Delete selected</button>
         <button id="sessWipeBtn" class="danger" disabled>Wipe all logs</button>
       </details>
+
+      <!-- SD card file explorer (fw >= 0.18: CMD "Z:<op>:<arg>" + "U<bytes>", see features/files.js) -->
+      <details id="filesBox">
+        <summary>SD card files</summary>
+        <div class="sub" style="margin:.3em 0">Browse the whole card: download, upload (e.g. an edited <code>signatures.csv</code>), rename, delete, new folder. Over Bluetooth, so big files are slow.</div>
+        <button id="filesBtn" class="secondary">Open file explorer</button>
+      </details>
     </section>
 
     <!-- ============================ SETTINGS ============================ -->
@@ -219,6 +226,17 @@
         <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
         <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
         <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
+      </div>
+
+      <!-- Scanner keys (BLE phone-link auth, docs/ble-auth.md): per-scanner keys held in this browser as
+           non-extractable CryptoKeys (IndexedDB) — see js/ble/auth.js -->
+      <div class="card" style="margin-top:12px">
+        <strong class="cardhdr">Scanner keys</strong>
+        <div id="keyLinkState" class="sub keystate" style="margin:.4em 0">Not connected.</div>
+        <div id="keyList" class="sesslist"><div class="sub" style="padding:6px;margin:0">No scanner keys stored.</div></div>
+        <div class="sub" style="margin-bottom:.4em">Add a key: scan the scanner's key sticker or its CYD Settings &rarr; Phone key QR with the phone camera, or paste the key link (or &ldquo;scanner-id key&rdquo;) here.</div>
+        <input type="text" id="keyPaste" placeholder="key link, or scanner-id + key" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button id="keyAddBtn" class="secondary" style="margin-top:.4em">Add key</button>
       </div>
 
       <!-- Remote server (scan-analyzer): pair + upload scans to the user's own private server -->
@@ -267,6 +285,52 @@
     </select>
     <input type="text" id="wlLabel" placeholder="label (max 15 chars)" maxlength="15">
     <button id="wlAddBtn">Add</button>
+  </dialog>
+
+  <!-- Phone-link key needed / rejected (js/ble/auth.js openAuthDlg) -->
+  <dialog id="authDlg">
+    <div class="modalhdr">
+      <strong>Scanner key needed</strong>
+      <button id="authClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div id="authMsg" class="authmsg"></div>
+    <div class="sub" style="margin:.6em 0 .4em">This scanner only talks to phones holding its key. Scan the key sticker (inside the case / battery door), or on the CYD open <strong>Settings &rarr; Phone key</strong> and scan its QR with the phone camera &mdash; that opens this app and stores the key. Or paste the key link, or the key text shown under the QR:</div>
+    <input type="text" id="authPaste" placeholder="key link, scanner-id + key, or key" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="authSaveBtn" style="margin-top:.4em">Save &amp; reconnect</button>
+  </dialog>
+
+  <!-- In-app confirm / notice (js/ble/auth.js askConfirm): key replace, unsecured-firmware prompt, refusals -->
+  <dialog id="secDlg">
+    <div class="modalhdr">
+      <strong id="secTitle">Confirm</strong>
+      <button id="secClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div id="secMsg" class="secmsg"></div>
+    <div class="fsactions dlgactions">
+      <button id="secCancel" class="secondary">Cancel</button>
+      <button id="secOk">OK</button>
+    </div>
+  </dialog>
+
+  <dialog id="filesDlg">
+    <div class="modalhdr">
+      <strong>SD card</strong>
+      <button id="fsClose" class="xbtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="iconrow">
+      <button id="fsUp" class="iconbtn" title="Up one folder" aria-label="Up one folder"><span class="material-symbols-outlined">arrow_upward</span></button>
+      <button id="fsRefresh" class="iconbtn" title="Refresh" aria-label="Refresh"><span class="material-symbols-outlined">refresh</span></button>
+      <button id="fsMkdir" class="iconbtn" title="New folder" aria-label="New folder"><span class="material-symbols-outlined">create_new_folder</span></button>
+      <label class="iconbtn" style="cursor:pointer" title="Upload a file here" aria-label="Upload a file here"><span class="material-symbols-outlined">upload_file</span><input type="file" id="fsFile" hidden></label>
+    </div>
+    <div id="fsPath" class="fspath">/</div>
+    <div id="fsList" class="sesslist"><div class="sub" style="padding:6px">Loading…</div></div>
+    <div id="fsMsg" class="sub" style="min-height:1.2em"></div>
+    <div class="fsactions">
+      <button id="fsDl" disabled>Download</button>
+      <button id="fsRen" class="secondary" disabled>Rename</button>
+      <button id="fsDel" class="danger" disabled>Delete</button>
+    </div>
   </dialog>
 
   <dialog id="scanSetDlg">
@@ -406,6 +470,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261028a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261029b"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

@@ -22,6 +22,7 @@
 #include "pins.h"
 #include "link_protocol.h"
 #include "../host_common/phone.h"
+#include "../host_common/devkey.h"
 #include "../host_common/webshare.h"
 #include "../host_common/sigdb.h"
 #include "../host_common/whitelist.h"
@@ -131,7 +132,7 @@ bool     g_touchOk    = false;   // calibration loaded/valid -> touch selection 
 uint8_t  g_brightness = 100;     // backlight %, persisted in NVS
 
 // URL of the hosted control web app (GitHub Pages). Scan the QR to open it.
-static const char* APP_URL = "https://negativeaffirmations.github.io/cyd-scanner/webapp/";
+static const char* APP_URL = devkey::APP_URL;
 
 // --- On-device navigation. Two inputs: the BOOT button (always works) and the
 // touchscreen (once calibrated). A short tap of BOOT moves through the menu; a long
@@ -142,7 +143,8 @@ enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCA
               SCR_FOLLOWLIST, SCR_FOLLOWACTION, SCR_FOLLOWDETAIL,
               SCR_WHITELIST, SCR_WLADD, SCR_WLRULE,
               SCR_SCANROW, SCR_SCANDETAIL, SCR_SCANCONFIRM, SCR_SCANFILTER,
-              SCR_MENUCAT, SCR_MENUCATDETAIL };
+              SCR_MENUCAT, SCR_MENUCATDETAIL,
+              SCR_PHONEKEY, SCR_REKEYCONFIRM };
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -161,7 +163,7 @@ static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int HOME_ICONS = 2;
 static constexpr int HOME_ICON_R = 11, HOME_ICON_CY = 44;  // radius + vertical centre on the title line
                                                            // (down from the status-bar line at y=21 for padding)
-static constexpr int SET_N  = 3;  // Calibrate Touch / Brightness / Back
+static constexpr int SET_N  = 4;  // Calibrate Touch / Brightness / Phone key / Back
 static const char* kScanItems[] = { "Scanner", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
 
@@ -451,7 +453,7 @@ static void drawStatusBar() {
   // phone connection icon (right) + C5-link status dot to its right
   int ix = W - 30;
   if (webshare::active())      iconWifi(ix, 3, TFT_CYAN);
-  else if (phone::connected()) iconBle(ix + 2, 3, TFT_BLUE);
+  else if (phone::connected()) iconBle(ix + 2, 3, phone::authed() ? TFT_BLUE : TFT_LIGHTGREY);  // grey until the phone proves the key
   else                         iconNoConn(ix, 3, TFT_DARKGREY);
   tft.fillCircle(W - 8, 10, 4, g_linkOk ? TFT_GREEN : TFT_RED);  // C5 link up/down
   drawGpsGlyph();                                              // location pin + source badge (tap -> modal)
@@ -767,12 +769,16 @@ static void render() {
   drawScanList(false);
 }
 
-// Draw a QR centered horizontally at the given top y; returns the y just below it.
-static int drawCenteredQr(const char* text, int qy) {
+// Draw a QR centered horizontally at the given top y; returns the y just below it. Version 4 / scale 6
+// suits the short URLs; the phone-key pairing link (~130 B) needs version 6 (41 modules) at scale 5.
+static int drawCenteredQr(const char* text, int qy, uint8_t version = 4, int scale = 6) {
   QRCode qr;
-  static uint8_t qrbuf[256];  // fits version 4
-  qrcode_initText(&qr, qrbuf, 4, ECC_LOW, text);
-  const int scale = 6, side = qr.size * scale;
+  static uint8_t qrbuf[256];  // fits up to version 6 (211 B)
+  // Byte-mode ECC-L capacity per version (the library does NOT bounds-check the text against it).
+  static const uint8_t kCap[] = { 0, 17, 32, 53, 78, 106, 134 };
+  if (version < 1 || version > 6 || strlen(text) > kCap[version]) return qy;  // won't fit: draw nothing
+  if (qrcode_initText(&qr, qrbuf, version, ECC_LOW, text) < 0) return qy;
+  const int side = qr.size * scale;
   const int qx = (tft.width() - side) / 2;
   tft.fillRect(qx - 6, qy - 6, side + 12, side + 12, TFT_WHITE);  // quiet zone
   for (uint8_t y = 0; y < qr.size; y++)
@@ -1100,7 +1106,7 @@ static void drawPhoneIcon(int cx, int cy, int r, uint16_t color, bool sel) {
 }
 
 static void drawHomeIcons() {
-  bool conn = phone::connected();
+  bool conn = phone::authed();  // green only once the phone proved the key (a mere connection stays grey)
   drawCogIcon(homeCogCx(), HOME_ICON_CY, HOME_ICON_R, TFT_LIGHTGREY, g_menuSel == MENU_N);
   drawPhoneIcon(homePhoneCx(), HOME_ICON_CY, HOME_ICON_R, conn ? TFT_GREEN : TFT_DARKGREY,
                 g_menuSel == MENU_N + 1);
@@ -1146,14 +1152,85 @@ static void drawMenu() {
   drawHomeAlerts();
 }
 
-// Settings screen: Calibrate Touch / Brightness / Back.
+// Settings screen: Calibrate Touch / Brightness / Phone key / Back.
 static void drawSettings() {
   char bright[24];
   snprintf(bright, sizeof(bright), "Brightness: %d%%", g_brightness);
-  const char* items[SET_N] = { "Calibrate Touch", bright, "Back" };
+  const char* items[SET_N] = { "Calibrate Touch", bright, "Phone key", "Back" };
   drawListMenu("SETTINGS", items, SET_N, g_setSel);
   tft.drawString(g_touchOk ? "Touch OK - tap an item" : "Touch not calibrated yet",
                  10, tft.height() - 18, 1);
+}
+
+// ---- Phone key (SEC-H3, docs/ble-auth.md): the pairing QR + the key as text, and re-keying. ----
+// The QR encodes devkey::pairUrl() (web app + #devkey=&sid=&kg=); the key is also printed as 4x4 hex
+// groups for a phone that can't scan. Focus (BOOT nav): 0 = NEW KEY..., 1 = < BACK.
+static int g_pkSel = 0;
+static uint32_t g_pkGen = 0;      // devkey::gen() the screen shows: a serial `rekey` while it is open triggers a redraw
+static uint32_t g_pkLastMs = 0;   // last input: the screen shows the secret, so it times out back to Settings
+static constexpr uint32_t PK_IDLE_MS = 60000;
+static constexpr int PK_QR_Y = 48, PK_BTN_Y = 301, PK_BTN_H = 17;
+
+static void drawPhoneKey() {
+  g_pkGen = devkey::gen();
+  g_pkLastMs = millis();
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  drawTopBar("< BACK", g_pkSel == 1 ? UI_ACCENT : TFT_BLACK, g_pkSel == 1 ? TFT_CYAN : TFT_DARKGREY);
+  int W = tft.width();
+  int y = drawCenteredQr(devkey::pairUrl(), PK_QR_Y, 6, 5) + 3;   // v6 41 modules x5 = 205 px (+quiet zone) fits 240
+  char b[48];
+  tft.setTextDatum(TC_DATUM);
+  bool saved = devkey::persisted();   // false: the NVS write failed and this key vanishes at reboot
+  tft.setTextColor(saved ? TFT_CYAN : TFT_RED, TFT_BLACK);
+  if (saved) snprintf(b, sizeof(b), "%s  gen %lu", scannerName(), (unsigned long)devkey::gen());
+  else       snprintf(b, sizeof(b), "gen %lu  NOT SAVED!", (unsigned long)devkey::gen());
+  tft.drawString(b, W / 2, y, 2);
+  const char* k = devkey::keyHex();   // 32 hex -> two lines of four 4-char groups
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  for (int ln = 0; ln < 2; ln++) {
+    int o = 0;
+    for (int g = 0; g < 4; g++) {
+      memcpy(b + o, k + ln * 16 + g * 4, 4); o += 4;
+      b[o++] = g < 3 ? ' ' : 0;
+    }
+    tft.drawString(b, W / 2, y + 19 + ln * 10, 1);
+  }
+  bool s = (g_pkSel == 0);
+  if (s) tft.fillRoundRect(6, PK_BTN_Y, W - 12, PK_BTN_H, 6, UI_ACCENT);
+  else   tft.drawRoundRect(6, PK_BTN_Y, W - 12, PK_BTN_H, 6, TFT_DARKGREY);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? UI_ACCENT : TFT_BLACK);
+  tft.drawString("NEW KEY...", W / 2, PK_BTN_Y + PK_BTN_H / 2, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// Fresh tap on the NEW KEY... button (edge-detected like the other hit-tests).
+static bool pkButtonTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return false; }
+  bool now = g_touch.touched();
+  bool hit = false;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    hit = g_touch.getScreen(tft, sx, sy, z) && sx >= 6 && sx <= tft.width() - 6 &&
+          sy >= PK_BTN_Y - 3 && sy <= PK_BTN_Y + PK_BTN_H + 3;
+  }
+  prev = now;
+  return hit;
+}
+
+static const char* const kRekeyItems[] = { "Cancel", "Re-key" };
+static constexpr int REKEY_N = 2;
+static int g_rkSel = 0;
+
+static void drawRekeyConfirm() {
+  drawListMenu("NEW KEY?", kRekeyItems, REKEY_N, g_rkSel);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Disconnects the phone and voids", tft.width() / 2, 170, 1);
+  tft.drawString("the old key / QR sticker", tft.width() / 2, 182, 1);
+  tft.setTextDatum(TL_DATUM);
 }
 
 // Scan sub-menu: Start Scan / New Session / Explore Scan / Scan Settings / Back.
@@ -1424,7 +1501,7 @@ static bool exploreHolds(const char* path) {
   if (!g_viewFile) return false;
   char open[48];
   snprintf(open, sizeof(open), "/logs/%s.%s", g_viewName, g_viewJl ? "jsonl" : "csv");
-  return strcmp(path, open) == 0;
+  return strcasecmp(path, open) == 0;  // FAT names are case-insensitive (the file explorer can spell it any way)
 }
 
 static void exploreFree() {
@@ -2629,9 +2706,17 @@ static void activateSettings(int sel) {
     applyBrightness();
     saveBrightness();
     drawSettings();
+  } else if (sel == 2) {                           // Phone key: pairing QR + key text + re-key
+    g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey();
   } else {                                         // Back
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu();
   }
+}
+
+// Act on a re-key confirmation row (touch tap or long-press select).
+static void activateRekeyConfirm(int sel) {
+  if (sel == 1) phone::rekeyAndKick();             // new key + generation, audit line, phone dropped (drawPhoneKey shows "NOT SAVED" if NVS failed)
+  g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey();  // Cancel / done: back to the (new) key
 }
 
 // Phone-initiated Wi-Fi bulk-download mode: SoftAP + web server + on-screen QR.
@@ -2686,6 +2771,8 @@ static void redrawScreen() {
     case SCR_SCAN:         render();           break;
     case SCR_APPQR:        drawAppQrScreen();  break;
     case SCR_SETTINGS:     drawSettings();     break;
+    case SCR_PHONEKEY:     drawPhoneKey();     break;
+    case SCR_REKEYCONFIRM: drawRekeyConfirm(); break;
     case SCR_SCANMENU:     drawScanMenu();     break;
     case SCR_SCANSETTINGS: drawScanSettings(); break;
     case SCR_PICKLOG:      drawPickLog();      break;
@@ -2903,6 +2990,10 @@ void loop() {
     pushStatus();
   }
   if (pf.newSession) pushStatus();                         // web-app "New Session"
+  if (pf.authChanged && !pf.downloadEnter) {               // a phone proved the key / the authed one left
+    drawStatusBar();                                       // BLE icon: grey (connected) -> blue (authed)
+    if (g_screen == SCR_MENU) drawHomeIcons();
+  }
   if (pf.sessionChanged && g_screen == SCR_SCANMENU) drawScanMenu();  // keep the Scan-menu session label live
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
@@ -3004,9 +3095,10 @@ void loop() {
       else if (ev == BTN_LONG)  { activateMenu(); }
       else {  // idle: re-check the C5 link and refresh the status bar (dot + clock)
         static uint32_t lastPing = 0;
-        static bool lastConn = false;
-        if (phone::connected() != lastConn) {  // phone link came up/down: recolour the phone icon
-          lastConn = phone::connected();
+        static int lastConn = 0;
+        int conn = (phone::connected() ? 1 : 0) + (phone::authed() ? 1 : 0);
+        if (conn != lastConn) {  // phone link came up/down / authed: recolour the phone icons
+          lastConn = conn;
           drawStatusBar(); drawHomeIcons();  // no full-screen flicker
         }
         if (millis() - lastPing > 2000) {
@@ -3035,6 +3127,28 @@ void loop() {
       if (t >= 0)               { g_setSel = t; activateSettings(t); return; }  // touch select
       if      (ev == BTN_SHORT) { g_setSel = (g_setSel + 1) % SET_N; drawSettings(); }
       else if (ev == BTN_LONG)  { activateSettings(g_setSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_PHONEKEY: {
+      bool nk = pkButtonTapped();   // both edge-trackers run every pass
+      bool bk = topBarTapped();
+      if (nk || bk || ev != BTN_NONE) g_pkLastMs = millis();
+      if (millis() - g_pkLastMs > PK_IDLE_MS) { g_screen = SCR_SETTINGS; drawSettings(); return; }   // don't leave the key on screen
+      if (devkey::gen() != g_pkGen) { drawPhoneKey(); return; }   // re-keyed over serial while open
+      if (bk || (ev == BTN_LONG && g_pkSel == 1)) { g_screen = SCR_SETTINGS; drawSettings(); return; }
+      if (nk || (ev == BTN_LONG && g_pkSel == 0)) { g_rkSel = 0; g_screen = SCR_REKEYCONFIRM; drawRekeyConfirm(); return; }
+      if (ev == BTN_SHORT) { g_pkSel ^= 1; drawPhoneKey(); }   // BOOT tap: NEW KEY... <-> BACK
+      delay(20);
+      return;
+    }
+
+    case SCR_REKEYCONFIRM: {
+      int t = tappedRow(REKEY_N);
+      if (t >= 0)               { g_rkSel = t; activateRekeyConfirm(t); return; }
+      if      (ev == BTN_SHORT) { g_rkSel = (g_rkSel + 1) % REKEY_N; drawRekeyConfirm(); }
+      else if (ev == BTN_LONG)  { activateRekeyConfirm(g_rkSel); }
       delay(20);
       return;
     }

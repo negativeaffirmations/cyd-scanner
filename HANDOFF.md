@@ -1,7 +1,82 @@
 # Handoff — 2026-10-28 (branch: `main`; it is the only branch / the trunk)
 
-## Latest — 2026-10-28: status-LED brightness setting, fw 0.17.0 (DONE; mini #2 FLASHED, pushed `80bf283` + `cac0de7`)
-**RESUME HERE.** The mini #2 RGB LED was glaring at night, so its overall brightness is now a web-app setting.
+## Latest — 2026-10-28 (late): SD card file explorer, fw 0.18.0 (BUILT, NOT FLASHED, NOT COMMITTED)
+**RESUME HERE — first agenda item 2026-10-29.** ⛔ **Owner's rule: do NOT flash 0.18.0 to ANY device (CYD, mini #1,
+mini #2) and do not push the web app until BLE link security is handled** (see Blocker below). Everything is
+uncommitted in the working tree; builds pass for `cyd`, `xiao_s3`, `xiao_s3_rgb`.
+
+**What it is.** Owner-chosen scope: the WHOLE card, with browse / download / delete / upload / rename / new folder,
+from a Data-page card ("SD card files" → `#filesDlg`).
+- Device: new `src/host_common/host_files.{h,cpp}` (both hosts; `files::service()` runs from
+  `core::servicePhoneCommands`). CMD **`Z<seq>:<op>:<arg>`** — `l` list (paged ~4 KB, `MORE\t<skip>`, request
+  `l:<skip>:<dir>`), `m` mkdir, `r` rename `from\tto`, `d` delete file / empty folder, `u` upload `<size>:<path>`,
+  `a` abort — plus **`U<seq byte><bytes>`** upload chunks (≤ `phone::UPLOAD_CHUNK_MAX` 500; the web app sends 240).
+  Every op answers with ONE `FS=<n>:<seq>` LOGDATA payload (`OK…` / `DONE…` / `ERR\t<why>`). The NimBLE callback
+  (`phone.cpp`) only fills one slot each (`g_fsCmd`, `g_upBuf`); all SD work is on loop(). **`F:<path>`** download
+  widened from `/logs/` to any `files::safePath` path (`g_dlFile`/`g_streamingPath` 48 → 100 B).
+- Uploads stage to `<path>.upl`, then old → `<path>.bak`, `.upl` → path, delete `.bak` (rolls back on failure);
+  8 MB cap; 30 s idle / disconnect abort; size must be digits; zero-byte uploads finish at once.
+- Guards (after the security + reviewer passes): `safePath` = absolute, < 96 chars, no control / `\:*?"<>|`, no
+  empty / `.` / `..` parts, no part ending in `.` or space (FAT aliases `/logs.` → `/logs`). `logPathProtected`
+  (now public, host_log.cpp) + the CYD `exploreHolds` are **case-insensitive** and include the in-progress `.upl`
+  (`files::uploadHolds`). `/` and `/logs` can't be renamed/deleted; no rename onto a protected path or into
+  itself; `.upl/.tmp/.bak` names refused as targets; `/logs/` names ≤ 47 chars (the log code's 48-B buffers —
+  a longer one would wedge `enforceLogCap`). Case-only renames allowed.
+- Web: `webapp/js/features/files.js` (NEW file, so it updates with the page) keeps its OWN LOGDATA listener for
+  FS= framing (download.js untouched — it ignores FS= headers); drops replies whose `<seq>` isn't the pending one;
+  downloads go through download.js's "save" sink and only count as saved when every byte arrived; gated on
+  STATUS `fw` ≥ 0.18.0. Wiring in `main.js`, markup in `index.html`, styles in `scss/_base.scss` (→ style.css
+  built). Tokens bumped to `?v=20261028b`, `#uiver` = `sd-files` (not deployed). CLAUDE.md CMD list updated.
+- `FW_VERSION` 0.18.0.
+- Note: an automation added `.gitignore` entries for `host_files.h` + `files.js` (false positive: the comment text
+  `F:/Z:` looked like a drive path). Comments reworded and the entries removed with the owner's OK — check
+  `git check-ignore` before committing so the new files aren't left out.
+
+**2026-10-29 update — SEC-H3 Phase A firmware WRITTEN (builds: cyd, xiao_s3, xiao_s3_rgb; NOT flashed, NOT committed).**
+Design/decisions in `docs/ble-auth.md`. New: `src/host_common/devkey.*` (NVS key + generation, pairing URL, HMAC-SHA256,
+ct-compare), AUTH characteristic `…0007` + auth state machine + notify-to-authed-handle-only gating in `phone.*`
+(`authed()` replaces `connected()` for transfers/DETS/phone-GPS freshness; `connected()` kept for UI), `host_serial.*`
+(`help`/`key`/`rekey [confirm]`), CYD Settings → Phone key (`SCR_PHONEKEY`/`SCR_REKEYCONFIRM`, QR v6 scale 5), grey/blue BLE
+icon, `phonecfg` audit lines (`logPhoneCfg`). `PHONE_BLE_SEC` = 0; Phase B bonding not started. Still to do: reviewer +
+security passes, hardware tests T2–T8, the web app (separate agent), then flash. The blocker below is what this fixes.
+**Review fixes applied (same day):** peer MAC filter set only after auth (SEC-M1); notify snapshots the authed handle (NONE =
+broadcast in NimBLE); `devkey::hmac`/`rekey` return status (HMAC failure rejects without a lockout count; failed NVS write
+shows "NOT SAVED" on the CYD + serial warning); `phone::authEpoch()`/`transferAlive()` abort transfers when the peer changes and
+run `service()` inside chunk loops; AUTH onWrite stops after max tries / with no nonce, rekey refreshes the nonce; bounded
+AUTH builder + static buffer (`PHONE_DEBUG_STACK` prints the NimBLE task stack high-water after auth); kick queue (4);
+`uploadOverrun` no longer clears `g_upReq` (consumer eats the stale chunk); QR byte-capacity check; Phone-key screen redraws
+on gen change and times out after 60 s; legacy `D:` uses `safePath` + `logPathProtected` and audits only real deletes;
+SoftAP PSK no longer logged; `safePath` rejects bytes >= 0x7F.
+
+**⛔ Blocker — BLE link has no pairing/auth (security review SEC-H3).** Any central in range that connects while
+the owner's phone isn't connected can now read, overwrite, rename and delete anything on the card — e.g. replace
+`/signatures.csv` (drop camera rules / raise thresholds) or `/whitelist.csv` (mute a tracker) to blind the scanner.
+Before 0.18.0 the worst case was deleting logs (`D:*`). The same gap already exposes `D:*`, `A:` whitelist adds,
+and the SoftAP password in STATUS (`appsk`). Planned fix to design first thing: **BLE bonding with LE Secure
+Connections, passkey shown on the device** (CYD screen; the screenless mini needs another way: LED/serial,
+just-works + allow-list, or a button), then `READ_ENC`/`WRITE_ENC` (or authenticated) on CMD / LOGDATA / STATUS,
+and decide what (if anything) stays readable unauthenticated. Must keep Web Bluetooth on Android Chrome working
+(it triggers the OS pairing dialog on an encrypted characteristic). Lighter interim idea also on the table: an
+on-device notice / `evt` log line whenever sigdb/whitelist is changed by the phone.
+
+**Other open issues (smaller, not fixed):**
+- SEC-L4: an open upload holds an extra SD handle; not verified the worst case fits `max_files` = 5 (live log
+  appends + Explore `g_viewFile` + webshare + streaming + upload).
+- REV-008: `.upl` files left by a reboot/power loss mid-upload aren't swept at boot (deletable from the explorer).
+- SEC-L2: the slot flags are `volatile`, not `std::atomic`/portMUX — fine on these chips in practice.
+- SEC-L5: no free-space floor; uploads into `/logs/` count toward the 512 MB cap. SEC-L7: fuzz the log readers
+  with a non-NDJSON file planted in `/logs/`.
+- REV-011: a 0-byte download also shows download.js's "Nothing to download — no rows in that range" toast.
+- REV-012: a listing chunk that happens to start with `SIZE=`/`SESS=`/`WL=` (a file named so, on a 180-B
+  boundary) would confuse download.js until its 20 s watchdog — very unlikely.
+- REV-014: lowercase `z`/`u` (and Z/U sent to pre-0.18 firmware) fall to phone.cpp's final `else` → `g_download=0`.
+- `enforceLogCap` still `break`s on a failed remove (a too-long name put on the card by a PC could still wedge it).
+- CYD file dates show blank (its system clock is never set; FAT stamps read 1980); mini dates are real.
+- Upload speed untested (estimate ~1–5 KB/s: one ack round trip per 240-B chunk).
+- Nothing tested on hardware yet.
+
+## Earlier — 2026-10-28: status-LED brightness setting, fw 0.17.0 (DONE; mini #2 FLASHED, pushed `80bf283` + `cac0de7`)
+The mini #2 RGB LED was glaring at night, so its overall brightness is now a web-app setting.
 - **CMD `I:<0-100>`** (`phone.cpp` → `ledBrightnessRequested()`; `'L'` was taken by the log download) → core
   `servicePhoneCommands` calls the new **`hostboard::setLedBrightness(pct)`** (board clamps 0–100, re-applies the current
   colour, saves NVS **`cydui/ledbri`**; skips a no-op write) then `pushStatus()`.

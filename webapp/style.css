@@ -501,6 +501,42 @@ summary {
   color: #8b949e;
 }
 
+.fspath {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+  margin: 0.2em 0;
+  color: #8b949e;
+}
+
+.fsrow .material-symbols-outlined {
+  flex: none;
+  color: #8b949e;
+}
+.fsrow.dir .material-symbols-outlined {
+  color: #aa00aa;
+}
+.fsrow.picked {
+  background: #30363d;
+}
+.fsrow .fsopen {
+  margin-left: auto;
+  flex: none;
+}
+
+.fsactions {
+  display: flex;
+  gap: 8px;
+}
+.fsactions button {
+  flex: 1;
+  margin: 0;
+}
+
+#fsMsg.err {
+  color: rgb(87.1794871795%, 39.2911010558%, 42.6847662142%);
+}
+
 dialog {
   background: #161b22;
   color: #e6edf3;
@@ -578,6 +614,48 @@ select {
   border: 1px solid #30363d;
 }
 
+.keystate.ok {
+  color: #3fb950;
+}
+
+.keystate.warn {
+  color: #d29922;
+}
+
+.keyrow {
+  cursor: default;
+}
+.keyrow > .material-symbols-outlined {
+  flex: none;
+  color: #8b949e;
+}
+.keyrow .keyforget {
+  margin-left: auto;
+  flex: none;
+  width: auto;
+  padding: 0.4em 0.9em;
+  font-size: 0.85rem;
+}
+.keyrow .sesssub {
+  font-family: ui-monospace, monospace;
+}
+
+.authmsg {
+  color: #d29922;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.secmsg {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.dlgactions {
+  margin-top: 1em;
+}
+
 .appbar {
   display: flex;
   align-items: center;
@@ -635,6 +713,22 @@ select {
 
 .conn.down .material-symbols-outlined {
   color: #8b949e;
+}
+
+.conn {
+  position: relative;
+}
+
+.conn.up.legacy .material-symbols-outlined {
+  color: #d29922;
+}
+
+.conn .secbadge {
+  position: absolute;
+  right: -6px;
+  top: -5px;
+  font-size: 12px !important;
+  color: #d29922 !important;
 }
 
 .page {

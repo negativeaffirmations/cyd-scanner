@@ -61,12 +61,15 @@ const ROWS = [
       return [p + " %", p < 20 ? "bad" : "ok"];
     } },
   { id:"conn", name:"Phone link (Bluetooth)",
-    desc:"This web app's Bluetooth connection to the scanner. White = connected, yellow = connecting, " +
-         "grey = disconnected. Everything else on this page needs it.",
+    desc:"This web app's Bluetooth connection to the scanner. White = connected and authenticated with " +
+         "this browser's scanner key, orange with a warning badge = connected to old firmware that has " +
+         "no phone-link authentication (update it), yellow = connecting, grey = disconnected. " +
+         "Scanner keys are managed in Settings.",
     status(){
       const c = $("conn").className;
-      if(c.includes("up"))   return ["Connected" + (state.device && state.device.name ? " to " + state.device.name : "") +
-                                     (state.status.fw ? " · fw " + state.status.fw : ""), "ok"];
+      const who = (state.device && state.device.name ? " to " + state.device.name : "") + (state.status.fw ? " · fw " + state.status.fw : "");
+      if(c.includes("legacy")) return ["Connected" + who + " · UNSECURED firmware (no authentication)", "warn"];
+      if(c.includes("up"))   return ["Connected" + who + (c.includes("authed") ? " · authenticated" : ""), "ok"];
       if(c.includes("wait")) return ["Connecting…", "warn"];
       return ["Disconnected", "bad"];
     } },

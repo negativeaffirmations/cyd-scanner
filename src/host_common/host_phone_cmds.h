@@ -12,6 +12,7 @@ struct PhoneCmdFlags {
   bool scanStarted = false, scanStopped = false;           // "G"/"X" (g_scanActive already updated)
   bool downloadEnter = false;                              // Wi-Fi download requested (level: true every loop while active)
   bool downloadExit = false;                               // download just ended (AP torn down, g_scanActive restored)
+  bool authChanged = false;                                // a central authenticated / the authed one left (BLE icon, HOME phone icon)
   bool acceptScanStart = true;                             // INPUT to servicePhoneScan(): false defers a "G" (left pending)
 };
 

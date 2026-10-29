@@ -14,13 +14,41 @@
 
 namespace phone {
 
+// Largest upload chunk ("U<seq><bytes>") the CMD characteristic accepts; the web app sends 240.
+constexpr size_t UPLOAD_CHUNK_MAX = 500;
+
 void begin(const char* devName);
 
 // Push a status line to the app (throttle in the caller). Format is
 // "key=val;key=val;..." parsed by the web app.
 void setStatus(const String& s);
 
-bool     connected();
+// Link security level advertised in the AUTH characteristic's sec= (docs/ble-auth.md): 0 = HMAC auth only
+// (Phase A), 1 = + opportunistic bonding after auth (Phase B), 2 = authed AND encrypted (Phase C).
+// Only 0 is implemented; B/C are not built yet.
+#ifndef PHONE_BLE_SEC
+#define PHONE_BLE_SEC 0
+#endif
+
+bool     connected();   // a central is on the GATT link (UI: grey BLE icon until it authenticates)
+// The connected central proved the device key (HMAC challenge-response) -- THE gate for everything that
+// sends data to / takes data from "the phone": transfers, DETS, STATUS, phone GPS freshness.
+bool     authed();
+bool     linkEncrypted();       // the authed link is AES-encrypted (always false in Phase A)
+bool     authJustCompleted();   // true once per successful authentication (consumed on read)
+// Loop-context housekeeping: the 30 s auth timeout and kicks queued by the NimBLE callbacks (which must
+// never disconnect from inside a callback). Called from core::servicePhoneCommands.
+void     service();
+// Rekey (new random key, generation + 1), log the phonecfg audit line and drop the current central so the
+// old key's holder must re-pair. Used by the CYD "Phone key" screen and the serial `rekey confirm`.
+// Returns false when the new key could not be saved to NVS (it then lasts until reboot only).
+bool     rekeyAndKick();
+// Bumped on every authentication success and every disconnect of the tracked central. A transfer captures it
+// when it starts and stops when transferAlive() says the session changed (a NEW peer must not receive the
+// tail of the old peer's download). transferAlive() also runs service(), so the auth timeout / kicks keep
+// working through a long chunk loop.
+uint32_t authEpoch();
+bool     transferAlive(uint32_t epoch);
 
 // This device's own BLE MAC (as the C5 would report it, MSB-first). Lets the CYD
 // filter out its own advertisement from the scan results. Returns false if unknown.
@@ -77,6 +105,13 @@ bool exportRequested(int* mode, int* minutes, char* path, size_t cap);
 // True once if the app set a brightness ("B:<0-100>"); fills the percent value.
 bool brightnessRequested(int* outPct);
 
+// File explorer (host_files.cpp). True once per "Z<seq>:<op>:<arg>" write; fills `out` with "<seq>:<op>:<arg>".
+bool fsRequested(char* out, size_t cap);
+// True once per "U<seq byte><bytes>" upload chunk; copies the raw bytes (binary-safe), their length and the tag.
+bool uploadChunk(uint8_t* out, size_t cap, size_t* outLen, uint8_t* seq);
+// True once if a chunk arrived before the previous one was consumed (the upload must be aborted); its tag.
+bool uploadOverrun(uint8_t* seq);
+
 // True once if the app set the status-LED brightness ("I:<0-100>"); fills the percent value.
 bool ledBrightnessRequested(int* outPct);
 
@@ -97,7 +132,7 @@ bool wlListRequested();
 bool wlAddRequested(char* out, size_t cap);
 bool wlRemoveRequested(int* outIdx);
 
-// Notify a chunk of log data to the connected phone (used during BLE log download).
+// Notify a chunk of log data to the authenticated phone (used during BLE log download); no-op unless authed().
 void logNotify(const uint8_t* data, size_t len);
 
 // Notify one line of the live detection snapshot (mirrors the CYD screen). The

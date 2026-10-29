@@ -92,7 +92,7 @@ void pushStatus() {
 // characteristic. Capped so the burst stays small on the BLE link.
 static constexpr int DETS_STREAM_MAX = 12;
 void pushDetections() {
-  if (!phone::connected()) return;
+  if (!phone::authed()) return;
   if (!g_scanActive) return;  // only stream while scanning
   static uint16_t g_detsSeq = 0;
   int n = min(g_groupCount, DETS_STREAM_MAX);

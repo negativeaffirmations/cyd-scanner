@@ -151,6 +151,17 @@ summary { cursor:pointer; font-weight:600; }
 .sessdate { font-size:.9rem; }
 .sesssub { font-size:.8rem; color:$color-text-muted; }
 
+// --- SD card file explorer (#filesDlg): reuses .sesslist / .sessrow / .sessmain for the rows ---
+.fspath { font-family:ui-monospace, monospace; font-size:.85rem; overflow-wrap:anywhere; margin:.2em 0; color:$color-text-muted; }
+.fsrow {
+  .material-symbols-outlined { flex:none; color:$color-text-muted; }
+  &.dir .material-symbols-outlined { color:$color-accent; }
+  &.picked { background:$color-border; }
+  .fsopen { margin-left:auto; flex:none; }
+}
+.fsactions { display:flex; gap:8px; button { flex:1; margin:0; } }
+#fsMsg.err { color:lighten($color-danger, 25%); }
+
 // --- Dialog / modal chrome (shared by all modals) ---
 dialog {
   background:$color-surface; color:$color-text; border:1px solid $color-border; border-radius:12px;
@@ -179,3 +190,16 @@ select {
   width:100%; font-size:1rem; padding:.6em; margin:.4em 0; border-radius:8px;
   background:$color-surface-inset; color:$color-text; border:1px solid $color-border;
 }
+
+// --- Scanner keys (Settings card + #authDlg, js/ble/auth.js): rows reuse .sesslist / .sessrow / .sessmain ---
+.keystate.ok   { color:$color-ok; }
+.keystate.warn { color:$color-warn; }
+.keyrow {
+  cursor:default;
+  > .material-symbols-outlined { flex:none; color:$color-text-muted; }
+  .keyforget { margin-left:auto; flex:none; width:auto; padding:.4em .9em; font-size:.85rem; }
+  .sesssub { font-family:ui-monospace, monospace; }
+}
+.authmsg { color:$color-warn; font-weight:600; overflow-wrap:anywhere; }
+.secmsg { white-space:pre-line; overflow-wrap:anywhere; line-height:1.4; }
+.dlgactions { margin-top:1em; }

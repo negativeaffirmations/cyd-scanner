@@ -223,8 +223,8 @@ void start() {
   });
   g_server.begin();
   g_active = true;
-  Serial.printf("[webshare] softAP=%s SSID=%s PW=%s ip=%s heap=%u serving=%s exists=%d\n",
-                ok ? "OK" : "FAIL", g_ssid, g_pw, ip.toString().c_str(),
+  Serial.printf("[webshare] softAP=%s SSID=%s ip=%s heap=%u serving=%s exists=%d\n",  // PSK deliberately not logged
+                ok ? "OK" : "FAIL", g_ssid, ip.toString().c_str(),
                 (unsigned)ESP.getFreeHeap(), g_logPath, SD.exists(g_logPath));
 }
 

@@ -229,7 +229,7 @@ PosFix posSnapshot() {
   int32_t  d = (int32_t)(now - pat);
   uint32_t phAge  = phHad ? (d > 0 ? (uint32_t)d : 0) : UINT32_MAX;
   uint32_t onbAge = g_onbAtMs ? now - g_onbAtMs : UINT32_MAX;  // set by the link poll on this task
-  f.phoneOk = phHad && phone::connected() && phAge < phone::PHONE_GPS_STALE_MS;
+  f.phoneOk = phHad && phone::authed() && phAge < phone::PHONE_GPS_STALE_MS;
   f.onbOk   = g_onbValid && onbAge < ONB_STALE_MS;
   if (g_gpsPref == SRC_PREFER_PHONE && f.phoneOk && (!f.onbOk || phAge < PHONE_FIX_FRESH_MS)) f.src = 1;
   else if (f.onbOk)   f.src = 2;
