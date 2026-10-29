@@ -240,9 +240,13 @@ export async function fsUpload(ev){
   const p = join(cwd, file.name);
   const old = entries.find(x => x.name === file.name);
   if (old && old.dir) { msg("A folder with that name already exists.", true); return; }
-  if (old && !confirm(p + " already exists. Replace it?")) return;
+  if (!confirm(old ? p + " already exists. Replace it with " + file.name + " (" + fmtSize(file.size) + ")?"
+                   : "Upload " + file.name + " (" + fmtSize(file.size) + ") to " + p + "?")) return;
   const buf = new Uint8Array(await file.arrayBuffer());
   setBusy(true); cancelUpload = false;
+  // Android rejects a GATT write while another is in flight ("GATT operation failed for unknown reason"),
+  // and the ~5 s GPS feed would collide with one of the hundreds of chunk writes: hold it for the upload.
+  state.gpsHold = true;
   try {
     await zCmd("u", buf.length + ":" + p);
     const t0 = Date.now();
@@ -256,6 +260,7 @@ export async function fsUpload(ev){
     log("Uploaded " + p + " (" + fmtSize(buf.length) + ")");
     toast("Uploaded " + file.name + ".");
   } catch (err) { msg("Upload failed: " + err.message, true); setBusy(false); return; }
+  finally { state.gpsHold = false; }
   setBusy(false);
   if ($("filesDlg").open) refresh(cwd);
 }

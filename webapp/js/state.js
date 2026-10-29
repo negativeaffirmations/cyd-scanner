@@ -29,6 +29,7 @@ export const state = {
   // --- GPS (see gps.js) ---
   gpsWatch: null,       // geolocation watch id, or null
   lastGps: { t:0, lat:0, lon:0 },
+  gpsHold: false,       // true while a file upload streams chunks: the GPS feed pauses (Android runs one GATT op at a time)
 
   // --- live detections / explore ---
   lastDetRows: [],      // latest live DETS snapshot, for the follower + category modals

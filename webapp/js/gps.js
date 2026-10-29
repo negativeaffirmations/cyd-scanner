@@ -34,7 +34,7 @@ export async function sendGps(pos, quiet=false){   // quiet: the ~5 s continuous
 let gpsBusy = false, staleLogged = false, lastTry = 0;
 export async function onGpsWatch(pos){
   const now=Date.now(), la=pos.coords.latitude, lo=pos.coords.longitude;
-  if(gpsBusy || now-lastTry < 5000) return;
+  if(gpsBusy || state.gpsHold || now-lastTry < 5000) return;
   if(pos.timestamp && now-pos.timestamp > 10000){   // a cached / stale fix: don't present it as current
     // Logged once: a phone clock skewed > 10 s from its fix times would otherwise drop EVERY update silently.
     if(!staleLogged){ staleLogged=true; log("GPS: skipping a fix "+Math.round((now-pos.timestamp)/1000)+" s old"); }
