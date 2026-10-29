@@ -8,6 +8,7 @@ import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
+import { askConfirm } from '../ble/auth.js';
 
 const REPLY_MS = 25000;   // the device may be mid scan cycle before it services the request
 const CHUNK = 240;        // upload bytes per "U" write: one ATT packet at Android's usual MTU
@@ -241,8 +242,10 @@ export async function fsUpload(ev){
   const p = join(cwd, file.name);
   const old = entries.find(x => x.name === file.name);
   if (old && old.dir) { msg("A folder with that name already exists.", true); return; }
-  if (!confirm(old ? p + " already exists. Replace it with " + file.name + " (" + fmtSize(file.size) + ")?"
-                   : "Upload " + file.name + " (" + fmtSize(file.size) + ") to " + p + "?")) return;
+  const folder = cwd === "/" ? "/" : cwd + "/";
+  if (!(await askConfirm(old
+        ? { title:"Replace file?", msg:file.name + " already exists in " + folder + ". Replace it?", ok:"Replace", danger:true }
+        : { title:"Confirm Upload", msg:"Upload selected to " + folder + "?", ok:"Upload" }))) return;
   const buf = new Uint8Array(await file.arrayBuffer());
   setBusy(true); cancelUpload = false;
   try {
