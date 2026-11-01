@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261031c">
+<link rel="stylesheet" href="style.css?v=20261031d">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -66,7 +66,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-31&nbsp;·&nbsp;wifi-steps&nbsp;c</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-31&nbsp;·&nbsp;fleet-p2&nbsp;d</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -234,6 +234,30 @@
         <div class="sub" style="margin-bottom:.4em">Add a key: scan the scanner's key sticker or its CYD Settings &rarr; Phone key QR with the phone camera, or paste the key link (or &ldquo;scanner-id key&rdquo;) here.</div>
         <input type="text" id="keyPaste" placeholder="key link, or scanner-id + key" autocomplete="off" autocapitalize="off" spellcheck="false">
         <button id="keyAddBtn" class="secondary" style="margin-top:.4em">Add key</button>
+      </div>
+
+      <!-- Fleet (docs/fleet-mode.md): cooperating scanners over ESP-NOW; js/features/fleet.js. Members are added
+           from the Scanner keys above: the phone wraps the member's fleet key for the leader (js/ble/fleetcrypto.js). -->
+      <div class="card" id="fleetCard" style="margin-top:12px">
+        <strong class="cardhdr">Fleet</strong>
+        <div id="fltState" class="sub" style="margin:.4em 0">Connect to a scanner.</div>
+        <div id="fltLeaderBox" hidden>
+          <div id="fltMembers" class="sesslist"><div class="sub" style="padding:6px;margin:0">Loading members…</div></div>
+          <label class="k" for="fltAddSel" style="display:block;margin-top:.6em">Add a member (any scanner whose key is stored above)</label>
+          <select id="fltAddSel"></select>
+          <button id="fltAddBtn">Add to fleet</button>
+          <label class="k" for="fltChSel" style="display:block;margin-top:.6em">Fleet channel (members follow)</label>
+          <select id="fltChSel">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+            <option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option>
+            <option value="13">13</option>
+          </select>
+          <button id="fltLeaderOffBtn" class="danger" style="margin-top:.6em">Stop leading</button>
+        </div>
+        <button id="fltLeaderOnBtn" hidden>Make this scanner the fleet leader</button>
+        <button id="fltClientBtn" class="secondary" hidden>Make this scanner a fleet client…</button>
+        <button id="fltLeaveBtn" class="secondary" hidden>Leave the fleet…</button>
       </div>
 
       <!-- Remote server (scan-analyzer): pair + upload scans to the user's own private server -->
@@ -525,6 +549,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261031c"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261031d"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>
