@@ -1463,6 +1463,47 @@ body {
   filter: brightness(1.25);
 }
 
+.vias {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.via {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #0d1117;
+  background: #8b949e;
+}
+.via.v0 {
+  background: #c9d1d9;
+}
+.via.v1 {
+  background: #58a6ff;
+}
+.via.v2 {
+  background: #3fb950;
+}
+.via.v3 {
+  background: #d29922;
+}
+.via.v4 {
+  background: #f778ba;
+}
+.via.v5 {
+  background: #a371f7;
+}
+.via.v6 {
+  background: #39c5cf;
+}
+
 .folbanner {
   display: none;
   align-items: center;

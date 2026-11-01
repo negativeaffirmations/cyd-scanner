@@ -16,6 +16,21 @@ import { wifiRoles } from '../util/format.js';
 import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
 import { recordSightings } from './sightings.js';
 import { maybePostLive } from './remote.js';
+// Fleet "seen by" (DETS v9 `via`: bit 0 = the connected scanner, bit k = fleet member slot k). Names come from the
+// Fleet card's member list (state.fleetMembers, set by features/fleet.js). Kept local to this module on purpose: a
+// new export in a shared module would break a phone still holding a cached copy of it.
+function viaUnits(via){
+  const out = [];
+  for (let k = 0; k < 8; k++) {
+    if (!(via & (1 << k))) continue;
+    const m = k === 0 ? null : (state.fleetMembers || []).find(x => x.slot === k);
+    const name = k === 0 ? (state.scannerName || "this scanner") : (m ? m.name : "member " + k);
+    const tail = String(name).split(/[-\s]/).filter(Boolean).pop() || "?";
+    out.push({ k, name, letter: tail[0].toUpperCase() });
+  }
+  return out;
+}
+
 
 let detState = { expect:0, rows:[], rendered:false };
 let curSeq = -1;
@@ -84,7 +99,8 @@ export function onDets(ev){
                       cid: p.length>12 ? (p[12]||"") : "",      // DETS v7: BLE company maker label ("" if unknown)
                       cidHex: p.length>13 ? (p[13]||"") : "",   // DETS v8: raw company ID, 4 hex (live-POST `cid`)
                       uuid: p.length>14 ? (p[14]||"") : "",     // DETS v8: primary service UUID (4 or 32 hex)
-                      sig: p.length>15 ? (p[15]||"") : ""});    // DETS v8: sigdb/flag label (live-POST `sig`)
+                      sig: p.length>15 ? (p[15]||"") : "",      // DETS v8: sigdb/flag label (live-POST `sig`)
+                      via: p.length>16 ? (+p[16]||1) : 1});     // DETS v9: fleet "seen by" mask (1 = this scanner only)
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -110,6 +126,9 @@ export function renderDetList(el, rows, opts){
     const tags = []; srcs.forEach(s=>{ if(!tags.includes(s.tag)) tags.push(s.tag); });  // distinct bands
     const pills = tags.map(t=>`<span class="sp ${pillClass[t]||""}">${esc(t)}</span>`).join("") || "?";
     const roles = wifiRoles(tags).map(x=>`<span class="sp prole">${x}</span>`).join("");  // AP / CLIENT pill(s)
+    // Fleet: one small chip per unit that heard it -- only when a member did (a lone scanner looks unchanged).
+    const vias = (!viewer && (r.via & ~1)) ? `<span class="vias">` + viaUnits(r.via).map(u =>
+      `<span class="via v${u.k}" title="Seen by ${esc(u.name)}">${esc(u.letter)}</span>`).join("") + `</span>` : "";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
     const extra = [esc(r.mac || "")];
     if (!viewer && r.cid) extra.push(`<span class="mk">${esc(r.cid)}</span>`);  // BLE company maker, in addition to the MAC
@@ -119,7 +138,7 @@ export function renderDetList(el, rows, opts){
            `<span class="tiercol"><span class="badge b${tn}"></span></span>`+
            `<div class="detmain">`+
              `<div class="r1"><span class="nm t${tn}">${nm}</span><span class="rssi">${r.rssi} dBm</span></div>`+
-             `<div class="r2"><span class="sigcol">${pills}${roles}</span><span class="r2sub">${extra.filter(Boolean).join("  ·  ")}</span></div>`+
+             `<div class="r2"><span class="sigcol">${pills}${roles}${vias}</span><span class="r2sub">${extra.filter(Boolean).join("  ·  ")}</span></div>`+
            `</div></div>`;
   }).join("");
   el.querySelectorAll(".detrow[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick && opts.onRowClick(rows[+d.dataset.ri]); });
