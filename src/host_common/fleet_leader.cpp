@@ -14,6 +14,7 @@
 #include "webshare.h"
 #include "phone.h"
 #include "host_core.h"
+#include "host_log.h"   // hostTransferRecent()
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -415,7 +416,11 @@ void assignRoles() {
   // MASK_154 is on; the C5 also requires the source bit.)
   // ...and only while the leader's OWN C5 is up: the leader takes the BLE share, so with its C5 down (past the sticky
   // window, not a busy miss) a split would leave nobody on BLE -- everyone runs FULL until it is back (bench P5).
-  const bool ownC5Up = g_lastLinkOkMs && millis() - g_lastLinkOkMs < LINK_STICKY_MS;
+  // A blocking BLE file transfer pauses loop() and so the C5 poll: keep the last verdict through it (+ the sticky
+  // window after, for the first scan cycle to land) instead of dropping everyone to FULL per download (field 11-01).
+  static bool lastOwnC5Up = false;
+  if (!hostTransferRecent(LINK_STICKY_MS)) lastOwnC5Up = g_lastLinkOkMs && millis() - g_lastLinkOkMs < LINK_STICKY_MS;
+  const bool ownC5Up = lastOwnC5Up;
   if (L->planMode != PLANMODE_OFF && np >= 1 && (g_srcMask & MASK_BLE) && ownC5Up) {
     int wifi[FLEET_MAX_MEMBERS], nw = 0;
     for (int k = 0; k < np; k++) {

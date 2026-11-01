@@ -57,6 +57,41 @@ LogStream g_fg;  // zero-init (.bss); path set by openSession()
 LogStream g_bg;
 char g_streamingPath[100] = "";
 
+// Blocking BLE transfers (see XferScope below). Fleet event lines raised meanwhile (fleet::service() keeps running
+// between chunks) are formatted at once but appended only after the transfer, so a file never grows between an
+// export's counting pass and its send pass (the SIZE= header would undercount).
+static uint8_t  g_xferDepth = 0;
+static uint32_t g_xferEndMs = 0;
+static constexpr int XFER_DEFER_MAX = 4;
+static char*    g_xferDefer = nullptr;            // XFER_DEFER_MAX x LOG_LINE, allocated on the first deferral
+static uint16_t g_xferDeferLen[XFER_DEFER_MAX];
+static int      g_xferDeferN = 0;
+static void appendActiveLine(const char* ln, int n);   // defined with logFleetEvent
+
+bool hostTransferRecent(uint32_t windowMs) {
+  return g_xferDepth || (g_xferEndMs && millis() - g_xferEndMs < windowMs);
+}
+
+// Keeps the phone link + fleet serviced inside long non-sending passes (counting, directory scans); the send loops
+// get the same from phone::transferAlive() per chunk. Throttled: these run per line.
+static void xferKeepAlive() {
+  static uint32_t last = 0;
+  if (millis() - last < 20) return;
+  last = millis();
+  phone::service();
+  fleet::service();
+}
+
+struct XferScope {
+  XferScope() { g_xferDepth++; }
+  ~XferScope() {
+    if (--g_xferDepth) return;
+    g_xferEndMs = millis() | 1;
+    for (int i = 0; i < g_xferDeferN; i++) appendActiveLine(g_xferDefer + i * LOG_LINE, g_xferDeferLen[i]);
+    g_xferDeferN = 0;
+  }
+};
+
 bool bgCtx() { return g_bgScan && !hostboard::foregroundScan(); }
 LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
 void syncSharePath() {
@@ -578,12 +613,17 @@ void logPhoneCfg(const char* op, const char* path, const char* to) {
 
 // {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"fleet","op":"..","role":"client|leader"} -- fleet mode transitions
 // (docs/fleet-mode.md §9.5). scan-analyzer needs it to explain a role-limited client file.
-void logFleetEvent(const char* op, const char* role, const fleet::EventInfo* x) {
+static void appendActiveLine(const char* ln, int n) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!g_sdOk || !ensureLogFile(st)) return;
   File f = SD.open(st.path, FILE_APPEND);
   if (!f) return;
+  f.write((const uint8_t*)ln, n);
+  f.close();
+}
+
+void logFleetEvent(const char* op, const char* role, const fleet::EventInfo* x) {
   char ln[LOG_LINE];
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
@@ -602,11 +642,17 @@ void logFleetEvent(const char* op, const char* role, const fleet::EventInfo* x) 
     char plan[48]; fleet::planString(plan, sizeof(plan));
     lnAppend(ln, n, ",\"plan\":\"%s\"", plan);
   }
-  if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
-    lnAppend(ln, n, "}\n");
-    if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  if (n > (int)LOG_LINE - 2) return;   // no room to close the object: drop (never write truncated JSON)
+  lnAppend(ln, n, "}\n");
+  if (n > (int)LOG_LINE) return;
+  if (g_xferDepth) {                   // mid-transfer: keep the line (its own epoch/ms) for after
+    if (!g_xferDefer) g_xferDefer = (char*)malloc(XFER_DEFER_MAX * LOG_LINE);
+    if (!g_xferDefer || g_xferDeferN >= XFER_DEFER_MAX) return;
+    memcpy(g_xferDefer + g_xferDeferN * LOG_LINE, ln, n);
+    g_xferDeferLen[g_xferDeferN++] = (uint16_t)n;
+    return;
   }
-  f.close();
+  appendActiveLine(ln, n);
 }
 
 // Log one "rid" event line per Remote-ID emitter, rate-limited per MAC to once per EVENT_LOG_GAP_MS.
@@ -787,7 +833,7 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
   uint32_t total = 0, nlines = 0;
   {
     logfilter::LineReader rd(f);
-    while (rd.next(line, len)) if (logfilter::keep(line, c)) { total += len; nlines++; }
+    while (rd.next(line, len)) { xferKeepAlive(); if (logfilter::keep(line, c)) { total += len; nlines++; } }
   }
   char hdr[24];
   int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
@@ -839,7 +885,7 @@ static void streamMultiOverBle(int mode, int minutes) {
   int nf = mx.begin();
   char meta[160];
   int metaN = sessionMetaLine(meta, sizeof(meta));
-  uint32_t rows = mx.run([](const char*, size_t) { return true; });
+  uint32_t rows = mx.run([](const char*, size_t) { xferKeepAlive(); return true; });
   uint32_t total = rows ? rows + (uint32_t)metaN : 0;
   char hdr[24];
   int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
@@ -868,12 +914,13 @@ static void streamMultiOverBle(int mode, int minutes) {
 }
 
 // "L": the current session = the stream matching the current screen.
-void transferLog() { streamFileOverBle(activeStream().path); }
+void transferLog() { XferScope xs; streamFileOverBle(activeStream().path); }
 
 // "T:<mode>[:<minutes>][:<path>]": mode 0 = whole file ("since boot"), 1 = past 24 h, 2 = past
 // <minutes>. Path optional (restricted to /logs/); default = the current session; "*" = every log
 // file (the window spans all sessions -- see streamMultiOverBle).
 void transferFiltered(int mode, int minutes, const char* pathIn) {
+  XferScope xs;
   char path[48];
   if (pathIn && pathIn[0] == '*') { streamMultiOverBle(mode, minutes); return; }
   if (pathIn && pathIn[0]) {
@@ -894,6 +941,7 @@ void transferFiltered(int mode, int minutes, const char* pathIn) {
 // Download a file the phone requested ("F:<path>"): any file on the card (the web file explorer),
 // gated by files::safePath (absolute, no traversal or FAT-illegal characters). A folder sends SIZE=0.
 void transferFile(const char* path) {
+  XferScope xs;
   if (!files::safePath(path) || files::isDir(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.printf("[CYD] BLE dl: rejected path %s\n", path);
@@ -1011,6 +1059,7 @@ void enforceLogCap() {
 // is running (its file is being written), else "latest"; blank for all other rows. The web
 // app parses it into a picker and labels/floats the flagged row.
 void sendSessionList() {
+  XferScope xs;
   // The newest file is the current session when its file exists this boot; otherwise the
   // most recently written prior file (by FS timestamp).
   const LogStream& cs = activeStream();   // the stream "current"/"L" refers to right now
@@ -1043,6 +1092,7 @@ void sendSessionList() {
       String base = logBase(String(e.name()));
       const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
       uint32_t first = 0, last = 0;  // dated span (local epoch; 0 = unknown) -> the phone groups a scan's parts
+      xferKeepAlive();
       if (base.endsWith(".jsonl")) logfilter::MultiExport::fileSpan(e, first, last);
       list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\t" + String(first) +
               "\t" + String(last) + "\n";
