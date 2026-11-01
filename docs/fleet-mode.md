@@ -931,3 +931,22 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
 - **Deferred:** the web layout editor + saved layout (`fltlay`, §16.1), the `M:o` per-member override, a user-set
   grace (`fltgrace`), the 4+-member channel split, and the 5 GHz-caps preference (every C5 has 5 GHz).
   FW_VERSION stays 0.20.0 on the bench builds; bump to 0.21.0 at the release flash.
+
+### 19.1 P4 review (2026-11-01) — fixes applied
+- **REV-001/008:** a joined member that sends a new Hello (a reboot faster than the 10 s loss mark) gets `lostAtMs`
+  stamped, so the role grace applies (no reshuffle) and caps it at 30 s.
+- **REV-002:** a released member gives its role back at once. Bench: the leader went FULL 0.1 s after the release.
+- **REV-003:** MStat is now **43 B** (`srcMask`). Roles go only to units that can run them:
+  - the leader must have BLE on;
+  - a Wi-Fi member needs PRB plus a Wi-Fi band;
+  - WIFI5 prefers a member with 5 GHz on;
+  - anyone else runs FULL.
+- **REV-004:** C5 5 GHz passive capture needs PRB as well (as in legacy), on both the direct-entry and the plan-change
+  paths.
+- **REV-005/006:** uniform BLE stop guards. A volatile `g_planPhases` copy is the only plan state the NimBLE task reads.
+- **REV-009:** ch 12/13 are allowed by design (receive-only); documented on the struct.
+- **REV-010:** a member reporting an older `planGen` gets the Plan re-sent at once.
+- **Deferred (REV-007):** restricting a split role's AP scan to its own band. It needs a band-select API verified on the
+  C5 first; currently each role still runs the dual-band AP scan and drops the other band's results.
+- Re-bench: roles, then release (leader FULL at once), then rejoin (roles back after 10 s). All hosts + C5s flash
+  together (MStat size).

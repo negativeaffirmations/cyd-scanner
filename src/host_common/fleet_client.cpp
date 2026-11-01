@@ -123,6 +123,7 @@ void sendMStat() {
   m->txFailPm = tot ? (uint16_t)((uint64_t)u.txFail * 1000 / tot) : 0;
   m->bat = (int8_t)hostboard::batteryPercent();
   m->planGen = C->planGen;
+  m->srcMask = g_srcMask;                                          // the leader only assigns roles this unit can run
   m->c5Link = g_linkOk ? 1 : 0;
   // This unit's OWN live GPS fix (not the fleet position it stamps): the leader may use it as the fleet position
   // when it has no live fix of its own (docs §16.6). P5 fills the scan counters.

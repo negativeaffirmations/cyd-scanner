@@ -109,7 +109,7 @@ enum PlanPhase : uint8_t {
 struct ScanPlan {
   uint8_t  phases;        // PlanPhase bits; the C5 also requires the matching ScanConfig.sources bit
   uint8_t  planId;        // leader plan generation (diagnostic: printed on the C5 console)
-  uint16_t ch24Mask;      // bit n = 2.4 GHz channel n+1 for PROM24 (0 = default 1..11)
+  uint16_t ch24Mask;      // bit n = 2.4 GHz channel n+1 for PROM24 (0 = default 1..11; 12/13 allowed: receive-only)
   uint16_t ch5Mask;       // bit i = the C5's i-th non-DFS 5 GHz hop channel (0 = all 9)
   uint8_t  ch154Mask;     // bit i = the i-th 802.15.4 hop channel (0 = all 5)
   uint8_t  rsv;

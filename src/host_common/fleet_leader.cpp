@@ -59,6 +59,7 @@ struct MemberRt {
   uint8_t  role;                       // assigned scan role (PlanRole)
   uint8_t  planSentGen;                // last plan generation sent to it
   uint32_t lastPlanMs;
+  uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
 };
 
 struct Leader {
@@ -223,6 +224,8 @@ void startJoin(int i, const uint8_t* mac, const Hello& h) {
   ok = ok && Hmac(m.fk, KEY_LEN).add("CFLO-FLT-SK-1").add(h.nl, NONCE_LEN).add(h.nc, NONCE_LEN).add16(sess)
                 .add(g_mac, 6).add(mac, 6).finish(sk);
   if (!ok) { memset(sk, 0, sizeof(sk)); Serial.println("[FLT] Join: crypto error, ignored"); return; }
+  if (r.state == M_JOINED) r.lostAtMs = millis();                 // re-joining without a loss mark (quick reboot):
+                                                                   // the role grace applies -- and caps it at 30 s
   if (r.state == M_JOINING || r.state == M_JOINED) peerDel(r.mac);   // a rejoin replaces the old session
   memcpy(j.proof, proof, sizeof(j.proof));
   memcpy(r.sk, sk, KEY_LEN);
@@ -314,6 +317,9 @@ void onMStat(const Rx& f) {
   r.lastRxMs = millis(); r.rssi = f.rssi;
   r.heapKB = m.heapKB; r.txFailPm = m.txFailPm;
   memcpy(r.phoneMac, m.phoneMac, 6);
+  r.srcMask = m.srcMask;
+  if (m.planGen != L->planGen && r.planSentGen == L->planGen && millis() - r.lastPlanMs > 1000)
+    r.planSentGen = (uint8_t)(L->planGen - 1);                     // it missed the last Plan: resend on the next tick
   if (m.gpsFix && m.lat >= -900000000 && m.lat <= 900000000 && m.lon >= -1800000000 && m.lon <= 1800000000) {
     r.fixLat = m.lat / 1e7f; r.fixLon = m.lon / 1e7f; r.fixAtMs = r.lastRxMs;
   }
@@ -349,10 +355,26 @@ void assignRoles() {
                   ((r.state == M_LOST || r.state == M_JOINING) && r.role != PLANROLE_FULL && inGrace);
     if (counts) pres[np++] = i;
   }
-  if (L->planMode != PLANMODE_OFF && np >= 1) {
-    leaderRole = PLANROLE_BLE;
-    if (np == 1) roles[pres[0]] = PLANROLE_WIFI;
-    else { roles[pres[0]] = PLANROLE_WIFI24; roles[pres[1]] = PLANROLE_WIFI5; }   // 3rd+ member: FULL
+  // Only split when it can work: the leader must have BLE on (it takes the BLE role) and each Wi-Fi member must have
+  // passive capture (PRB) on plus the band its role covers; anyone else runs FULL. (802.15.4 rides along only where
+  // MASK_154 is on; the C5 also requires the source bit.)
+  if (L->planMode != PLANMODE_OFF && np >= 1 && (g_srcMask & MASK_BLE)) {
+    int wifi[FLEET_MAX_MEMBERS], nw = 0;
+    for (int k = 0; k < np; k++) {
+      const uint8_t m = L->rt[pres[k]].srcMask;
+      if ((m & MASK_PROBE) && (m & (MASK_WIFI24 | MASK_WIFI5))) wifi[nw++] = pres[k];
+    }
+    if (nw >= 1) {
+      leaderRole = PLANROLE_BLE;
+      if (nw == 1) roles[wifi[0]] = PLANROLE_WIFI;
+      else {
+        const bool aHas5 = L->rt[wifi[0]].srcMask & MASK_WIFI5, bHas5 = L->rt[wifi[1]].srcMask & MASK_WIFI5;
+        const int five = (bHas5 || !aHas5) ? 1 : 0;                // prefer a member with 5 GHz on for WIFI5
+        roles[wifi[five]] = PLANROLE_WIFI5;
+        roles[wifi[1 - five]] = PLANROLE_WIFI24;
+        if (!(L->rt[wifi[five]].srcMask & MASK_WIFI5)) { roles[wifi[0]] = PLANROLE_WIFI; roles[wifi[1]] = PLANROLE_FULL; }
+      }                                                            // 3rd+ Wi-Fi-capable member: FULL
+    }
   }
   bool changed = leaderRole != L->leaderRole;
   for (int i = 0; i < L->st.n; i++) if (roles[i] != L->rt[i].role) changed = true;
@@ -747,6 +769,7 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
     for (int k = 0; k < 3; k++) sendCtrl(i, CTRL_RELEASE, 0);    // three tries; each has its own seq
     waitSent(L->rt[i].mac);
     endSession(i, M_LOST);                                       // it is rebooting: show it gone right away
+    L->rt[i].role = PLANROLE_FULL; L->rt[i].lostAtMs = 0;        // ...and its coverage goes back to the others now
     event("member_release");
     reply(out, cap, "OK\treleased\t%s", args);
     return CMD_NONE;

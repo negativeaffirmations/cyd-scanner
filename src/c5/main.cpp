@@ -96,7 +96,8 @@ static volatile uint8_t   g_srcMask = MASK_ALL & ~MASK_154;  // 802.15.4 is opt-
 // v12 fleet coverage plan (docs/fleet-mode.md §8.2), from every StartScan. All-zero (PLAN_VALID clear) = legacy:
 // every phase the source mask allows, exactly the pre-v12 behaviour. A phase runs only if BOTH allow it.
 static ScanPlan g_plan = {};
-static inline bool planAllows(uint8_t bits) { return !(g_plan.phases & PLAN_VALID) || (g_plan.phases & bits); }
+static volatile uint8_t g_planPhases = 0;   // copy of g_plan.phases: the only plan field the NimBLE task reads
+static inline bool planAllows(uint8_t bits) { const uint8_t p = g_planPhases; return !(p & PLAN_VALID) || (p & bits); }
 static inline bool bleWanted() { return (g_srcMask & MASK_BLE) && planAllows(PLAN_BLE); }
 
 // Is this table entry's source currently enabled? Wi-Fi AP-scan detections are
@@ -408,7 +409,7 @@ static void enter154() {
     return;
   }
   g_phase      = PH_154;  // publish first: once PH_154 is visible no restart path can re-arm BLE
-  if (g_srcMask & MASK_BLE) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->stop(); }  // then free the radio for 15.4 RX
+  { NimBLEScan* s = NimBLEDevice::getScan(); if (s && s->isScanning()) s->stop(); }  // then free the radio for 15.4 RX
   g_154Idx     = 0;
   g_154Start   = millis();
   g_154LastHop = g_154Start;
@@ -422,7 +423,7 @@ static void after154Slot() {
 
 static void enterPromisc() {
   g_phase     = PH_PROMISC;   // publish first: blePaused() is now true, so no path re-arms BLE
-  if (g_srcMask & MASK_BLE) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->stop(); }  // free the radio for passive RX
+  { NimBLEScan* s = NimBLEDevice::getScan(); if (s && s->isScanning()) s->stop(); }  // free the radio for passive RX
   g_hopIdx    = 0;
   g_promStart = millis();
   g_lastHop   = g_promStart;
@@ -463,7 +464,8 @@ static void finishPromisc(uint32_t now) {
 // but no 2.4 GHz capture goes straight to the 5 GHz window (legacy never does: 5 GHz follows 2.4 GHz).
 static void afterScanPhase() {
   if ((g_srcMask & MASK_PROBE) && planAllows(PLAN_PROM24)) enterPromisc();
-  else if ((g_plan.phases & PLAN_VALID) && (g_plan.phases & PLAN_PROM5) && (g_srcMask & MASK_WIFI5)) enterPromisc5(true);
+  else if ((g_planPhases & PLAN_VALID) && (g_planPhases & PLAN_PROM5) &&
+           (g_srcMask & (MASK_PROBE | MASK_WIFI5)) == (MASK_PROBE | MASK_WIFI5)) enterPromisc5(true);
   else after154Slot();
 }
 
@@ -621,10 +623,11 @@ static void applyBleMask() {
 static void applyPlan(const ScanPlan& np) {
   if (!memcmp(&np, &g_plan, sizeof(ScanPlan))) return;
   g_plan = np;
+  g_planPhases = np.phases;
   buildPlanRuntime();
   const uint32_t now = millis();
   if ((g_phase == PH_PROMISC && !((g_srcMask & MASK_PROBE) && planAllows(PLAN_PROM24))) ||
-      (g_phase == PH_PROMISC5 && !planAllows(PLAN_PROM5))) {
+      (g_phase == PH_PROMISC5 && !(planAllows(PLAN_PROM5) && (g_srcMask & MASK_PROBE)))) {
     finishPromisc(now);
   } else if (g_phase == PH_154 && !planAllows(PLAN_154)) {
     ieee154::disable();
