@@ -160,6 +160,8 @@ function metaLine(){
   if(state.scannerName) o.scanner_name = state.scannerName;
   if(state.scannerFw) o.fw = state.scannerFw;
   if(state.scannerDbGen) o.db_gen = state.scannerDbGen;
+  if(state.fleetRole) o.fleet_role = state.fleetRole;   // P6 item 1, same keys as the file meta (STATUS flt/fid/fld)
+  if(state.fleetId){ o.fleet_id = state.fleetId; if(state.fleetLeader) o.fleet_leader = state.fleetLeader; }
   return JSON.stringify(o);
 }
 

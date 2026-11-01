@@ -155,6 +155,7 @@ function onLegacyStatus(ev){
 
 export function onDisconnect(){ setConn("disconnected"); clearLinkSecurity(); log("Disconnected."); state.connected=false;
   state.scannerName = ""; $("unitName").textContent = "";
+  state.fleetRole = state.fleetId = state.fleetLeader = "";   // a stale fleet id must not tag the next unit's live-POST meta
   clearSightings();   // drop the in-memory per-device sighting trails for this session
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; state.lastDetRows = [];   // clear the alerts
   if($("folDlg").open) $("folDlg").close(); if($("folDetDlg").open) $("folDetDlg").close();
