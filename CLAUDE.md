@@ -713,7 +713,7 @@ location. **While building the remote-server integration, keep HANDOFF #11 and t
 work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
 context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
 
-## Fleet mode (P1 done, P2 built + bench-passed; fw 0.20.0)
+## Fleet mode (P1 + P2 done, P3 time/position built; fw 0.20.0)
 
 Cooperating scanners over **ESP-NOW on the host radios** (one fixed channel, default 1). Design + phases +
 owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides earlier sections). **P1 = transport +
@@ -734,6 +734,10 @@ MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` 
 `webapp/js/ble/fleetcrypto.js` —, `r` remove, `x` release, `c` channel, `L1/L0`, `j` become client); STATUS part 2
 `flt=<role>,<joined>/<enrolled>,<ch>`; web **Settings → Fleet** card (`features/fleet.js`). Code: `fleet_leader.cpp`,
 `fleet_client.cpp`, `fleet_internal.h`. Debug-only bench enrollment: `fleet fk` / `fleet add` / `fleet m <cmd>`.
+**P3 (docs §18):** the leader's Sync carries UTC + tz + the ONE fleet position (its phone by default, else its GPS,
+else a member's live GPS) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
+client stamps the fleet time/position ahead of its own (not under device-only), its tz follows the leader, and
+`isSelfDet()` drops the fleet's own radios. `devpos` lines + fleet meta keys wait for the P6 scan-analyzer contract.
 
 ## Subagents (`.claude/agents/`)
 

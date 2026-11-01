@@ -121,23 +121,24 @@ extern uint32_t g_gpsEpochAtMs;  // millis() when it was latched
 // One consistent view of the scanner's position. Callers needing more than one field (lat + lon +
 // fix_age) take ONE snapshot instead of calling the single-field accessors below in sequence.
 struct PosFix {
-  uint8_t  src;      // 0 none / 1 phone / 2 onboard / 3 held (last known, not live)
-  bool     live;     // src 1 or 2
+  uint8_t  src;      // 0 none / 1 phone / 2 onboard / 3 held (last known, not live) / 4 fleet (docs/fleet-mode.md §7)
+  bool     live;     // src 1, 2 or 4
   bool     aged;     // held, or the fix in use is > 10 s old: log lines carry fix_age
   bool     phoneOk;  // phone fix available (STATUS gav bit0)
   bool     onbOk;    // live onboard fix available (gav bit1)
+  bool     fleetOk;  // live fleet fix available (gav bit2): client = the leader's fleet position, leader = a member's GPS
   float    lat, lon; // valid when src != 0
   uint32_t ageMs;    // ms since the fix in use was current (0 with no fix)
 };
 PosFix   posSnapshot();
 bool     posLive();              // a live source is in use (phone providing fixes, or live onboard)
 bool     posHasFix();            // any position: live, or the held last-known fix
-int      posSource();            // 0 none / 1 phone / 2 onboard / 3 held (last known, not live)
+int      posSource();            // 0 none / 1 phone / 2 onboard / 3 held (last known, not live) / 4 fleet
 uint32_t posFixAgeS();           // seconds since the fix in use was current (0 with no fix)
-uint8_t  posAvailMask();         // available position sources: bit0 phone, bit1 onboard (STATUS gav)
-uint8_t  timeAvailMask();        // available clock sources: bit0 phone, bit1 device GPS/RTC (STATUS tav)
+uint8_t  posAvailMask();         // available position sources: bit0 phone, bit1 onboard, bit2 fleet (STATUS gav)
+uint8_t  timeAvailMask();        // available clock sources: bit0 phone, bit1 device GPS/RTC, bit2 fleet (STATUS tav)
 bool     timeHasSync();
-int      timeSource();           // 0 none / 1 phone / 2 GPS / 3 RTC
+int      timeSource();           // 0 none / 1 phone / 2 GPS / 3 RTC / 4 fleet (the leader's clock)
 uint32_t epochLocal();
 extern uint32_t g_rtcEpochUtc;   // DS3231 UTC latch (0 = none); set by the board at boot
 extern uint32_t g_rtcAtMs;

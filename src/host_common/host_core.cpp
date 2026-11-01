@@ -11,6 +11,7 @@
 #include "host_board.h"
 #include "host_ui.h"
 #include "phone.h"
+#include "fleet.h"
 #include "webshare.h"
 #include "whitelist.h"
 
@@ -221,27 +222,37 @@ uint8_t g_timePref = SRC_PREFER_PHONE, g_gpsPref = SRC_PREFER_PHONE;
 // The source is decided ONCE per snapshot from one consistent phone read (lat / lon / stamp taken
 // together under the phone's lock, stamps read before millis()), so a caller needing several fields
 // can't mix a phone latitude with an onboard longitude, or take fix_age from a different source.
+// Fleet (docs/fleet-mode.md §7, §16.6): ONE fleet position. A joined CLIENT stamps the leader's fleet position ahead
+// of its own sources (so every unit logs the same track); the LEADER uses a member's live GPS only when it has no live
+// fix of its own. Device-only ignores the fleet like the phone (both are external sources).
+static constexpr uint32_t FLEET_FIX_LIVE_MS = 15000;   // the leader's fix age + Sync transit can reach ~12 s
 PosFix posSnapshot() {
   PosFix f = {};
   float pla = 0, plo = 0; uint32_t pat = 0;
   bool phHad = g_gpsPref != SRC_DEVICE_ONLY && phone::gpsFix(&pla, &plo, &pat);  // device-only: phone ignored
+  float fla = 0, flo = 0; uint32_t flAge = UINT32_MAX;
+  bool flHad = g_gpsPref != SRC_DEVICE_ONLY && fleet::posFix(&fla, &flo, &flAge);
   uint32_t now = millis();
   int32_t  d = (int32_t)(now - pat);
   uint32_t phAge  = phHad ? (d > 0 ? (uint32_t)d : 0) : UINT32_MAX;
   uint32_t onbAge = g_onbAtMs ? now - g_onbAtMs : UINT32_MAX;  // set by the link poll on this task
   f.phoneOk = phHad && phone::authed() && phAge < phone::PHONE_GPS_STALE_MS;
   f.onbOk   = g_onbValid && onbAge < ONB_STALE_MS;
-  if (g_gpsPref == SRC_PREFER_PHONE && f.phoneOk && (!f.onbOk || phAge < PHONE_FIX_FRESH_MS)) f.src = 1;
+  f.fleetOk = flHad && flAge < FLEET_FIX_LIVE_MS;
+  if (fleet::isClient() && f.fleetOk) f.src = 4;
+  else if (g_gpsPref == SRC_PREFER_PHONE && f.phoneOk && (!f.onbOk || phAge < PHONE_FIX_FRESH_MS)) f.src = 1;
   else if (f.onbOk)   f.src = 2;
   else if (f.phoneOk) f.src = 1;  // prefer-device: the phone fills in only while the device has no fix
-  else if (phHad || g_onbAtMs) f.src = 3;
+  else if (f.fleetOk) f.src = 4;  // leader with no live fix: a member's GPS
+  else if (phHad || g_onbAtMs || flHad) f.src = 3;
   if (!f.src) return f;
-  // Held fallback = whichever allowed source fixed most recently (ties -> phone).
-  bool usePhone = f.src == 1 || (f.src == 3 && phHad && phAge <= onbAge);
-  f.lat   = usePhone ? pla : g_onbLat;
-  f.lon   = usePhone ? plo : g_onbLon;
-  f.ageMs = usePhone ? phAge : onbAge;
-  f.live  = f.src == 1 || f.src == 2;
+  // Held fallback = whichever allowed source fixed most recently (ties -> phone, then onboard).
+  uint8_t use = f.src == 4 ? 4 : f.src == 1 ? 1 : f.src == 2 ? 2 : 0;
+  if (!use) use = (phHad && phAge <= onbAge && phAge <= flAge) ? 1 : (g_onbAtMs && onbAge <= flAge) ? 2 : 4;
+  f.lat   = use == 1 ? pla : use == 2 ? g_onbLat : fla;
+  f.lon   = use == 1 ? plo : use == 2 ? g_onbLon : flo;
+  f.ageMs = use == 1 ? phAge : use == 2 ? onbAge : flAge;
+  f.live  = f.src == 1 || f.src == 2 || f.src == 4;
   f.aged  = f.src == 3 || f.ageMs > FIX_AGE_MARK_MS;
   return f;
 }
@@ -249,7 +260,7 @@ int      posSource()    { return posSnapshot().src; }
 bool     posLive()      { return posSnapshot().live; }
 bool     posHasFix()    { return posSnapshot().src != 0; }
 uint32_t posFixAgeS()   { return posSnapshot().ageMs / 1000; }
-uint8_t  posAvailMask() { PosFix f = posSnapshot(); return (f.phoneOk ? 1 : 0) | (f.onbOk ? 2 : 0); }  // a disabled phone reads unavailable
+uint8_t  posAvailMask() { PosFix f = posSnapshot(); return (f.phoneOk ? 1 : 0) | (f.onbOk ? 2 : 0) | (f.fleetOk ? 4 : 0); }  // a disabled phone reads unavailable
 
 // Unified wall-clock: the phone's synced time is PREFERRED; the onboard GPS's UTC (NEO-6M RMC, v10)
 // is a FALLBACK so the device timestamps logs with no phone, as long as it has a fix. The GPS epoch
@@ -272,18 +283,26 @@ void (*g_rtcWrite)(uint32_t utc) = nullptr;
 static bool phoneTimeOk()  { return g_timePref != SRC_DEVICE_ONLY && phone::hasTime(); }
 static bool gpsTimeFresh() { return g_gpsEpochUtc && millis() - g_gpsEpochAtMs < ONB_STALE_MS; }
 static bool rtcTimeOk()    { return g_rtcEpochUtc != 0; }
+// Fleet clock (client only; the leader IS the source): fresh while Syncs arrive, then free-runs as a last resort.
+static bool fleetTimeFresh() { return g_timePref != SRC_DEVICE_ONLY && fleet::timeFresh(); }
+static bool fleetTimeEver()  { uint32_t u, a; return g_timePref != SRC_DEVICE_ONLY && fleet::timeFix(&u, &a); }
 // Device clocks rank the same under every preference: fresh GPS > RTC > the free-running latched GPS
 // clock. Prefer-phone puts the phone above all three; prefer-device puts it below, so once the device
 // has ever had GPS time it keeps it (a 10 s Status gap can't flip the clock GPS -> phone -> GPS).
-int timeSource() {  // 0 none / 1 phone / 2 GPS / 3 RTC
+// A joined fleet client keeps the fleet's clock (the leader's best: its phone, else its own device clock) ahead of
+// everything under prefer-phone; under prefer-device it ranks below the device's live clocks (docs §7).
+int timeSource() {  // 0 none / 1 phone / 2 GPS / 3 RTC / 4 fleet
+  if (g_timePref == SRC_PREFER_PHONE && fleetTimeFresh()) return 4;
   if (g_timePref == SRC_PREFER_PHONE && phoneTimeOk()) return 1;
   if (gpsTimeFresh()) return 2;
   if (rtcTimeOk())    return 3;
+  if (fleetTimeFresh()) return 4;
   if (g_gpsEpochUtc)  return 2;
-  return phoneTimeOk() ? 1 : 0;  // prefer-device: the phone fills in only while the device has no clock at all
+  if (phoneTimeOk())  return 1;  // prefer-device: the phone fills in only while the device has no clock at all
+  return fleetTimeEver() ? 4 : 0;   // the leader went away: its clock keeps running here
 }
 bool     timeHasSync() { return timeSource() != 0; }
-uint8_t  timeAvailMask() { return (phoneTimeOk() ? 1 : 0) | ((gpsTimeFresh() || rtcTimeOk()) ? 2 : 0); }
+uint8_t  timeAvailMask() { return (phoneTimeOk() ? 1 : 0) | ((gpsTimeFresh() || rtcTimeOk()) ? 2 : 0) | (fleetTimeFresh() ? 4 : 0); }
 uint32_t epochLocal() {
   int s = timeSource();
   if (s == 1) return phone::epochNow();
@@ -294,6 +313,11 @@ uint32_t epochLocal() {
   if (s == 3) {
     uint32_t utc = g_rtcEpochUtc + (millis() - g_rtcAtMs) / 1000;
     return utc - (uint32_t)(phone::tzOffsetMin() * 60);  // RTC holds UTC: same offset convention as GPS
+  }
+  if (s == 4) {
+    uint32_t u = 0, a = 0;
+    if (!fleet::timeFix(&u, &a)) return 0;
+    return u + (millis() - a) / 1000 - (uint32_t)(phone::tzOffsetMin() * 60);   // tz comes from the leader's Sync
   }
   return 0;
 }
@@ -311,13 +335,15 @@ void disciplineRtc() {
   uint32_t utc = 0;
   // device-only: the phone's time never reaches the RTC either (phoneTimeOk() is false)
   bool fromPhone = phoneTimeOk() && (g_timePref == SRC_PREFER_PHONE || !gpsTimeFresh());
+  uint32_t fu = 0, fa = 0;
   if (fromPhone) utc = phone::epochNow() + (uint32_t)(phone::tzOffsetMin() * 60);  // local -> UTC
+  else if (fleetTimeFresh() && fleet::timeFix(&fu, &fa)) utc = fu + (millis() - fa) / 1000;   // a mini fleet client
   else if (g_gpsEpochUtc) utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
   if (utc < 1700000000UL) return;  // nothing trustworthy yet (before ~2023)
   g_rtcWrite(utc);
   g_rtcEpochUtc = utc; g_rtcAtMs = millis();
   done = true; lastMs = millis();
-  Serial.printf("[CYD] RTC disciplined from %s (utc %lu)\n", fromPhone ? "phone" : "GPS", (unsigned long)utc);
+  Serial.printf("[CYD] RTC disciplined from %s (utc %lu)\n", fromPhone ? "phone" : fu ? "fleet" : "GPS", (unsigned long)utc);
 }
 uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
 uint8_t  g_evilShown = 0;
@@ -661,8 +687,8 @@ uint8_t g_ownMac[6]   = {0};
 bool    g_haveOwnMac  = false;
 
 bool isSelfDet(const Detection& d) {
-  return g_haveOwnMac && d.source == (uint8_t)Source::BleScan &&
-         memcmp(d.mac, g_ownMac, 6) == 0;
+  if (g_haveOwnMac && d.source == (uint8_t)Source::BleScan && memcmp(d.mac, g_ownMac, 6) == 0) return true;
+  return fleet::isFleetSelf(d.mac);   // the fleet's own radios (leader BLE / its phone / its AP / members' BLE)
 }
 
 // Bag-safe touch lock (also settable from the web app via CMD "K1"/"K0"); declared here so pushStatus

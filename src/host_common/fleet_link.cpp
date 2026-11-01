@@ -661,6 +661,17 @@ void onRekey() {
 }
 void setEventSink(void (*fn)(const char* op)) { g_eventSink = fn; }
 
+bool timeFix(uint32_t* utc, uint32_t* atMs) { return g_active && !g_leader && detail::client::timeFix(utc, atMs); }
+bool timeFresh() { return g_active && !g_leader && detail::client::timeFresh(); }
+bool posFix(float* lat, float* lon, uint32_t* ageMs) {
+  if (!g_active) return false;
+  return g_leader ? detail::leader::memberFix(lat, lon, ageMs) : detail::client::posFix(lat, lon, ageMs);
+}
+bool isFleetSelf(const uint8_t mac[6]) {
+  if (!g_active) return false;
+  return g_leader ? detail::leader::isSelf(mac) : detail::client::isSelf(mac);
+}
+
 void uiSnapshot(Ui& u) {
   memset(&u, 0, sizeof(u));
   u.active = g_active; u.role = g_role; u.channel = g_ch;

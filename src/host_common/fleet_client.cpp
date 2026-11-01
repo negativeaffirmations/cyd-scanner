@@ -12,6 +12,8 @@
 #include "devkey.h"
 #include "host_board.h"
 #include "webshare.h"
+#include "phone.h"
+#include "host_core.h"
 
 using namespace fleet::detail;
 
@@ -20,6 +22,8 @@ namespace {
 constexpr uint32_t DWELL_MS = 9000, HELLO_GAP_MS = 2000, JOIN_WAIT_MS = 5000;
 constexpr uint32_t ACK_EVERY_MS = 300, ACK_GIVEUP_MS = 1000, SYNC_LOST_MS = 15000, MSTAT_MS = 2000;
 constexpr uint8_t  ACK_TRIES = 5;
+constexpr uint32_t TIME_FRESH_MS = 15000;   // a joined client trusts the leader's clock this long after a Sync
+constexpr uint32_t MIN_UTC = 1700000000UL;  // anything earlier (~2023) is not a real clock
 
 enum CState : uint8_t { C_SEARCH, C_HELLO, C_JOINING, C_JOINED };
 
@@ -45,6 +49,13 @@ struct ClientSt {
   uint8_t  hop[13], nHop, hopIdx;
   uint32_t hopStartMs;
   uint8_t  pendingCh;                  // CTRL_SETCH that arrived while the SoftAP was up (applied when it stops)
+  // P3: latched from the last Sync that carried them (kept after the leader goes: free-running / held fallbacks)
+  uint32_t fltUtc, fltUtcAtMs;         // leader UTC and the millis() it arrived
+  float    fltLat, fltLon;
+  uint32_t fltFixAgeRx, fltFixAtMs;    // the fix's age when the Sync arrived + that millis()
+  bool     haveTime, havePos;
+  uint8_t  selfMacs[9][6];
+  uint8_t  nSelf;
 };
 ClientSt* C = nullptr;
 
@@ -89,7 +100,8 @@ void sendAck() {
   if (!Hmac(C->fk, KEY_LEN).add("CFLO-FLT-ACK-1").add(C->nl, NONCE_LEN).add(C->nc, NONCE_LEN).add16(C->sess).finish(t)) return;
   memcpy(a->proof, t, sizeof(a->proof));
   a->board = hostboard::fleetLeaderCapable() ? 2 : 1;            // 1 CYD / 2 MINI
-  a->caps  = hostboard::fleetLeaderCapable() ? 0x08 : 0;         // bit3: phone link present (P3 fills the rest + bleMac)
+  a->caps  = (g_onbAtMs ? 0x01 : 0) | (hostboard::fleetLeaderCapable() ? 0x08 : 0);   // bit0 GPS seen, bit3 phone link
+  phone::ownMac(a->bleMac);                                        // a mini client's BLE advert: the fleet must not log it
   strncpy(a->fw, devkey::fwVersion(), sizeof(a->fw) - 1);
   strncpy(a->name, devkey::unitName(), sizeof(a->name) - 1);
   sendSealed(C->leaderMac, buf, sizeof(JoinAck), Msg::JoinAck, C->sess, C->txSeq, C->sk);
@@ -103,7 +115,13 @@ void sendMStat() {
   const uint32_t tot = u.txOk + u.txFail;
   m->heapKB = (uint16_t)(ESP.getFreeHeap() / 1024);
   m->txFailPm = tot ? (uint16_t)((uint64_t)u.txFail * 1000 / tot) : 0;
-  m->bat = -1;                                                    // P3/P5 fill the scan + power fields
+  m->bat = (int8_t)hostboard::batteryPercent();
+  m->c5Link = g_linkOk ? 1 : 0;
+  // This unit's OWN live GPS fix (not the fleet position it stamps): the leader may use it as the fleet position
+  // when it has no live fix of its own (docs §16.6). P5 fills the scan counters.
+  const bool ownFix = g_onbValid && g_onbAtMs && millis() - g_onbAtMs < 10000;
+  m->gpsFix = ownFix ? 1 : 0;
+  if (ownFix) { m->lat = (int32_t)lroundf(g_onbLat * 1e7f); m->lon = (int32_t)lroundf(g_onbLon * 1e7f); }
   sendSealed(C->leaderMac, buf, sizeof(MStat), Msg::MStat, C->sess, C->txSeq, C->sk);
   C->lastMStatMs = millis();
 }
@@ -175,8 +193,17 @@ void onSync(const Rx& f) {
   if (!sessionOk(f, sizeof(Sync))) return;
   Sync s; memcpy(&s, f.data, sizeof(s));
   memcpy(C->leaderName, s.leaderName, sizeof(s.leaderName)); C->leaderName[20] = 0;
-  C->lastSyncMs = millis();
+  const uint32_t now = millis();
+  C->lastSyncMs = now;
   C->rssi = f.rssi;
+  // P3: the fleet clock / position / tz / self MACs (flags bit0 time valid, bit1 position valid)
+  if ((s.flags & 0x01) && s.utc >= MIN_UTC) { C->fltUtc = s.utc; C->fltUtcAtMs = now; C->haveTime = true; phone::setTzOffsetMin(s.tzOffMin); }
+  if ((s.flags & 0x02) && s.lat >= -900000000 && s.lat <= 900000000 && s.lon >= -1800000000 && s.lon <= 1800000000) {
+    C->fltLat = s.lat / 1e7f; C->fltLon = s.lon / 1e7f;
+    C->fltFixAgeRx = s.fixAgeMs; C->fltFixAtMs = now; C->havePos = true;
+  }
+  C->nSelf = s.nSelf <= 9 ? s.nSelf : 9;
+  memcpy(C->selfMacs, s.selfMacs, sizeof(C->selfMacs));
   if (C->st == C_JOINING) {
     C->st = C_JOINED;
     const uint8_t here = C->hop[C->hopIdx];
@@ -301,9 +328,33 @@ void printStatus() {
   else
     Serial.printf("  on ch %u", (unsigned)C->hop[C->hopIdx]);
   Serial.println();
+  PosFix f = posSnapshot();
+  Serial.printf("[FLT] client: time src %d epoch %lu tz %d | pos src %d%s age %lus | fleet time %s pos %s | self MACs %u\n",
+                timeSource(), (unsigned long)epochLocal(), phone::tzOffsetMin(), (int)f.src, f.live ? " live" : "",
+                (unsigned long)(f.ageMs / 1000), C->haveTime ? (timeFresh() ? "fresh" : "stale") : "none",
+                C->havePos ? "yes" : "none", (unsigned)C->nSelf);
 }
 
 bool joined() { return C && C->st == C_JOINED; }
+
+bool timeFix(uint32_t* utc, uint32_t* atMs) {
+  if (!C || !C->haveTime) return false;
+  *utc = C->fltUtc; *atMs = C->fltUtcAtMs;
+  return true;
+}
+bool timeFresh() { return C && C->haveTime && C->st == C_JOINED && millis() - C->fltUtcAtMs < TIME_FRESH_MS; }
+bool posFix(float* lat, float* lon, uint32_t* ageMs) {
+  if (!C || !C->havePos) return false;
+  *lat = C->fltLat; *lon = C->fltLon;
+  const uint32_t since = millis() - C->fltFixAtMs;
+  *ageMs = C->fltFixAgeRx > UINT32_MAX - since ? UINT32_MAX : C->fltFixAgeRx + since;   // the leader's age + ours
+  return true;
+}
+bool isSelf(const uint8_t mac[6]) {
+  if (!C) return false;
+  for (int i = 0; i < C->nSelf; i++) if (!memcmp(C->selfMacs[i], mac, 6)) return true;
+  return false;
+}
 void dropSession(const char* why) { if (C && C->st != C_SEARCH) toSearch(why, true); }
 void forgetKey() { if (C) { C->fkOk = false; memset(C->fk, 0, sizeof(C->fk)); } }
 

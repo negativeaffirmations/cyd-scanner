@@ -10,8 +10,9 @@ import { renderCounts } from '../features/counts.js';
 // Clock + location icons: two stacked source dots (blue = phone on top, purple = device below; grey when
 // that source is unavailable) and the icon tinted with the source in use. Built from the merged
 // state.status because the keys arrive in different STATUS parts (tsrc/gpssrc part 1, tav/gav part 2).
-//   tsrc 0 none / 1 phone / 2 device GPS / 3 device RTC     tav bit0 phone, bit1 device
-//   gpssrc 0 none / 1 phone / 2 device GPS / 3 held          gav bit0 phone, bit1 device
+//   tsrc 0 none / 1 phone / 2 device GPS / 3 device RTC / 4 fleet     tav bit0 phone, bit1 device, bit2 fleet
+//   gpssrc 0 none / 1 phone / 2 device GPS / 3 held / 4 fleet          gav bit0 phone, bit1 device, bit2 fleet
+//   (fleet = a fleet client stamping its leader's clock / position; drawn as a device source)
 function setSrc(id, avail, use){
   const el = $(id);
   el.querySelector(".dot.ph").classList.toggle("avail", !!(avail & 1));
@@ -26,13 +27,14 @@ function renderSourceIcons(){
   const tav = "tav" in s ? +s.tav : (ts===1 ? 1 : ts>=2 ? 2 : 0);
   const gav = "gav" in s ? +s.gav : (gs===1 ? 1 : gs===2 ? 2 : 0);
   setSrc("timeState", tav, ts===1 ? "ph" : ts>=2 ? "dev" : "");
-  setSrc("gpsState",  gav, gs===1 ? "ph" : gs===2 ? "dev" : gs===3 ? "held" : "");
+  setSrc("gpsState",  gav, gs===1 ? "ph" : (gs===2 || gs===4) ? "dev" : gs===3 ? "held" : "");
   const avail = m => [(m&1) && "phone", (m&2) && "device"].filter(Boolean).join(" + ") || "none";
-  $("timeState").title = "Time: " + (ts===3 ? "device RTC" : ts===2 ? "device GPS" : ts===1 ? "phone" : "not set")
+  $("timeState").title = "Time: " + (ts===4 ? "fleet (the leader's clock)" : ts===3 ? "device RTC" : ts===2 ? "device GPS" : ts===1 ? "phone" : "not set")
                        + " · available: " + avail(tav);
   $("gpsSats").textContent = (gs===2 && sats>0) ? sats : "";   // sat count only while the device GPS drives
   $("gpsState").title = "GPS: " + (gs===2 ? "device · "+sats+" sat"+(sats===1?"":"s")
                                  : gs===1 ? "phone"
+                                 : gs===4 ? "fleet position (from the leader)"
                                  : gs===3 ? "no live fix · logging the last known position"
                                  : "no fix") + " · available: " + avail(gav);
 }

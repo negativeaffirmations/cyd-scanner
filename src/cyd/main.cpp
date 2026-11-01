@@ -1300,8 +1300,8 @@ static int fleetButtonTapped() {
 }
 
 static const char* srcWord(int s, bool pos) {
-  if (pos) return s == 1 ? "phone" : s == 2 ? "GPS" : s == 3 ? "held" : "none";
-  return s == 1 ? "phone" : s == 2 ? "GPS" : s == 3 ? "RTC" : "none";
+  if (pos) return s == 1 ? "phone" : s == 2 ? "GPS" : s == 3 ? "held" : s == 4 ? "fleet" : "none";
+  return s == 1 ? "phone" : s == 2 ? "GPS" : s == 3 ? "RTC" : s == 4 ? "fleet" : "none";
 }
 
 // Info band y52..175: leader line, time/pos sources, band counts, TX stats, channel, session. Clears its own

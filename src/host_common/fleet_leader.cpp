@@ -12,6 +12,9 @@
 #include "devkey.h"
 #include "host_board.h"
 #include "webshare.h"
+#include "phone.h"
+#include "host_core.h"
+#include <WiFi.h>
 
 using namespace fleet::detail;
 
@@ -23,6 +26,7 @@ constexpr uint32_t JOIN_TIMEOUT_MS = 5000, ENCRYPT_FALLBACK_MS = 500, SENT_WAIT_
 constexpr uint32_t SYNC_MS = 2000, LOST_MS = 10000;
 constexpr uint32_t REMAC_IDLE_MS = 15UL * 60 * 1000;   // nobody joined: rotate the leader MAC this often (tracking)
 constexpr int      HELLOS_PER_S = 10;
+constexpr uint32_t MEMBER_FIX_LIVE_MS = 10000;   // a member's own GPS fix counts as live this long
 
 struct MemberRec { uint8_t sid[6]; uint32_t kg; char name[21]; uint8_t fk[KEY_LEN]; };   // persisted
 struct Store { uint8_t n; MemberRec m[FLEET_MAX_MEMBERS]; };
@@ -42,6 +46,9 @@ struct MemberRt {
   uint8_t  board, caps;
   char     fw[13];
   uint16_t heapKB, txFailPm;
+  uint8_t  bleMac[6];                  // its BLE advert MAC (JoinAck; zeros for a CYD client): a fleet "self" MAC
+  float    fixLat, fixLon;             // its OWN live GPS fix from MStat (P3: fleet position fallback)
+  uint32_t fixAtMs;                    // 0 = never
 };
 
 struct Leader {
@@ -131,12 +138,39 @@ void sendProbe() {
   sendClear(bc, &p, sizeof(p));
 }
 
+bool macSet(const uint8_t* m) { for (int k = 0; k < 6; k++) if (m[k]) return true; return false; }
+void addSelf(Sync* s, const uint8_t* m) {
+  if (s->nSelf >= 9 || !macSet(m)) return;
+  for (int k = 0; k < s->nSelf; k++) if (!memcmp(s->selfMacs[k], m, 6)) return;
+  memcpy(s->selfMacs[s->nSelf++], m, 6);
+}
+
+// Sync (every 2 s per member): the fleet clock (UTC + tz) and the ONE fleet position every unit stamps (docs §16.6:
+// the leader's own choice -- phone by default, its GPS, else a member's live GPS), plus the fleet's own radio MACs.
 void sendSync(int i) {
   MemberRt& r = L->rt[i];
   uint8_t buf[sizeof(Sync) + TAG_LEN];
   Sync* s = (Sync*)buf;
   memset(buf, 0, sizeof(buf));
-  s->ch = g_ch;                        // P3 fills time / position / selfMacs
+  s->ch = g_ch;
+  s->tzOffMin = (int16_t)phone::tzOffsetMin();
+  s->tsrc = (uint8_t)timeSource();
+  if (timeHasSync()) {
+    s->utc = epochLocal() + (uint32_t)(phone::tzOffsetMin() * 60);   // epochLocal is local: back to UTC
+    s->flags |= 0x01;
+  }
+  PosFix f = posSnapshot();
+  s->psrc = f.src;
+  if (f.src) {
+    s->lat = (int32_t)lroundf(f.lat * 1e7f); s->lon = (int32_t)lroundf(f.lon * 1e7f);
+    s->fixAgeMs = f.ageMs;
+    s->flags |= 0x02 | (f.live ? 0x04 : 0);
+  }
+  uint8_t m[6];
+  if (phone::ownMac(m))  addSelf(s, m);                            // this leader's BLE advert
+  if (phone::peerMac(m)) addSelf(s, m);                            // the phone connected to it
+  if (webshare::active()) { WiFi.softAPmacAddress(m); addSelf(s, m); }   // its download AP
+  for (int k = 0; k < L->st.n; k++) if (L->rt[k].state == M_JOINED) addSelf(s, L->rt[k].bleMac);
   memcpy(s->leaderSid, L->sid, 6);
   strncpy(s->leaderName, devkey::unitName(), sizeof(s->leaderName) - 1);
   sendSealed(r.mac, buf, sizeof(Sync), Msg::Sync, r.sess, r.txSeq, r.sk);
@@ -236,6 +270,7 @@ void onJoinAck(const Rx& f) {
   if (r.state != M_JOINED) {
     r.state = M_JOINED;
     r.board = a.board; r.caps = a.caps;
+    memcpy(r.bleMac, a.bleMac, 6);
     copyPrintable(r.fw, a.fw, sizeof(r.fw));                     // reads at most sizeof(r.fw)-1 = sizeof(a.fw) bytes
     Serial.printf("[FLT] member %d (%s) JOINED, fw %s\n", i + 1, L->st.m[i].name, r.fw);
     event("member_join");
@@ -252,6 +287,9 @@ void onMStat(const Rx& f) {
   MemberRt& r = L->rt[i];
   r.lastRxMs = millis(); r.rssi = f.rssi;
   r.heapKB = m.heapKB; r.txFailPm = m.txFailPm;
+  if (m.gpsFix && m.lat >= -900000000 && m.lat <= 900000000 && m.lon >= -1800000000 && m.lon <= 1800000000) {
+    r.fixLat = m.lat / 1e7f; r.fixLon = m.lon / 1e7f; r.fixAtMs = r.lastRxMs;
+  }
 }
 
 const char* stateName(uint8_t s) {
@@ -457,6 +495,27 @@ void tick() {
 void fillUi(Ui& u) {
   uint8_t e, j; counts(e, j);
   u.members = e; u.joinedMembers = j;
+}
+
+bool memberFix(float* lat, float* lon, uint32_t* ageMs) {
+  if (!L) return false;
+  const uint32_t now = millis();
+  int best = -1;
+  for (int i = 0; i < L->st.n; i++) {
+    const MemberRt& r = L->rt[i];
+    if (r.state != M_JOINED || !r.fixAtMs || now - r.fixAtMs >= MEMBER_FIX_LIVE_MS) continue;
+    if (best < 0 || r.fixAtMs > L->rt[best].fixAtMs) best = i;
+  }
+  if (best < 0) return false;
+  *lat = L->rt[best].fixLat; *lon = L->rt[best].fixLon; *ageMs = now - L->rt[best].fixAtMs;
+  return true;
+}
+
+bool isSelf(const uint8_t mac[6]) {
+  if (!L) return false;
+  for (int i = 0; i < L->st.n; i++)
+    if (L->rt[i].state == M_JOINED && macSet(L->rt[i].bleMac) && !memcmp(L->rt[i].bleMac, mac, 6)) return true;
+  return false;
 }
 
 void counts(uint8_t& enrolled, uint8_t& joined) {

@@ -1,6 +1,12 @@
 # Handoff — 2026-10-31 (work branch: `fleet-mode`, local commits, NOT pushed; `main` @ `c9a9acb` is the trunk)
 
-## RESUME HERE — 2026-10-31 (late): fleet P2 (enrollment + auth) BUILT, REVIEWED (reviewer + security, all fixed) + bench-PASSED; web card untested on a phone
+## RESUME HERE — 2026-11-01: fleet P3 (time + position) BUILT; P2 done + owner-tested from the phone
+- **P3:** docs/fleet-mode.md §18. Bench: the CYD client takes the fleet clock (src 4) + the leader's tz, and its bg log
+  renamed 0.4 s after join. **Still to bench:** the position flow (connect the phone to mini #2 → the CYD fleet screen
+  should read `Pos: fleet`) and self-MAC drops. Then reviewer pass, then P4 (link v12 scan plan; all boards flash).
+- The webapp `status.js` change (source 4 icons) is committed on `fleet-mode` only — deploy with the next webapp push.
+
+## Earlier — 2026-10-31 (late): fleet P2 (enrollment + auth) BUILT, REVIEWED (reviewer + security, all fixed) + bench-PASSED; owner tested the Fleet card from the phone
 - **P1:** done (see below). Its sniffer check (step 9) moves to P2's sniffer check.
 - **P2:** built and bench-passed — details, deviations and results in **docs/fleet-mode.md §17**.
   - Both boards run the `*_fleetdbg` builds: mini #2 = leader (channel 1) with the CYD enrolled + joined; the CYD is a

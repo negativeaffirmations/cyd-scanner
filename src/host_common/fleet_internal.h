@@ -84,6 +84,8 @@ void tick();
 void fillUi(Ui& u);
 void printStatus();
 void counts(uint8_t& enrolled, uint8_t& joined);
+bool memberFix(float* lat, float* lon, uint32_t* ageMs);   // freshest live member GPS fix (< 10 s)
+bool isSelf(const uint8_t mac[6]);                          // a member's BLE MAC
 }
 namespace client {
 void begin();
@@ -92,6 +94,10 @@ void tick();
 void fillUi(Ui& u);
 void printStatus();
 bool joined();
+bool timeFix(uint32_t* utc, uint32_t* atMs);
+bool timeFresh();
+bool posFix(float* lat, float* lon, uint32_t* ageMs);
+bool isSelf(const uint8_t mac[6]);                          // in the leader's Sync.selfMacs
 void dropSession(const char* why);         // back to searching (rekey, unjoin)
 void forgetKey();                          // the device key changed: recompute FK on next use
 }

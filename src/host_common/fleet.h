@@ -50,6 +50,15 @@ CmdAction handlePhoneCmd(const char* cmd, char* reply, size_t cap);
 // STATUS part 2 field value: "<role>,<joined>/<enrolled>,<ch>" (client: joined 0/1 of 1).
 void    statusField(char* out, size_t cap);
 
+// --- P3: time / position shared across the fleet (host_core source 4 = "fleet", docs §7 + §16.6) ---
+// Client: the leader's clock + fleet position from its Sync. Leader: posFix = the freshest live GPS fix a MEMBER
+// reported (used only when the leader has no live fix of its own); timeFix/timeFresh are false (it IS the source).
+bool timeFix(uint32_t* utc, uint32_t* atMs);   // UTC `utc` was current at millis() `atMs`; false = never had one
+bool timeFresh();                              // client: a Sync with a valid time arrived within 15 s
+bool posFix(float* lat, float* lon, uint32_t* ageMs);   // position + its age NOW; false = none
+// MACs of the fleet's own radios (leader BLE advert, its phone, its SoftAP, members' BLE): never logged as detections.
+bool isFleetSelf(const uint8_t mac[6]);
+
 // --- UI / diagnostics ---
 struct Ui {
   bool     active;

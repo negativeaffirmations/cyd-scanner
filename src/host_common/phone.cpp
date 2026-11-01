@@ -510,6 +510,14 @@ void loadTz() {
   if (p.begin("cydscan", true)) { g_tzOffMin = p.getInt("tzoff", 0); p.end(); }
 }
 
+// A fleet client learns the tz from its leader's Sync (it has no phone of its own). NVS is written only on change.
+void setTzOffsetMin(int offMin) {
+  if (offMin < -840 || offMin > 840 || offMin == g_tzOffMin) return;
+  g_tzOffMin = offMin;
+  Preferences p;
+  if (p.begin("cydscan", false)) { p.putInt("tzoff", offMin); p.end(); }
+}
+
 void begin(const char* devName) {
   loadTz();
   NimBLEDevice::init(devName);

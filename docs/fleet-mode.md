@@ -843,3 +843,33 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - Probes continue at 15 s for a released (still enrolled) member.
   - Stored FKs sit in NVS like the devkey; revoking one means rekeying that member.
   - Member slot numbers go stale after a removal until rejoin — **P4 must re-send slots** (Plan).
+
+## 18. P3 as built (2026-10-31) — fleet time + position (supersedes §7 where they differ; follows §16.6)
+- **Sync, filled by the leader every 2 s:**
+  - `utc` (= `epochLocal()` + tz back to UTC) and `tzOffMin` (`phone::tzOffsetMin()`).
+  - `tsrc`/`psrc` = the leader's sources. `lat`/`lon` (deg·1e7) and `fixAgeMs` = the leader's `posSnapshot()`.
+  - `flags`: bit0 time valid, bit1 position valid, bit2 position live.
+  - `selfMacs`: the leader's BLE MAC, its connected phone's, its SoftAP BSSID while up, and each joined member's
+    `JoinAck.bleMac` (a mini client sends its own; a CYD client has none).
+- **One fleet position (§16.6):** host_core source **4 = fleet**.
+  - A joined **client** stamps the fleet position ahead of its own sources while the fix is under 15 s old.
+  - The **leader** uses a member's live GPS (`MStat.gpsFix`/`lat`/`lon`, under 10 s) only when it has no live fix of
+    its own. Held fallback = the most recent of phone / onboard / fleet.
+  - Device-only ignores the fleet, like the phone.
+- **Time:**
+  - Under prefer-phone, a client's fresh fleet clock (a Sync within 15 s) ranks first.
+  - Under prefer-device it ranks below fresh GPS and the RTC.
+  - After the leader is gone the latched fleet clock free-runs as the last resort.
+  - The tz is taken from Sync (`phone::setTzOffsetMin`, which writes NVS only on change).
+  - The first fleet time triggers the existing session rename + `timesync` anchor. Bench: rename 0.4 s after join,
+    clock = PC clock.
+  - A mini client's RTC is disciplined from the fleet clock.
+- **STATUS:** `tsrc`/`gpssrc` can now be **4**. `tav`/`gav` gained **bit2** (fleet available). The web source icons
+  draw 4 as a device source, with a "fleet" tooltip.
+- **Self filtering:** `isSelfDet()` also drops `fleet::isFleetSelf(mac)`: a client the leader's `selfMacs`, a leader
+  its members' BLE MACs.
+- **MStat now carries** `bat`, `c5Link`, and the member's OWN live onboard fix (`gpsFix`/`lat`/`lon`).
+- **Deferred to P6 (scan-analyzer contract first):** the `devpos` per-unit GPS line, the meta keys
+  `fleet_id`/`fleet_role`/`fleet_leader`, and the member-chosen fleet-position source setting.
+- **Not yet bench-tested:** position flow (needs the phone on the leader, or a GPS fix) and self-MAC drops (by
+  inspection only).
