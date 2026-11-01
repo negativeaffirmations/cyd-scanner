@@ -34,6 +34,14 @@ The overnight timer didn't fire (the session was de-authenticated); the owner ra
   the web Fleet card "Make this scanner a fleet client"), then on mini #2 → Fleet card → Add member (the phone needs
   mini #1's key). Mini #2 was unplugged at the time.
 - The webapp Home fleet cue is deployed (`efe7c9b`, `fleet-cue c`).
+- **3-UNIT FLEET RUNNING (2026-11-01):**
+  - mini #1 is a client (enrolled from the owner's phone) — layout leader ble, CYD wifi24, mini #1 wifi5.
+  - Merge from two clients, rx drop 0.
+  - mini #2 re-flashed with the member-name fix (`3ad60ce`, release `xiao_s3_rgb`).
+  - **`fleet-mode` is PUSHED** to GitHub (no PR, not merged to `main`).
+  - Next: **P6** — draft the scan-analyzer contract proposal via REMOTE.md (log keys: meta `fleet_id` / `fleet_role` /
+    `fleet_leader`, row `scanner` / `ofile` / `orow` for P5b, `devpos`, the `fleet` evt fields, `pos_via`, live-POST
+    member rows) and build after it is agreed.
 - The CYD is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
 - The CYD's time preference is "prefer device", so its clock shows GPS (src 2) rather than fleet (4) while its own GPS
   is fresh. That is correct for that setting.
