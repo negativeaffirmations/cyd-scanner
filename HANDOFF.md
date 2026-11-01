@@ -330,13 +330,13 @@ The mini #2 RGB LED was glaring at night, so its overall brightness is now a web
 - `FW_VERSION` 0.17.0; CLAUDE.md CMD list + STATUS keys updated. Builds: cyd, xiao_s3, xiao_s3_rgb all green.
 - **Device state:** mini #2's S3 (`10:b4:1d:eb:96:04`, COM10 this session) runs `cac0de7` `xiao_s3_rgb`, boot-verified
   (link up, scanning). **Owner confirmed the slider works.** CYD NOT reflashed (its change is only `led=-1` + stubs).
-- Still untracked: `hardware/diagrams/mini-build_led_wiring_diagram.svg` (says 68 Ω for blue; 100 Ω fitted) — ask before
-  committing.
+- The untracked `hardware/diagrams/mini-build_led_wiring_diagram.svg` was **deleted** (owner, 2026-10-31): the LED stays
+  as built; `hardware/PINOUT.md` §6 is the reference (100 Ω blue fitted).
 
 ## Earlier — 2026-10-27: MINI #2 built + `[env:xiao_s3_rgb]` RGB status LED (DONE; committed + pushed `4fddba0`)
 The owner built a **second mini** ("mini #2", NOT the unit used on the 10-24 drives): new perfboard/case
 footprint, **2000 mAh** cell, **power LED removed** (redundant), and a **5 mm RGB status LED** on the S3. Wiring diagram:
-`hardware/diagrams/mini-build_led_wiring_diagram.svg` (untracked, owner's Cirkit export; it says 68 Ω for blue but **100 Ω is
+the owner's Cirkit export (deleted 2026-10-31; it said 68 Ω for blue but **100 Ω is
 fitted**).
 
 **Hardware (mini #2):** S3 `10:b4:1d:eb:96:04` (BLE `CFLO-MINI-BEMOPU`), C5 `10:bd:a3:cf:a3:c8`. The USB serial number = the
