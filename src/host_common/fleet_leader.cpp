@@ -374,7 +374,10 @@ void assignRoles() {
   // Only split when it can work: the leader must have BLE on (it takes the BLE role) and each Wi-Fi member must have
   // passive capture (PRB) on plus the band its role covers; anyone else runs FULL. (802.15.4 rides along only where
   // MASK_154 is on; the C5 also requires the source bit.)
-  if (L->planMode != PLANMODE_OFF && np >= 1 && (g_srcMask & MASK_BLE)) {
+  // ...and only while the leader's OWN C5 is up: the leader takes the BLE share, so with its C5 down (past the sticky
+  // window, not a busy miss) a split would leave nobody on BLE -- everyone runs FULL until it is back (bench P5).
+  const bool ownC5Up = g_lastLinkOkMs && millis() - g_lastLinkOkMs < LINK_STICKY_MS;
+  if (L->planMode != PLANMODE_OFF && np >= 1 && (g_srcMask & MASK_BLE) && ownC5Up) {
     int wifi[FLEET_MAX_MEMBERS], nw = 0;
     for (int k = 0; k < np; k++) {
       const uint8_t m = L->rt[pres[k]].srcMask;
