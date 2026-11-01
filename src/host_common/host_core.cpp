@@ -35,6 +35,8 @@ Detection          g_dets[MAX_DET];
 sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 int                g_detCount = 0;
 uint8_t            g_detVia[MAX_DET];
+int8_t             g_detFleetRssi[MAX_DET];
+uint16_t           g_detFleetFlags[MAX_DET];
 // Decoded Remote-ID broadcasts (Reply::RemoteId), keyed by emitter MAC. Same lifecycle as g_dets:
 // reset at the top of each requestScan() so it mirrors the current burst.
 RemoteId           g_rids[MAX_RID];
@@ -442,9 +444,10 @@ int buildGroups() {
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
     if ((int)g_score[i].score > g.score) g.score = (int)g_score[i].score;
     if (d.rssi > g.bestRssi) { g.bestRssi = d.rssi; g.rep = i; }
+    if (g_detFleetRssi[i] > g.bestRssi) g.bestRssi = g_detFleetRssi[i];   // a member hears it stronger (display only)
     if (g.nameIdx < 0 && d.name[0]) g.nameIdx = i;
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
-    g.flags |= (uint16_t)(d.flags & (FLAGS_NOTABLE | FLAGS_DATA));
+    g.flags |= (uint16_t)((d.flags | g_detFleetFlags[i]) & (FLAGS_NOTABLE | FLAGS_DATA));
     g.srcMask |= (uint8_t)(1u << srcTypeOf(srcTag(d)));
     g.via |= g_detVia[i];
   }

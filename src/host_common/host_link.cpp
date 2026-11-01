@@ -76,7 +76,11 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
           memcpy(&nd, parser.payload(), sizeof(Detection));
           bool isPhone = havePeer && nd.source == (uint8_t)Source::BleScan &&
                          memcmp(nd.mac, peer, 6) == 0;
-          if (!isSelfDet(nd) && !isPhone) g_detVia[g_detCount++] = 1;  // drop our own + the paired phone; bit 0 = our C5
+          nd.name[sizeof(nd.name) - 1] = 0;
+          if (!isSelfDet(nd) && !isPhone) {  // drop our own + the paired phone; bit 0 = our C5
+            g_detFleetRssi[g_detCount] = -128; g_detFleetFlags[g_detCount] = 0;
+            g_detVia[g_detCount++] = 1;
+          }
         }
       } else if (t == (uint8_t)Reply::RemoteId && parser.length() >= sizeof(RemoteId)) {
         // Non-terminating (like Detection): rides inside the Status(1)..Status(0) burst.
@@ -89,6 +93,8 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
           else slot = 0;  // full: overwrite index 0 (store is rebuilt every poll, so rarely hit)
         }
         memcpy(&g_rids[slot], r, sizeof(RemoteId));
+        g_rids[slot].uasId[sizeof(g_rids[slot].uasId) - 1] = 0;            // (REV-005) always terminated
+        g_rids[slot].operatorId[sizeof(g_rids[slot].operatorId) - 1] = 0;
         g_ridVia[slot] = 1;
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());

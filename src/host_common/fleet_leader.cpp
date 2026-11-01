@@ -35,8 +35,9 @@ constexpr uint32_t MEMBER_FIX_LIVE_MS = 10000;   // a member's own GPS fix count
 constexpr uint32_t ROLE_STABLE_MS = 10000, ROLE_GRACE_MS = 30000, PLAN_RESEND_MS = 10000;
 constexpr uint8_t  PLANMODE_AUTO = 0, PLANMODE_OFF = 3;
 // P5 (docs §9.2): members' forwarded rows live this long (= the C5 table TTL); member alert counts this long.
-constexpr uint32_t REMOTE_TTL_MS = 30000, MEMBER_STAT_FRESH_MS = 10000;
-constexpr int      REMOTE_ROWS = 256, REMOTE_ROWS_NOPSRAM = 64, REMOTE_RIDS = 16;
+// Rows are refreshed by members every 10 s, so 20 s survives one lost refresh and clears departed devices sooner.
+constexpr uint32_t REMOTE_TTL_MS = 20000, MEMBER_STAT_FRESH_MS = 10000;
+constexpr int      REMOTE_ROWS = 768, REMOTE_ROWS_NOPSRAM = 64, REMOTE_RIDS = 16;   // 768 x ~88 B = 66 KB PSRAM
 
 struct RemoteRow { Detection d; uint8_t member; bool used; uint32_t lastMs; };   // ~88 B; PSRAM
 struct RemoteRid { RemoteId r; uint8_t member; bool used; uint32_t lastMs; };
@@ -455,6 +456,7 @@ void onRidBatch(const Rx& f) {
   const uint32_t now = millis();
   for (int k = 0; k < cnt; k++) {
     RemoteId r; memcpy(&r, f.data + sizeof(RidBatchHdr) + k * sizeof(RemoteId), sizeof(r));
+    r.uasId[sizeof(r.uasId) - 1] = 0; r.operatorId[sizeof(r.operatorId) - 1] = 0;   // member text: always terminated
     int hit = -1, freeIx = -1, oldest = -1;
     for (int j = 0; j < REMOTE_RIDS; j++) {
       RemoteRid& e = L->rids[j];
@@ -726,21 +728,15 @@ int mergeRemote() {
     int k = -1;
     for (int x = 0; x < g_detCount; x++) if (sameDet(g_dets[x], d)) { k = x; break; }
     if (k >= 0) {
-      Detection& t = g_dets[k];
-      if (d.rssi > t.rssi) t.rssi = d.rssi;
-      t.flags |= d.flags;
-      if (!t.name[0] && d.name[0]) memcpy(t.name, d.name, sizeof(t.name));
-      if (!t.ie_hash) t.ie_hash = d.ie_hash;
-      if (!t.companyId) t.companyId = d.companyId;
-      bool svcBlank = true; for (int q = 0; q < 16; q++) if (t.svc[q]) { svcBlank = false; break; }
-      if (svcBlank) memcpy(t.svc, d.svc, sizeof(t.svc));
-      if (!t.svc16[0]) memcpy(t.svc16, d.svc16, sizeof(t.svc16));
-      bool bssidBlank = true; for (int q = 0; q < 6; q++) if (t.bssid[q]) { bssidBlank = false; break; }
-      if (bssidBlank) memcpy(t.bssid, d.bssid, 6);
+      // This unit heard it too: its own row (and so its log line) stays untouched; the member's stronger RSSI and its
+      // detector flags go to the display-only side arrays (REV-001: no member data in the leader's own log rows).
+      if (d.rssi > g_detFleetRssi[k]) g_detFleetRssi[k] = d.rssi;
+      g_detFleetFlags[k] |= d.flags;
       g_detVia[k] |= bit;
       L->merged++;
     } else if (g_detCount < MAX_DET) {
-      g_dets[g_detCount] = d;
+      g_dets[g_detCount] = d;                                        // a member-only row: never logged (no bit 0)
+      g_detFleetRssi[g_detCount] = -128; g_detFleetFlags[g_detCount] = 0;
       g_detVia[g_detCount++] = bit;
       added++; L->appended++;
     }

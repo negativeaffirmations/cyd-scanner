@@ -43,7 +43,7 @@ constexpr uint8_t  CRASH_BOOTS   = 3;
 constexpr int      DRAIN_MAX     = 8;       // RX frames handled per service() pass
 constexpr size_t   CLIENT_SLOT   = 256;     // client RX slot (header + data); leader->client frames are <= 119 B (Sync + tag)
 constexpr int      CLIENT_SLOTS  = 8;
-constexpr int      LEADER_SLOTS  = 16;
+constexpr int      LEADER_SLOTS  = 48;      // PSRAM: several members' DetBatch bursts land while loop() runs a cycle
 constexpr int      FALLBACK_SLOTS = 8;      // leader pool when PSRAM is unavailable
 
 // --- static footprint (normal mode must stay < 300 B: everything big is allocated by begin*) ---

@@ -105,7 +105,7 @@ void loop() {
 
   // One logical scan (bg at boot, or phone G/X). Back the cadence off while the C5 link is down.
   if (g_scanActive && !webshare::active() &&
-      millis() - g_lastCycleMs >= (g_linkOk ? SCAN_CYCLE_MS : SCAN_CYCLE_DOWN_MS)) {
+      millis() - g_lastCycleMs >= ((g_linkOk || fleet::hasRemote()) ? SCAN_CYCLE_MS : SCAN_CYCLE_DOWN_MS)) {   // fleet-only view: keep 2 s
     g_lastCycleMs = millis();
     core::runScanCycle();
   } else if (!g_scanActive) {  // idle: keep the link dot + phone STATUS fresh (scan=0)

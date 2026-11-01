@@ -78,6 +78,8 @@ struct ClientSt {
   uint8_t  planRole, planGen;
   // P5 forwarding
   uint16_t fwdCycle;
+  uint16_t fwdStart;                   // where the last capped cycle stopped: the next one resumes there (no starving)
+  uint16_t lastDets;                   // rows of the last successful cycle (MStat.dets; steady across a busy miss)
   uint32_t rowsSent, framesSent, ridFrames;
 };
 ClientSt* C = nullptr;
@@ -178,7 +180,7 @@ void sendMStat() {
   m->txFailPm = tot ? (uint16_t)((uint64_t)u.txFail * 1000 / tot) : 0;
   m->bat = (int8_t)hostboard::batteryPercent();
   m->planGen = C->planGen;
-  m->dets = (uint16_t)g_detCount;                                   // P5: scan counters (the leader shows them)
+  m->dets = C->lastDets;                                           // P5: scan counters (the leader shows them)
   m->deauth = g_deauthRecent; m->evil = g_evilCount; m->rid = g_ridCount;
   m->srcMask = g_srcMask;                                          // the leader only assigns roles this unit can run
   m->c5Link = g_linkOk ? 1 : 0;
@@ -442,12 +444,20 @@ void forwardCycle() {
     frames++; cnt = 0;
   };
   memset(g_fwdBuf, 0, sizeof(DetBatchHdr));
-  for (int i = 0; i < g_detCount && frames < FWD_MAX_FRAMES; i++) {
-    if (!(g_detVia[i] & 1)) continue;                                // only what this unit's own C5 heard
-    if (!needsSend(g_dets[i], now)) continue;
-    memcpy(g_fwdBuf + sizeof(DetBatchHdr) + cnt * sizeof(Detection), &g_dets[i], sizeof(Detection));
+  C->lastDets = (uint16_t)g_detCount;
+  // Start where the last capped cycle stopped, so a few jittery rows near the top can't starve the rest of their
+  // 10 s refresh (REV-003). The cap only bites on a v1 link or a large table.
+  const int n = g_detCount;
+  const int start = n ? C->fwdStart % n : 0;
+  int i = 0;
+  for (; i < n && frames < FWD_MAX_FRAMES; i++) {
+    const int r = (start + i) % n;
+    if (!(g_detVia[r] & 1)) continue;                                // only what this unit's own C5 heard
+    if (!needsSend(g_dets[r], now)) continue;
+    memcpy(g_fwdBuf + sizeof(DetBatchHdr) + cnt * sizeof(Detection), &g_dets[r], sizeof(Detection));
     if (++cnt == per) flush();
   }
+  C->fwdStart = (uint16_t)(n ? (start + i) % n : 0);
   if (frames < FWD_MAX_FRAMES) flush();
   int nr = 0;                                                        // Remote-IDs: every cycle while present
   const int rper = per == DETS_PER_V2 ? RIDS_PER_V2 : RIDS_PER_V1;

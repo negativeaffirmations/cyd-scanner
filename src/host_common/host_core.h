@@ -52,6 +52,11 @@ extern int                g_detCount;
 // Fleet "seen by" mask per row (docs/fleet-mode.md §9.2): bit 0 = this unit's own C5, bit k = member slot k.
 // A non-fleet unit only ever has bit 0. Logging and the follow engine use only rows with bit 0.
 extern uint8_t            g_detVia[MAX_DET];
+// What fleet members reported for a row THIS unit also heard: their strongest RSSI and their detector flags. Kept
+// beside g_dets (never merged into it) so the unit's own log rows -- RSSI + its position, the triangulation input --
+// stay its own measurements; only the display (group strength, flags / category) uses them. -128 / 0 = none.
+extern int8_t             g_detFleetRssi[MAX_DET];
+extern uint16_t           g_detFleetFlags[MAX_DET];
 constexpr int MAX_RID = 8;
 extern RemoteId           g_rids[MAX_RID];
 extern int                g_ridStoreCount;
