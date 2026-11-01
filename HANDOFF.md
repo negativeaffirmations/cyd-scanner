@@ -29,6 +29,11 @@ The overnight timer didn't fire (the session was de-authenticated); the owner ra
 - mini #2 + the CYD are on the **release** envs (`xiao_s3_rgb`, `cyd`) at **fw 0.22.0** (`b5b99d9`, `build release`).
   The debug-only serial commands (`fleet m/fk/add/crash/trace`) are gone: use the `*_fleetdbg` envs for bench work.
 - Both C5s run the latest `c5` / `xiao_c5`.
+- **Mini #1 FLASHED (2026-11-01):** release `xiao_s3` (S3 COM16, `10:B4:1D:E7:ED:A0`) + `xiao_c5` (COM23,
+  `10:BD:A3:CF:02:DC`), fw 0.22.0, link v12. Its S3↔C5 link is up, role off. To join: `fleet client` on its serial (or
+  the web Fleet card "Make this scanner a fleet client"), then on mini #2 → Fleet card → Add member (the phone needs
+  mini #1's key). Mini #2 was unplugged at the time.
+- The webapp Home fleet cue is deployed (`efe7c9b`, `fleet-cue c`).
 - The CYD is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
 - The CYD's time preference is "prefer device", so its clock shows GPS (src 2) rather than fleet (4) while its own GPS
   is fresh. That is correct for that setting.
