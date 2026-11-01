@@ -2,8 +2,9 @@
 
 ## RESUME HERE — 2026-11-01: fleet P3 (time + position) BUILT; P2 done + owner-tested from the phone
 - **P3:** docs/fleet-mode.md §18. Bench: the CYD client takes the fleet clock (src 4) + the leader's tz, and its bg log
-  renamed 0.4 s after join. **Still to bench:** the position flow (connect the phone to mini #2 → the CYD fleet screen
-  should read `Pos: fleet`) and self-MAC drops. Then reviewer pass, then P4 (link v12 scan plan; all boards flash).
+  renamed 0.4 s after join. **Position PASSED** with the phone on the leader (CYD `pos src 4 live`, 2 self MACs; the
+  owner confirmed `Pos: fleet`). Self-MAC drops: by inspection only. P3 review fixed (`fbd786e`, docs §18.1). Next: P4 (link v12 scan
+  plan; all boards flash).
 - The webapp `status.js` change (source 4 icons) is committed on `fleet-mode` only — deploy with the next webapp push.
 
 ## Earlier — 2026-10-31 (late): fleet P2 (enrollment + auth) BUILT, REVIEWED (reviewer + security, all fixed) + bench-PASSED; owner tested the Fleet card from the phone
