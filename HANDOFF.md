@@ -1,4 +1,26 @@
-# Handoff — 2026-11-01 (work branch: `fleet-mode`, pushed; `main` @ `9e83bb3` = trunk + webapp)
+# Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `0bd3fe9` = trunk + webapp)
+
+## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix built, NOT flashed
+- **fw 0.24.0 (P6 items 1-4) flashed on all 3 hosts** (mini #2 `xiao_s3_rgb` COM10 = leader, mini #1 `xiao_s3` COM16,
+  CYD `cyd` COM13). `fleet-mode` `f3e7798` (fw) + `90a559e` (webapp) pushed; webapp on `main` `0bd3fe9` (footer
+  `fleet-p6 e`). **Field test VERIFIED by scan-analyzer (server `b036384`, schema v11):** fleet_id `57289e09c2931f8c`
+  matched on all 3 units; meta fleet keys, `evt:fleet` peer/peer_name/slot/n/plan, `pos_src` (gps/phone/fleet only)
+  and 26 `devpos` (from the leader -- mini #2 had a live onboard fix, 3 sats) all as agreed; no rejects. Only errors:
+  2 live batches cut mid-send (ClientDisconnect, nothing stored). Details in the bridge's two newest entries.
+- **CYD as fleet client has NO phone link by design** (BT memory released). To pull its SD log: CYD Settings → Leave
+  fleet (or Release from the leader's web Fleet card), download, then Settings → Fleet client... (owner did this).
+- **Plan flips on mini #1 (share ↔ FULL, no `lost`):** NOT the phone connection. Correction to what scan-analyzer was
+  told: BLE file streams ALREADY run `fleet::service()` per chunk (`phone::transferAlive`). Real causes found: (1) a
+  transfer on the LEADER pauses its C5 poll → `ownC5Up` false after 8 s → `assignRoles()` drops everyone to FULL;
+  (2) export counting passes + the session-list dir scan never serviced the fleet. Exact timeline not confirmed --
+  if flips persist after the fix, ask scan-analyzer for the ordered leader + mini#1 `fleet` lines (epoch/op/plan/n).
+- **Fix `1cbbee6` (fw 0.24.1), committed locally, NOT pushed / flashed:** leader holds its own-C5 verdict while
+  `hostTransferRecent(LINK_STICKY_MS)`; `xferKeepAlive()` (throttled phone+fleet service) in counting passes + session
+  list; `XferScope` around transferLog/Filtered/File + sendSessionList defers fleet event lines (≤4, heap on first
+  use) until the transfer ends so an export's SIZE= count stays exact. All 5 host envs build. Fleet proto/link
+  unchanged → can flash the leader alone. **Next:** flash (needs owner OK), re-test a phone download on the leader
+  and on a client while the fleet runs: roles should stay split. No reviewer pass yet.
+- Open: mini #2 key rotation (owner's call); item 6 deferred; server-side fleet grouping UI is scan-analyzer's.
 
 ## RESUME HERE — 2026-11-01 (afternoon): P6 agreed; item 5 (fleet live-POST) DONE end to end
 - **P6 contract agreed** (bridge 10:05 proposal, 10:20 owner-approved reply, then Q&A). Decisions: `pos_src` =
