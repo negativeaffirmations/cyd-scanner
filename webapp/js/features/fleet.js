@@ -63,8 +63,25 @@ const settingsOpen = () => $("page-settings").classList.contains("visible");
 
 function show(id, on){ $(id).hidden = !on; }
 
+// Home card cue (same line as the unit name, no extra height): "[FLEET · n] NAME | FLEET LEADER" while the connected
+// scanner is in a fleet. n = units in the fleet right now (this leader + its joined members); a client can't know it.
+function renderHomeCue(f){
+  const inFleet = state.connected && f && f.role !== 0;
+  const pill = $("fltPill"), role = $("fltRole");
+  if (!pill || !role) return;                     // a cached older index.html without the cue elements
+  pill.hidden = role.hidden = !inFleet;
+  if (!inFleet) return;
+  const lead = f.role === 2;
+  pill.textContent = lead ? `FLEET · ${f.joined + 1}` : "FLEET";
+  pill.title = lead ? `${f.joined + 1} unit${f.joined ? "s" : ""} in the fleet: this leader + ${f.joined} joined client${f.joined === 1 ? "" : "s"}`
+                      + (f.enrolled > f.joined ? ` (${f.enrolled - f.joined} enrolled but not joined)` : "")
+                    : (f.joined ? "Joined to a fleet leader" : "Fleet client, searching for its leader");
+  role.textContent = lead ? "FLEET LEADER" : "FLEET CLIENT";
+}
+
 export function renderFleet(){
   const f = fltStatus();
+  renderHomeCue(f);
   const conn = state.connected && !!f;
   let txt;
   if (!state.connected) txt = "Connect to a scanner.";
