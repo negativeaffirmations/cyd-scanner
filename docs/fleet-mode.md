@@ -1005,3 +1005,15 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - `needsSend` doesn't track bssid / channel / svc16 changes (they arrive with the 10 s refresh).
   - A failed send isn't retried before the next refresh.
   - Multi-member (N ≥ 2 clients) delivery is untested: only one client is on the bench.
+
+### 20.1 Deferred P4 items done (2026-11-01)
+- **Band-restricted AP scan** (§19.1 REV-007): the C5 sets `esp_wifi_set_band_mode()` from the plan at each AP-scan
+  launch.
+  - 2.4 only for a role with no 5 GHz phase (WIFI24), 5 only for a role with no 2.4 phase (WIFI5), auto otherwise
+    (legacy / WIFI / BLE).
+  - Passive entry switches back to auto if a mid-cycle plan change needs the other band.
+  - Bench (CYD forced via `M:o`): AP scan **12.4 s dual-band → 3.0 s 2.4-only → 9.5 s 5-only**.
+  - Running AP counts unchanged: 2.4 GHz 10.3 → 10.0, 5 GHz 16.8 → 18.0.
+  - A WIFI24 member's cycle drops from ~24 s to ~9.5 s.
+- **`M:o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>`:** a per-member role override (runtime only, not saved; it applies
+  once the member counts). There is no web control yet; serial `fleet m o:…` or a future layout editor (§16.1).

@@ -69,6 +69,7 @@ struct MemberRt {
   uint8_t  planSentGen;                // last plan generation sent to it
   uint32_t lastPlanMs;
   uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
+  uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (runtime only, not saved)
   uint16_t deauth; uint8_t evil, rid;  // its latest alert counts (MStat), for the fleet-wide maxima
   uint32_t statAtMs;
 };
@@ -396,6 +397,12 @@ void assignRoles() {
       }                                                            // 3rd+ Wi-Fi-capable member: FULL
     }
   }
+  for (int i = 0; i < L->st.n; i++)                                // M:o overrides, for members that count
+    if (L->rt[i].roleOverride && L->rt[i].roleOverride - 1 <= PLANROLE_BLE) {
+      bool counts = false;
+      for (int k = 0; k < np; k++) if (pres[k] == i) counts = true;
+      if (counts) roles[i] = (uint8_t)(L->rt[i].roleOverride - 1);
+    }
   bool changed = leaderRole != L->leaderRole;
   for (int i = 0; i < L->st.n; i++) if (roles[i] != L->rt[i].role) changed = true;
   if (!changed) return;
@@ -888,6 +895,23 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
   if (op == 'l') {
     if (canLead) loadStore();
     cmdList(out, cap);
+    return CMD_NONE;
+  }
+  if (op == 'o') {                                               // "o:<sid>:<role|auto>" per-member role override
+    if (!canLead || !loadStore()) { reply(out, cap, "ERR\tthis scanner can only be a fleet client"); return CMD_NONE; }
+    char* c = strchr(args, ':');
+    if (!c) { reply(out, cap, "ERR\tusage o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>"); return CMD_NONE; }
+    *c = 0;
+    uint8_t sid[6]; int i = sidFromHex(args, sid) ? findSid(sid) : -1;
+    if (i < 0) { reply(out, cap, "ERR\tnot a member"); return CMD_NONE; }
+    const char* rn = c + 1;
+    uint8_t r = 0;                                               // 0 = auto
+    if (strcmp(rn, "auto")) {
+      for (uint8_t k = PLANROLE_FULL; k <= PLANROLE_BLE; k++) if (!strcmp(rn, fleet::planRoleName(k))) r = (uint8_t)(k + 1);
+      if (!r) { reply(out, cap, "ERR\tunknown role"); return CMD_NONE; }
+    }
+    L->rt[i].roleOverride = r;
+    reply(out, cap, "OK\trole %s for %s", r ? fleet::planRoleName(r - 1) : "auto", args);
     return CMD_NONE;
   }
   if (op == 'p') {                                               // plan mode: 0 auto (role template) / 3 off (all full)

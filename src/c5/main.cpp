@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <NimBLEDevice.h>
 #include "pins.h"
 #include "link_protocol.h"
@@ -421,7 +422,29 @@ static void after154Slot() {
   else g_lastWifiDone = millis();
 }
 
+// Band restriction (P4 deferred item, docs §19.1): a single-band fleet role (WIFI24 / WIFI5) scans and captures on one
+// band only, so restrict the radio to it -- the active AP scan then skips the other band's channels (~half the busy
+// window) instead of scanning them and dropping the results. Everything else (legacy, WIFI, BLE) stays AUTO.
+static wifi_band_mode_t g_band = WIFI_BAND_MODE_AUTO;
+static uint32_t g_scanStartMs = 0;
+static void setBand(wifi_band_mode_t b) {
+  if (b == g_band) return;
+  esp_err_t e = esp_wifi_set_band_mode(b);
+  if (e == ESP_OK) g_band = b;
+  Serial.printf("[C5] band -> %s (%s)\n", b == WIFI_BAND_MODE_2G_ONLY ? "2.4 only" : b == WIFI_BAND_MODE_5G_ONLY ? "5 only" : "auto",
+                esp_err_to_name(e));
+}
+static wifi_band_mode_t wantedBand() {
+  const uint8_t p = g_planPhases;
+  if (!(p & PLAN_VALID)) return WIFI_BAND_MODE_AUTO;
+  const bool on24 = (p & (PLAN_AP24 | PLAN_PROM24)) != 0, on5 = (p & (PLAN_AP5 | PLAN_PROM5)) != 0;
+  if (on24 && !on5) return WIFI_BAND_MODE_2G_ONLY;
+  if (on5 && !on24) return WIFI_BAND_MODE_5G_ONLY;
+  return WIFI_BAND_MODE_AUTO;
+}
+
 static void enterPromisc() {
+  if (g_band == WIFI_BAND_MODE_5G_ONLY) setBand(WIFI_BAND_MODE_AUTO);   // a plan change mid-cycle: 2.4 needs the band back
   g_phase     = PH_PROMISC;   // publish first: blePaused() is now true, so no path re-arms BLE
   { NimBLEScan* s = NimBLEDevice::getScan(); if (s && s->isScanning()) s->stop(); }  // free the radio for passive RX
   g_hopIdx    = 0;
@@ -436,6 +459,7 @@ static void enterPromisc() {
 // `fresh`: entered straight from the AP-scan phase (a fleet plan with 5 GHz capture but no 2.4 GHz capture),
 // so pause BLE and enable promiscuous mode first, exactly as enterPromisc() does.
 static void enterPromisc5(bool fresh) {
+  if (g_band == WIFI_BAND_MODE_2G_ONLY) setBand(WIFI_BAND_MODE_AUTO);   // likewise for 5 GHz
   g_phase      = PH_PROMISC5;           // publish first: blePaused() is now true
   if (fresh) {
     NimBLEScan* bs = NimBLEDevice::getScan(); if (bs && bs->isScanning()) bs->stop();
@@ -477,12 +501,18 @@ static void wifiTick() {
         afterScanPhase();
         return;
       }
-      WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);  // 2.4 + 5 GHz
+      setBand(wantedBand());          // single-band role: scan (and capture) one band only
+      g_scanStartMs = millis();
+      WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);  // 2.4 + 5 GHz (or the role's one band)
       g_wifiScanning = true;
       return;
     }
     int n = WiFi.scanComplete();
     if (n >= 0) {
+      static uint8_t logged = 0;                                    // AP-scan duration: first few after each band change
+      static wifi_band_mode_t lastBand = WIFI_BAND_MODE_AUTO;
+      if (lastBand != g_band) { lastBand = g_band; logged = 0; }
+      if (logged < 3) { logged++; Serial.printf("[C5] AP scan %lu ms, %d APs (band %d)\n", (unsigned long)(millis() - g_scanStartMs), n, (int)g_band); }
       for (int i = 0; i < n; i++) {
         uint8_t ch = (uint8_t)WiFi.channel(i);
         if (ch > 14 && (!(g_srcMask & MASK_WIFI5) || !planAllows(PLAN_AP5))) continue;     // 5 GHz disabled / another unit's job
