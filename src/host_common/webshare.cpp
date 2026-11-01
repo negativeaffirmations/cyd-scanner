@@ -96,7 +96,11 @@ void handleRoot() {
   for (int i = 0; i < kept; i++) {
     const IndexEntry& x = ents[i];
     char when[24] = "";
-    if (x.t > 1600000000) { struct tm tmv; gmtime_r(&x.t, &tmv); strftime(when, sizeof(when), " &middot; %b %d %H:%M", &tmv); }
+    if (x.t > 1600000000) {   // snprintf, NOT strftime: strftime cost the CYD ~4 KB heap + static (A/B 2026-10-31)
+      static const char kMon[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+      struct tm tmv; gmtime_r(&x.t, &tmv);
+      snprintf(when, sizeof(when), " &middot; %s %02d %02d:%02d", kMon[tmv.tm_mon % 12], tmv.tm_mday, tmv.tm_hour, tmv.tm_min);
+    }
     h += String("<li><a href='/dl?f=") + x.name + "'>" + x.name + "</a> <small>" + String(x.size / 1024.0, 1) +
          " KB" + when + (strcmp(x.name, logBasename()) ? "" : " (current)") +
          "</small> <small><a href='/dlf?f=" + x.name + "&mode=1'>24h</a></small></li>";

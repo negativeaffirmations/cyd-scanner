@@ -53,5 +53,6 @@ void uiSnapshot(Ui& u);
 void printStatus();                // serial `fleet`
 void dbgSetRate(int mbps);         // FLEET_DEBUG bench knobs (no-ops otherwise): peer PHY rate 1 or 12
 void dbgSetPad(int len);           //   ping frame size: 250 / 1300 / 0 = alternate
+void dbgSetTrace(bool on);         //   one console line per ping sent / received, with the actual RF channel
 
 }  // namespace fleet

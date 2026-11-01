@@ -722,7 +722,7 @@ boot modes only** (no pairing/crypto, no scan plan, no link-protocol change): NV
 client** boots with `esp_bt_mem_release` BEFORE anything touches BT, never calls `phone::begin()` (no phone link;
 SoftAP download disabled), forces scanning on / logs to the bg stream, and shows `SCR_FLEET` as its root (Settings
 -> "Fleet client..." enters, "Leave fleet" exits; both reboot). Minis keep NimBLE in either role. Code:
-`src/host_common/fleet*.{h,cpp}`; serial `fleet` / `fleet leave|client|leader on|off|ch <n>|remac` (+ `fleet rate 1|12`, `fleet pad 250|1300|0`, `fleet crash` = boot-guard test panic, in debug builds). `-DFLEET_DEBUG`
+`src/host_common/fleet*.{h,cpp}`; serial `fleet` / `fleet leave|client|leader on|off|ch <n>|remac` (+ `fleet rate 1|12`, `fleet pad 250|1300|0`, `fleet trace on|off` = per-ping tx/rx lines with the actual RF channel, `fleet crash` = boot-guard test panic, in debug builds). `-DFLEET_DEBUG`
 (envs `cyd_fleetdbg`, `xiao_s3_rgb_fleetdbg`) adds the cleartext ping/pong bench frames; release builds send no fleet
 frames. Normal-mode static footprint is tiny; every fleet buffer is heap-allocated by `beginClient()/beginLeader()`.
 

@@ -63,6 +63,8 @@ void fleetCmd(const char* arg) {
     fleet::rerandomizeMac();
   } else if (!strncmp(arg, "rate ", 5)) {
     fleet::dbgSetRate(atoi(arg + 5));
+  } else if (!strcmp(arg, "trace on") || !strcmp(arg, "trace off")) {
+    fleet::dbgSetTrace(!strcmp(arg, "trace on"));
   } else if (!strncmp(arg, "pad ", 4)) {
     fleet::dbgSetPad(atoi(arg + 4));
 #ifdef FLEET_DEBUG

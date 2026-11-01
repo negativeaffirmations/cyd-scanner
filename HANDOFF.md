@@ -34,8 +34,8 @@ are answered. Key decisions:
     885 pongs ok, 0 RX drop.
 - **Step 4 rate/pad:** at 1 Mbps over 3 min, 45/45 (250 B) and 44/45 (1300 B) — the same as 12 Mbps at bench range, so
   only a range test will separate them. Pad default (0) already alternates 250/1300, which the soak covered. Restored 12M.
-- **Step 5 remac:** CYD `fleet remac` took 9.2 ms (direct set, ESP-NOW up), but there was a **~15 s gap** before pings
-  resumed. **The leader never expires old peer MACs** (stale rows kept counting up; cleared only by a leader reboot) — fix in a later
+- **Step 5 remac:** CYD `fleet remac` took 9.2 ms (direct set, ESP-NOW up). The **~15 s gap** seen before pings
+  resumed was the unread-console artifact (see "Traffic stall"). **The leader never expires old peer MACs** (stale rows kept counting up; cleared only by a leader reboot) — fix in a later
   phase (peer timeout). Reboots: the CYD rejoined instantly with a new boot MAC; the mini rebooted (via reflash) back
   into leader and the CYD followed its new MAC automatically. Boot-time randomization holds; no fallback needed.
 - **BUG found + fixed:** `fleet::setRole()` saved NVS but not `g_role`, so after `fleet leader on` the live leader
@@ -50,8 +50,22 @@ are answered. Key decisions:
   - Idle with the phone: ~95%. A BLE download of 168.8 KB: ~100%, leader heap min 116 KB.
   - SoftAP up ~6.5 min incl. a 170 KB Wi-Fi download: 95%, leader heap min 113 KB (the AP cost ~3 KB internal).
   - **After `AP down` the fleet stayed on ch 6** (retune fix proven), 16/17.
-  - `fleet ch 6` itself caused a **~25 s outage** before pings resumed (like the ~15 s after remac). Both recover on their
-    own — cause not yet found (peers use channel 0 = current). Investigate before P2.
+  - `fleet ch 6` itself seemed to cause a **~25 s outage** before pings resumed (like the ~15 s after remac). **RESOLVED,
+    not a fleet bug** — see "Traffic stall" below.
+- **Traffic stall — RESOLVED (2026-10-31).** A scripted run (`fleet trace on`: per-ping tx/rx lines with the actual RF
+  channel; both consoles read on one clock) showed **no stall**:
+  - remac: the next ping arrived 150 ms later. Same-channel retunes: no loss.
+  - A real channel change loses pings only while the two boards are on different channels.
+  - **Cause:** the earlier stalls happened only while the **mini's USB-CDC console was plugged in but unread**. HWCDC
+    retries each `Serial` write 20 × 100 ms, so the chatty mini loop() crawled and pings went out every ~12–17 s.
+  - **Fix:** `src/xiao_s3/main.cpp` sets `Serial.setTxBufferSize(4096)` before `begin` and `setTxTimeoutMs(0)` after. With
+    the console closed, pings now arrive every ~2 s (age ≤ 1 s).
+  - This also affects a mini powered from a laptop USB port without a terminal open (scanning + phone link too, not just
+    the fleet).
+  - **TODO, next C5 flash:** the C5 (USB-CDC console) has the same default; apply the same two lines.
+- **CYD heap regression found + fixed:** the `strftime` date on the Wi-Fi index cost the CYD **~4 KB** (+1 KB static, ~3 KB
+  heap; fleet-client heap 84 → 80 KB). A/B confirmed; now `gmtime_r` + `snprintf` + a month table. Back to 139,836 B before
+  fleet start / ~84.2 KB after; `cyd` static 114,016 B.
 - **Owner UX feedback (web app, not fleet):** the SoftAP join QR is drawn in the web app on the same phone that has to
   scan it. Proposed: Copy-password + "Open Wi-Fi settings" (Android `intent:` link, with a fallback) + the existing log-index
   link, with the QR folded under "for another device". Chrome's "can't download securely" warning is the plain-HTTP AP, and

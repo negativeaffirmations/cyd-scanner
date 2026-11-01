@@ -47,7 +47,13 @@ static void runDownload() {
 }
 
 void setup() {
+  // USB-CDC console must never block loop(). With USB plugged in but no terminal reading (a laptop charging the
+  // mini, or a closed monitor), HWCDC retries each write up to 20 x 100 ms; the mini prints several lines a cycle,
+  // so loop() crawled and fleet pings went out every ~15 s instead of 2 s (bench 2026-10-31). A 4 KB ring holds a
+  // normal burst while a terminal IS reading; timeout 0 drops output instead of waiting when nobody is.
+  Serial.setTxBufferSize(4096);
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);
   delay(200);
   Serial.println("[S3] boot: headless scanner host + phone link + SD");
   fleet::loadRole();   // fltrole/fltch + boot-loop guard (docs/fleet-mode.md)

@@ -113,8 +113,27 @@ struct Dbg {
   uint8_t  tx[FLEET_V2_MAX];        // padded frame buffer
 };
 Dbg* g_dbg = nullptr;
+bool g_trace = false;               // `fleet trace on`: one console line per ping sent / received (stall hunting)
 
 inline int sizeClass(uint16_t len) { return len > 400 ? 1 : 0; }
+
+uint8_t rfChannel() {               // the channel the radio is actually on (vs g_ch, the one we asked for)
+  uint8_t p = 0; wifi_second_chan_t s;
+  return esp_wifi_get_channel(&p, &s) == ESP_OK ? p : 0;
+}
+
+// Wi-Fi STA events that could move the radio off the fleet channel (a scan / connect attempt / restart).
+void dbgWifiEvent(arduino_event_id_t ev, arduino_event_info_t info) {
+  switch (ev) {
+    case ARDUINO_EVENT_WIFI_STA_START:     Serial.printf("[FLT] %lu wifi STA_START\n", millis()); break;
+    case ARDUINO_EVENT_WIFI_STA_STOP:      Serial.printf("[FLT] %lu wifi STA_STOP\n", millis()); break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED: Serial.printf("[FLT] %lu wifi STA_CONNECTED\n", millis()); break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.printf("[FLT] %lu wifi STA_DISCONNECTED reason %u\n", millis(), (unsigned)info.wifi_sta_disconnected.reason); break;
+    case ARDUINO_EVENT_WIFI_SCAN_DONE:     Serial.printf("[FLT] %lu wifi SCAN_DONE\n", millis()); break;
+    default: break;
+  }
+}
 
 bool dbgSend(const uint8_t* mac, Msg type, uint32_t seq, uint16_t frameLen) {
   if (frameLen < sizeof(DbgPing)) frameLen = sizeof(DbgPing);
@@ -137,6 +156,8 @@ void dbgHandle(const Slot* s) {
     if (g_dbg->lastSeq && p->h.seq > g_dbg->lastSeq + 1) g_dbg->gaps += p->h.seq - g_dbg->lastSeq - 1;
     g_dbg->lastSeq = p->h.seq;
     g_dbg->rxPing[c]++;
+    if (g_trace) Serial.printf("[FLT] %lu rx ping %lu len %u rssi %d rf %u\n", millis(), (unsigned long)p->h.seq,
+                               (unsigned)s->len, (int)s->rssi, rfChannel());
     if (dbgSend(s->mac, Msg::DbgPong, p->h.seq, s->len)) g_dbg->pongSent[c]++;
   } else if (p->h.type == (uint8_t)Msg::DbgPong && g_leader) {      // leader: per-peer delivery
     DbgPeer* d = nullptr;
@@ -155,7 +176,10 @@ void dbgTick() {
     uint16_t L = g_dbg->padOverride ? (uint16_t)g_dbg->padOverride : ((n & 1) ? 1300 : 250);
     if (L > g_maxPayload) L = 250;
     uint8_t bc[6]; memset(bc, 0xFF, 6);
-    if (dbgSend(bc, Msg::DbgPing, n, L)) {
+    bool sent = dbgSend(bc, Msg::DbgPing, n, L);
+    if (g_trace) Serial.printf("[FLT] %lu tx ping %lu len %u %s rf %u\n", now, (unsigned long)n, (unsigned)L,
+                               sent ? "queued" : "SEND-ERR", rfChannel());
+    if (sent) {
       int c = sizeClass(L);
       g_dbg->pingSent[c]++;
       for (auto& q : g_dbg->peers) if (q.used) q.since[c]++;
@@ -164,7 +188,7 @@ void dbgTick() {
   if (now - g_dbg->lastPrintMs >= 5000) {
     g_dbg->lastPrintMs = now;
     if (g_leader) {
-      Serial.printf("[FLT] L ch=%u ping sent 250:%lu 1300:%lu  tx ok=%lu fail=%lu  rx drop=%lu\n", g_ch,
+      Serial.printf("[FLT] L ch=%u rf=%u ping sent 250:%lu 1300:%lu  tx ok=%lu fail=%lu  rx drop=%lu\n", g_ch, rfChannel(),
                     (unsigned long)g_dbg->pingSent[0], (unsigned long)g_dbg->pingSent[1],
                     (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxDrop);
       for (auto& q : g_dbg->peers) {
@@ -177,12 +201,12 @@ void dbgTick() {
       }
     } else {
       char ms[18]; macStr(g_dbg->leader, ms);
-      Serial.printf("[FLT] C ch=%u leader %s rssi %d age %lus  ping rx 250:%lu 1300:%lu gaps=%lu  pong ok 250:%lu 1300:%lu"
-                    "  tx ok=%lu fail=%lu  rx drop=%lu\n", g_ch, g_dbg->haveLeader ? ms : "-", (int)g_dbg->lrssi,
+      Serial.printf("[FLT] C ch=%u rf=%u leader %s rssi %d age %lus  ping rx 250:%lu 1300:%lu gaps=%lu  pong ok 250:%lu 1300:%lu"
+                    "  tx ok=%lu fail=%lu  rx drop=%lu rxf=%lu\n", g_ch, rfChannel(), g_dbg->haveLeader ? ms : "-", (int)g_dbg->lrssi,
                     (unsigned long)(g_dbg->haveLeader ? (now - g_dbg->lastRxMs) / 1000 : 0),
                     (unsigned long)g_dbg->rxPing[0], (unsigned long)g_dbg->rxPing[1], (unsigned long)g_dbg->gaps,
                     (unsigned long)g_dbg->pongSent[0], (unsigned long)g_dbg->pongSent[1],
-                    (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxDrop);
+                    (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxDrop, (unsigned long)g_rxFrames);
     }
     printHeap(g_leader ? "L" : "C");
   }
@@ -341,6 +365,10 @@ bool begin(bool leader) {
   radioTune();
   if (!nowInit()) return beginFailed("esp_now_init");
   g_active = true;
+#ifdef FLEET_DEBUG
+  static bool evReg = false;
+  if (!evReg) { WiFi.onEvent(dbgWifiEvent); evReg = true; }
+#endif
   char ms[18]; macStr(g_mac, ms);
   int8_t pw = 0; esp_wifi_get_max_tx_power(&pw);
   Serial.printf("[FLT] %s up: ch %u mac %s (set %s) maxPayload %u txpwr %d.%02d dBm rate %s pool %ux%u (%s)\n",
@@ -518,6 +546,14 @@ void dbgSetRate(int mbps) {
 #endif
 }
 
+void dbgSetTrace(bool on) {
+#ifdef FLEET_DEBUG
+  g_trace = on;
+  Serial.printf("[FLT] ping trace %s\n", on ? "on" : "off");
+#else
+  (void)on;
+#endif
+}
 void dbgSetPad(int len) {
 #ifdef FLEET_DEBUG
   if (g_dbg) g_dbg->padOverride = len;
