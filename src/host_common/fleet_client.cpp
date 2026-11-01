@@ -60,6 +60,9 @@ struct ClientSt {
   uint32_t lastSyncMs, lastMStatMs;
   int8_t   rssi;
   char     leaderName[21];
+  uint8_t  leaderSid[6], fleetId[8];   // P6: from the Sync (log fleet_leader / fleet_id); haveIdent once one arrived
+  uint8_t  fixSlot;                    // P6: Sync.fixSlot (whose GPS is the fleet position; 0 = none)
+  bool     haveIdent;
   bool     needRemac;
   bool     fullSweep;                  // this pass covers 1-13 (the preferred list found nothing)
   uint8_t  hop[13], nHop, hopIdx;
@@ -258,10 +261,24 @@ bool sessionOk(const Rx& f, size_t structLen) {
   return C->rx.accept(h->seq);
 }
 
+// A fleet event with the P6 extras: the leader as the peer, this unit's slot. Call it while still JOINED so the log
+// line also carries the fleet id (fleetIdent()).
+void clientEvent(const char* op) {
+  fleet::EventInfo x = {};
+  x.slot = -1; x.n = -1;
+  if (C->haveIdent) {
+    for (int k = 0; k < 6; k++) snprintf(x.peer + 2 * k, 3, "%02x", C->leaderSid[k]);
+    strncpy(x.peerName, C->leaderName, sizeof(x.peerName) - 1);
+  }
+  if (C->slot) x.slot = (int8_t)C->slot;
+  event(op, x);
+}
+
 void onSync(const Rx& f) {
   if (!sessionOk(f, sizeof(Sync))) return;
   Sync s; memcpy(&s, f.data, sizeof(s));
   memcpy(C->leaderName, s.leaderName, sizeof(s.leaderName)); C->leaderName[20] = 0;
+  memcpy(C->leaderSid, s.leaderSid, 6); memcpy(C->fleetId, s.fleetId, 8); C->haveIdent = true; C->fixSlot = s.fixSlot;
   const uint32_t now = millis();
   C->lastSyncMs = now;
   C->rssi = f.rssi;
@@ -281,7 +298,7 @@ void onSync(const Rx& f) {
     if (here != g_ch) fleet::setChannel(here);                      // found the leader elsewhere: remember that channel
     Serial.printf("[FLT] client: JOINED %s (slot %u of %u, ch %u)\n", C->leaderName, (unsigned)C->slot,
                   (unsigned)C->nMembers, (unsigned)g_ch);
-    event("join");
+    clientEvent("join");
     C->lastMStatMs = 0;
   }
 }
@@ -290,11 +307,12 @@ void onPlan(const Rx& f) {
   if (C->st != C_JOINED || !sessionOk(f, sizeof(Plan))) return;
   Plan p; memcpy(&p, f.data, sizeof(p));
   if (p.role > PLANROLE_BLE) return;
+  if (p.slot >= 1 && p.slot <= FLEET_MAX_MEMBERS) C->slot = p.slot;   // a removed member shifts the slots after it
   const bool changed = p.planGen != C->planGen || p.role != C->planRole;
   C->plan = p.plan; C->planRole = p.role; C->planGen = p.planGen;
   if (changed) {
     Serial.printf("[FLT] client: scan role %s (plan %u)\n", fleet::planRoleName(p.role), (unsigned)p.planGen);
-    event("plan");
+    clientEvent("plan");
   }
 }
 
@@ -305,14 +323,14 @@ void onCtrl(const Rx& f) {
   switch (c.op) {
     case CTRL_RELEASE:                                             // leave fleet mode (a CYD returns to its phone link)
       Serial.println("[FLT] client: released by the leader -- restarting in normal mode");
-      event("release");
+      clientEvent("release");
       fleet::setRole(fleet::ROLE_OFF);
       Serial.flush();
       delay(300);
       ESP.restart();
       break;
     case CTRL_UNJOIN:
-      event("unjoin");
+      clientEvent("unjoin");
       toSearch("removed by the leader", true);
       break;
     case CTRL_SETCH:                                               // sent 3x: repeats of the same channel are no-ops
@@ -384,7 +402,7 @@ void tick() {
       else if (now - C->lastAckMs > ACK_GIVEUP_MS) toSearch("no Sync after JoinAck", true);
       break;
     case C_JOINED:
-      if (now - C->lastSyncMs > SYNC_LOST_MS) { event("lost"); toSearch("leader lost", true); }
+      if (now - C->lastSyncMs > SYNC_LOST_MS) { clientEvent("lost"); toSearch("leader lost", true); }
       else if (!C->lastMStatMs || now - C->lastMStatMs >= MSTAT_MS) sendMStat();
       break;
   }
@@ -510,6 +528,12 @@ bool isSelf(const uint8_t mac[6]) {
 }
 void dropSession(const char* why) { if (C && C->st != C_SEARCH) toSearch(why, true); }
 void forgetKey() { if (C) { C->fkOk = false; memset(C->fk, 0, sizeof(C->fk)); } }
+bool gpsIsFleetPos() { return C && C->st == C_JOINED && C->slot && C->fixSlot == C->slot; }
+bool ident(uint8_t id[8], uint8_t leaderSid[6]) {
+  if (!C || C->st != C_JOINED || !C->haveIdent) return false;
+  memcpy(id, C->fleetId, 8); memcpy(leaderSid, C->leaderSid, 6);
+  return true;
+}
 
 }}}  // namespace fleet::detail::client
 

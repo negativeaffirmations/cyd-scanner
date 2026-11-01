@@ -16,6 +16,7 @@
 #include "host_core.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 #include <esp_memory_utils.h>
 
 using namespace fleet::detail;
@@ -80,6 +81,7 @@ struct Leader {
   uint32_t addCtr;                     // next valid enrollment counter (NVS fltactr): every M:a binds it -> no replay
   MemberRt rt[FLEET_MAX_MEMBERS];
   uint8_t  sid[6];
+  uint8_t  fleetId[8];                 // P6: random per leader boot (first begin()), sent in every Sync -> log fleet_id
   uint8_t  probeNl[2][NONCE_LEN];
   uint32_t probeMs[2];
   uint8_t  probeIdx;
@@ -91,6 +93,7 @@ struct Leader {
   uint32_t chSwitchAtMs;
   uint32_t lastRemacMs;
   int8_t   fixMember;                  // member whose GPS is the fleet position fallback (sticky; -1 = none)
+  int8_t   fixUsed;                    // the member memberFix() last returned (live or held), -1 = none
   uint8_t  planGen;                    // bumped whenever the role layout changes
   uint8_t  leaderRole;                 // this leader's own scan role
   uint8_t  planMode;                   // PLANMODE_AUTO (template) / PLANMODE_OFF (everyone full); NVS fltpmode
@@ -140,6 +143,23 @@ int findMac(const uint8_t* mac) {
 }
 
 void restartProbing() { L->probing = false; }   // the next tick starts a fresh 2-minute fast burst
+
+// A fleet event with the P6 extras: member `m` in slot i (or none) as the peer + the fleet size now.
+void leaderEventRec(const char* op, const MemberRec* m, int i) {
+  if (!L) { event(op); return; }
+  fleet::EventInfo x = {};
+  x.slot = -1;
+  if (m) {
+    for (int k = 0; k < 6; k++) snprintf(x.peer + 2 * k, 3, "%02x", m->sid[k]);
+    strncpy(x.peerName, m->name, sizeof(x.peerName) - 1);
+    x.slot = (int8_t)(i + 1);
+  }
+  int units = 1;
+  for (int k = 0; k < L->st.n; k++) if (L->rt[k].state == M_JOINED) units++;
+  x.n = (int8_t)units;
+  event(op, x);
+}
+void leaderEvent(const char* op, int i) { leaderEventRec(op, L && i >= 0 && i < L->st.n ? &L->st.m[i] : nullptr, i); }
 
 void endSession(int i, uint8_t newState) {
   MemberRt& r = L->rt[i];
@@ -201,6 +221,7 @@ void sendSync(int i) {
     s->lat = (int32_t)lroundf(f.lat * 1e7f); s->lon = (int32_t)lroundf(f.lon * 1e7f);
     s->fixAgeMs = f.ageMs;
     s->flags |= 0x02 | (f.live ? 0x04 : 0);
+    if (f.from == 4 && f.live && L->fixUsed >= 0) s->fixSlot = (uint8_t)(L->fixUsed + 1);   // a member's GPS is the fleet position
   }
   uint8_t m[6];
   if (phone::ownMac(m))  addSelf(s, m);                            // this leader's BLE advert
@@ -210,6 +231,7 @@ void sendSync(int i) {
     if (L->rt[k].state == M_JOINED) { addSelf(s, L->rt[k].bleMac); addSelf(s, L->rt[k].phoneMac); }
   memcpy(s->leaderSid, L->sid, 6);
   strncpy(s->leaderName, devkey::unitName(), sizeof(s->leaderName) - 1);
+  memcpy(s->fleetId, L->fleetId, sizeof(s->fleetId));
   sendSealed(r.mac, buf, sizeof(Sync), Msg::Sync, r.sess, r.txSeq, r.sk);
   r.lastSyncMs = millis();
 }
@@ -334,7 +356,7 @@ void onJoinAck(const Rx& f) {
       }
     }
     Serial.printf("[FLT] member %d (%s) JOINED, fw %s\n", i + 1, L->st.m[i].name, r.fw);
-    event("member_join");
+    leaderEvent("member_join", i);
     sendSync(i);
   } else if (millis() - r.lastSyncMs > 250) {
     sendSync(i);                       // the client resends JoinAck until a Sync gets through
@@ -427,7 +449,7 @@ void assignRoles() {
   Serial.printf("[FLT] plan %u: leader %s", (unsigned)L->planGen, fleet::planRoleName(leaderRole));
   for (int i = 0; i < L->st.n; i++) Serial.printf(", %s %s", L->st.m[i].name, fleet::planRoleName(roles[i]));
   Serial.println();
-  event("plan");
+  leaderEvent("plan", -1);
 }
 
 // ---- P5: members' detections (docs §9.2) ----
@@ -596,7 +618,7 @@ void cmdAdd(char* args, char* out, size_t cap) {
   L->addCtr++;
   restartProbing();
   Serial.printf("[FLT] member %d added: %s (%s kg %lu)\n", slot + 1, L->st.m[slot].name, sidc, (unsigned long)L->st.m[slot].kg);
-  event("member_add");
+  leaderEvent("member_add", slot);
   reply(out, cap, "OK\tadded\t%s", sidc);
 }
 
@@ -609,8 +631,8 @@ bool removeAt(int i) {
   if (ok) {
     endSession(i, M_ENROLLED);
     if (L->remote) remoteForget(i);
-    // Slots shift down; joined members keep the slot number from their Join until they rejoin (P4 must re-send it).
-    for (int k = i; k < L->st.n - 1; k++) L->rt[k] = L->rt[k + 1];
+    // Slots shift down: each shifted member learns its new slot from its next Plan (sent at once: planSentGen stale).
+    for (int k = i; k < L->st.n - 1; k++) { L->rt[k] = L->rt[k + 1]; L->rt[k].planSentGen = (uint8_t)(L->planGen - 1); }
     memset(&L->rt[L->st.n - 1], 0, sizeof(MemberRt));
     L->st = next;
   }
@@ -644,9 +666,11 @@ namespace fleet { namespace detail { namespace leader {
 void begin() {
   if (!loadStore()) { Serial.println("[FLT] leader: out of memory"); return; }
   for (int i = 0; i < FLEET_MAX_MEMBERS; i++) { memset(&L->rt[i], 0, sizeof(MemberRt)); }
+  static const uint8_t kZero[8] = {0};
+  while (!memcmp(L->fleetId, kZero, sizeof(L->fleetId))) esp_fill_random(L->fleetId, sizeof(L->fleetId));
   L->probing = false;
   L->lastRemacMs = millis();
-  L->fixMember = -1;
+  L->fixMember = -1; L->fixUsed = -1;
   if (!L->remote) {                                                // P5 remote table: PSRAM on the S3
     L->remote = (RemoteRow*)heap_caps_calloc(REMOTE_ROWS, sizeof(RemoteRow), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     L->nRemote = REMOTE_ROWS;
@@ -691,7 +715,7 @@ void tick() {
       if (now - r.lastRxMs > LOST_MS) {
         Serial.printf("[FLT] member %d (%s) LOST\n", i + 1, L->st.m[i].name);
         endSession(i, M_LOST);
-        event("member_lost");
+        leaderEvent("member_lost", i);
       } else if (now - r.lastSyncMs >= SYNC_MS) {
         sendSync(i);
       }
@@ -826,6 +850,7 @@ bool memberFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
   }
   *lat = L->rt[pick].fixLat; *lon = L->rt[pick].fixLon; *ageMs = now - L->rt[pick].fixAtMs;
   *live = isLive(pick);
+  L->fixUsed = (int8_t)pick;                                       // Sync.fixSlot when this fix becomes the fleet position
   return true;
 }
 
@@ -841,6 +866,12 @@ bool isSelf(const uint8_t mac[6]) {
   return false;
 }
 
+bool ident(uint8_t id[8], uint8_t leaderSid[6]) {
+  static const uint8_t kZero[8] = {0};
+  if (!L || !memcmp(L->fleetId, kZero, 8)) return false;
+  memcpy(id, L->fleetId, 8); memcpy(leaderSid, L->sid, 6);
+  return true;
+}
 void counts(uint8_t& enrolled, uint8_t& joined) {
   enrolled = joined = 0;
   if (!L) return;
@@ -899,7 +930,7 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
       if (!setRole(ROLE_LEADER)) { reply(out, cap, "ERR\tNVS write failed"); return CMD_NONE; }
       if (active() && was != ROLE_LEADER) { reply(out, cap, "OK\trestarting as leader"); return CMD_RESTART; }
       if (!active() && !beginLeader()) { reply(out, cap, "ERR\tleader start failed (stop the Wi-Fi download?)"); return CMD_NONE; }
-      event("start");
+      leaderEvent("start", -1);
       reply(out, cap, "OK\tleader on");
       return CMD_NONE;
     }
@@ -979,8 +1010,10 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
       sendCtrl(i, CTRL_UNJOIN, 0); sendCtrl(i, CTRL_UNJOIN, 0);
       waitSent(L->rt[i].mac);                                    // the frames must leave before the peer (LMK) goes
     }
+    MemberRec gone = L->st.m[i];                                 // the event names it after the slots shift
+    memset(gone.fk, 0, sizeof(gone.fk));                         // ...and needs no key copy
     if (!removeAt(i)) { reply(out, cap, "ERR\tNVS write failed"); return CMD_NONE; }
-    event("member_remove");
+    leaderEventRec("member_remove", &gone, i);
     reply(out, cap, "OK\tremoved\t%s", args);
     return CMD_NONE;
   }
@@ -992,7 +1025,7 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
     waitSent(L->rt[i].mac);
     endSession(i, M_LOST);                                       // it is rebooting: show it gone right away
     L->rt[i].role = PLANROLE_FULL; L->rt[i].lostAtMs = 0;        // ...and its coverage goes back to the others now
-    event("member_release");
+    leaderEvent("member_release", i);
     reply(out, cap, "OK\treleased\t%s", args);
     return CMD_NONE;
   }

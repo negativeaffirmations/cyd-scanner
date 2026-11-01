@@ -52,7 +52,11 @@ void fleetCmd(const char* arg) {
       if (!fleet::setRole(fleet::ROLE_LEADER)) { Serial.println("[fleet] NVS write failed"); return; }
       if (fleet::active() && was != fleet::ROLE_LEADER) fleetRestart("leader set (was running as a client)");
       else if (fleet::active()) Serial.println("[fleet] already running");
-      else Serial.println(fleet::beginLeader() ? "[fleet] leader up" : "[fleet] leader start FAILED");
+      else {
+        const bool up = fleet::beginLeader();
+        Serial.println(up ? "[fleet] leader up" : "[fleet] leader start FAILED");
+        logFleetEvent(up ? "start" : "start_failed");   // the same anchor the boot / phone paths write
+      }
     } else {
       logFleetEvent("leave");
       fleet::setRole(fleet::ROLE_OFF);

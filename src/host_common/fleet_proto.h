@@ -9,7 +9,7 @@
 
 namespace fleet_proto {
 
-constexpr uint8_t  FLEET_PROTO_VERSION = 1;
+constexpr uint8_t  FLEET_PROTO_VERSION = 2;   // 2 (fw 0.24.0): Sync.fleetId (P6 item 1); a v1 unit can't join a v2 fleet
 constexpr uint8_t  FLEET_DEFAULT_CH    = 1;
 constexpr uint16_t FLEET_V1_MAX = 250, FLEET_V2_MAX = 1470;
 // Clients per leader (docs/fleet-mode.md §16.5): the prebuilt libs allow 7 ENCRYPTED ESP-NOW peers (the
@@ -39,7 +39,10 @@ struct JoinAck { Hdr h; uint8_t proof[16]; uint8_t board, caps; uint8_t bleMac[6
                  char fw[12]; char name[20]; };                                            // 64 encrypted
 struct Sync    { Hdr h; uint32_t utc; int16_t tzOffMin; uint8_t tsrc, psrc;
                  int32_t lat, lon; uint32_t fixAgeMs; uint8_t ch, flags; uint8_t leaderSid[6];
-                 uint8_t nSelf; uint8_t selfMacs[9][6]; char leaderName[20]; };            // 111 encrypted, every 2 s; 9 = leader BLE + phone peer + SoftAP BSSID + 6 members
+                 uint8_t nSelf; uint8_t selfMacs[9][6]; char leaderName[20];
+                 uint8_t fleetId[8]; uint8_t fixSlot; };   // 120 encrypted, every 2 s; 9 = leader BLE + phone peer + SoftAP BSSID + 6 members;
+                                          // v2: fleetId = the leader's random per-boot fleet session id (log `fleet_id`); fixSlot = the member slot whose GPS
+                                          // IS the fleet position (0 = none: the leader's phone / own GPS) -> devpos `used`
 struct Plan    { Hdr h; uint8_t planGen, role, slot, nMembers; link_protocol::ScanPlan plan; };   // 30 encrypted (P4)
 struct Ctrl    { Hdr h; uint8_t op; uint8_t arg[3]; };                                     // 12 encrypted
 struct MStat   { Hdr h; uint8_t planGen, c5Link; int8_t bat; uint8_t gpsFix;
@@ -55,7 +58,7 @@ struct DbgPing { Hdr h; uint16_t padLen; };                                     
 
 static_assert(sizeof(Hdr) == 8, "fleet wire size");
 static_assert(sizeof(Probe) == 26 && sizeof(Hello) == 58 && sizeof(Join) == 60 && sizeof(JoinAck) == 64, "fleet wire size");
-static_assert(sizeof(Sync) == 111 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 43, "fleet wire size");
+static_assert(sizeof(Sync) == 120 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 43, "fleet wire size");
 // Sync.flags: bit0 time valid (utc >= 2023), bit1 position valid, bit2 position LIVE at the leader, bit3 tz known.
 static_assert(sizeof(DetBatchHdr) == 12 && sizeof(RidBatchHdr) == 10 && sizeof(DbgPing) == 10, "fleet wire size");
 // A full v2 DetBatch / RidBatch must fit one v2 ESP-NOW frame.

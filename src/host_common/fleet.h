@@ -40,8 +40,25 @@ bool    rerandomizeMac();
 const uint8_t* staMac();           // current fleet STA MAC (6 B)
 uint16_t maxPayload();             // 250 (ESP-NOW v1) or 1470 (v2); 0 before begin
 void    onRekey();                 // the unit's phone key changed: its fleet key changed too, drop any session
-// Host log hook: fleet events ("join", "lost", "unjoin", "release", "member_add", ...) -> logFleetEvent(op).
-void    setEventSink(void (*fn)(const char* op));
+// Host log hook: fleet events ("join", "lost", "unjoin", "release", "member_add", ...) -> logFleetEvent(op, x).
+// EventInfo = the optional P6 `fleet` evt fields: the other unit involved (client: its leader; leader: the member),
+// its slot, and the fleet size (units now: leader + joined members). Blank / -1 = omit.
+struct EventInfo {
+  char   peer[13];       // 12-hex sid, "" = none
+  char   peerName[21];   // "" = none
+  int8_t slot;           // member slot 1..6, -1 = none
+  int8_t n;              // units in the fleet, -1 = unknown
+};
+void    setEventSink(void (*fn)(const char* op, const EventInfo& x));
+// P6 item 1: the fleet session this unit is in RIGHT NOW (leader: active; client: joined). id = the leader's random
+// per-boot 16-hex fleet id, leader = its 12-hex sid. False (both "") when not in one.
+bool    fleetIdent(char id[17], char leader[13]);
+// P6 item 3 (devpos `used`): a joined CLIENT whose own GPS fix the leader is using as the fleet position. A leader
+// answers false (its own GPS is "used" exactly when its own position comes from it: PosFix.from == 2).
+bool    gpsIsFleetPosition();
+// What this unit's C5 scans now, as the `plan` field: "+"-joined ap24/ap5/prom24/prom5/154/ble, or "full" (legacy:
+// everything the Scan Settings allow).
+void    planString(char* out, size_t cap);
 
 // --- phone commands (CMD "M:<op>[:args]", docs §9.4) ---
 // Runs on loop(). Writes ONE reply body ("OK<TAB>..." / "ERR<TAB><why>") that the host frames as LOGDATA "FLT=<n>".

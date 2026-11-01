@@ -1028,3 +1028,32 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - Mini #1 takes the fleet clock + position, with 3 self MACs.
   - Fix: a member enrolled with a placeholder name (the phone's key had no unit name → "member") now takes the name it
     reports in its authenticated JoinAck, saved to `fltmem`.
+
+## 21. P6 as built (2026-11-01) — fleet logging (contract agreed with scan-analyzer; owner-approved)
+
+All additions are optional NDJSON keys (old readers ignore them). Item 6 (P5b store-and-forward) is DEFERRED: per-unit
+file uploads grouped by `fleet_id` cover it.
+
+- **Item 5 — live-POST member rows (fw 0.23.0, DETS v10):** see §20. Field-tested 2026-11-01 (3 per-scanner server
+  sessions, per-unit RSSI, `pos_src:"fleet"` on member rows).
+- **Fleet proto v2 (fw 0.24.0):** `Sync` + `fleetId[8]` (random per leader boot, `esp_fill_random` in `leader::begin()`)
+  + `fixSlot` (member slot whose GPS IS the fleet position, 0 = none) → 120 B. `FLEET_PROTO_VERSION` 2: a v1 unit's
+  frames are dropped at RX, so **every host unit flashes together** (the C5s don't change; link stays v12).
+- **Item 1 — `meta`:** + `fleet_role` (`leader|client`, while a role is set) and `fleet_id` / `fleet_leader` (16 / 12 hex,
+  while in a session: leader active, client joined). A client that joins after its file was created gets them from the
+  `join` evt line.
+- **Item 2 — `"evt":"fleet"`:** + `fleet_id` / `fleet_leader` (in a session), `peer` (the other unit's sid: a client's
+  leader, a leader's member), `peer_name`, `slot` (member slot 1..6), `n` (leader side: units now = 1 + joined members),
+  `plan` on `plan` / `start` (a client's Plan arrives just after its `join`; `+`-joined `ap24`/`ap5`/`prom24`/`prom5`/`154`/`ble`, or `full` = legacy, all the
+  Scan Settings allow; every phase is masked by the Scan Settings sources the C5 checks, so it is what really runs). Ops: client `join|plan|lost|unjoin|release`, leader `start|plan|member_add|member_join|
+  member_lost|member_release|member_remove`, plus `leave|fallback|client_set|radio_fail|start_failed`.
+- **Item 4 — `pos_src`:** on every line that carries `lat`/`lon`: `phone|gps|fleet` = where that fix came from
+  (`PosFix.from`; a held fix keeps its origin, `fix_age` marks staleness). `fleet` = a client stamping the leader's fleet
+  position, or a leader using a member's GPS. scan-analyzer weights `fleet` fixes 0.25.
+- **Item 3 — `"evt":"devpos"`:** `{epoch,ms,[lat,lon,fix_age,pos_src],"evt":"devpos","scanner":<own sid>,"dlat","dlon",
+  "sats","used"}` from any unit in a fleet with a LIVE onboard GPS fix, every 30 s or after 25 m of movement
+  (`logDevPos()`, each scan cycle). `used` = 1 when that own fix is the fleet position (leader: `PosFix.from == 2`;
+  client: `Sync.fixSlot` == its slot). Record-only on the server.
+- **STATUS part 2:** `;fid=<16hex>;fld=<12hex>` after `flt=`, only while in a session and only whole (skipped past 249 B,
+  i.e. with the download AP's creds, when live-POST is paused anyway). The web app (`ble/status.js`) re-reads them with
+  every `flt=` and adds `fleet_role` / `fleet_id` / `fleet_leader` to the live-POST meta (`remote.js` `metaLine()`).

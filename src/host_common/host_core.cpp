@@ -255,6 +255,7 @@ PosFix posSnapshot() {
   // Held fallback = whichever allowed source fixed most recently (ties -> phone, then onboard).
   uint8_t use = f.src == 4 ? 4 : f.src == 1 ? 1 : f.src == 2 ? 2 : 0;
   if (!use) use = (phHad && phAge <= onbAge && phAge <= flAge) ? 1 : (g_onbAtMs && onbAge <= flAge) ? 2 : 4;
+  f.from  = use;
   f.lat   = use == 1 ? pla : use == 2 ? g_onbLat : fla;
   f.lon   = use == 1 ? plo : use == 2 ? g_onbLon : flo;
   f.ageMs = use == 1 ? phAge : use == 2 ? onbAge : flAge;
@@ -791,6 +792,7 @@ ScanCycleResult core::runScanCycle() {
   int newCount = logNewDetections();
   logRidEvents();   // rate-limited per-MAC Remote-ID event lines
   logFollowEvents(); // rate-limited per-MAC FOLLOWING event lines
+  logDevPos();      // fleet: this unit's own GPS fix vs the fleet position (devpos lines)
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",

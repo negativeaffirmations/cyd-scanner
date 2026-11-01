@@ -751,6 +751,13 @@ own rows only** (no log-schema change). DETS **v9** appends `via`; the web shows
 (`<via bit>:<rssi>` comma list, fleet rows only; `g_detFleetRssi` is per member slot), and live-POST sends one row
 per unit (member rows tagged `"scanner":<sid>` + `pos_src:"fleet"`; own rows untagged; v9 fleet rows post own-only). S3 envs build with
 `-DHOST_MAX_DET=192`; the CYD keeps 96.
+**P6 logging (fw 0.24.0, contract agreed with scan-analyzer 2026-11-01; docs §21):** fleet proto **v2** (Sync +
+`fleetId[8]` random per leader boot + `fixSlot`; all host units flash together). Optional log keys: `meta` +
+`fleet_role` / `fleet_id` / `fleet_leader`; `"evt":"fleet"` + `fleet_id`/`fleet_leader` (in a session), `peer`,
+`peer_name`, `slot`, `n` (units), `plan` (plan/start; `ap24+ap5+prom24+prom5+154+ble` or `full`); every line with
+lat/lon + **`pos_src`** `phone|gps|fleet` (the fix's origin, held included); **`"evt":"devpos"`**
+`{…,"scanner","dlat","dlon","sats","used"}` every 30 s / 25 m from a fleet unit with a live own GPS fix. STATUS part 2
+`fid`/`fld` → the web live-POST meta. Item 6 (store-and-forward) deferred.
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
 a member's role at runtime (§20.1).
 

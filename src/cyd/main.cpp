@@ -3168,7 +3168,7 @@ void setup() {
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
   fleet::loadRole();   // fltrole/fltch + boot-loop guard
-  fleet::setEventSink([](const char* op) { logFleetEvent(op); });   // join / lost / release ... -> the SD log
+  fleet::setEventSink([](const char* op, const fleet::EventInfo& x) { logFleetEvent(op, nullptr, &x); });   // join / lost / release ... -> the SD log
   const bool fleetClient = fleet::isClient();
   if (fleetClient) {   // MUST precede anything that touches BT: frees ~43 KB so Wi-Fi + ESP-NOW fit (docs §1.2)
     esp_err_t e = esp_bt_mem_release(ESP_BT_MODE_BTDM);

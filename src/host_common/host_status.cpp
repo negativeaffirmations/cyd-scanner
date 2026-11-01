@@ -63,7 +63,16 @@ void pushStatus() {
   // Fleet LAST: if part 2 ever overflows the ~252 B notify, flt= is what gets cut, never the AP credentials.
   if (n2 > 0 && n2 < (int)sizeof(s2)) {   // role, joined/enrolled, channel, can-lead (web Fleet card)
     char ff[24]; fleet::statusField(ff, sizeof(ff));
-    snprintf(s2 + n2, sizeof(s2) - n2, ";flt=%s", ff);
+    n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";flt=%s", ff);
+  }
+  // fid / fld (P6 item 1) = this fleet session's id + leader sid, for the web app's live-POST meta. Only while in a
+  // session, and only WHOLE (a cut id would mis-group): skipped if it would pass the notify limit (download AP up,
+  // when live-POST is paused anyway).
+  char id[17], leader[13];
+  if (n2 > 0 && n2 < (int)sizeof(s2) && fleet::fleetIdent(id, leader)) {
+    char fl[48];
+    int w = snprintf(fl, sizeof(fl), ";fid=%s;fld=%s", id, leader);
+    if (w > 0 && n2 + w <= 249) { memcpy(s2 + n2, fl, w + 1); n2 += w; }
   }
   static bool warned = false;
   if (!warned && (strlen(s) > 240 || strlen(s2) > 240)) {

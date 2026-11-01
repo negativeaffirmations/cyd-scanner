@@ -139,6 +139,7 @@ extern uint32_t g_gpsEpochAtMs;  // millis() when it was latched
 // fix_age) take ONE snapshot instead of calling the single-field accessors below in sequence.
 struct PosFix {
   uint8_t  src;      // 0 none / 1 phone / 2 onboard / 3 held (last known, not live) / 4 fleet (docs/fleet-mode.md §7)
+  uint8_t  from;     // where lat/lon came from, held included: 1 phone / 2 onboard GPS / 4 fleet (log `pos_src`)
   bool     live;     // src 1, 2 or 4
   bool     aged;     // held, or the fix in use is > 10 s old: log lines carry fix_age
   bool     phoneOk;  // phone fix available (STATUS gav bit0)

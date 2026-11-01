@@ -343,9 +343,17 @@ const char* scannerName() {
 
 // Provenance anchor written as the first line of every session stream (see ensureLogFile). scanner_name
 // = scannerName() (the advertised unit name; scanner_id stays the stable key).
+// P6 item 1: + fleet_role while a fleet role is set, and fleet_id / fleet_leader while in a fleet session. A client
+// that joins after the file was created gets them from its "join" evt line instead.
 static void writeSessionMeta(File& f) {
-  f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"scanner_name\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu}\n",
+  f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"scanner_name\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu",
            scannerIdHex(), scannerName(), FW_VERSION, (unsigned long)DB_GEN);
+  if (fleet::role() != fleet::ROLE_OFF) {
+    f.printf(",\"fleet_role\":\"%s\"", fleet::role() == fleet::ROLE_LEADER ? "leader" : "client");
+    char id[17], leader[13];
+    if (fleet::fleetIdent(id, leader)) f.printf(",\"fleet_id\":\"%s\",\"fleet_leader\":\"%s\"", id, leader);
+  }
+  f.print("}\n");
 }
 
 void initSD() {
@@ -381,6 +389,8 @@ static void appendPos(char* ln, int& n) {
   if (!f.src || !isfinite(f.lat) || !isfinite(f.lon)) return;
   lnAppend(ln, n, ",\"lat\":%.6f,\"lon\":%.6f", f.lat, f.lon);
   if (f.aged) lnAppend(ln, n, ",\"fix_age\":%lu", (unsigned long)(f.ageMs / 1000));
+  // P6 item 4: whose fix this is. "fleet" = the leader's shared position (a client), or a member's GPS (a leader).
+  if (f.from) lnAppend(ln, n, ",\"pos_src\":\"%s\"", f.from == 1 ? "phone" : f.from == 2 ? "gps" : "fleet");
 }
 
 int logNewDetections() {
@@ -568,7 +578,7 @@ void logPhoneCfg(const char* op, const char* path, const char* to) {
 
 // {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"fleet","op":"..","role":"client|leader"} -- fleet mode transitions
 // (docs/fleet-mode.md §9.5). scan-analyzer needs it to explain a role-limited client file.
-void logFleetEvent(const char* op, const char* role) {
+void logFleetEvent(const char* op, const char* role, const fleet::EventInfo* x) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!g_sdOk || !ensureLogFile(st)) return;
@@ -578,9 +588,24 @@ void logFleetEvent(const char* op, const char* role) {
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
   appendPos(ln, n);
-  lnAppend(ln, n, ",\"evt\":\"fleet\",\"op\":\"%s\",\"role\":\"%s\"}\n", op,
+  lnAppend(ln, n, ",\"evt\":\"fleet\",\"op\":\"%s\",\"role\":\"%s\"", op,
            role ? role : fleet::role() == fleet::ROLE_LEADER ? "leader" : "client");
-  if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  char id[17], leader[13];
+  if (fleet::fleetIdent(id, leader)) lnAppend(ln, n, ",\"fleet_id\":\"%s\",\"fleet_leader\":\"%s\"", id, leader);
+  if (x) {
+    if (x->peer[0]) lnAppend(ln, n, ",\"peer\":\"%s\"", x->peer);
+    if (x->peerName[0]) { char esc[6 * 20 + 1]; jsonEscape(esc, sizeof(esc), x->peerName); lnAppend(ln, n, ",\"peer_name\":\"%s\"", esc); }
+    if (x->slot >= 0) lnAppend(ln, n, ",\"slot\":%d", x->slot);
+    if (x->n >= 0) lnAppend(ln, n, ",\"n\":%d", x->n);
+  }
+  if (!strcmp(op, "plan") || !strcmp(op, "start")) {   // not on a client join: its Plan arrives right after
+    char plan[48]; fleet::planString(plan, sizeof(plan));
+    lnAppend(ln, n, ",\"plan\":\"%s\"", plan);
+  }
+  if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
+    lnAppend(ln, n, "}\n");
+    if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  }
   f.close();
 }
 
@@ -1067,4 +1092,39 @@ void sessBase(const LogStream& st, char* out, size_t cap) {
   strncpy(out, b, cap - 1); out[cap - 1] = 0;
   char* dot = strrchr(out, '.');
   if (dot) *dot = 0;
+}
+
+// P6 item 3 -- {"epoch","ms",["lat","lon",...],"evt":"devpos","scanner":"<12hex>","dlat","dlon","sats":N,"used":0|1}
+// While in a fleet, a unit with a LIVE fix of its own (onboard GPS) logs it every DEVPOS_MS or after DEVPOS_M of
+// movement: lat/lon = the position its rows are stamped with (the fleet position on a client), dlat/dlon = its own fix,
+// used = 1 when that own fix IS the fleet position (leader: its rows use its GPS; client: the leader picked its GPS).
+void logDevPos() {
+  static constexpr uint32_t DEVPOS_MS = 30000, ONB_LIVE_MS = 10000;
+  static constexpr float    DEVPOS_M = 25.0f;
+  static uint32_t lastMs = 0;
+  static float    lastLat = 0, lastLon = 0;
+  char fid[17], fld[13];
+  if (!fleet::fleetIdent(fid, fld) || !g_onbValid || !g_onbAtMs || millis() - g_onbAtMs >= ONB_LIVE_MS) return;
+  if (!isfinite(g_onbLat) || !isfinite(g_onbLon)) return;
+  const uint32_t now = millis();
+  if (lastMs) {
+    const float k = 111320.0f, dy = (g_onbLat - lastLat) * k;
+    const float dx = (g_onbLon - lastLon) * k * cosf(g_onbLat * (float)M_PI / 180.0f);
+    if (now - lastMs < DEVPOS_MS && dx * dx + dy * dy < DEVPOS_M * DEVPOS_M) return;
+  }
+  LogStream& st = activeStream();
+  if (bgCtx() && !st.path[0]) openBgSession();
+  if (!g_sdOk || !ensureLogFile(st)) return;
+  File f = SD.open(st.path, FILE_APPEND);
+  if (!f) return;
+  const bool used = fleet::role() == fleet::ROLE_LEADER ? posSnapshot().from == 2 : fleet::gpsIsFleetPosition();
+  char ln[LOG_LINE];
+  int n = 0;
+  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)now);
+  appendPos(ln, n);
+  lnAppend(ln, n, ",\"evt\":\"devpos\",\"scanner\":\"%s\",\"dlat\":%.6f,\"dlon\":%.6f,\"sats\":%u,\"used\":%d}\n",
+           scannerIdHex(), g_onbLat, g_onbLon, (unsigned)g_onbSats, used ? 1 : 0);
+  if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  f.close();
+  lastMs = now; lastLat = g_onbLat; lastLon = g_onbLon;
 }

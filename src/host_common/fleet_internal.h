@@ -77,6 +77,7 @@ void setRadioChannel(uint8_t ch);          // tune now, don't persist (client ch
 link_protocol::ScanPlan planForRole(uint8_t role, uint8_t gen);
 namespace detail {
 void event(const char* op);                // -> the host's log sink (logFleetEvent), if registered
+void event(const char* op, const EventInfo& x);
 uint32_t eventCount();
 
 // One received frame, already copied out of the Wi-Fi task.
@@ -96,6 +97,7 @@ bool hasRemote();
 void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid);
 void fwdStats(FwdStats& s);
 bool isSelf(const uint8_t mac[6]);                          // a member's BLE MAC
+bool ident(uint8_t id[8], uint8_t leaderSid[6]);            // this fleet session (random per leader boot) + own sid
 }
 namespace client {
 void begin();
@@ -113,6 +115,8 @@ void forwardCycle();
 void fwdStats(FwdStats& s);
 void dropSession(const char* why);         // back to searching (rekey, unjoin)
 void forgetKey();                          // the device key changed: recompute FK on next use
+bool ident(uint8_t id[8], uint8_t leaderSid[6]);            // the joined leader's fleet id + sid (false unless joined)
+bool gpsIsFleetPos();                                       // the leader uses THIS unit's GPS as the fleet position
 }
 
 }  // namespace detail

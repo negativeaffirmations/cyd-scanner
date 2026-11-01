@@ -21,6 +21,7 @@
 #include "devkey.h"
 #include "host_board.h"
 #include "webshare.h"
+#include "host_core.h"   // g_srcMask (planString)
 
 using namespace fleet_proto;
 
@@ -50,8 +51,10 @@ constexpr int      FALLBACK_SLOTS = 8;      // leader pool when PSRAM is unavail
 uint8_t  g_role = 0, g_fellBackRole = 0;
 bool     g_fellBack = false, g_bootCounted = false;
 bool     g_rate12 = true, g_rateWarned = false;
-void   (*g_eventSink)(const char*) = nullptr;
+void   (*g_eventSink)(const char*, const fleet::EventInfo&) = nullptr;
 uint32_t g_events = 0;
+volatile uint8_t g_badVer = 0;   // a frame with another fleet proto version (set in onRecv, reported once by service())
+bool     g_badVerShown = false;
 uint8_t* g_pool = nullptr;
 uint16_t g_slotSize = 0;
 uint8_t  g_slots = 0;
@@ -226,6 +229,7 @@ void dbgTick() {
 // ------------------------------------------------------------------ ESP-NOW callbacks (Wi-Fi task context)
 // Copy into the pool and queue the index; nothing else happens here.
 void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  if (data && len >= (int)sizeof(Hdr) && data[0] != FLEET_PROTO_VERSION) g_badVer = data[0];
   if (!g_freeQ || !info || !data || len < (int)sizeof(Hdr) || data[0] != FLEET_PROTO_VERSION) { BUMP(g_rxDrop); return; }
   uint8_t i;
   if (xQueueReceive(g_freeQ, &i, 0) != pdTRUE) { BUMP(g_rxDrop); return; }
@@ -525,7 +529,8 @@ bool SeqWin::accept(uint32_t s) {
 }
 
 void setRadioChannel(uint8_t ch) { if (g_active && ch >= 1 && ch <= 13) esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE); }
-void event(const char* op) { g_events++; if (g_eventSink) g_eventSink(op); }
+void event(const char* op, const EventInfo& x) { g_events++; if (g_eventSink) g_eventSink(op, x); }
+void event(const char* op) { EventInfo x = {}; x.slot = -1; x.n = -1; event(op, x); }
 uint32_t eventCount() { return g_events; }
 
 }}  // namespace fleet::detail
@@ -606,6 +611,11 @@ void service() {
     if (p.begin("cydscan", false)) { p.putUChar("fltboot", 0); p.end(); }
   }
   if (!g_active) return;
+  if (g_badVer && !g_badVerShown) {           // a partly reflashed fleet: say so once instead of only bumping rxDrop
+    g_badVerShown = true;
+    Serial.printf("[FLT] ignoring fleet proto v%u frames (this unit speaks v%u): reflash every unit together\n",
+                  (unsigned)g_badVer, (unsigned)FLEET_PROTO_VERSION);
+  }
   for (int n = 0; n < DRAIN_MAX; n++) {
     uint8_t i;
     if (xQueueReceive(g_fullQ, &i, 0) != pdTRUE) break;
@@ -659,7 +669,35 @@ void onRekey() {
   detail::client::forgetKey();
   if (g_active && !g_leader) detail::client::dropSession("rekey");
 }
-void setEventSink(void (*fn)(const char* op)) { g_eventSink = fn; }
+void setEventSink(void (*fn)(const char* op, const EventInfo& x)) { g_eventSink = fn; }
+
+bool fleetIdent(char id[17], char leader[13]) {
+  id[0] = leader[0] = 0;
+  uint8_t fid[8], sid[6];
+  if (!g_active || !(g_leader ? detail::leader::ident(fid, sid) : detail::client::ident(fid, sid))) return false;
+  for (int i = 0; i < 8; i++) snprintf(id + 2 * i, 3, "%02x", fid[i]);
+  for (int i = 0; i < 6; i++) snprintf(leader + 2 * i, 3, "%02x", sid[i]);
+  return true;
+}
+bool gpsIsFleetPosition() { return g_active && !g_leader && detail::client::gpsIsFleetPos(); }
+void planString(char* out, size_t cap) {
+  using namespace link_protocol;
+  const ScanPlan p = currentPlan();
+  // What the C5 really runs (c5/main.cpp gates): a phase needs its plan bit (legacy = all) AND every Scan Settings
+  // source bit the C5 checks for it. Empty = nothing enabled.
+  const uint8_t phases = (p.phases & PLAN_VALID) ? p.phases : 0xFF;
+  const uint8_t mask = g_srcMask;
+  static const struct { uint8_t bit, need; const char* name; } kPh[] = {
+    {PLAN_AP24, MASK_WIFI24, "ap24"}, {PLAN_AP5, MASK_WIFI5, "ap5"}, {PLAN_PROM24, MASK_PROBE, "prom24"},
+    {PLAN_PROM5, MASK_PROBE | MASK_WIFI5, "prom5"}, {PLAN_154, MASK_154, "154"}, {PLAN_BLE, MASK_BLE, "ble"}};
+  size_t n = 0; out[0] = 0;
+  for (const auto& e : kPh) {
+    if (!(phases & e.bit) || (mask & e.need) != e.need) continue;
+    int w = snprintf(out + n, cap - n, "%s%s", n ? "+" : "", e.name);
+    if (w < 0 || (size_t)w >= cap - n) break;
+    n += w;
+  }
+}
 
 bool timeFix(uint32_t* utc, uint32_t* atMs) { return g_active && !g_leader && detail::client::timeFix(utc, atMs); }
 bool timeFresh() { return g_active && !g_leader && detail::client::timeFresh(); }

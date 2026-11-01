@@ -57,7 +57,7 @@ void setup() {
   delay(200);
   Serial.println("[S3] boot: headless scanner host + phone link + SD");
   fleet::loadRole();   // fltrole/fltch + boot-loop guard (docs/fleet-mode.md)
-  fleet::setEventSink([](const char* op) { logFleetEvent(op); });   // join / lost / member_add ... -> the SD log
+  fleet::setEventSink([](const char* op, const fleet::EventInfo& x) { logFleetEvent(op, nullptr, &x); });   // join / lost / member_add ... -> the SD log
   hostboard::begin();
   loadBrightness();
   loadSrcMask();
