@@ -69,6 +69,7 @@ function render(){
   $("wfJoined").hidden = !(sta > 0);
   $("wfJoinedBtn").hidden = sta > 0;
   $("wfNotJoined").hidden = sta !== 0;   // only when the firmware positively reports nobody joined
+  $("wfCancelBtn").hidden = !state.wifiOn || step >= 4;   // step 4 has its own Stop
   $("wifiBtn").textContent = state.wifiOn ? "Wi-Fi download is on — continue" : "Download over Wi-Fi";
 }
 

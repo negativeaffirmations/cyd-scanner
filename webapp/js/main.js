@@ -19,7 +19,7 @@ import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
-import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031b';   // new module: versioned so it loads fresh with main.js
+import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
@@ -114,6 +114,7 @@ $("wfJoinedBtn").onclick  = markJoined;
 $("wfOpen").addEventListener("click", pageOpened);
 $("wfBackBtn").onclick    = reopenPage;
 $("wfStopBtn").onclick    = stopWifiFlow;
+$("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
 $("sessDelBtn").onclick = deleteSession;
