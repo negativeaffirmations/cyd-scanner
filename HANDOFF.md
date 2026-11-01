@@ -42,6 +42,9 @@ The overnight timer didn't fire (the session was de-authenticated); the owner ra
   - Next: **P6** — draft the scan-analyzer contract proposal via REMOTE.md (log keys: meta `fleet_id` / `fleet_role` /
     `fleet_leader`, row `scanner` / `ofile` / `orow` for P5b, `devpos`, the `fleet` evt fields, `pos_via`, live-POST
     member rows) and build after it is agreed.
+  - **2026-11-01: P6 proposal SENT** (bridge entry 2026-11-01 10:05, DRAFT). Items: 1 meta fleet keys, 2 `fleet` evt,
+    3 `devpos`, 4 `pos_via` (or `pos_src`), 5 live-POST of member rows with a per-row `scanner`, 6 P5b `scanner` /
+    `ofile` / `orow`. scan-analyzer checks with the owner first. WAIT for its answers (questions a-d) before building.
 - The CYD is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
 - The CYD's time preference is "prefer device", so its clock shows GPS (src 2) rather than fleet (4) while its own GPS
   is fresh. That is correct for that setting.
