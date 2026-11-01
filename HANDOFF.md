@@ -1,4 +1,20 @@
-# Handoff — 2026-11-01 (work branch: `fleet-mode`, local commits, NOT pushed; `main` @ `4bfd8d8` = trunk + webapp)
+# Handoff — 2026-11-01 (work branch: `fleet-mode`, pushed; `main` @ `9e83bb3` = trunk + webapp)
+
+## RESUME HERE — 2026-11-01 (afternoon): P6 agreed; item 5 (fleet live-POST) DONE end to end
+- **P6 contract agreed** (bridge 10:05 proposal, 10:20 owner-approved reply, then Q&A). Decisions: `pos_src` =
+  phone|gps|fleet (no `held`); `fleet_id` also on `fleet` evt lines (at least join/plan) + optional `peer_name` on
+  member_join; item 6 (P5b store-and-forward) DEFERRED; `ms` = the unit's own millis() in files (P3 changes only
+  epoch/lat/lon), live-POST `ms` = phone wall clock (owner OK'd for member rows too).
+- **Item 5 DONE:** fw 0.23.0 = DETS v10 (per-unit RSSI; `g_detFleetRssi[MAX_DET][6]`) `4a4e19b`; webapp one row per
+  unit (`remote.js` `unitsOf()`, member rows `scanner` + `pos_src:"fleet"`) `ba7a64d` → `main` `9e83bb3`, footer
+  `fleet-p6 d`. Mini #2 (leader) flashed 0.23.0; CYD + mini #1 stay 0.22.0 (link unchanged). scan-analyzer server
+  `6242c19` (schema v11) is live. **Field test PASSED:** 3 server sessions (leader + `@<member sid>` each), per-unit RSSI,
+  pos_src=fleet. The leader's own 2.4/5G rows are real (the BLE role keeps the AP scan). Per-unit `src` not needed.
+- **Next: items 1/2/4 (firmware, small):** meta `fleet_id`/`fleet_role`/`fleet_leader`; `fleet` evt fields incl.
+  `fleet_id` + `peer_name`; `pos_src`. ALSO put fleet id/role/leader in STATUS so the webapp's live-batch meta carries
+  them (scan-analyzer groups live sessions by `fleet_id`). Then item 3 (`devpos`).
+- **Security note:** a boot check sent serial `key` to mini #2 and printed its phone key into a session transcript.
+  The owner was told; rotation (`rekey`) is the owner's call — not done yet.
 
 ## RESUME HERE — 2026-11-01 (morning): fleet P1-P5 DONE + deferred P4 items; nothing pushed or deployed
 The overnight timer didn't fire (the session was de-authenticated); the owner ran it in the morning.
