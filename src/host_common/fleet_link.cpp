@@ -1,0 +1,530 @@
+// fleet_link.cpp — see fleet.h and docs/fleet-mode.md §1, §3. Roles + boot-loop guard (NVS), Wi-Fi STA + ESP-NOW
+// bring-up with a random locally-administered MAC, the RX pool + index queues, and (FLEET_DEBUG only) the P1
+// ping/pong bench instrument. Receive-only in production P1: nothing is transmitted without FLEET_DEBUG.
+#include <Arduino.h>
+#include <Preferences.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+#include <esp_random.h>
+#include <esp_system.h>
+#include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include "fleet.h"
+#include "fleet_proto.h"
+#include "host_board.h"
+#include "webshare.h"
+
+using namespace fleet_proto;
+
+namespace {
+
+// Fixed project PMK (secrecy rests on the per-session LMK from P2 on; the PMK only keys the LMK wrapping).
+const uint8_t kPmk[16] = { 'C','F','L','O','-','F','L','T','-','P','M','K','-','0','0','1' };
+
+constexpr uint32_t STABLE_MS     = 60000;   // uptime after which the crash counter is cleared
+constexpr uint8_t  CRASH_BOOTS   = 3;
+constexpr int      DRAIN_MAX     = 8;       // RX frames handled per service() pass
+constexpr size_t   CLIENT_SLOT   = 256;     // client RX slot (header + data); leader->client frames are <= 74 B
+constexpr int      CLIENT_SLOTS  = 8;
+constexpr int      LEADER_SLOTS  = 16;
+constexpr int      FALLBACK_SLOTS = 8;      // leader pool when PSRAM is unavailable
+
+// --- static footprint (normal mode must stay < 300 B: everything big is allocated by begin*) ---
+uint8_t  g_role = 0, g_ch = FLEET_DEFAULT_CH, g_fellBackRole = 0;
+bool     g_fellBack = false, g_bootCounted = false, g_active = false, g_leader = false;
+bool     g_rate12 = true, g_rateWarned = false;
+uint16_t g_maxPayload = 0;
+uint8_t  g_mac[6] = {0};
+uint8_t* g_pool = nullptr;
+uint16_t g_slotSize = 0;
+uint8_t  g_slots = 0;
+QueueHandle_t g_freeQ = nullptr, g_fullQ = nullptr;
+uint32_t g_txOk = 0, g_txFail = 0, g_rxFrames = 0, g_rxDrop = 0;   // written by the Wi-Fi task, read by loop()
+#define BUMP(c) __atomic_fetch_add(&(c), 1u, __ATOMIC_RELAXED)
+
+// One RX pool slot: copied out of the Wi-Fi task, handled in service(). `len` is the TRUE frame length;
+// only min(len, cap) bytes are stored (truncation is allowed only for the oversized debug frames).
+struct Slot { uint8_t mac[6]; int8_t rssi; uint8_t flags; uint16_t len; uint8_t data[]; };
+constexpr uint8_t SF_TRUNC = 1;
+
+inline Slot* slotAt(uint8_t i) { return (Slot*)(g_pool + (size_t)i * g_slotSize); }
+inline uint16_t slotCap() { return (uint16_t)(g_slotSize - sizeof(Slot)); }
+
+void macStr(const uint8_t* m, char* out) {
+  snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+void printHeap(const char* tag) {
+  Serial.printf("[FLT] %s heap free=%u min=%u largest=%u", tag, (unsigned)ESP.getFreeHeap(),
+                (unsigned)ESP.getMinFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM))
+    Serial.printf(" | internal free=%u psram free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  Serial.println();
+}
+
+// ------------------------------------------------------------------ peers / rate
+void applyRate(const uint8_t* mac) {
+  esp_now_rate_config_t rc = {};
+  if (g_rate12) { rc.phymode = WIFI_PHY_MODE_11G; rc.rate = WIFI_PHY_RATE_12M; }
+  else          { rc.phymode = WIFI_PHY_MODE_11B; rc.rate = WIFI_PHY_RATE_1M_L; }
+  esp_err_t e = esp_now_set_peer_rate_config(mac, &rc);
+  if (e != ESP_OK && !g_rateWarned) {   // keep the 1 Mbps default; delivery is judged by the P1 bench
+    g_rateWarned = true;
+    Serial.printf("[FLT] peer rate config failed (%d): staying on the default rate\n", (int)e);
+  }
+}
+
+bool ensurePeer(const uint8_t* mac) {
+  if (esp_now_is_peer_exist(mac)) return true;
+  esp_now_peer_info_t pi = {};
+  memcpy(pi.peer_addr, mac, 6);
+  pi.channel = 0;                  // current channel
+  pi.ifidx = WIFI_IF_STA;
+  pi.encrypt = false;
+  esp_err_t e = esp_now_add_peer(&pi);
+  if (e != ESP_OK) { Serial.printf("[FLT] add_peer failed (%d)\n", (int)e); return false; }
+  applyRate(mac);
+  return true;
+}
+
+// ------------------------------------------------------------------ FLEET_DEBUG bench instrument
+#ifdef FLEET_DEBUG
+struct DbgPeer {                    // leader: one per client that ponged
+  uint8_t  mac[6];
+  bool     used;
+  int8_t   rssi;
+  uint32_t pong[2], since[2];       // [0] = 250 B class, [1] = 1300 B class; since = pings sent since first heard
+  uint32_t lastMs;
+};
+struct Dbg {
+  uint32_t seq, lastPingMs, lastPrintMs;
+  uint32_t pingSent[2];
+  int      padOverride;             // 0 = alternate 250 / 1300
+  DbgPeer  peers[FLEET_MAX_MEMBERS];
+  // client side
+  uint8_t  leader[6];
+  bool     haveLeader;
+  int8_t   lrssi;
+  uint32_t lastRxMs, lastSeq, gaps, rxPing[2], pongSent[2];
+  uint8_t  tx[FLEET_V2_MAX];        // padded frame buffer
+};
+Dbg* g_dbg = nullptr;
+
+inline int sizeClass(uint16_t len) { return len > 400 ? 1 : 0; }
+
+bool dbgSend(const uint8_t* mac, Msg type, uint32_t seq, uint16_t frameLen) {
+  if (frameLen < sizeof(DbgPing)) frameLen = sizeof(DbgPing);
+  if (frameLen > g_maxPayload) frameLen = g_maxPayload;
+  if (!ensurePeer(mac)) return false;
+  DbgPing* p = (DbgPing*)g_dbg->tx;
+  p->h.ver = FLEET_PROTO_VERSION; p->h.type = (uint8_t)type; p->h.sess = 0; p->h.seq = seq;
+  p->padLen = frameLen - sizeof(DbgPing);
+  memset(g_dbg->tx + sizeof(DbgPing), 0xA5, p->padLen);
+  return esp_now_send(mac, g_dbg->tx, frameLen) == ESP_OK;
+}
+
+void dbgHandle(const Slot* s) {
+  if (s->len < sizeof(DbgPing)) return;
+  const DbgPing* p = (const DbgPing*)s->data;
+  int c = sizeClass(s->len);
+  if (p->h.type == (uint8_t)Msg::DbgPing && !g_leader) {            // client: note the leader, pong back
+    memcpy(g_dbg->leader, s->mac, 6);
+    g_dbg->haveLeader = true; g_dbg->lrssi = s->rssi; g_dbg->lastRxMs = millis();
+    if (g_dbg->lastSeq && p->h.seq > g_dbg->lastSeq + 1) g_dbg->gaps += p->h.seq - g_dbg->lastSeq - 1;
+    g_dbg->lastSeq = p->h.seq;
+    g_dbg->rxPing[c]++;
+    if (dbgSend(s->mac, Msg::DbgPong, p->h.seq, s->len)) g_dbg->pongSent[c]++;
+  } else if (p->h.type == (uint8_t)Msg::DbgPong && g_leader) {      // leader: per-peer delivery
+    DbgPeer* d = nullptr;
+    for (auto& q : g_dbg->peers) if (q.used && !memcmp(q.mac, s->mac, 6)) { d = &q; break; }
+    if (!d) for (auto& q : g_dbg->peers) if (!q.used) { d = &q; memset(&q, 0, sizeof(q)); memcpy(q.mac, s->mac, 6); q.used = true; break; }
+    if (!d) return;                                                // table full: ignore (bench only)
+    d->pong[c]++; d->rssi = s->rssi; d->lastMs = millis();
+  }
+}
+
+void dbgTick() {
+  uint32_t now = millis();
+  if (g_leader && now - g_dbg->lastPingMs >= 2000) {
+    g_dbg->lastPingMs = now;
+    uint32_t n = ++g_dbg->seq;
+    uint16_t L = g_dbg->padOverride ? (uint16_t)g_dbg->padOverride : ((n & 1) ? 1300 : 250);
+    if (L > g_maxPayload) L = 250;
+    uint8_t bc[6]; memset(bc, 0xFF, 6);
+    if (dbgSend(bc, Msg::DbgPing, n, L)) {
+      int c = sizeClass(L);
+      g_dbg->pingSent[c]++;
+      for (auto& q : g_dbg->peers) if (q.used) q.since[c]++;
+    }
+  }
+  if (now - g_dbg->lastPrintMs >= 5000) {
+    g_dbg->lastPrintMs = now;
+    if (g_leader) {
+      Serial.printf("[FLT] L ch=%u ping sent 250:%lu 1300:%lu  tx ok=%lu fail=%lu  rx drop=%lu\n", g_ch,
+                    (unsigned long)g_dbg->pingSent[0], (unsigned long)g_dbg->pingSent[1],
+                    (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxDrop);
+      for (auto& q : g_dbg->peers) {
+        if (!q.used) continue;
+        char ms[18]; macStr(q.mac, ms);
+        Serial.printf("[FLT]   peer %s pong 250:%lu/%lu 1300:%lu/%lu rssi %d age %lus\n", ms,
+                      (unsigned long)q.pong[0], (unsigned long)(q.since[0] + 1),   // +1: the ping that was answered first
+                      (unsigned long)q.pong[1], (unsigned long)(q.since[1] + 1), (int)q.rssi,
+                      (unsigned long)((now - q.lastMs) / 1000));
+      }
+    } else {
+      char ms[18]; macStr(g_dbg->leader, ms);
+      Serial.printf("[FLT] C ch=%u leader %s rssi %d age %lus  ping rx 250:%lu 1300:%lu gaps=%lu  pong ok 250:%lu 1300:%lu"
+                    "  tx ok=%lu fail=%lu  rx drop=%lu\n", g_ch, g_dbg->haveLeader ? ms : "-", (int)g_dbg->lrssi,
+                    (unsigned long)(g_dbg->haveLeader ? (now - g_dbg->lastRxMs) / 1000 : 0),
+                    (unsigned long)g_dbg->rxPing[0], (unsigned long)g_dbg->rxPing[1], (unsigned long)g_dbg->gaps,
+                    (unsigned long)g_dbg->pongSent[0], (unsigned long)g_dbg->pongSent[1],
+                    (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxDrop);
+    }
+    printHeap(g_leader ? "L" : "C");
+  }
+}
+#endif  // FLEET_DEBUG
+
+// ------------------------------------------------------------------ ESP-NOW callbacks (Wi-Fi task context)
+// Copy into the pool and queue the index; nothing else happens here.
+void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  if (!g_freeQ || !info || !data || len < (int)sizeof(Hdr) || data[0] != FLEET_PROTO_VERSION) { BUMP(g_rxDrop); return; }
+  uint8_t i;
+  if (xQueueReceive(g_freeQ, &i, 0) != pdTRUE) { BUMP(g_rxDrop); return; }
+  Slot* s = slotAt(i);
+  const uint16_t cap = slotCap();
+  bool trunc = len > cap;
+  if (trunc) {
+#ifdef FLEET_DEBUG
+    bool dbgFrame = data[1] == (uint8_t)Msg::DbgPing || data[1] == (uint8_t)Msg::DbgPong;   // header-only is enough
+#else
+    bool dbgFrame = false;
+#endif
+    if (!dbgFrame) { xQueueSend(g_freeQ, &i, 0); BUMP(g_rxDrop); return; }   // oversized: not ours to hold
+  }
+  memcpy(s->mac, info->src_addr, 6);
+  s->rssi = info->rx_ctrl ? info->rx_ctrl->rssi : 0;
+  s->flags = trunc ? SF_TRUNC : 0;
+  s->len = (uint16_t)len;
+  memcpy(s->data, data, trunc ? cap : len);
+  if (xQueueSend(g_fullQ, &i, 0) != pdTRUE) { xQueueSend(g_freeQ, &i, 0); BUMP(g_rxDrop); return; }
+  BUMP(g_rxFrames);
+}
+
+void onSent(const esp_now_send_info_t*, esp_now_send_status_t st) {
+  if (st == ESP_NOW_SEND_SUCCESS) BUMP(g_txOk); else BUMP(g_txFail);
+}
+
+// ------------------------------------------------------------------ radio bring-up
+void randomMac(uint8_t* m) {
+  esp_fill_random(m, 6);
+  m[0] = (uint8_t)((m[0] & 0xFC) | 0x02);   // locally administered, unicast
+}
+
+// Set the STA MAC. Tries it with the interface up first; if the driver refuses or the read-back differs,
+// does the stop -> set -> start sequence. Reports which path worked (docs §3.2: verify in P1).
+bool setStaMac(const uint8_t* mac, bool* viaStopStart) {
+  uint8_t rb[6];
+  if (viaStopStart) *viaStopStart = false;
+  esp_err_t e = esp_wifi_set_mac(WIFI_IF_STA, mac);
+  if (e == ESP_OK && esp_wifi_get_mac(WIFI_IF_STA, rb) == ESP_OK && !memcmp(rb, mac, 6)) return true;
+  if (viaStopStart) *viaStopStart = true;
+  esp_wifi_stop();
+  e = esp_wifi_set_mac(WIFI_IF_STA, mac);
+  esp_err_t s = esp_wifi_start();
+  bool ok = e == ESP_OK && s == ESP_OK && esp_wifi_get_mac(WIFI_IF_STA, rb) == ESP_OK && !memcmp(rb, mac, 6);
+  if (!ok) Serial.printf("[FLT] set_mac failed (set=%d start=%d)\n", (int)e, (int)s);
+  return ok;
+}
+
+void radioTune() {   // after every esp_wifi_start()
+  esp_wifi_set_channel(g_ch, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_max_tx_power(FLEET_TXPWR_QDBM);
+  if (!hostboard::fleetLeaderCapable()) esp_wifi_set_ps(WIFI_PS_NONE);   // CYD; the S3 keeps the default (BT coex)
+}
+
+bool nowInit() {
+  esp_err_t e = esp_now_init();
+  if (e != ESP_OK) { Serial.printf("[FLT] esp_now_init failed (%d)\n", (int)e); return false; }
+  uint32_t v = 1;
+  esp_now_get_version(&v);
+  g_maxPayload = v >= 2 ? FLEET_V2_MAX : FLEET_V1_MAX;
+  esp_now_set_pmk(kPmk);
+  esp_now_register_recv_cb(onRecv);
+  esp_now_register_send_cb(onSent);
+  if (g_leader) {   // broadcast peer for Probe (and the debug ping)
+    uint8_t bc[6]; memset(bc, 0xFF, 6);
+    ensurePeer(bc);
+  }
+  return true;
+}
+
+void freeBuffers() {   // also the partial-failure cleanup: every pointer is checked before use elsewhere
+  if (g_freeQ) { vQueueDelete(g_freeQ); g_freeQ = nullptr; }
+  if (g_fullQ) { vQueueDelete(g_fullQ); g_fullQ = nullptr; }
+  if (g_pool)  { heap_caps_free(g_pool); g_pool = nullptr; }
+#ifdef FLEET_DEBUG
+  if (g_dbg)   { free(g_dbg); g_dbg = nullptr; }
+#endif
+}
+
+bool buffersOk() {
+  bool ok = g_pool && g_freeQ && g_fullQ;
+#ifdef FLEET_DEBUG
+  ok = ok && g_dbg;
+#endif
+  return ok;
+}
+
+bool allocBuffers(bool leader) {
+  if (buffersOk()) return true;   // kept across a MAC re-randomize
+  freeBuffers();                  // drop any partial set from an earlier failed attempt
+  if (leader) {
+    g_slotSize = (uint16_t)(sizeof(Slot) + FLEET_V2_MAX);
+    g_slots = LEADER_SLOTS;
+    g_pool = (uint8_t*)heap_caps_malloc((size_t)g_slots * g_slotSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!g_pool) {   // no PSRAM: a smaller pool in internal RAM
+      g_slots = FALLBACK_SLOTS;
+      g_pool = (uint8_t*)heap_caps_malloc((size_t)g_slots * g_slotSize, MALLOC_CAP_8BIT);
+    }
+  } else {
+    g_slotSize = CLIENT_SLOT;
+    g_slots = CLIENT_SLOTS;
+    g_pool = (uint8_t*)heap_caps_malloc((size_t)g_slots * g_slotSize, MALLOC_CAP_8BIT);
+  }
+  g_freeQ = xQueueCreate(g_slots, sizeof(uint8_t));
+  g_fullQ = xQueueCreate(g_slots, sizeof(uint8_t));
+#ifdef FLEET_DEBUG
+  g_dbg = (Dbg*)calloc(1, sizeof(Dbg));
+#endif
+  if (!buffersOk()) {
+    Serial.println("[FLT] buffer allocation failed");
+    freeBuffers();
+    return false;
+  }
+  for (uint8_t i = 0; i < g_slots; i++) xQueueSend(g_freeQ, &i, 0);
+  return true;
+}
+
+// begin() failed after the radio was started: undo it so a CYD doesn't hold ~51 KB of Wi-Fi for nothing.
+bool beginFailed(const char* why) {
+  Serial.printf("[FLT] start failed: %s\n", why);
+  esp_now_deinit();
+  if (!webshare::active()) WiFi.mode(WIFI_OFF);
+  freeBuffers();
+  g_active = false;
+  return false;
+}
+
+bool begin(bool leader) {
+  if (g_active) return true;
+  if (webshare::active()) {   // WiFi.mode(WIFI_STA) below would kill the live SoftAP download
+    Serial.println("[FLT] start refused: the SoftAP download is up");
+    return false;
+  }
+  g_leader = leader;
+  if (!g_ch || g_ch > 13) g_ch = FLEET_DEFAULT_CH;
+  uint32_t heap0 = ESP.getFreeHeap();
+  if (!allocBuffers(leader)) return false;
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  if (!hostboard::fleetLeaderCapable()) WiFi.setSleep(false);   // CYD: keeps Arduino's STA_START handler from resetting PS to MIN_MODEM
+  uint8_t mac[6];
+  randomMac(mac);
+  bool ss = false;
+  if (!setStaMac(mac, &ss)) return beginFailed("set_mac");
+  memcpy(g_mac, mac, 6);
+  radioTune();
+  if (!nowInit()) return beginFailed("esp_now_init");
+  g_active = true;
+  char ms[18]; macStr(g_mac, ms);
+  int8_t pw = 0; esp_wifi_get_max_tx_power(&pw);
+  Serial.printf("[FLT] %s up: ch %u mac %s (set %s) maxPayload %u txpwr %d.%02d dBm rate %s pool %ux%u (%s)\n",
+                leader ? "leader" : "client", g_ch, ms, ss ? "via stop/start" : "direct", g_maxPayload,
+                pw / 4, (pw % 4) * 25, g_rate12 ? "12M" : "1M", g_slots, g_slotSize,
+                esp_ptr_external_ram(g_pool) ? "psram" : "heap");
+  Serial.printf("[FLT] heap before %u, after %u (fleet cost %d B)\n", (unsigned)heap0, (unsigned)ESP.getFreeHeap(),
+                (int)heap0 - (int)ESP.getFreeHeap());
+  printHeap(leader ? "L" : "C");
+  return true;
+}
+
+const char* roleName(uint8_t r) { return r == fleet::ROLE_LEADER ? "leader" : r == fleet::ROLE_CLIENT ? "client" : "off"; }
+
+}  // namespace
+
+namespace fleet {
+
+void loadRole() {
+  Preferences p;
+  if (!p.begin("cydscan", false)) { g_role = ROLE_OFF; return; }
+  g_role = p.getUChar("fltrole", ROLE_OFF);
+  g_ch = p.getUChar("fltch", FLEET_DEFAULT_CH);
+  if (g_ch < 1 || g_ch > 13) g_ch = FLEET_DEFAULT_CH;
+  if (g_role > ROLE_LEADER || (g_role == ROLE_LEADER && !hostboard::fleetLeaderCapable())) {   // the CYD refuses leader
+    g_role = ROLE_OFF;
+    p.putUChar("fltrole", ROLE_OFF);
+  }
+  if (g_role != ROLE_OFF) {   // boot-loop guard (docs §1.4): counted only while a fleet role is set
+    // fltboot = CONSECUTIVE crash boots: a clean boot resets it, and service() clears it after 60 s of
+    // uptime, so a crash later than that never counts (Leave stays reachable).
+    uint8_t n = p.getUChar("fltboot", 0);
+    esp_reset_reason_t rr = esp_reset_reason();
+    bool crash = rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT ||
+                 rr == ESP_RST_WDT || rr == ESP_RST_BROWNOUT;
+    uint8_t was = n;
+    n = crash ? (n < 255 ? n + 1 : n) : 0;
+    if (n >= CRASH_BOOTS) {
+      Serial.printf("[FLT] boot-loop guard: %u boots, last reset reason %d -> leaving the fleet\n", n, (int)rr);
+      g_fellBackRole = g_role;
+      g_role = ROLE_OFF;
+      g_fellBack = true;
+      p.putUChar("fltrole", ROLE_OFF);
+      p.putUChar("fltboot", 0);
+    } else {
+      if (n != was) p.putUChar("fltboot", n);
+      g_bootCounted = n != 0;
+    }
+  }
+  p.end();
+}
+
+uint8_t role()     { return g_role; }
+bool    isClient() { return g_role == ROLE_CLIENT; }
+bool    fellBack() { bool r = g_fellBack; g_fellBack = false; return r; }
+uint8_t fellBackRole() { return g_fellBackRole; }
+uint8_t channel()  { return g_ch; }
+
+bool setRole(uint8_t r) {
+  if (r > ROLE_LEADER || (r == ROLE_LEADER && !hostboard::fleetLeaderCapable())) return false;
+  Preferences p;
+  if (!p.begin("cydscan", false)) return false;
+  bool ok = p.putUChar("fltrole", r) == sizeof(uint8_t);
+  p.putUChar("fltboot", 0);
+  p.end();
+  if (ok) g_role = r;   // keep role() in step with NVS (a `leader on` with no restart runs on this value)
+  return ok;
+}
+
+bool setChannel(uint8_t ch) {
+  if (ch < 1 || ch > 13) return false;
+  Preferences p;
+  if (!p.begin("cydscan", false)) return false;
+  bool ok = p.putUChar("fltch", ch) == sizeof(uint8_t);
+  p.end();
+  if (ok) { g_ch = ch; if (g_active) retune(); }   // applied immediately when the fleet is up
+  return ok;
+}
+
+void retune() { if (g_active) esp_wifi_set_channel(g_ch, WIFI_SECOND_CHAN_NONE); }
+
+bool beginClient() { return begin(false); }
+bool beginLeader() { return begin(true); }
+bool active()      { return g_active; }
+
+void service() {
+  if (g_bootCounted && millis() > STABLE_MS) {   // stable for 60 s: the last boots were not a crash loop
+    g_bootCounted = false;
+    Preferences p;
+    if (p.begin("cydscan", false)) { p.putUChar("fltboot", 0); p.end(); }
+  }
+  if (!g_active) return;
+  for (int n = 0; n < DRAIN_MAX; n++) {
+    uint8_t i;
+    if (xQueueReceive(g_fullQ, &i, 0) != pdTRUE) break;
+#ifdef FLEET_DEBUG
+    dbgHandle(slotAt(i));
+#endif
+    xQueueSend(g_freeQ, &i, 0);   // P1: nothing else consumes frames
+  }
+#ifdef FLEET_DEBUG
+  dbgTick();
+#endif
+}
+
+bool rerandomizeMac() {
+  if (!g_active) return false;
+  if (webshare::active()) { Serial.println("[FLT] remac refused: the SoftAP is up"); return false; }
+  uint8_t mac[6];
+  randomMac(mac);   // before the radio stops: it is the entropy source
+  uint32_t t0 = micros();
+  esp_now_deinit();
+  esp_wifi_stop();
+  esp_err_t e = esp_wifi_set_mac(WIFI_IF_STA, mac);
+  esp_err_t s = esp_wifi_start();
+  uint8_t rb[6] = {0};
+  esp_wifi_get_mac(WIFI_IF_STA, rb);
+  bool ok = e == ESP_OK && s == ESP_OK && !memcmp(rb, mac, 6);
+  radioTune();
+  bool now = nowInit();
+  uint32_t us = micros() - t0;
+  if (ok) memcpy(g_mac, mac, 6);
+  g_active = now;
+  char ms[18]; macStr(g_mac, ms);
+  Serial.printf("[FLT] MAC re-randomized in %lu.%03lu ms (%s): %s, ESP-NOW %s\n", (unsigned long)(us / 1000),
+                (unsigned long)(us % 1000), ok ? "ok" : "FAILED", ms, now ? "up" : "DOWN");
+  return ok && now;
+}
+
+const uint8_t* staMac()   { return g_mac; }
+uint16_t       maxPayload() { return g_maxPayload; }
+void onRekey() { Serial.println("[FLT] key changed: any fleet session is dropped (P1: none)"); }
+
+void uiSnapshot(Ui& u) {
+  memset(&u, 0, sizeof(u));
+  u.active = g_active; u.role = g_role; u.channel = g_ch;
+  u.txOk = g_txOk; u.txFail = g_txFail; u.rxFrames = g_rxFrames; u.rxDrop = g_rxDrop;
+#ifdef FLEET_DEBUG
+  if (g_dbg && g_dbg->haveLeader && millis() - g_dbg->lastRxMs < 6000) {
+    u.leaderSeen = true;
+    memcpy(u.leaderMac, g_dbg->leader, 6);
+    u.rssi = g_dbg->lrssi;
+    u.ageMs = millis() - g_dbg->lastRxMs;
+  }
+#endif
+}
+
+void printStatus() {
+  char ms[18]; macStr(g_mac, ms);
+  Serial.printf("[FLT] role %s  channel %u  active %s  mac %s  maxPayload %u\n", roleName(g_role), g_ch,
+                g_active ? "yes" : "no", g_active ? ms : "-", g_maxPayload);
+  Serial.printf("[FLT] tx ok %lu fail %lu  rx %lu drop %lu  rate %s  boot-guard %s  build %s\n",
+                (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxFrames, (unsigned long)g_rxDrop,
+                g_rate12 ? "12M" : "1M", g_bootCounted ? "counting" : "idle",
+#ifdef FLEET_DEBUG
+                "FLEET_DEBUG (ping/pong on)");
+#else
+                "release (no frames sent)");
+#endif
+  printHeap("now");
+}
+
+void dbgSetRate(int mbps) {
+#ifdef FLEET_DEBUG
+  g_rate12 = mbps == 12;
+  g_rateWarned = false;
+  if (g_active) {
+    uint8_t bc[6]; memset(bc, 0xFF, 6);
+    if (esp_now_is_peer_exist(bc)) applyRate(bc);
+    if (g_dbg && g_dbg->haveLeader && esp_now_is_peer_exist(g_dbg->leader)) applyRate(g_dbg->leader);
+  }
+  Serial.printf("[FLT] peer rate now %s\n", g_rate12 ? "12M" : "1M");
+#else
+  (void)mbps;
+#endif
+}
+
+void dbgSetPad(int len) {
+#ifdef FLEET_DEBUG
+  if (g_dbg) g_dbg->padOverride = len;
+  Serial.printf("[FLT] ping size %s\n", len ? "fixed" : "alternating 250/1300");
+#else
+  (void)len;
+#endif
+}
+
+}  // namespace fleet

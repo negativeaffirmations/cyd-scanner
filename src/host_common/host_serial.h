@@ -4,6 +4,7 @@
 //   help          list the commands
 //   key           unit name, sid, key generation, key, and the pairing link (QR payload)
 //   rekey         arm a key rotation; `rekey confirm` within 15 s performs it (kicks the phone)
+//   fleet         fleet-mode status; `fleet leave|client|leader on|off|ch <n>|remac` (docs/fleet-mode.md)
 #pragma once
 
 namespace hostserial {

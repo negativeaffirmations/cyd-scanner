@@ -18,6 +18,8 @@ namespace phone {
 constexpr size_t UPLOAD_CHUNK_MAX = 500;
 
 void begin(const char* devName);
+// Restore the persisted tz offset (begin() calls it). A fleet-client CYD boot calls it alone: NimBLE never starts there.
+void loadTz();
 
 // Push a status line to the app (throttle in the caller). Format is
 // "key=val;key=val;..." parsed by the web app.

@@ -133,4 +133,5 @@ uint8_t hostboard::brightness()     { return g_brightness; }
 bool    hostboard::rtcPresent()     { return s_rtcPresent; }
 bool    hostboard::foregroundScan() { return g_fgScan; }
 const char* hostboard::boardTag() { return "MINI"; }
+bool    hostboard::fleetLeaderCapable() { return true; }   // PSRAM + 512 KB SRAM: the leader is always a mini
 bool    hostboard::pipelineAllowed() { return true; }

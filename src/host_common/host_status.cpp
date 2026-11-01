@@ -10,6 +10,7 @@
 #include "whitelist.h"
 
 void pushStatus() {
+  if (!phone::authed()) return;   // setStatus() only reaches an authenticated phone: skip the build (heap churn on fleet clients)
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
@@ -52,8 +53,8 @@ void pushStatus() {
       n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=;pfa=-1");
   }
   if (webshare::active() && n2 > 0 && n2 < (int)sizeof(s2))  // download AP up: the phone draws the join QR from these
-    snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s",
-             webshare::ssid(), webshare::apPass(), webshare::url());
+    snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s;apsta=%d",   // apsta: phones joined (web stepper)
+             webshare::ssid(), webshare::apPass(), webshare::url(), webshare::stations());
   static bool warned = false;
   if (!warned && (strlen(s) > 240 || strlen(s2) > 240)) {
     warned = true;

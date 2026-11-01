@@ -82,7 +82,7 @@ inline constexpr uint32_t DB_GEN = 5;  // 1: Phase-3 Flock GATT bleuuid rule; 2:
                                        // 5: expanded 'cidname,' BLE company makers + Garmin ID fix (2026-10-15)
 // Human-facing firmware version, distinct from the CYD<->C5 PROTOCOL_VERSION and the sig-DB DB_GEN.
 // Emitted in the per-session {"evt":"meta"} provenance anchor and the STATUS characteristic.
-inline constexpr char FW_VERSION[] = "0.19.0";  // 0.10.0: LRU never-stop logging + 5-min relog, unit names; 0.11.0: lastseen departure lines; 0.12.0: link v11 bssid + data/dl flags; 0.13.0: phone-GPS staleness + held fix "fix_age"; 0.14.0: phone fix preferred only while < 10 s old, fix_age on any fix > 10 s, STATUS gav/tav; 0.15.0: time/GPS source prefs (P: cmd), device dot = GPS-time-fresh or RTC; 0.16.0: STATUS pos/pfa (live-POST rows use the scanner position); 0.16.1: review fixes (one position snapshot per use, race-safe fix ages, fix_age > 10 s in ms, one device-clock order); 0.16.2: CYD GPS modal refreshes live while open; 0.17.0: status-LED brightness (I: cmd, STATUS led=); 0.18.0: web SD file explorer (Z:/U cmds, F: any path); 0.19.0: DETS v8 (cid/uuid/sig for live-POST)
+inline constexpr char FW_VERSION[] = "0.20.0";  // 0.10.0: LRU never-stop logging + 5-min relog, unit names; 0.11.0: lastseen departure lines; 0.12.0: link v11 bssid + data/dl flags; 0.13.0: phone-GPS staleness + held fix "fix_age"; 0.14.0: phone fix preferred only while < 10 s old, fix_age on any fix > 10 s, STATUS gav/tav; 0.15.0: time/GPS source prefs (P: cmd), device dot = GPS-time-fresh or RTC; 0.16.0: STATUS pos/pfa (live-POST rows use the scanner position); 0.16.1: review fixes (one position snapshot per use, race-safe fix ages, fix_age > 10 s in ms, one device-clock order); 0.16.2: CYD GPS modal refreshes live while open; 0.17.0: status-LED brightness (I: cmd, STATUS led=); 0.18.0: web SD file explorer (Z:/U cmds, F: any path); 0.19.0: DETS v8 (cid/uuid/sig for live-POST); 0.20.0: fleet mode P1 (ESP-NOW transport, CYD fleet-client boot mode, evt:fleet)
 
 const char* scannerIdHex();
 // Human-friendly unit name, e.g. "CFLO-MINI-KOBALI": board tag + a pronounceable 6-letter word
@@ -106,6 +106,8 @@ int  logNewDetections();
 void logEvent(const char* evt, int count);
 // {"evt":"phonecfg"} audit line: the phone changed card files / whitelist / DB, or the key was rotated.
 void logPhoneCfg(const char* op, const char* path = nullptr, const char* to = nullptr);
+// {"evt":"fleet","op":"start|leave|fallback|...","role":"client|leader"} (docs/fleet-mode.md §9.5); readers skip unknown evt.
+void logFleetEvent(const char* op, const char* role = nullptr);   // role: default = the current fleet role
 void logRidEvents();
 void logFollowEvents();
 void transferLog();

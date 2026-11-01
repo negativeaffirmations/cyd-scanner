@@ -1,4 +1,181 @@
-# Handoff — 2026-10-29 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-10-31 (work branch: `fleet-mode`, UNCOMMITTED; `main` @ `c3bd4ff` is the trunk)
+
+## RESUME HERE — 2026-10-31: fleet mode P1 built + reviewed; NEXT = owner bench tests (nothing flashed)
+**What fleet mode is:** 2+ of the owner's scanners cooperate over ESP-NOW and split RF coverage. Design + every owner
+decision: **[docs/fleet-mode.md](docs/fleet-mode.md)**. §16 (2026-10-31) overrides earlier sections; all §15 questions
+are answered. Key decisions:
+- **Roles:** the CYD is only ever a fleet **client**. It reboots into that mode, never starts NimBLE (no phone link), and
+  releases its BT memory. A **mini is the leader**: it holds the phone link and enrolls clients. Up to 6 clients (one
+  encrypted ESP-NOW slot spare).
+- **Coverage split:** the role layout is user-editable. When a member drops out past the grace period the leader
+  reassigns its coverage, and restores the saved layout when it rejoins.
+- **Logging:** the leader logs everything. Clients forward their log rows verbatim (acked and resumable) and keep their
+  own SD copy as a backup. `fleet_id` plus per-row `scanner`/`ofile`/`orow` let scan-analyzer spot duplicate or partial
+  client uploads.
+- **Position:** one fleet position, phone by default. The user may pick the leader's GPS or a member's GPS instead. Each
+  unit's own fix is logged as `evt:"devpos"` with `used` 0/1.
+
+**Why the CYD can't lead (measured 2026-10-30 on the CYD, throwaway probes):**
+- Normal boot leaves ~58.7 KB free heap. Wi-Fi STA costs ~51 KB, so with NimBLE up the CYD **OOM-aborted**.
+- Fleet-client boot (no NimBLE + `esp_bt_mem_release`) ran Wi-Fi + ESP-NOW at **~114 KB free**. A real dual-mode build
+  should land around 95–105 KB.
+
+**P1 bench results (2026-10-31, CYD = `cyd_fleetdbg` on COM14, mini #2 = `xiao_s3_rgb_fleetdbg` on COM10):**
+- **Step 1 leader:** up on ch 1, MAC set **direct**, 12 Mbps accepted, pool 16x1480 in PSRAM, txpwr 8 dBm. Fleet cost
+  44.8 KB internal heap (166.4 → 121.6 KB).
+- **Step 2 client:** `BT memory release -> 0`, MAC set direct, pool 8x256 on heap, txpwr 6.25 dBm. Heap **139.8 KB before
+  the fleet, 84.3 KB after (fleet cost 55.5 KB)**. The probe's 114 KB doesn't carry over: the real boot has SD/sigdb/whitelist
+  allocated before `beginClient()` (the fg dedup-table skip is already included).
+- **Step 3 soak, 30 min — stable, but fails the ≥95 KB heap target:**
+  - **CYD:** heap 83.7 KB steady with no drift, min 75.2 KB, largest block 73.7 KB. No resets, and the C5 link was up for all
+    896 cycles.
+  - **Mini:** internal heap 121.6 KB (min 116.6 KB), PSRAM flat at 8.3 MB. 908 TX ok, 0 fail.
+  - **Delivery:** about 97–98% at ~-31 dBm (250 B 446/~454, 1300 B 439/~454). 16 gaps spread evenly (~1 per 2 min). All
+    885 pongs ok, 0 RX drop.
+- **Step 4 rate/pad:** at 1 Mbps over 3 min, 45/45 (250 B) and 44/45 (1300 B) — the same as 12 Mbps at bench range, so
+  only a range test will separate them. Pad default (0) already alternates 250/1300, which the soak covered. Restored 12M.
+- **Step 5 remac:** CYD `fleet remac` took 9.2 ms (direct set, ESP-NOW up), but there was a **~15 s gap** before pings
+  resumed. **The leader never expires old peer MACs** (stale rows kept counting up; cleared only by a leader reboot) — fix in a later
+  phase (peer timeout). Reboots: the CYD rejoined instantly with a new boot MAC; the mini rebooted (via reflash) back
+  into leader and the CYD followed its new MAC automatically. Boot-time randomization holds; no fallback needed.
+- **BUG found + fixed:** `fleet::setRole()` saved NVS but not `g_role`, so after `fleet leader on` the live leader
+  reported `role off` (`fleet leave` would have said "not in a fleet"). Now `setRole()` updates `g_role`, and the `leader on`
+  handler reads the old role first so its "was a client → restart" check still works. Both boards reflashed.
+- **Step 7 `fleet leave` (serial):** OK — rebooted to normal, phone BLE advertising again. **Not yet tested:** the touch / BOOT
+  "Leave fleet" UI path — **PASSED (owner, 2026-10-31)**.
+- **Step 8 crash fallback:** OK using a new **`fleet crash`** serial command (`abort()`, `FLEET_DEBUG` builds only): 3
+  consecutive panics → `boot-loop guard: 3 boots, last reset reason 4 -> leaving the fleet`, normal boot, `role off`.
+  The SD `evt:"fleet","op":"fallback"` line isn't checked yet (read the card / download the bg log).
+- **Step 6 mini under load (phone authed on the mini, fleet on ch 6) — PASS:**
+  - Idle with the phone: ~95%. A BLE download of 168.8 KB: ~100%, leader heap min 116 KB.
+  - SoftAP up ~6.5 min incl. a 170 KB Wi-Fi download: 95%, leader heap min 113 KB (the AP cost ~3 KB internal).
+  - **After `AP down` the fleet stayed on ch 6** (retune fix proven), 16/17.
+  - `fleet ch 6` itself caused a **~25 s outage** before pings resumed (like the ~15 s after remac). Both recover on their
+    own — cause not yet found (peers use channel 0 = current). Investigate before P2.
+- **Owner UX feedback (web app, not fleet):** the SoftAP join QR is drawn in the web app on the same phone that has to
+  scan it. Proposed: Copy-password + "Open Wi-Fi settings" (Android `intent:` link, with a fallback) + the existing log-index
+  link, with the QR folded under "for another device". Chrome's "can't download securely" warning is the plain-HTTP AP, and
+  it is expected (a self-signed HTTPS cert would be worse). Add a note on the card.
+  - **Built + deployed** as `main` `0345a44` (webapp `20261031a`): Copy password, Open Wi-Fi settings, folded QR.
+  - **Owner test feedback (2026-10-31), still to fix:**
+    1. The card was very slow to appear and looked like a failure. The mini only shows it once STATUS carries the AP
+       creds; STATUS pushes every 1 s in download mode, so the delay is entering download mode / bringing up the AP. Show a
+       "Starting device Wi-Fi…" state the moment the toggle is tapped.
+    2. **The log index link must be a large button, not a link in small copy.** Required steps never go in `.sub` text
+       (owner UX rule). The whole join → open → download flow needs a guided stepper.
+    3. **This run the log index didn't load:** no `[webshare] GET` reached the mini (AP up, heap 113 KB) — phone-side
+       routing, cause TBD.
+  - **Stepper BUILT + deployed** as `main` `2ead774` (webapp `20261031b`, `features/wififlow.js`, `#wifiDlg`). It opens
+    instantly with a counting spinner, then steps 2→3 on return from Wi-Fi settings, 3→4 on return from the download tab.
+    Legacy shims for cached phones: hidden `#apCard` stub, no-op `renderApCard()`, `toggleWifi()` — remove in a later deploy.
+  - **"Index won't load" was the phone, not the mini:** no request arrived for a long while, then `GET /` was served
+    instantly. Android routes over mobile data after "Connected without internet" until it settles. Step 3 now says so.
+  - Cancel button added (`main` `c9a9acb`, webapp `20261031c`).
+  - **Firmware side DONE (uncommitted on `fleet-mode`; mini #2 runs it in `xiao_s3_rgb_fleetdbg`; ships with the next
+    release):**
+    - STATUS part 2 **`apsta`** = SoftAP stations (`webshare::stations()`), sent with `apssid`/`appsk`/`apurl`.
+    - The **index page is newest-first**: a big "Download current log" button, then the 40 newest `/logs/` files by FS write time
+      (bounded heap insertion sort, freed per request), with a "N older logs not listed" line.
+    - **AP station join/leave/IP-assigned console trace** (timestamped, no MACs), plus index build time.
+    - Cost: `cyd` static RAM +1,008 B (114,032 → 115,040), flash +16 KB, likely `gmtime_r`/`strftime` for the date column. Weigh
+      this against the CYD's tight DRAM before release; dropping the date would recover it.
+  - **Owner verdict 2026-10-31: RESOLVED.** Page load felt quick, the newest-first list and current-log button were seen,
+    and "phone joined ✓" auto-advanced. "As streamlined as it can be without a standalone app."
+- **Still open:** step 9 (sniffer), step 10 (normal-mode CYD heap during a SoftAP download).
+  **Both boards are on fleet ch 6** (CYD client, mini leader); set `fleet ch 1` on both to restore the default.
+- **Heap decision (owner, 2026-10-31):** accept ~84 KB steady / 75 KB min for P1; 95 KB was a margin estimate, not a limit.
+  **Before P5b** (LogRows store-and-forward), set a hard floor (e.g. min ≥ 50 KB plus a heap-check load-shed) and size the
+  queue from the measured headroom.
+
+**P1 state (branch `fleet-mode`, nothing committed; flashed to the CYD + mini #2 for bench testing 2026-10-31):**
+- **New code:** `src/host_common/fleet_proto.h` (wire structs), `fleet.h` (facade), `fleet_link.cpp` (roles/NVS, boot-loop
+  fallback, random-MAC STA + ESP-NOW, RX pool/queues, FLEET_DEBUG ping/pong + stats).
+- **CYD** (`src/cyd/main.cpp`): fleet-client boot path, screens `SCR_FLEET` / `SCR_FLEETLEAVE` / `SCR_FLEETENTER`,
+  Settings → "Fleet client…" (shows "Leave fleet…" in fleet mode), fleet glyph in the status bar, forced bg scanning,
+  SoftAP download disabled.
+- **Mini** (`src/xiao_s3/main.cpp`): leader or client starts after `phone::begin()`.
+- **Shared code:**
+  - `webshare` uses AP_STA on the fleet channel, retunes on `stop()` and allows 1 station while the fleet is up.
+  - Serial `fleet` commands (below).
+  - `logFleetEvent()`.
+  - `phone::loadTz()` split out of `phone::begin()`.
+  - `pushStatus()` returns early when no phone is authed.
+  - **FW 0.20.0**.
+- **`platformio.ini`:** only two bench envs added, `cyd_fleetdbg` and `xiao_s3_rgb_fleetdbg` (`-DFLEET_DEBUG`).
+  Normal envs send no fleet frames in P1.
+- **Builds (2026-10-31, all OK):**
+
+  | Env | RAM (B) | Flash (B) |
+  |---|---|---|
+  | `cyd` | 114,016 | 1,489,961 (+144 RAM, +19 KB flash vs 0.19.0) |
+  | `cyd_fleetdbg` | 114,032 | 1,494,377 |
+  | `xiao_s3` | 103,332 | 1,331,238 |
+  | `xiao_s3_rgb` | 103,476 | 1,341,525 |
+  | `xiao_s3_rgb_fleetdbg` | 103,484 | 1,345,445 |
+
+- **Reviewed:** no critical findings. All 6 code-fix items rated important plus all minor items fixed, notably:
+  - the SoftAP stop stranding the fleet on ch 1;
+  - `fleet leader on` killing a live AP;
+  - a partial-alloc retry panic;
+  - `fleet ch` not retuning;
+  - the unused 9.6 KB fg dedup table on a client is now skipped;
+  - `Sync.selfMacs` resized to 9 (`Sync` = 91 B);
+  - the boot guard now counts consecutive crash boots only.
+- **Encrypted-peer limit:** confirmed **7** at runtime (sdkconfig `CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM`; the header's
+  `ESP_NOW_MAX_ENCRYPT_PEER_NUM 6` is only a constant).
+
+**Serial console (USB):** `fleet` (status) · `fleet client` (saves role + reboots) · `fleet leave` (reboots to normal) ·
+`fleet leader on|off` (minis only) · `fleet ch <1-13>` · `fleet remac` (re-randomize the STA MAC, prints the time taken).
+Debug builds only: `fleet rate 1|12` · `fleet pad 250|1300|0`.
+
+### P1 bench test checklist (owner, next session)
+**Flash** with `PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$HOME/.platformio/penv/Scripts/pio.exe" run -e <env> -t upload
+--upload-port <COM>`, and read serial with pyserial (memory: serial-capture-windows-pyserial).
+- **Mini #2:** env `xiao_s3_rgb_fleetdbg`. Its S3 and C5 both enumerate as `303A:1001`, so pick the S3 by MAC
+  `10:b4:1d:eb:96:04` (`esptool chip_id`). Last seen on COM10, but ports move on replug.
+- **CYD:** env `cyd_fleetdbg`, CH340 `1A86:7523` (was COM14). The first upload attempt often fails with "Wrong boot
+  mode"; just retry.
+
+**Steps:**
+1. **Mini as leader:** type `fleet leader on`. Expect `[FLT] leader up: ch 1 mac … (set direct|via stop/start)
+   maxPayload … txpwr 8.00 dBm rate 12M pool …(psram|internal)`, then heap lines and 5 s ping stats.
+   - Note which MAC-set path was used ("direct" vs "via stop/start") and whether the 12 Mbps rate was accepted (a
+     one-time warning prints if not).
+2. **CYD as client:** type `fleet client`, or use Settings → Fleet client… → confirm. Expect `BT memory release -> 0`
+   and `fleet client up, free heap N`.
+   - The screen shows FLEET CLIENT. Once a ping is heard it changes from "Searching… ch 1" to "Leader xx:xx -NN dBm",
+     and the glyph turns green.
+3. **Memory soak:** 30 min with scanning running.
+   - **CYD free heap ≥ 95 KB steady**, min-free and largest block logged.
+   - C5 link dot stays green, no aborts.
+   - Mini internal + PSRAM headroom logged.
+4. **Delivery:** compare the pong ratio at `fleet rate 1` vs `12` and `fleet pad 250` vs `1300`.
+5. **MAC re-randomize:** run `fleet remac` on the CYD and read "re-randomized in X ms". Then reboot each side in turn and
+   confirm pings resume.
+   - If a rejoin after a reboot fails, fall back to boot-only randomization (owner-approved).
+6. **Mini under load:** with the phone connected, measure delivery while idle, during DETS pushes, and during a BLE log
+   download. Also start a SoftAP download while the fleet is up.
+   - The fleet must stay on its channel after the AP stops. Try `fleet ch 6` first to prove the retune fix.
+7. **Leaving fleet mode:** test "Leave fleet" on the CYD (Cancel is the default; works from touch and BOOT; respects the
+   touch lock) and `fleet leave`. The CYD must reboot to normal mode with the phone link back.
+8. **Crash fallback:** force 3 consecutive crash boots and check that `evt:"fleet","op":"fallback"` is logged and the
+   unit boots normally.
+9. **Optional (sniffer):** each frame's addr2 must not equal `scannerIdHex()` or the base MAC.
+10. **Existing-risk measurement:** free heap on a **normal-mode CYD during a Wi-Fi (SoftAP) log download** with NimBLE up.
+    AP mode likely costs the same ~51 KB as STA, so this existing feature may be near OOM. If it is, gate it behind a
+    heap check or `NimBLEDevice::deinit()` it first (separate fix).
+
+**After P1 passes:**
+- Commit P1 on `fleet-mode`. Commit message on request; don't push until the owner says.
+- Then **P2**: enrollment + auth, meaning the `M:` CMDs, Probe/Hello/Join/JoinAck, LMK peers, the seq window, release
+  and unjoin, and the web `fleet.js` + `fleetcrypto.js`.
+- Later phases: P3 time/position push · P4 link **v12** ScanPlan (flash ALL boards together) · P5 forwarding/merge +
+  DETS v9 · **P5b** LogRows store-and-forward · P6 scan-analyzer contracts via REMOTE.md (`fleet`/`devpos` evts, meta
+  `fleet_id`/`fleet_role`/`fleet_leader`, row `scanner`/`ofile`/`orow`).
+
+**Side note, existing and NOT fleet-related:** about every 30 s the CYD's 2.4 GHz and 5 GHz counts dip to 0 and recover
+over a few polls. This is the C5's 30 s TTL expiring Wi-Fi entries before the next AP scan refreshes them. It is
+cosmetic on the live list and DETS; the log is unaffected. Worth its own look.
 
 ## Latest — 2026-10-29 (eve): fw 0.19.0 = DETS v8 + richer live-POST rows (scan-analyzer "Live-POST v-next", owner-approved)
 DETS rows append `cid` (4-hex) / `uuid` (4-hex short or 32-hex) / `sig` (`host_status.cpp` `pushDetections`); the web app

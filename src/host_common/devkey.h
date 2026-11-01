@@ -10,7 +10,8 @@ namespace devkey {
 inline constexpr char APP_URL[] = "https://negativeaffirmations.github.io/cyd-scanner/webapp/";
 
 // Load the key from NVS (cydscan/blekey, 16 B) or create it (esp_fill_random, generation 1). Call after
-// NimBLEDevice::init so the radio is already feeding the hardware RNG.
+// NimBLEDevice::init (or, on a fleet-client CYD where NimBLE never starts, after the fleet Wi-Fi is up) so a
+// radio is already feeding the hardware RNG. Needs no NimBLE.
 void begin();
 
 const char* keyHex();   // 32 lowercase hex chars (secret: print only on explicit request)

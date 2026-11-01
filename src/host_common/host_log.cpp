@@ -10,6 +10,7 @@
 #include "host_files.h"
 #include "logfilter.h"
 #include "phone.h"
+#include "fleet.h"
 #include "webshare.h"
 #include "whitelist.h"
 
@@ -174,7 +175,7 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all);  // below, wi
 void beginSessionNamed(LogStream& st, bool bg) {
   writeDepartures(st, millis(), true);  // close out every presence period in the outgoing file
   rememberBootFile(st);
-  if (!st.seen) {
+  if (!st.seen && (bg || !fleet::isClient())) {   // a fleet client never logs to fg: skip its ~9.6 KB dedup table
     st.seen = (SeenKey*)calloc(MAX_SEEN, sizeof(SeenKey));
     if (!st.seen) Serial.printf("[CYD] %s seen table: out of memory (logging disabled)\n", bg ? "bg" : "fg");
   }
@@ -561,6 +562,24 @@ void logPhoneCfg(const char* op, const char* path, const char* to) {
     lnAppend(ln, n, "}\n");
     if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
   }
+  f.close();
+}
+
+// {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"fleet","op":"..","role":"client|leader"} -- fleet mode transitions
+// (docs/fleet-mode.md §9.5). scan-analyzer needs it to explain a role-limited client file.
+void logFleetEvent(const char* op, const char* role) {
+  LogStream& st = activeStream();
+  if (bgCtx() && !st.path[0]) openBgSession();
+  if (!g_sdOk || !ensureLogFile(st)) return;
+  File f = SD.open(st.path, FILE_APPEND);
+  if (!f) return;
+  char ln[LOG_LINE];
+  int n = 0;
+  lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
+  appendPos(ln, n);
+  lnAppend(ln, n, ",\"evt\":\"fleet\",\"op\":\"%s\",\"role\":\"%s\"}\n", op,
+           role ? role : fleet::role() == fleet::ROLE_LEADER ? "leader" : "client");
+  if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
   f.close();
 }
 

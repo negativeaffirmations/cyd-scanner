@@ -476,7 +476,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove · **`"P:<t><g>"`** time / GPS source preference (fw 0.15.0; each digit 0 prefer phone /
     1 prefer device / 2 device only; NVS `cydui/tpref`,`gpref`; web Settings "Time & location sources")
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden). Keys:
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl;apsta]` (**`apsta`** = phones joined to the download SoftAP, drives the web Wi-Fi stepper); the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden). Keys:
     `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,led,pos,pfa,sid,fw,dbgen`
     (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device. Device GPS = a live
     onboard fix; device clock (0.15.0) = the onboard GPS is supplying time right now OR the RTC holds a valid
@@ -641,11 +641,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   then switches to `http://192.168.4.1`. The SoftAP **WPA2 password is random per device, generated
   once and stored in NVS** (`"cydscan"`/`"appsk"`), shown only on the device/QR — it is **not**
   derived from the MAC/BSSID (the SEC-M1 fix; the old MAC-derived PSK was recomputable by anyone in
-  RF range). That page is a **browsable index of ALL `/logs/` sessions** (name + size), each with a
+  RF range). That page is a **browsable index of `/logs/`**: a big "Download current log" button, then the **40 newest files, newest first** (by FS write time; older ones via the time-range links), each with a
   `/dl?f=<name>` link plus a **24 h** `/dlf?...` filtered link — so bulk Wi-Fi download can grab any
   past session (the reason for Wi-Fi: BLE is slow for MB-size drive logs). `/scanlog.jsonl` still
   streams the current session (`/scanlog.csv` kept as an alias).
-  Pauses scanning while active.
+  Pauses scanning while active. The web app walks the user through it with a **4-step dialog** (`features/wififlow.js`,
+  `#wifiDlg`): start the AP → join it (Copy password / Open Wi-Fi settings; auto-advances on STATUS `apsta`) → open the
+  page (a big button, new tab) → stop. Required steps are big buttons, never links in small text (owner UX rule).
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is
@@ -710,6 +712,19 @@ It's git-ignored and holds the machine-local bridge path, so nothing committed h
 location. **While building the remote-server integration, keep HANDOFF #11 and the bridge updated each
 work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
 context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
+
+## Fleet mode (P1, in progress, fw 0.20.0)
+
+Cooperating scanners over **ESP-NOW on the host radios** (one fixed channel, default 1). Design + phases +
+owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides earlier sections). **P1 = transport +
+boot modes only** (no pairing/crypto, no scan plan, no link-protocol change): NVS `fltrole` (0 off / 1 client /
+2 leader, minis only), `fltch`, `fltboot` (3 crash boots -> role cleared, `evt:fleet op:fallback`); a **CYD fleet
+client** boots with `esp_bt_mem_release` BEFORE anything touches BT, never calls `phone::begin()` (no phone link;
+SoftAP download disabled), forces scanning on / logs to the bg stream, and shows `SCR_FLEET` as its root (Settings
+-> "Fleet client..." enters, "Leave fleet" exits; both reboot). Minis keep NimBLE in either role. Code:
+`src/host_common/fleet*.{h,cpp}`; serial `fleet` / `fleet leave|client|leader on|off|ch <n>|remac` (+ `fleet rate 1|12`, `fleet pad 250|1300|0`, `fleet crash` = boot-guard test panic, in debug builds). `-DFLEET_DEBUG`
+(envs `cyd_fleetdbg`, `xiao_s3_rgb_fleetdbg`) adds the cleartext ping/pong bench frames; release builds send no fleet
+frames. Normal-mode static footprint is tiny; every fleet buffer is heap-allocated by `beginClient()/beginLeader()`.
 
 ## Subagents (`.claude/agents/`)
 

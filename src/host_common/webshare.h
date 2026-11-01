@@ -12,6 +12,7 @@ void        start();       // bring up SoftAP + web server
 void        stop();        // tear down
 bool        active();
 bool        clientConnected();  // true if a phone has joined the SoftAP
+int         stations();    // stations joined to the SoftAP (0 when it's down) -> STATUS apsta
 void        handle();      // call frequently while active
 
 void        setLogPath(const char* path);  // which SD file the download serves

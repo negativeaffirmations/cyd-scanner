@@ -5,6 +5,7 @@
 #include <esp_random.h>
 #include <math.h>
 #include "devkey.h"
+#include "fleet.h"
 
 namespace {
 
@@ -493,9 +494,13 @@ StatusCB g_statusCB;
 
 namespace phone {
 
+void loadTz() {
+  Preferences p;                         // restore the last known tz (for phone-less GPS local time)
+  if (p.begin("cydscan", true)) { g_tzOffMin = p.getInt("tzoff", 0); p.end(); }
+}
+
 void begin(const char* devName) {
-  { Preferences p;                       // restore the last known tz (for phone-less GPS local time)
-    if (p.begin("cydscan", true)) { g_tzOffMin = p.getInt("tzoff", 0); p.end(); } }
+  loadTz();
   NimBLEDevice::init(devName);
   devkey::begin();                       // phone-link key (NVS), after init so the RNG is radio-fed
   NimBLEServer* server = NimBLEDevice::createServer();
@@ -583,6 +588,7 @@ void service() {
 uint32_t authEpoch() { return g_authEpoch; }
 bool transferAlive(uint32_t epoch) {
   service();   // 30 s auth timeout / kicks keep running during a long transfer
+  fleet::service();   // a long BLE transfer blocks loop(): keep draining fleet frames (docs/fleet-mode.md §3.4)
   return g_authHandle != NO_CONN && g_authEpoch == epoch;
 }
 
