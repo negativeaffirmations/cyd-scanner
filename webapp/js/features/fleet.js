@@ -134,7 +134,7 @@ export async function refreshMembers(){
       const c = l.split("\t");
       return { slot:+c[0], sid:c[1], name:c[2], kg:+c[3], state:+c[4], rssi:+c[5], age:+c[6], role:c[7] || "", fw:c[14] || "" };
     });
-    state.fleetMembers = members.map(m => ({ slot:m.slot, name:m.name }));   // "seen by" chip names (detections.js)
+    state.fleetMembers = members.map(m => ({ slot:m.slot, name:m.name, sid:m.sid }));   // "seen by" chip names (detections.js) + live-POST `scanner` (remote.js)
     renderMembers();
     await renderAddChoices();
   } catch (e) { if (!/busy|download/.test(e.message)) log("Fleet: " + e.message); }
