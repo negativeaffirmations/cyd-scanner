@@ -1,82 +1,52 @@
-# Handoff — 2026-11-01 (work branch: `fleet-mode`, local commits, NOT pushed; `main` @ `4bfd8d8` is the trunk + webapp)
+# Handoff — 2026-11-01 (work branch: `fleet-mode`, local commits, NOT pushed; `main` @ `4bfd8d8` = trunk + webapp)
 
-## RESUME HERE — 2026-11-01 01:15: P1-P4 DONE (reviewed + fixed + bench-passed); NEXT = P5, run UNATTENDED overnight
-**State at hand-off (`fleet-mode` @ `304048f`, all local, nothing fleet-related pushed):**
-- P1 transport · P2 enrollment/auth · P3 time/position · P4 coverage split (link **v12**). Each is built, reviewed by
-  the reviewer agent (+ the security agent for P2), fixed, and bench-passed. See docs/fleet-mode.md §17-§19 (+ .1
-  review notes).
-- **Bench hardware, all connected over USB, battery switches OFF.** Identify ports by USB serial number, not COM:
-  | Board | Env | Port last seen | USB serial |
-  |---|---|---|---|
-  | mini #2 S3 (LEADER) | `xiao_s3_rgb_fleetdbg` | COM10 | `10:B4:1D:EB:96:04` |
-  | mini #2 C5 | `xiao_c5` | COM9 | `10:BD:A3:CF:A3:C8` |
-  | CYD (CLIENT, member 1) | `cyd_fleetdbg` | COM13 | CH340 `1A86:7523` (no serial) |
-  | CYD rig C5 (DevKit, native USB) | `c5` | COM18 | `D0:CF:13:E4:6A:74` |
-  - COM8 = the CYD rig C5's UART bridge. Console only; it does NOT flash.
-  - **Mini #1 is NOT connected and is still v11.** Don't touch it.
-  - Flash with `PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$HOME/.platformio/penv/Scripts/pio.exe" run -e <env> -t upload
-    --upload-port <COM>`. The CYD's first attempt sometimes fails: retry.
-  - Any link-protocol or fleet-wire struct change ⇒ flash ALL FOUR.
-- **Bench tooling** (session scratchpad; recreate if gone; all pyserial via `$HOME/.platformio/penv/Scripts/python.exe`):
-  - Never reset the CYD on open: DTR/RTS false. The S3 / C5 USB-CDC consoles need DTR true to print.
-  - Flush the log per line (the 2026-10-31 lesson: an unflushed buffer lost a whole test).
-  - Drop `gps:` lines from any saved log (privacy).
-  - A 4-port watcher on one clock is the most useful tool.
-  - A CYD reset = an RTS pulse.
-  - The leader can be rebooted with `fleet crash` (`FLEET_DEBUG` only).
-  - Debug serial: `fleet`, `fleet m <M-cmd>`, `fleet trace on|off`, `fleet fk` / `fleet add` (bench enrollment).
-  - The CYD (b817f4f4e9d4) is enrolled on mini #2 and joins by itself.
+## RESUME HERE — 2026-11-01 (morning): fleet P1-P5 DONE + deferred P4 items; nothing pushed or deployed
+The overnight timer didn't fire (the session was de-authenticated); the owner ran it in the morning.
+**Fleet mode P1-P5 are built, reviewed (reviewer agent each phase, + security for P2), fixed and bench-passed.**
+`fleet-mode` @ `4e62fbe`. Design + as-built notes: docs/fleet-mode.md §17-§20 (+ .1 review notes).
 
-**P5 BRIEF — forwarding + merge + DETS v9 (docs/fleet-mode.md §9 + §16.7; §16 overrides).** Goal: the leader's phone
-shows ONE merged live list of every unit's detections with "seen by" markers. The P4 split makes P5 essential: today
-the phone lacks the CYD's Wi-Fi-only finds.
-1. **Client forwarding** (`fleet_client.cpp`, hook at the end of `core::runScanCycle()`).
-   - A sent-table decides what to send: new, |Δrssi| ≥ 6, flags/name/IE/cid changed, or > 10 s since last sent.
-   - Pack raw `Detection` rows into `DetBatchHdr` frames (16/frame on v2), ≤ 6 frames per cycle, 5 ms apart, sealed
-     (`sendSealed`, TAG_LEN) like every session frame. `RidBatch` while RIDs exist.
-   - Fill MStat's scan counters (dets, deauth, evil, rid, uniq).
-   - Mind the CYD heap (~84 KB free as a client, min 75 KB): the sent-table is 20 B × 96, heap-allocated in `begin()`.
-2. **Leader merge** (`fleet_leader.cpp` + `host_core`).
-   - Remote table in PSRAM (`RemoteRow` × 256, TTL 30 s). `fleet::mergeRemote()` runs right after a successful
-     `requestScan()`: dedup by source+MAC(+PAN), keep the stronger RSSI, OR the flags, fill blanks.
-     `g_detVia[i] |= 1<<slot` (local = bit 0).
-   - Fleet-only cycle when the leader's C5 link is down but remote rows exist.
-   - `DevGroup.via`.
-   - Merged categories / tiles / band counts / tiers; the follow engine uses only `via & 1`.
-   - Alert maxima from members' MStat.
-   - `HOST_MAX_DET=192` on the S3 envs only: **measure the S3's internal heap first** and audit the `int idx[MAX_DET]`
-     stack arrays (8 KB loop stack). The CYD stays at 96.
-3. **Logging:** each unit logs only its own rows. The leader skips `!(via & 1)` rows (§9.5). No new log keys without
-   the scan-analyzer contract (P6) — the `fleet`-evt extra fields / meta keys / `pos_via` / `via` stay deferred.
-4. **DETS v9** (phone stream): append a `via` field (decimal member mask) to each row. Older parsers ignore extras.
-5. **Web:**
-   - Small "seen by" chips per row (one letter / colour per member slot; names from `FLT=`).
-   - The device modal gets "Seen by: …".
-   - Live-POST stays `via & 1` only (§9.5).
-   - New files / DOM wiring follow the cache rules in CLAUDE.md (versioned imports, token bumps).
-   - **Do NOT push or deploy.** Commit the webapp on `fleet-mode` and list it as ready to deploy.
-6. **Checks (§13):**
-   - A device only the CYD hears shows on the leader with via = CYD.
-   - Overlap dedups to one row with both bits.
-   - CYD off → its rows age out at 30 s.
-   - Frame counts / airtime match the budget.
-   - Heap on both hosts (CYD ≥ ~75 KB min, S3 internal logged).
-   - Delivery under the WIFI/BLE roles.
-7. **Then:**
-   - Build ALL envs (`cyd xiao_s3 xiao_s3_rgb c5 xiao_c5 cyd_fleetdbg xiao_s3_rgb_fleetdbg xiao_s3_bringup`).
-   - A **reviewer** agent pass, then fix and re-bench.
-   - Commit on `fleet-mode` (Co-Authored-By trailer as in earlier commits).
-   - Update docs/fleet-mode.md (§20 "P5 as built" + review notes), CLAUDE.md's fleet section, and THIS block.
-**Rules for the unattended run:**
-- No pushes, no deploys, no flashing mini #1, no destructive git.
-- Don't change log schemas (P6 needs the scan-analyzer contract).
-- Don't ask the owner (asleep): pick the documented default, note the decision here, and continue. If something truly
-  needs the owner, write it under "Owner decisions needed" below and move on to whatever else can progress.
-- If P5 finishes with time left: P5b (LogRows store-and-forward, §16.7) only if it needs no log-schema change;
-  otherwise the deferred P4 items (§19.1: the AP scan restricted to the role's band — verify the API on the C5 first)
-  or bench hardening.
+**What landed this session (P5 + extras):**
+- `2d23619` **P5:** client forwarding (DetBatch/RidBatch), the leader's PSRAM remote table + `mergeRemote()`, the
+  `g_detVia` "seen by" mask, `DevGroup.via`, the fleet-only cycle, STATUS alert maxima, DETS **v9** `via`, and the web
+  "seen by" chips. `HOST_MAX_DET=192` on the S3 envs.
+- `85b0271` No coverage split while the leader's own C5 is down (found on the bench).
+- `77b65bf` P5 review fixes. The big one: **the leader's own log rows stay its own measurements** (members' RSSI/flags
+  are display-only). Also: RX pool 48, a 768-row remote table, the forwarder no longer starves rows, terminated RID
+  strings, a 2 s fleet-only cadence.
+- `8fead0f` docs §20. `4e62fbe` **single-band roles restrict the C5's band** (AP scan 12.4 s → 3.0 s on 2.4 only) +
+  the `M:o` per-member role override.
 
-**Owner decisions needed (filled in by the overnight run):** _(none yet)_
+**Bench results (mini #2 leader + CYD client; all PASS):**
+- **Merge:** the leader (BLE role) shows the client's probes, e.g. 82 rows = 10 own + 14 member-only + 58 both.
+- **Ageing:** client off → its rows age out (~20-30 s).
+- **Traffic:** ~0.75 DetBatch frames/cycle, `rx drop 0`.
+- **Fleet-only view:** the leader's C5 parked in its bootloader (`esptool --after no-reset`) → a fleet-only view, roles
+  drop to FULL within ~8 s; restored → the split returns in 2 s.
+- **Heap:** mini internal ~88 KB free (min ~84 KB); CYD client ~78 KB (min ~73 KB).
+- **Builds:** all 8 envs pass. Static RAM: cyd 114,648 B; xiao_s3 129,028 B (+25 KB from the 192-row table); c5 80,156 B.
+
+**Board state:** all four bench boards run the latest debug firmware, and both C5s the latest `c5` / `xiao_c5`. The CYD
+is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
+- Ports: mini S3 COM10, mini C5 COM9, CYD COM13, CYD C5 COM18.
+- **Mini #1 is untouched (still link v11).**
+
+**Ready, waiting on the owner:**
+1. **Webapp** (P5 "seen by" chips; tokens `20261101b`, footer `fleet-p5 b`): committed on `fleet-mode`, **not
+   deployed**. Deploy = put `webapp/` from `fleet-mode` onto `main`, push, and verify Pages (as for earlier deploys).
+   The web needs fw with DETS v9 to show chips; older fw is unaffected.
+2. **Release flash** (non-debug envs, FW_VERSION → 0.21.0 suggested): the bench units run `*_fleetdbg`. All hosts + C5s
+   must flash together (link v12). Mini #1 needs both halves flashed whenever it joins.
+3. **Push `fleet-mode`** (or merge to `main`) when the owner is happy. Nothing fleet-related is on GitHub yet.
+
+**Open items / next steps:**
+- **P6 (needs the scan-analyzer contract via REMOTE.md):** the `fleet` evt extra fields, meta `fleet_id` / `fleet_role` /
+  `fleet_leader`, `devpos`, `pos_via`, live-POST of member rows, and P5b LogRows store-and-forward (`scanner` / `ofile`
+  / `orow`). None of these are built: they change the log schema.
+- **Untested:** 2+ clients (only one client on the bench) — bring mini #1 in (flash both halves) to test N=3 roles,
+  WIFI24/WIFI5 on real members, and multi-member delivery. Also the sniffer check (P1 step 9 / P2).
+- **Web:** no `M:o` / plan-mode / layout editor controls yet (§16.1); serial `fleet m o:…` / `fleet m p:…` meanwhile.
+- **Accepted / minor:** see docs §20 "Accepted / open"; a group's `rep` can be a member row.
+
 
 ## Earlier — 2026-11-01: fleet P3 (time + position) BUILT; P2 done + owner-tested from the phone
 - **P3:** docs/fleet-mode.md §18. Bench: the CYD client takes the fleet clock (src 4) + the leader's tz, and its bg log
