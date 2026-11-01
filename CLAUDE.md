@@ -747,7 +747,9 @@ C5s must run the same link version (flash together).
 them into `g_dets` after `requestScan()` with a **`g_detVia` "seen by" mask** (bit 0 = own C5, bit k = member slot k;
 `DevGroup.via`). A row the leader also heard keeps ITS OWN values (members' RSSI/flags go to display-only
 `g_detFleetRssi/Flags`). Display/tiles/counts/DETS are fleet-wide; the **SD log, follow engine, uniq and event lines use
-own rows only** (no log-schema change). DETS **v9** appends `via`; the web shows "seen by" chips. S3 envs build with
+own rows only** (no log-schema change). DETS **v9** appends `via`; the web shows "seen by" chips. **v10** (P6 item 5) appends each unit's own RSSI
+(`<via bit>:<rssi>` comma list, fleet rows only; `g_detFleetRssi` is per member slot), and live-POST sends one row
+per unit (member rows tagged `"scanner":<sid>` + `pos_src:"fleet"`; own rows untagged; v9 fleet rows post own-only). S3 envs build with
 `-DHOST_MAX_DET=192`; the CYD keeps 96.
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
 a member's role at runtime (§20.1).

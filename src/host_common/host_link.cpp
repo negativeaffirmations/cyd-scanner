@@ -78,7 +78,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
                          memcmp(nd.mac, peer, 6) == 0;
           nd.name[sizeof(nd.name) - 1] = 0;
           if (!isSelfDet(nd) && !isPhone) {  // drop our own + the paired phone; bit 0 = our C5
-            g_detFleetRssi[g_detCount] = -128; g_detFleetFlags[g_detCount] = 0;
+            clearFleetRssi(g_detCount); g_detFleetFlags[g_detCount] = 0;
             g_detVia[g_detCount++] = 1;
           }
         }

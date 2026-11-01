@@ -19,6 +19,7 @@
 #include <esp_memory_utils.h>
 
 using namespace fleet::detail;
+static_assert(DET_MEMBER_SLOTS == fleet_proto::FLEET_MAX_MEMBERS, "g_detFleetRssi needs one slot per member");
 
 namespace {
 
@@ -751,13 +752,15 @@ int mergeRemote() {
     if (k >= 0) {
       // This unit heard it too: its own row (and so its log line) stays untouched; the member's stronger RSSI and its
       // detector flags go to the display-only side arrays (REV-001: no member data in the leader's own log rows).
-      if (d.rssi > g_detFleetRssi[k]) g_detFleetRssi[k] = d.rssi;
+      int8_t& mr = g_detFleetRssi[k][rr.member];                     // per member: DETS v10's per-unit RSSI list
+      if (d.rssi > mr) mr = d.rssi;
       g_detFleetFlags[k] |= d.flags;
       g_detVia[k] |= bit;
       L->merged++;
     } else if (g_detCount < MAX_DET) {
       g_dets[g_detCount] = d;                                        // a member-only row: never logged (no bit 0)
-      g_detFleetRssi[g_detCount] = -128; g_detFleetFlags[g_detCount] = 0;
+      clearFleetRssi(g_detCount); g_detFleetFlags[g_detCount] = 0;
+      g_detFleetRssi[g_detCount][rr.member] = d.rssi;               // so the per-unit list reads every member alike
       g_detVia[g_detCount++] = bit;
       added++; L->appended++;
     }

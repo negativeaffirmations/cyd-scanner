@@ -170,7 +170,29 @@ void pushDetections() {
     len += snprintf(row + len, sizeof(row) - len, "\t%s\t%s\t%s", cid, uuid, sig);
     if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
     // v9 trailing (fleet P5): "seen by" mask, decimal. bit 0 = this scanner, bit k = fleet member slot k.
-    snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.via);
+    len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.via);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v10 trailing (fleet P6 item 5): each unit's OWN strongest RSSI, "<bit>:<rssi>" comma-joined (bit as in via),
+    // so live-POST can send one row per unit. Empty unless a member heard it (then bestRssi may be a member's).
+    char per[64] = "";
+    if (g.via & ~1u) {
+      int8_t best[1 + DET_MEMBER_SLOTS];
+      memset(best, 0x80, sizeof(best));
+      for (int i = 0; i < g_detCount; i++) {
+        if (memcmp(g_dets[i].mac, g.mac, 6) != 0) continue;
+        if ((g_detVia[i] & 1) && g_dets[i].rssi > best[0]) best[0] = g_dets[i].rssi;
+        for (int s = 0; s < DET_MEMBER_SLOTS; s++)
+          if (g_detFleetRssi[i][s] > best[1 + s]) best[1 + s] = g_detFleetRssi[i][s];
+      }
+      int pn = 0;
+      for (int b = 0; b <= DET_MEMBER_SLOTS; b++) {
+        if (!(g.via & (1u << b)) || best[b] == -128) continue;
+        int w = snprintf(per + pn, sizeof(per) - pn, "%s%d:%d", pn ? "," : "", b, best[b]);
+        if (w < 0 || w >= (int)sizeof(per) - pn) break;
+        pn += w;
+      }
+    }
+    snprintf(row + len, sizeof(row) - len, "\t%s", per);
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }

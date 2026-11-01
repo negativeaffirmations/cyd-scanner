@@ -980,6 +980,10 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
 - **`HOST_MAX_DET=192`** on the S3 envs (static +25 KB; S3 internal free heap ~88 KB, min ~84 KB). The CYD stays at 96
   (+~0.4 KB static, ~4.5 KB heap for forwarding; client free heap ~78 KB, min ~73 KB).
 - **DETS v9:** `\tvia` (decimal mask, bit 0 = the connected scanner, bit k = member slot k) is appended to each row.
+- **DETS v10 (P6 item 5, fw 0.23.0):** `\tunits` = each unit's OWN strongest RSSI, `<via bit>:<rssi>` comma-joined,
+  only on rows a member heard (else empty). `g_detFleetRssi` became per member slot (`[MAX_DET][6]`). Live-POST
+  (`remote.js` `unitsOf()`) sends one row per unit: member rows carry `"scanner":<member sid>` + `pos_src:"fleet"`, the
+  connected unit's own row stays untagged; one phone-ms sequence per batch. v9 fleet rows post own-only.
 - **Web:**
   - Per-row "seen by" chips (one letter per unit, coloured by slot, shown only when a member contributed) and "Seen by"
     in the device modal (`detections.js` / `categories.js`; `viaUnits()` is inlined in each for cache safety).
