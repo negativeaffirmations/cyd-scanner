@@ -25,18 +25,24 @@ The overnight timer didn't fire (the session was de-authenticated); the owner ra
 - **Heap:** mini internal ~88 KB free (min ~84 KB); CYD client ~78 KB (min ~73 KB).
 - **Builds:** all 8 envs pass. Static RAM: cyd 114,648 B; xiao_s3 129,028 B (+25 KB from the 192-row table); c5 80,156 B.
 
-**Board state:** all four bench boards run the latest debug firmware, and both C5s the latest `c5` / `xiao_c5`. The CYD
-is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
+**Board state (updated after the morning run):**
+- mini #2 + the CYD are on the **release** envs (`xiao_s3_rgb`, `cyd`) at **fw 0.22.0** (`b5b99d9`, `build release`).
+  The debug-only serial commands (`fleet m/fk/add/crash/trace`) are gone: use the `*_fleetdbg` envs for bench work.
+- Both C5s run the latest `c5` / `xiao_c5`.
+- The CYD is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
+- The CYD's time preference is "prefer device", so its clock shows GPS (src 2) rather than fleet (4) while its own GPS
+  is fresh. That is correct for that setting.
 - Ports: mini S3 COM10, mini C5 COM9, CYD COM13, CYD C5 COM18.
 - **Mini #1 is untouched (still link v11).**
 
 **Ready, waiting on the owner:**
-1. **Webapp** (P5 "seen by" chips; tokens `20261101b`, footer `fleet-p5 b`): committed on `fleet-mode`, **not
-   deployed**. Deploy = put `webapp/` from `fleet-mode` onto `main`, push, and verify Pages (as for earlier deploys).
-   The web needs fw with DETS v9 to show chips; older fw is unaffected.
-2. **Release flash** (non-debug envs, FW_VERSION → 0.21.0 suggested): the bench units run `*_fleetdbg`. All hosts + C5s
-   must flash together (link v12). Mini #1 needs both halves flashed whenever it joins.
-3. **Push `fleet-mode`** (or merge to `main`) when the owner is happy. Nothing fleet-related is on GitHub yet.
+1. ~~Webapp deploy~~ **DONE** (`main` `7f81c50`, footer `fleet-p5 b`). ~~Release flash~~ **DONE** (mini #2 + the CYD at
+   fw 0.22.0).
+2. **Owner review** of the running fleet and the web "seen by" chips.
+3. If OK, the owner's plan:
+   - **push `fleet-mode`** (nothing fleet-related is on GitHub yet);
+   - **flash mini #1**: both halves, `xiao_s3` + `xiao_c5`, link v12; enroll it from the Fleet card;
+   - start **P6** (the scan-analyzer contract via REMOTE.md).
 
 **Open items / next steps:**
 - **P6 (needs the scan-analyzer contract via REMOTE.md):** the `fleet` evt extra fields, meta `fleet_id` / `fleet_role` /
