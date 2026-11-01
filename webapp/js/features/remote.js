@@ -178,11 +178,16 @@ function realName(r){
 // one its file log stamps, via STATUS pos=; omitted with no fix) + fix_age when the log would mark it
 // held / aged. epoch = LOCAL seconds, ms = phone wall-clock ms (unique per snapshot for the server's
 // session+ms dedup).
-function liveRow(r, sess, epoch, ms, fix){
+// Fleet (P6 item 5): one row per UNIT that heard the device, each with that unit's own RSSI. u.scanner = the
+// member's sid, or null for the connected scanner's own row (credited to the batch meta). Member rows carry the
+// fleet position the leader stamps, so they're marked pos_src:"fleet".
+function liveRow(r, u, sess, epoch, ms, fix){
   const srcs = (r.sources||[]).slice().sort((a,b)=>b.rssi-a.rssi);
-  const o = { live:1, session:sess, epoch, ms, src: srcs.length?srcs[0].tag:"", mac:r.mac, rssi:r.rssi };
+  const o = { live:1, session:sess, epoch, ms, src: srcs.length?srcs[0].tag:"", mac:r.mac, rssi:u.rssi };
+  if(u.scanner) o.scanner = u.scanner;
   if(fix){ o.lat = +fix.lat.toFixed(6); o.lon = +fix.lon.toFixed(6);
-    if(fix.fixAge !== undefined) o.fix_age = fix.fixAge; }
+    if(fix.fixAge !== undefined) o.fix_age = fix.fixAge;
+    if(u.scanner) o.pos_src = "fleet"; }
   const nm = realName(r); if(nm) o.name = nm;
   if(r.ie && !/^0+$/.test(r.ie)) o.ie = r.ie;
   if(r.cidHex) o.cid = r.cidHex;
@@ -192,6 +197,26 @@ function liveRow(r, sess, epoch, ms, fix){
   if(tn>0) o.tier = TIER_NAMES[tn];
   const fs = flagStr(r.flags||0); if(fs) o.flags = fs;
   return JSON.stringify(o);
+}
+
+// Which units heard a DETS row, each with its own RSSI. DETS v10 lists them per via bit (bit 0 = this scanner,
+// bit k = member slot k -> its sid from the Fleet card list; a slot we can't name yet is skipped). Without that
+// list: a non-fleet row is ours; a fleet row from older (v9) firmware is posted only if we heard it ourselves,
+// since its single RSSI may be a member's (the bestRssi max) and member-only rows can't be attributed.
+function unitsOf(r){
+  const via = r.via || 1;
+  if(r.units){
+    const out = [];
+    for(const [b, rssi] of Object.entries(r.units)){
+      const bit = +b;
+      if(!(via & (1 << bit))) continue;
+      if(bit === 0){ out.push({ scanner:null, rssi }); continue; }
+      const m = (state.fleetMembers || []).find(x => x.slot === bit);
+      if(m && m.sid) out.push({ scanner:m.sid, rssi });
+    }
+    return out;
+  }
+  return (via & 1) ? [{ scanner:null, rssi:r.rssi }] : [];
 }
 
 // Called from renderDets once per completed live snapshot. No-ops unless paired, live-upload is on,
@@ -204,7 +229,11 @@ export function maybePostLive(rows){
   const baseMs = Date.now();
   const meta = metaLine();
   const fix = scannerFix();   // one position per snapshot, like the file log's per-cycle stamp
-  const body = (meta ? meta+"\n" : "") + rows.map((r,i)=> liveRow(r, sess, epoch, baseMs+i, fix)).join("\n") + "\n";
+  // One phone wall-clock ms sequence across every posted row (own + member), so ms stays unique per batch.
+  const lines = [];
+  for(const r of rows) for(const u of unitsOf(r)) lines.push(liveRow(r, u, sess, epoch, baseMs+lines.length, fix));
+  if(!lines.length) return;
+  const body = (meta ? meta+"\n" : "") + lines.join("\n") + "\n";
   livePosting = true;
   fetch(api("/api/v1/detections"), {
     method:"POST", headers: authHeaders({ "Content-Type":"application/x-ndjson" }), body

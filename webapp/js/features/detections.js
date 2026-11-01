@@ -30,6 +30,12 @@ function viaUnits(via){
   }
   return out;
 }
+// DETS v10 per-unit RSSI list "<bit>:<rssi>,..." -> {bit: rssi}; null when empty (non-fleet row / older firmware).
+function unitRssi(s){
+  const o = {};
+  for (const x of (s||"").split(",")) { const [b, r] = x.split(":"); if (b !== undefined && r !== undefined && r !== "") o[+b] = +r; }
+  return Object.keys(o).length ? o : null;
+}
 
 
 let detState = { expect:0, rows:[], rendered:false };
@@ -100,7 +106,8 @@ export function onDets(ev){
                       cidHex: p.length>13 ? (p[13]||"") : "",   // DETS v8: raw company ID, 4 hex (live-POST `cid`)
                       uuid: p.length>14 ? (p[14]||"") : "",     // DETS v8: primary service UUID (4 or 32 hex)
                       sig: p.length>15 ? (p[15]||"") : "",      // DETS v8: sigdb/flag label (live-POST `sig`)
-                      via: p.length>16 ? (+p[16]||1) : 1});     // DETS v9: fleet "seen by" mask (1 = this scanner only)
+                      via: p.length>16 ? (+p[16]||1) : 1,       // DETS v9: fleet "seen by" mask (1 = this scanner only)
+                      units: p.length>17 ? unitRssi(p[17]) : null});  // DETS v10: {viaBit: that unit's own RSSI}, fleet rows only
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
