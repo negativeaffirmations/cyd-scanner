@@ -22,6 +22,9 @@ export const state = {
   scannerId: "",        // stable eFuse-MAC id of the connected CYD (opaque)
   scannerFw: "",        // CYD firmware version string
   scannerDbGen: 0,      // sig-DB generation
+  fleetRole: "",        // "leader" / "client" / "" (STATUS flt role) — live-POST meta fleet_role
+  fleetId: "",          // this fleet session's 16-hex id (STATUS fid, fw 0.24.0), "" = none
+  fleetLeader: "",      // the fleet leader's 12-hex sid (STATUS fld)
 
   // --- LOGDATA download/stream reassembly (see ble/download.js) ---
   dl: { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" },

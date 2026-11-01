@@ -82,6 +82,11 @@ export function onStatus(ev){
     renderApCard();
   }
   if("sid" in kv) state.scannerId = kv.sid;            // scan provenance: stable CYD id (eFuse MAC)
+  if("flt" in kv){                                      // fleet session for the live-POST meta (fw 0.24.0 fid/fld ride with flt;
+    const role = +(kv.flt||"0").split(",")[0];          // re-read on every part 2, so leaving a fleet clears them)
+    state.fleetRole = role === 2 ? "leader" : role === 1 ? "client" : "";
+    state.fleetId = kv.fid || ""; state.fleetLeader = kv.fld || "";
+  }
   if("fw"  in kv) state.scannerFw = kv.fw;             // CYD firmware version
   if("dbgen"in kv) state.scannerDbGen = +kv.dbgen||0;  // sig-DB generation
   if("name"in kv){ state.scannerName = kv.name; $("unitName").textContent = kv.name; }  // unit name, e.g. CFLO-MINI-KOBALI
