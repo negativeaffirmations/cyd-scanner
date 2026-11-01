@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261029f">
+<link rel="stylesheet" href="style.css?v=20261031a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -66,7 +66,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-29&nbsp;·&nbsp;live-v8&nbsp;f</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-10-31&nbsp;·&nbsp;wifi-join&nbsp;a</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -145,9 +145,17 @@
       <button id="wifiBtn" class="secondary" disabled>Wi-Fi download mode</button>
       <div id="apCard" class="card" style="display:none; text-align:center; margin:.5em 0">
         <span class="cardhdr">Join the device Wi-Fi</span>
-        <canvas id="apQr" width="0" height="0" style="background:#fff; border-radius:6px; max-width:100%"></canvas>
         <div class="sub" id="apTxt" style="margin-top:.4em"></div>
-        <div class="sub" style="margin-top:.4em">Scan with your camera to join, then <a id="apUrl" href="#" target="_blank" rel="noopener">open the log index</a> (a separate tab &mdash; this page can't reach the device over HTTPS).</div>
+        <div class="fsactions">
+          <button id="apCopyBtn" class="secondary">Copy password</button>
+          <button id="apWifiSetBtn" class="secondary">Open Wi-Fi settings</button>
+        </div>
+        <div class="sub" id="apWifiHint" hidden>Couldn't open it from here &mdash; swipe down to Quick Settings and long-press Wi-Fi.</div>
+        <div class="sub" style="margin-top:.4em">Copy the password, join that network in Wi-Fi settings, come back here, then <a id="apUrl" href="#" target="_blank" rel="noopener">open the log index</a> (a separate tab &mdash; this page can't reach the device over HTTPS). Chrome warns the file &ldquo;can't be downloaded securely&rdquo;: expected, the device serves plain HTTP over its own password-protected Wi-Fi.</div>
+        <details>
+          <summary>Show QR (to join from another device)</summary>
+          <canvas id="apQr" width="0" height="0" style="background:#fff; border-radius:6px; max-width:100%; margin-top:.4em"></canvas>
+        </details>
       </div>
       <details id="filterBox">
         <summary>Download a time range &mdash; all logs</summary>
@@ -470,6 +478,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261029f"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261031a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

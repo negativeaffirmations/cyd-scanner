@@ -105,6 +105,22 @@ $("dlfWifiBtn").onclick = downloadFilteredWifi;
 $("sessDlfBtn").onclick = downloadSessionRange;
 $("sessAll").addEventListener("change", e=>selectAllSessions(e.target.checked));
 $("wifiBtn").onclick = toggleWifi;
+// Wi-Fi download join card: the QR is drawn on this same phone, so it can't scan it. Copy the PSK and hand
+// off to Android's Wi-Fi settings instead (an intent: link; if Chrome won't resolve it the page simply stays
+// visible, so after a beat show the manual hint). Wired here, not in wifiap.js, so it works on first load.
+$("apCopyBtn").onclick = async ()=>{
+  const psk = state.ap && state.ap.psk, b = $("apCopyBtn");
+  if(!psk) return;
+  try { await navigator.clipboard.writeText(psk); }
+  catch(e){ log("Copy failed — type the password shown above."); return; }
+  b.textContent = "Copied ✓";
+  setTimeout(()=>{ b.textContent = "Copy password"; }, 1500);
+};
+$("apWifiSetBtn").onclick = ()=>{
+  $("apWifiHint").hidden = true;
+  location.href = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
+  setTimeout(()=>{ if(document.visibilityState === "visible") $("apWifiHint").hidden = false; }, 1500);
+};
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
 $("sessDelBtn").onclick = deleteSession;

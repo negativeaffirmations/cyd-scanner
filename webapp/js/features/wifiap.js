@@ -1,7 +1,8 @@
 // Wi-Fi download AP join card (Data page). The headless host has no screen, so the device sends its
-// SoftAP credentials in STATUS (apssid/appsk/apurl, only while the AP is up) and we draw the standard
-// "WIFI:" join QR here for the phone camera to scan. The page itself can't join Wi-Fi or fetch the
-// AP's http:// URL from this HTTPS app, hence scan-to-join + a link to open in a separate tab.
+// SoftAP credentials in STATUS (apssid/appsk/apurl, only while the AP is up) and we show its
+// SSID + password (Copy / Open Wi-Fi settings, wired in main.js) and a "WIFI:" QR folded away for ANOTHER
+// device (this phone can't scan its own screen). The page itself can't join Wi-Fi or fetch the
+// AP's http:// URL from this HTTPS app, hence join-by-hand + a link to open in a separate tab.
 import { state } from '../state.js';
 import { $ } from '../util/dom.js';
 

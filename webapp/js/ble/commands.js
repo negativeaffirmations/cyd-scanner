@@ -27,7 +27,7 @@ export async function toggleWifi(){
   state.wifiOn = !state.wifiOn;
   try{ await state.chars.cmd.writeValue(enc.encode(state.wifiOn?"1":"0"));
     $("wifiBtn").textContent = state.wifiOn ? "Stop Wi-Fi download" : "Wi-Fi download mode";
-    log(state.wifiOn ? "Wi-Fi download on — scan the QR on the device to join, then again to open."
+    log(state.wifiOn ? "Wi-Fi download on — join the device Wi-Fi (card below, or the QR on a CYD screen), then open the log index."
               : "Wi-Fi download off."); }
   catch(e){ state.wifiOn = !state.wifiOn; log("Wi-Fi cmd failed: "+e.message); }
 }
