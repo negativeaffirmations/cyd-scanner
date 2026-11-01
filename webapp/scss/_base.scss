@@ -198,6 +198,11 @@ select {
   cursor:default;
   > .material-symbols-outlined { flex:none; color:$color-text-muted; }
   .keyforget { margin-left:auto; flex:none; width:auto; padding:.4em .9em; font-size:.85rem; }
+  // Fleet member rows (features/fleet.js): actions stacked in one equal-width column so the text keeps its width.
+  .fltacts {
+    margin-left:auto; flex:none; display:flex; flex-direction:column; gap:4px;
+    button { width:100%; margin:0; padding:.4em .9em; font-size:.85rem; }
+  }
   .sesssub { font-family:ui-monospace, monospace; }
 }
 .authmsg { color:$color-warn; font-weight:600; overflow-wrap:anywhere; }

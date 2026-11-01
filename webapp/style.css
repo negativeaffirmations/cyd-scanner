@@ -636,6 +636,19 @@ select {
   padding: 0.4em 0.9em;
   font-size: 0.85rem;
 }
+.keyrow .fltacts {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.keyrow .fltacts button {
+  width: 100%;
+  margin: 0;
+  padding: 0.4em 0.9em;
+  font-size: 0.85rem;
+}
 .keyrow .sesssub {
   font-family: ui-monospace, monospace;
 }
