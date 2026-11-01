@@ -47,7 +47,7 @@ struct Plan    { Hdr h; uint8_t planGen, role, slot, nMembers; ScanPlanWire plan
 struct Ctrl    { Hdr h; uint8_t op; uint8_t arg[3]; };                                     // 12 encrypted
 struct MStat   { Hdr h; uint8_t planGen, c5Link; int8_t bat; uint8_t gpsFix;
                  uint16_t dets, deauth; uint8_t evil, rid, tsrc, psrc; uint32_t uniq;
-                 uint16_t heapKB, txFailPm; int32_t lat, lon; };                           // 36 encrypted, every 2 s
+                 uint16_t heapKB, txFailPm; int32_t lat, lon; uint8_t phoneMac[6]; };      // 42 encrypted, every 2 s (phoneMac: its own phone, a fleet self MAC)
 struct DetBatchHdr { Hdr h; uint16_t cycle; uint8_t idx, cnt; };                          // 12 + cnt*81
 struct RidBatchHdr { Hdr h; uint8_t cnt, rsv; };                                          // 10 + cnt*75
 // P1 bench frame (DbgPing leader->bcast, DbgPong client->leader): the whole frame is padded to the size the
@@ -57,7 +57,8 @@ struct DbgPing { Hdr h; uint16_t padLen; };                                     
 
 static_assert(sizeof(Hdr) == 8, "fleet wire size");
 static_assert(sizeof(Probe) == 26 && sizeof(Hello) == 58 && sizeof(Join) == 60 && sizeof(JoinAck) == 64, "fleet wire size");
-static_assert(sizeof(Sync) == 111 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 36, "fleet wire size");
+static_assert(sizeof(Sync) == 111 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 42, "fleet wire size");
+// Sync.flags: bit0 time valid (utc >= 2023), bit1 position valid, bit2 position LIVE at the leader, bit3 tz known.
 static_assert(sizeof(DetBatchHdr) == 12 && sizeof(RidBatchHdr) == 10 && sizeof(DbgPing) == 10, "fleet wire size");
 // A full v2 DetBatch / RidBatch must fit one v2 ESP-NOW frame.
 static_assert(sizeof(DetBatchHdr) + DETS_PER_V2 * sizeof(link_protocol::Detection) <= FLEET_V2_MAX, "DetBatch v2 fits");

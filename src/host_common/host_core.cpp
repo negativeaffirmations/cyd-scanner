@@ -222,23 +222,24 @@ uint8_t g_timePref = SRC_PREFER_PHONE, g_gpsPref = SRC_PREFER_PHONE;
 // The source is decided ONCE per snapshot from one consistent phone read (lat / lon / stamp taken
 // together under the phone's lock, stamps read before millis()), so a caller needing several fields
 // can't mix a phone latitude with an onboard longitude, or take fix_age from a different source.
-// Fleet (docs/fleet-mode.md §7, §16.6): ONE fleet position. A joined CLIENT stamps the leader's fleet position ahead
-// of its own sources (so every unit logs the same track); the LEADER uses a member's live GPS only when it has no live
-// fix of its own. Device-only ignores the fleet like the phone (both are external sources).
-static constexpr uint32_t FLEET_FIX_LIVE_MS = 15000;   // the leader's fix age + Sync transit can reach ~12 s
+// Fleet (docs/fleet-mode.md §7, §16.6, §18): ONE fleet position. A joined CLIENT stamps the leader's fleet position
+// ahead of its own sources under prefer-phone AND prefer-device (the fleet track is shared by design; only device-only
+// opts out), and "live" is the LEADER's own judgement carried in Sync -- so every unit agrees on live vs held. The
+// LEADER uses a member's live GPS only when it has no live fix of its own. (Time differs on purpose: under
+// prefer-device a client's own live clocks rank above the fleet clock, see timeSource().)
 PosFix posSnapshot() {
   PosFix f = {};
   float pla = 0, plo = 0; uint32_t pat = 0;
   bool phHad = g_gpsPref != SRC_DEVICE_ONLY && phone::gpsFix(&pla, &plo, &pat);  // device-only: phone ignored
-  float fla = 0, flo = 0; uint32_t flAge = UINT32_MAX;
-  bool flHad = g_gpsPref != SRC_DEVICE_ONLY && fleet::posFix(&fla, &flo, &flAge);
+  float fla = 0, flo = 0; uint32_t flAge = UINT32_MAX; bool flLive = false;
+  bool flHad = g_gpsPref != SRC_DEVICE_ONLY && fleet::posFix(&fla, &flo, &flAge, &flLive);
   uint32_t now = millis();
   int32_t  d = (int32_t)(now - pat);
   uint32_t phAge  = phHad ? (d > 0 ? (uint32_t)d : 0) : UINT32_MAX;
   uint32_t onbAge = g_onbAtMs ? now - g_onbAtMs : UINT32_MAX;  // set by the link poll on this task
   f.phoneOk = phHad && phone::authed() && phAge < phone::PHONE_GPS_STALE_MS;
   f.onbOk   = g_onbValid && onbAge < ONB_STALE_MS;
-  f.fleetOk = flHad && flAge < FLEET_FIX_LIVE_MS;
+  f.fleetOk = flHad && flLive;
   if (fleet::isClient() && f.fleetOk) f.src = 4;
   else if (g_gpsPref == SRC_PREFER_PHONE && f.phoneOk && (!f.onbOk || phAge < PHONE_FIX_FRESH_MS)) f.src = 1;
   else if (f.onbOk)   f.src = 2;
@@ -333,17 +334,20 @@ void disciplineRtc() {
   static uint32_t lastMs = 0;
   if (done && millis() - lastMs < 3600000UL) return;
   uint32_t utc = 0;
-  // device-only: the phone's time never reaches the RTC either (phoneTimeOk() is false)
-  bool fromPhone = phoneTimeOk() && (g_timePref == SRC_PREFER_PHONE || !gpsTimeFresh());
+  // The clock in use right now (timeSource()), so the RTC follows the same ranking the logs use. Device-only: the
+  // phone and fleet clocks are never sources, so they never reach the RTC either. The RTC never disciplines itself.
   uint32_t fu = 0, fa = 0;
+  const int src = timeSource();
+  const bool fromPhone = src == 1;
+  const bool fromFleet = src == 4 && fleet::timeFix(&fu, &fa);
   if (fromPhone) utc = phone::epochNow() + (uint32_t)(phone::tzOffsetMin() * 60);  // local -> UTC
-  else if (fleetTimeFresh() && fleet::timeFix(&fu, &fa)) utc = fu + (millis() - fa) / 1000;   // a mini fleet client
-  else if (g_gpsEpochUtc) utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
+  else if (fromFleet) utc = fu + (millis() - fa) / 1000;            // a mini fleet client
+  else if (src == 2 && g_gpsEpochUtc) utc = g_gpsEpochUtc + (millis() - g_gpsEpochAtMs) / 1000;
   if (utc < 1700000000UL) return;  // nothing trustworthy yet (before ~2023)
   g_rtcWrite(utc);
   g_rtcEpochUtc = utc; g_rtcAtMs = millis();
   done = true; lastMs = millis();
-  Serial.printf("[CYD] RTC disciplined from %s (utc %lu)\n", fromPhone ? "phone" : fu ? "fleet" : "GPS", (unsigned long)utc);
+  Serial.printf("[CYD] RTC disciplined from %s (utc %lu)\n", fromPhone ? "phone" : fromFleet ? "fleet" : "GPS", (unsigned long)utc);
 }
 uint16_t g_deauthShown = 0;   // values captured when the alert was last raised (banner text)
 uint8_t  g_evilShown = 0;

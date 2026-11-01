@@ -56,6 +56,7 @@ uint32_t g_epochBase  = 0;   // epoch secs at g_baseMillis
 uint32_t g_baseMillis = 0;
 bool     g_haveTime   = false;
 int      g_tzOffMin   = 0;   // UTC-local offset (min); loaded from NVS at begin(), updated on sync
+bool     g_tzKnown    = false;   // the offset came from a phone (now or a saved one), or a leader that knew it
 // The phone fix is written by the NimBLE task and read from loop() on the other core: g_gpsMux keeps
 // lat / lon / stamp together (see gpsFix()).
 portMUX_TYPE g_gpsMux = portMUX_INITIALIZER_UNLOCKED;
@@ -345,6 +346,7 @@ class WriteCB : public NimBLECharacteristicCallbacks {
         g_epochBase = (uint32_t)(utc - offMin * 60);
         g_baseMillis = millis();
         g_haveTime = true;
+        if (n >= 2) g_tzKnown = true;
         if (n >= 2 && (int)offMin != g_tzOffMin) {   // remember the tz so a phone-less GPS boot reads local
           g_tzOffMin = (int)offMin;
           Preferences p;
@@ -507,12 +509,14 @@ namespace phone {
 
 void loadTz() {
   Preferences p;                         // restore the last known tz (for phone-less GPS local time)
-  if (p.begin("cydscan", true)) { g_tzOffMin = p.getInt("tzoff", 0); p.end(); }
+  if (p.begin("cydscan", true)) { g_tzKnown = p.isKey("tzoff"); g_tzOffMin = p.getInt("tzoff", 0); p.end(); }
 }
 
 // A fleet client learns the tz from its leader's Sync (it has no phone of its own). NVS is written only on change.
 void setTzOffsetMin(int offMin) {
-  if (offMin < -840 || offMin > 840 || offMin == g_tzOffMin) return;
+  if (offMin < -840 || offMin > 840) return;
+  g_tzKnown = true;
+  if (offMin == g_tzOffMin) return;
   g_tzOffMin = offMin;
   Preferences p;
   if (p.begin("cydscan", false)) { p.putInt("tzoff", offMin); p.end(); }
@@ -622,6 +626,7 @@ bool rekeyAndKick() {
 bool     hasTime()          { return g_haveTime; }
 uint32_t epochNow()         { return g_haveTime ? g_epochBase + (millis() - g_baseMillis) / 1000 : 0; }
 int      tzOffsetMin()      { return g_tzOffMin; }
+bool     tzKnown()          { return g_tzKnown; }
 // A phone fix is LIVE only while the phone is connected and wrote one within PHONE_GPS_STALE_MS: a
 // pocketed (screen-off) Android Chrome page stops watchPosition, so without this its last fix would pin
 // every later row. The webapp sends a fix every ~5 s, so 90 s won't flap on a live phone.

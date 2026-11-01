@@ -663,9 +663,10 @@ void setEventSink(void (*fn)(const char* op)) { g_eventSink = fn; }
 
 bool timeFix(uint32_t* utc, uint32_t* atMs) { return g_active && !g_leader && detail::client::timeFix(utc, atMs); }
 bool timeFresh() { return g_active && !g_leader && detail::client::timeFresh(); }
-bool posFix(float* lat, float* lon, uint32_t* ageMs) {
+bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
+  *live = false;
   if (!g_active) return false;
-  return g_leader ? detail::leader::memberFix(lat, lon, ageMs) : detail::client::posFix(lat, lon, ageMs);
+  return g_leader ? detail::leader::memberFix(lat, lon, ageMs, live) : detail::client::posFix(lat, lon, ageMs, live);
 }
 bool isFleetSelf(const uint8_t mac[6]) {
   if (!g_active) return false;

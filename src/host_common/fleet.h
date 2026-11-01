@@ -55,7 +55,9 @@ void    statusField(char* out, size_t cap);
 // reported (used only when the leader has no live fix of its own); timeFix/timeFresh are false (it IS the source).
 bool timeFix(uint32_t* utc, uint32_t* atMs);   // UTC `utc` was current at millis() `atMs`; false = never had one
 bool timeFresh();                              // client: a Sync with a valid time arrived within 15 s
-bool posFix(float* lat, float* lon, uint32_t* ageMs);   // position + its age NOW; false = none
+// Position + its age NOW (false = never had one). `live`: client = the LEADER marked it live in a Sync that is still
+// current (one fleet position: the client follows the leader's own judgement); leader = the member fix is < 10 s old.
+bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live);
 // MACs of the fleet's own radios (leader BLE advert, its phone, its SoftAP, members' BLE): never logged as detections.
 bool isFleetSelf(const uint8_t mac[6]);
 

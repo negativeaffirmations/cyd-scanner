@@ -54,6 +54,7 @@ struct ClientSt {
   float    fltLat, fltLon;
   uint32_t fltFixAgeRx, fltFixAtMs;    // the fix's age when the Sync arrived + that millis()
   bool     haveTime, havePos;
+  bool     fltPosLive;                 // the leader marked its fix live (Sync flags bit2)
   uint8_t  selfMacs[9][6];
   uint8_t  nSelf;
 };
@@ -122,6 +123,7 @@ void sendMStat() {
   const bool ownFix = g_onbValid && g_onbAtMs && millis() - g_onbAtMs < 10000;
   m->gpsFix = ownFix ? 1 : 0;
   if (ownFix) { m->lat = (int32_t)lroundf(g_onbLat * 1e7f); m->lon = (int32_t)lroundf(g_onbLon * 1e7f); }
+  phone::peerMac(m->phoneMac);                                     // a mini client's own phone: the fleet must not log it
   sendSealed(C->leaderMac, buf, sizeof(MStat), Msg::MStat, C->sess, C->txSeq, C->sk);
   C->lastMStatMs = millis();
 }
@@ -197,11 +199,13 @@ void onSync(const Rx& f) {
   C->lastSyncMs = now;
   C->rssi = f.rssi;
   // P3: the fleet clock / position / tz / self MACs (flags bit0 time valid, bit1 position valid)
-  if ((s.flags & 0x01) && s.utc >= MIN_UTC) { C->fltUtc = s.utc; C->fltUtcAtMs = now; C->haveTime = true; phone::setTzOffsetMin(s.tzOffMin); }
+  if ((s.flags & 0x01) && s.utc >= MIN_UTC) { C->fltUtc = s.utc; C->fltUtcAtMs = now; C->haveTime = true; }
+  if (s.flags & 0x08) phone::setTzOffsetMin(s.tzOffMin);           // only a tz the leader really knows (never its default 0)
   if ((s.flags & 0x02) && s.lat >= -900000000 && s.lat <= 900000000 && s.lon >= -1800000000 && s.lon <= 1800000000) {
     C->fltLat = s.lat / 1e7f; C->fltLon = s.lon / 1e7f;
     C->fltFixAgeRx = s.fixAgeMs; C->fltFixAtMs = now; C->havePos = true;
   }
+  C->fltPosLive = (s.flags & 0x06) == 0x06;
   C->nSelf = s.nSelf <= 9 ? s.nSelf : 9;
   memcpy(C->selfMacs, s.selfMacs, sizeof(C->selfMacs));
   if (C->st == C_JOINING) {
@@ -343,11 +347,15 @@ bool timeFix(uint32_t* utc, uint32_t* atMs) {
   return true;
 }
 bool timeFresh() { return C && C->haveTime && C->st == C_JOINED && millis() - C->fltUtcAtMs < TIME_FRESH_MS; }
-bool posFix(float* lat, float* lon, uint32_t* ageMs) {
+// The fleet position is live exactly while the LEADER calls it live and its Syncs are current, so every unit agrees
+// on when the shared track is live vs held. Held (the leader's fix aged out, or the leader is gone) still returns
+// the last fleet fix with its true age for the held fallback.
+bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
   if (!C || !C->havePos) return false;
   *lat = C->fltLat; *lon = C->fltLon;
   const uint32_t since = millis() - C->fltFixAtMs;
   *ageMs = C->fltFixAgeRx > UINT32_MAX - since ? UINT32_MAX : C->fltFixAgeRx + since;   // the leader's age + ours
+  *live = C->fltPosLive && C->st == C_JOINED && millis() - C->lastSyncMs < SYNC_LOST_MS;
   return true;
 }
 bool isSelf(const uint8_t mac[6]) {

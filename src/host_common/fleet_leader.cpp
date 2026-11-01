@@ -49,6 +49,7 @@ struct MemberRt {
   uint8_t  bleMac[6];                  // its BLE advert MAC (JoinAck; zeros for a CYD client): a fleet "self" MAC
   float    fixLat, fixLon;             // its OWN live GPS fix from MStat (P3: fleet position fallback)
   uint32_t fixAtMs;                    // 0 = never
+  uint8_t  phoneMac[6];                // its own connected phone (MStat), a fleet self MAC
 };
 
 struct Leader {
@@ -66,6 +67,7 @@ struct Leader {
   uint8_t  chPending;
   uint32_t chSwitchAtMs;
   uint32_t lastRemacMs;
+  int8_t   fixMember;                  // member whose GPS is the fleet position fallback (sticky; -1 = none)
 };
 Leader* L = nullptr;   // heap, created by the first use (normal-mode static footprint stays one pointer)
 
@@ -157,8 +159,9 @@ void sendSync(int i) {
   s->tsrc = (uint8_t)timeSource();
   if (timeHasSync()) {
     s->utc = epochLocal() + (uint32_t)(phone::tzOffsetMin() * 60);   // epochLocal is local: back to UTC
-    s->flags |= 0x01;
+    if (s->utc >= 1700000000UL) s->flags |= 0x01;                    // the same bar the client applies
   }
+  if (phone::tzKnown()) s->flags |= 0x08;                            // never push a default 0 tz over a client's real one
   PosFix f = posSnapshot();
   s->psrc = f.src;
   if (f.src) {
@@ -170,7 +173,8 @@ void sendSync(int i) {
   if (phone::ownMac(m))  addSelf(s, m);                            // this leader's BLE advert
   if (phone::peerMac(m)) addSelf(s, m);                            // the phone connected to it
   if (webshare::active()) { WiFi.softAPmacAddress(m); addSelf(s, m); }   // its download AP
-  for (int k = 0; k < L->st.n; k++) if (L->rt[k].state == M_JOINED) addSelf(s, L->rt[k].bleMac);
+  for (int k = 0; k < L->st.n; k++)
+    if (L->rt[k].state == M_JOINED) { addSelf(s, L->rt[k].bleMac); addSelf(s, L->rt[k].phoneMac); }
   memcpy(s->leaderSid, L->sid, 6);
   strncpy(s->leaderName, devkey::unitName(), sizeof(s->leaderName) - 1);
   sendSealed(r.mac, buf, sizeof(Sync), Msg::Sync, r.sess, r.txSeq, r.sk);
@@ -287,6 +291,7 @@ void onMStat(const Rx& f) {
   MemberRt& r = L->rt[i];
   r.lastRxMs = millis(); r.rssi = f.rssi;
   r.heapKB = m.heapKB; r.txFailPm = m.txFailPm;
+  memcpy(r.phoneMac, m.phoneMac, 6);
   if (m.gpsFix && m.lat >= -900000000 && m.lat <= 900000000 && m.lon >= -1800000000 && m.lon <= 1800000000) {
     r.fixLat = m.lat / 1e7f; r.fixLon = m.lon / 1e7f; r.fixAtMs = r.lastRxMs;
   }
@@ -430,6 +435,7 @@ void begin() {
   for (int i = 0; i < FLEET_MAX_MEMBERS; i++) { memset(&L->rt[i], 0, sizeof(MemberRt)); }
   L->probing = false;
   L->lastRemacMs = millis();
+  L->fixMember = -1;
   Serial.printf("[FLT] leader: %u member(s) enrolled\n", (unsigned)L->st.n);
 }
 
@@ -497,24 +503,41 @@ void fillUi(Ui& u) {
   u.members = e; u.joinedMembers = j;
 }
 
-bool memberFix(float* lat, float* lon, uint32_t* ageMs) {
+// The fleet-position fallback from members' own GPS. STICKY: keep the current member while its fix is live, so the
+// fleet track can't bounce between two members a few metres apart every Sync; otherwise switch to the freshest
+// live one. With none live, return the most recent one with its true age (the held fallback), live = false.
+bool memberFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
   if (!L) return false;
   const uint32_t now = millis();
-  int best = -1;
-  for (int i = 0; i < L->st.n; i++) {
+  auto isLive = [&](int i) {
     const MemberRt& r = L->rt[i];
-    if (r.state != M_JOINED || !r.fixAtMs || now - r.fixAtMs >= MEMBER_FIX_LIVE_MS) continue;
-    if (best < 0 || r.fixAtMs > L->rt[best].fixAtMs) best = i;
+    return i >= 0 && i < L->st.n && r.state == M_JOINED && r.fixAtMs && now - r.fixAtMs < MEMBER_FIX_LIVE_MS;
+  };
+  int pick = isLive(L->fixMember) ? L->fixMember : -1;
+  if (pick < 0) {
+    for (int i = 0; i < L->st.n; i++)
+      if (isLive(i) && (pick < 0 || L->rt[i].fixAtMs > L->rt[pick].fixAtMs)) pick = i;
+    L->fixMember = (int8_t)pick;
   }
-  if (best < 0) return false;
-  *lat = L->rt[best].fixLat; *lon = L->rt[best].fixLon; *ageMs = now - L->rt[best].fixAtMs;
+  if (pick < 0) {                                                  // none live: the most recent fix ever seen
+    for (int i = 0; i < L->st.n; i++)
+      if (L->rt[i].fixAtMs && (pick < 0 || L->rt[i].fixAtMs > L->rt[pick].fixAtMs)) pick = i;
+    if (pick < 0) return false;
+  }
+  *lat = L->rt[pick].fixLat; *lon = L->rt[pick].fixLon; *ageMs = now - L->rt[pick].fixAtMs;
+  *live = isLive(pick);
   return true;
 }
 
 bool isSelf(const uint8_t mac[6]) {
   if (!L) return false;
-  for (int i = 0; i < L->st.n; i++)
-    if (L->rt[i].state == M_JOINED && macSet(L->rt[i].bleMac) && !memcmp(L->rt[i].bleMac, mac, 6)) return true;
+  for (int i = 0; i < L->st.n; i++) {
+    const MemberRt& r = L->rt[i];
+    if (r.state != M_JOINED) continue;
+    if (macSet(r.bleMac) && !memcmp(r.bleMac, mac, 6)) return true;
+    if (macSet(r.phoneMac) && !memcmp(r.phoneMac, mac, 6)) return true;
+  }
+  if (webshare::active()) { uint8_t ap[6]; WiFi.softAPmacAddress(ap); if (!memcmp(ap, mac, 6)) return true; }   // own AP
   return false;
 }
 

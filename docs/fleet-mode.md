@@ -871,5 +871,24 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
 - **MStat now carries** `bat`, `c5Link`, and the member's OWN live onboard fix (`gpsFix`/`lat`/`lon`).
 - **Deferred to P6 (scan-analyzer contract first):** the `devpos` per-unit GPS line, the meta keys
   `fleet_id`/`fleet_role`/`fleet_leader`, and the member-chosen fleet-position source setting.
-- **Not yet bench-tested:** position flow (needs the phone on the leader, or a GPS fix) and self-MAC drops (by
-  inspection only).
+- **Position bench (2026-11-01):** with the owner's phone on the leader, the CYD client shows `pos src 4 live` (fix
+  age 4 s) and receives 2 self MACs (the leader's BLE + the phone). The owner confirmed the CYD screen reads `Pos: fleet`.
+  Self-MAC drops are verified by inspection only.
+
+### 18.1 P3 review (2026-11-01) — fixes applied
+- **REV-001: "live" is the leader's call.** Sync flags bit2 (position live) is latched. A client's fleet fix counts as
+  live only while the leader says so AND its Syncs are current, so every unit agrees on live vs held. `fix_age` still
+  uses the leader's age plus transit.
+- **REV-002: no fake tz.** Sync flags **bit3 = tz known**. It is set only when the leader's tz came from a phone (now
+  or saved in NVS) or from its own leader. Clients ignore the tz otherwise, and never overwrite a real one with 0.
+- **REV-003** was already handled (the CYD fleet-client boot calls `phone::loadTz()`).
+- **REV-004:** the RTC write-back takes its source from `timeSource()` (the same ranking the logs use).
+- **REV-005:** documented. Position ignores the prefer-device setting on a client (one shared track), but time
+  does not.
+- **REV-006/007:** the leader's member-GPS fallback is **sticky** (it keeps the same member while that fix is live)
+  and returns the last member fix with its true age for the held fallback.
+- **REV-008:** MStat is now **42 B** (`phoneMac[6]`: a mini client's own phone). The leader adds members' phones to
+  `selfMacs`, and its own `isSelf` also covers members' phones and its own SoftAP BSSID.
+- **REV-009:** Sync flags bit0 is set only for UTC ≥ 2023, the same bar the client applies.
+- **Re-bench:** rejoin 4.5 s, time src 4 with the leader's tz, log renamed. Both boards must flash together (MStat
+  size).
