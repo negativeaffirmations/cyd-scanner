@@ -762,3 +762,84 @@ leader doing heavy work, and with accidental duplicate uploads detectable.
   and `fleet` events). Coordinate via REMOTE.md before P6. scan-analyzer's existing row-level dedup
   (2026-10-22) makes re-uploads cheap already.
 - **Phase change:** adds a **P5b** (LogRows stream + ack/resume + fleet stream + meta) after P5.
+
+## 17. P2 as built (2026-10-31) — deviations and specifics (supersede §4-§5 / §9.4 where they differ)
+Files: `fleet_internal.h` (shared internals), `fleet_leader.cpp`, `fleet_client.cpp`; transport and crypto
+helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fleet.js`, the Settings **Fleet** card.
+
+- **App-level tag on every session frame.** JoinAck, Sync, MStat and Ctrl carry `HMAC-SHA256(SK, header+payload)[0..8)`
+  appended after the struct (on-air length = `sizeof + 8`). It is checked before the seq window, so a forged frame
+  can't advance it. Reason: whether ESP-NOW drops UNencrypted frames that spoof an encrypted peer's MAC is
+  unconfirmed. Without the tag, a forged Ctrl RELEASE could reboot a member. ESP-NOW CCMP (LMK = SK) still
+  provides secrecy.
+- **Sync = 111 B:** adds `char leaderName[20]` (encrypted) so a client can show its leader. P2 fills only `ch`,
+  `leaderSid` and `leaderName`; time, position and selfMacs are P3.
+- **MStat in P2:** only `heapKB`, `txFailPm`, `bat=-1`. It is the client's heartbeat. The leader marks a member lost
+  after 10 s without one; the client marks the leader lost after 15 s without a Sync.
+- **Hello replay guard:** the leader skips a Hello whose `nc` started the member's current session.
+- **CMD framing:** `M<seq>:<op>[:args]` (seq 1-255, as with the explorer's `Z`). Reply: LOGDATA `FLT=<n>:<seq>` + `<n>`
+  bytes, `OK\t…` / `ERR\t<why>`. `M:` without a seq is still accepted (seq 0).
+  - `l` → `OK\t<role>\t<active>\t<ch>\t<planMode 0>\t<maxPayload>`, then one line per member:
+    `slot\tsid\tname\tkg\tstate\trssi\tage_s\trole\tdets\tbat\tc5link\ttsrc\tpsrc\ttxFailPm\tfw`
+    (state 0 enrolled / 1 joining / 2 joined / 3 lost; P2 sends 0 / -1 for the plan + scan columns).
+  - `a:<sid>:<kg>:<w>:<wrapped>:<tag>:<name>`. The name is 1-20 of `[A-Za-z0-9 _.-]`. The tag covers the exact `kg`
+    digits sent.
+  - `r:<sid>` remove (CTRL_UNJOIN ×2 if joined), `x:<sid>` release (CTRL_RELEASE ×3, joined only), `c:<1-13>`.
+    With members joined, `c` sends CTRL_SETCH and the leader follows 300 ms later.
+  - `L1` / `L0` leader on / off (also how a mini CLIENT leaves), `j` become a client. A role change replies first,
+    then reboots.
+  - Audited as `phonecfg` `fleetadd` / `fleetrm` (path = member sid). Fleet events go to `evt:"fleet"` with ops
+    `join`, `lost`, `unjoin`, `release`, `member_add`, `member_remove`, `member_join`, `member_lost`,
+    `member_release`, `client_set`, `start`, `leave`.
+- **STATUS part 2:** `flt=<role>,<joined>/<enrolled>,<ch>` (a client reports `0/1` or `1/1`).
+- **Probing:** only while an enrolled member is un-joined: every 3 s for 2 min from the first miss, then every 15 s.
+  A rebooted client waits for the leader's 10 s loss mark before probes resume (~10 s rejoin). A released member
+  stays enrolled (shown "lost"), so slow probing continues until it is removed.
+- **Client search:** dwell 9 s on the saved channel, then 1 / 6 / 11. It saves the channel it joined on. A new MAC
+  is drawn before the first Hello after any session ends.
+- **Bench-only (`-DFLEET_DEBUG`):** `fleet fk` prints this unit's FK as a ready `fleet add <sid> <fk> <name>` line;
+  `fleet add …` stores a member directly; `fleet m <M-command>` runs a phone command over serial; the serial line
+  buffer is 176 B in these envs (48 in release).
+- **Bench results (2026-10-31, mini #2 leader + CYD client):** all PASS.
+  - Join ~1 s after enrollment; the leader stops probing once all members are joined.
+  - Wrong FK: never joins. Re-add with the correct FK: joins in 4 s.
+  - Channel change: members follow and stay joined.
+  - Leader reboot: the client marks it lost at 15 s, then rejoins in 2 s from a fresh MAC.
+  - Client reboot: rejoins ~9 s after the reset.
+  - Remove → the client searches; release → the CYD reboots normal with its phone link.
+  - The real `fleetcrypto.js` (run in Node) built an `M:a` the leader accepted, and the CYD then joined with its
+    on-device FK (web ≡ firmware). A tampered name → `bad tag`; a replayed `M:a` → `replayed`.
+- **Not yet done:** web-app enrollment from the phone (card built, untested on a phone); the sniffer check that no
+  sid/name/real MAC goes out in the clear (P1 step 9 + P2); a replay of captured session frames (spare-S3
+  harness).
+
+### 17.1 Review + security pass (2026-10-31) — fixes applied, all re-bench-tested
+- **HMAC fail-open (both reports, high):** every `Hmac::finish()` is now checked (`[[nodiscard]]`). On a crypto error
+  it fills the output with random bytes, never zeros, so a forgotten check still can't be matched. The context lives
+  inside the object (no per-call `new`).
+- **M:a replay (medium):** the tag now binds a persistent enrollment counter (`CFLO-FLT-ADD-2`, NVS `fltactr`, sent
+  as the 7th field of the `M:l` header). `M:a` = `a:<sid>:<kg>:<ctr>:<w>:<wrapped>:<tag>:<name>`; the counter
+  advances on each add. Bench: replay at once → `stale`; replay after a leader reboot → `stale`.
+- **Hello replay vs a live session (medium):** a member with a session only rejoins through a probe sent after that
+  session began.
+- **Channel moves:** CTRL_SETCH is sent ×3. A searching client alternates the preferred pass (saved / 1 / 6 / 11) with
+  a full 1-13 pass. Bench: ch 3 and back OK.
+- **A live SoftAP is never moved:** `M:c` is refused while the AP is up. A client defers SETCH and stops channel
+  hopping while its AP is up. `M:c` is also refused on an active client.
+- **Encrypt / delete only after frames LEAVE the radio:** the send callback records unicast completions
+  (`sendDone`). The leader clears stale completions before a Ctrl burst, then waits for them. The bench caught a
+  release lost to a stale Sync completion; fixed and re-tested.
+- **Failure handling:** if `rerandomizeMac` fails, the unit reboots (it neither stays offline nor reuses its MAC).
+  RAM and NVS stay consistent (NVS is written first). A failed Hello send deletes its peer.
+- **Hygiene:**
+  - Junk Hellos can't eat the rate budget (the freshness check runs first).
+  - The member `fw` string is sanitised before it enters the TSV.
+  - Wrapped key material is zeroed in `phone.cpp` and `handlePhoneCmd`.
+  - `flt=` moved after the AP credentials in STATUS part 2 and gained a `canLead` field.
+  - The leader re-randomizes its MAC every 15 min while nobody is joined (anti-tracking).
+  - The web key store opens without a fixed version.
+- **Accepted / documented:**
+  - Join's cleartext `slot` / `nMembers`.
+  - Probes continue at 15 s for a released (still enrolled) member.
+  - Stored FKs sit in NVS like the devkey; revoking one means rekeying that member.
+  - Member slot numbers go stale after a removal until rejoin — **P4 must re-send slots** (Plan).

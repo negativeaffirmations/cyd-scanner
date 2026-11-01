@@ -10,7 +10,11 @@
 namespace {
 
 constexpr uint32_t REKEY_CONFIRM_MS = 15000;
+#ifdef FLEET_DEBUG
+char     g_line[176];            // bench: `fleet add <sid> <fk> <name>` / `fleet m a:...` enrollment lines
+#else
 char     g_line[48];
+#endif
 size_t   g_len = 0;
 bool     g_overflow = false;     // line too long: discard it up to the newline
 uint32_t g_rekeyArmedAt = 0;     // millis() of `rekey` (0 = not armed)
@@ -65,6 +69,19 @@ void fleetCmd(const char* arg) {
     fleet::dbgSetRate(atoi(arg + 5));
   } else if (!strcmp(arg, "trace on") || !strcmp(arg, "trace off")) {
     fleet::dbgSetTrace(!strcmp(arg, "trace on"));
+#ifdef FLEET_DEBUG
+  } else if (!strncmp(arg, "m ", 2)) {   // "m <M: command>" bench passthrough to the phone-command handler
+    char out[768];
+    fleet::CmdAction act = fleet::handlePhoneCmd(arg + 2, out, sizeof(out));
+    Serial.printf("[fleet] FLT= %s\n", out);
+    if (act == fleet::CMD_RESTART) fleetRestart("fleet command");
+  } else if (!strcmp(arg, "fk")) {   // bench enrollment without the web app: this unit's fleet key + the leader command
+    fleet::dbgPrintFk();
+  } else if (!strncmp(arg, "add ", 4)) {   // "add <sid> <fk> <name>" on the leader
+    char sid[16] = {0}, fk[40] = {0}, name[24] = {0};
+    if (sscanf(arg + 4, "%15s %39s %23s", sid, fk, name) == 3) fleet::dbgAddMember(sid, fk, name);
+    else Serial.println("[fleet] usage: fleet add <sid 12hex> <fk 32hex> <name>");
+#endif
   } else if (!strncmp(arg, "pad ", 4)) {
     fleet::dbgSetPad(atoi(arg + 4));
 #ifdef FLEET_DEBUG

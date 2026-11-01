@@ -107,6 +107,8 @@ bool exportRequested(int* mode, int* minutes, char* path, size_t cap);
 // True once if the app set a brightness ("B:<0-100>"); fills the percent value.
 bool brightnessRequested(int* outPct);
 
+// Fleet (fleet::handlePhoneCmd). True once per "M:<op>[:args]" write; fills `out` with the whole command.
+bool fleetRequested(char* out, size_t cap);
 // File explorer (host_files.cpp). True once per "Z<seq>:<op>:<arg>" write; fills `out` with "<seq>:<op>:<arg>".
 bool fsRequested(char* out, size_t cap);
 // True once per "U<seq byte><bytes>" upload chunk; copies the raw bytes (binary-safe), their length and the tag.

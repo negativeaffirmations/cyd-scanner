@@ -97,6 +97,9 @@ volatile uint8_t g_prefVal = 0;  // (t << 4) | g, one byte so the NimBLE task ca
 // (an FS= payload) before its next write, so one slot of each is enough; loop() does all the SD work.
 volatile bool g_fsReq = false;
 char     g_fsCmd[208] = {0};
+// Fleet: "M:<op>[:args]" (fleet::handlePhoneCmd). The web app waits for each FLT= reply, so one slot is enough.
+volatile bool g_fltReq = false;
+char     g_fltCmd[160] = {0};
 volatile bool g_upReq = false;
 uint8_t  g_upBuf[phone::UPLOAD_CHUNK_MAX];
 size_t   g_upLen      = 0;
@@ -233,6 +236,7 @@ class ServerCB : public NimBLEServerCallbacks {
       // Nothing queued by this peer may stream to the NEXT one: drop pending transfer requests.
       g_logReq = g_fileReq = g_expReq = g_listReq = g_wlList = false;
       g_fsReq = false; g_upReq = false; g_upOverrun = false;
+      g_fltReq = false;
     }
     Serial.println("[phone] disconnected");
     NimBLEDevice::getAdvertising()->start();  // keep discoverable
@@ -416,6 +420,13 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_fsCmd[sizeof(g_fsCmd) - 1] = 0;
           g_fsReq = true;
           Serial.printf("[phone] cmd file op %.40s\n", g_fsCmd);
+        }
+      } else if (c0 == 'M') {                        // "M:<op>[:args]" fleet command (fleet::handlePhoneCmd)
+        if (val.size() > 2 && val.size() < sizeof(g_fltCmd) && !g_fltReq) {
+          memcpy(g_fltCmd, val.c_str(), val.size());
+          g_fltCmd[val.size()] = 0;
+          g_fltReq = true;
+          Serial.printf("[phone] cmd fleet %.3s\n", g_fltCmd);   // args may carry wrapped key material: not logged
         }
       } else if (c0 == 'U') {                        // "U<seq byte><raw bytes>" one upload chunk (binary-safe: uses size())
         if (val.size() >= 2) {
@@ -693,6 +704,15 @@ bool brightnessRequested(int* outPct) {
   if (!g_briReq) return false;
   g_briReq = false;
   *outPct = g_briVal;
+  return true;
+}
+
+bool fleetRequested(char* out, size_t cap) {
+  if (!g_fltReq) return false;
+  strncpy(out, g_fltCmd, cap - 1);
+  out[cap - 1] = 0;
+  memset(g_fltCmd, 0, sizeof(g_fltCmd));   // an M:a carries a wrapped fleet key: don't keep it in a static
+  g_fltReq = false;   // after the copy: the NimBLE task only refills the slot once this clears
   return true;
 }
 

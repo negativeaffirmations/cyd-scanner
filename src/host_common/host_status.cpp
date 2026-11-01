@@ -8,6 +8,7 @@
 #include "phone.h"
 #include "webshare.h"
 #include "whitelist.h"
+#include "fleet.h"
 
 void pushStatus() {
   if (!phone::authed()) return;   // setStatus() only reaches an authenticated phone: skip the build (heap churn on fleet clients)
@@ -53,8 +54,13 @@ void pushStatus() {
       n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=;pfa=-1");
   }
   if (webshare::active() && n2 > 0 && n2 < (int)sizeof(s2))  // download AP up: the phone draws the join QR from these
-    snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s;apsta=%d",   // apsta: phones joined (web stepper)
-             webshare::ssid(), webshare::apPass(), webshare::url(), webshare::stations());
+    n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s;apsta=%d",   // apsta: phones joined (web stepper)
+                   webshare::ssid(), webshare::apPass(), webshare::url(), webshare::stations());
+  // Fleet LAST: if part 2 ever overflows the ~252 B notify, flt= is what gets cut, never the AP credentials.
+  if (n2 > 0 && n2 < (int)sizeof(s2)) {   // role, joined/enrolled, channel, can-lead (web Fleet card)
+    char ff[24]; fleet::statusField(ff, sizeof(ff));
+    snprintf(s2 + n2, sizeof(s2) - n2, ";flt=%s", ff);
+  }
   static bool warned = false;
   if (!warned && (strlen(s) > 240 || strlen(s2) > 240)) {
     warned = true;

@@ -12,12 +12,26 @@
 #include <esp_memory_utils.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <mbedtls/md.h>
+#include <new>
+#include <ctype.h>
 #include "fleet.h"
 #include "fleet_proto.h"
+#include "fleet_internal.h"
+#include "devkey.h"
 #include "host_board.h"
 #include "webshare.h"
 
 using namespace fleet_proto;
+
+// Transport state shared with fleet_leader.cpp / fleet_client.cpp (fleet_internal.h).
+namespace fleet { namespace detail {
+uint8_t  g_ch = FLEET_DEFAULT_CH;
+bool     g_active = false, g_leader = false;
+uint8_t  g_mac[6] = {0};
+uint16_t g_maxPayload = 0;
+}}
+using namespace fleet::detail;
 
 namespace {
 
@@ -27,17 +41,17 @@ const uint8_t kPmk[16] = { 'C','F','L','O','-','F','L','T','-','P','M','K','-','
 constexpr uint32_t STABLE_MS     = 60000;   // uptime after which the crash counter is cleared
 constexpr uint8_t  CRASH_BOOTS   = 3;
 constexpr int      DRAIN_MAX     = 8;       // RX frames handled per service() pass
-constexpr size_t   CLIENT_SLOT   = 256;     // client RX slot (header + data); leader->client frames are <= 74 B
+constexpr size_t   CLIENT_SLOT   = 256;     // client RX slot (header + data); leader->client frames are <= 119 B (Sync + tag)
 constexpr int      CLIENT_SLOTS  = 8;
 constexpr int      LEADER_SLOTS  = 16;
 constexpr int      FALLBACK_SLOTS = 8;      // leader pool when PSRAM is unavailable
 
 // --- static footprint (normal mode must stay < 300 B: everything big is allocated by begin*) ---
-uint8_t  g_role = 0, g_ch = FLEET_DEFAULT_CH, g_fellBackRole = 0;
-bool     g_fellBack = false, g_bootCounted = false, g_active = false, g_leader = false;
+uint8_t  g_role = 0, g_fellBackRole = 0;
+bool     g_fellBack = false, g_bootCounted = false;
 bool     g_rate12 = true, g_rateWarned = false;
-uint16_t g_maxPayload = 0;
-uint8_t  g_mac[6] = {0};
+void   (*g_eventSink)(const char*) = nullptr;
+uint32_t g_events = 0;
 uint8_t* g_pool = nullptr;
 uint16_t g_slotSize = 0;
 uint8_t  g_slots = 0;
@@ -52,10 +66,6 @@ constexpr uint8_t SF_TRUNC = 1;
 
 inline Slot* slotAt(uint8_t i) { return (Slot*)(g_pool + (size_t)i * g_slotSize); }
 inline uint16_t slotCap() { return (uint16_t)(g_slotSize - sizeof(Slot)); }
-
-void macStr(const uint8_t* m, char* out) {
-  snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
-}
 
 void printHeap(const char* tag) {
   Serial.printf("[FLT] %s heap free=%u min=%u largest=%u", tag, (unsigned)ESP.getFreeHeap(),
@@ -239,8 +249,21 @@ void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   BUMP(g_rxFrames);
 }
 
-void onSent(const esp_now_send_info_t*, esp_now_send_status_t st) {
+// Last few unicast destinations that left the radio (Wi-Fi task writes, loop() reads + consumes; detail::sendDone).
+portMUX_TYPE g_sentMux = portMUX_INITIALIZER_UNLOCKED;
+uint8_t      g_sentMac[4][6];
+bool         g_sentUsed[4] = { false, false, false, false };
+uint8_t      g_sentNext = 0;
+
+void onSent(const esp_now_send_info_t* info, esp_now_send_status_t st) {
   if (st == ESP_NOW_SEND_SUCCESS) BUMP(g_txOk); else BUMP(g_txFail);
+  if (info && info->des_addr && !(info->des_addr[0] & 1)) {   // unicast only (Probe broadcasts don't matter)
+    portENTER_CRITICAL(&g_sentMux);
+    memcpy(g_sentMac[g_sentNext], info->des_addr, 6);
+    g_sentUsed[g_sentNext] = true;
+    g_sentNext = (g_sentNext + 1) % 4;
+    portEXIT_CRITICAL(&g_sentMux);
+  }
 }
 
 // ------------------------------------------------------------------ radio bring-up
@@ -378,12 +401,134 @@ bool begin(bool leader) {
   Serial.printf("[FLT] heap before %u, after %u (fleet cost %d B)\n", (unsigned)heap0, (unsigned)ESP.getFreeHeap(),
                 (int)heap0 - (int)ESP.getFreeHeap());
   printHeap(leader ? "L" : "C");
+  if (leader) fleet::detail::leader::begin(); else fleet::detail::client::begin();
   return true;
 }
 
 const char* roleName(uint8_t r) { return r == fleet::ROLE_LEADER ? "leader" : r == fleet::ROLE_CLIENT ? "client" : "off"; }
 
 }  // namespace
+
+// ------------------------------------------------------------------ shared internals (fleet_internal.h)
+namespace fleet { namespace detail {
+
+Hmac::Hmac(const uint8_t* key, size_t klen) : ok_(false) {
+  mbedtls_md_init(&ctx_);
+  ok_ = mbedtls_md_setup(&ctx_, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1) == 0 &&
+        mbedtls_md_hmac_starts(&ctx_, key, klen) == 0;
+}
+Hmac::~Hmac() { mbedtls_md_free(&ctx_); }
+Hmac& Hmac::add(const void* p, size_t n) {
+  if (ok_ && n) ok_ = mbedtls_md_hmac_update(&ctx_, (const uint8_t*)p, n) == 0;
+  return *this;
+}
+Hmac& Hmac::add(const char* s) { return add(s, strlen(s)); }
+bool Hmac::finish(uint8_t out[32]) {
+  if (ok_) ok_ = mbedtls_md_hmac_finish(&ctx_, out) == 0;
+  if (!ok_) esp_fill_random(out, 32);   // never all-zeros: a caller that forgot the check still can't be matched
+  return ok_;
+}
+
+// FK = HMAC-SHA256(devkey, "CFLO-FLT-KEY-1|" + sid)[0..16) (docs §5.1). The web app derives the same value from the
+// key it stores for this sid; the leader only ever holds FK, never the devkey.
+bool ownFleetKey(uint8_t out[KEY_LEN]) {
+  char msg[32];
+  int n = snprintf(msg, sizeof(msg), "CFLO-FLT-KEY-1|%s", devkey::sid());
+  uint8_t h[32];
+  bool ok = devkey::hmac((const uint8_t*)msg, (size_t)n, h);
+  memcpy(out, h, KEY_LEN);
+  memset(h, 0, sizeof(h));
+  return ok;
+}
+
+void randomBytes(void* p, size_t n) { esp_fill_random(p, n); }
+bool ctEqual(const uint8_t* a, const uint8_t* b, size_t n) { return devkey::ctEqual(a, b, n); }
+
+void macStr(const uint8_t* m, char* out) {
+  snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+bool sidFromHex(const char* hex, uint8_t out[6]) {
+  if (!hex || strlen(hex) != 12) return false;
+  for (int i = 0; i < 6; i++) {
+    unsigned v;
+    char b[3] = { hex[2 * i], hex[2 * i + 1], 0 };
+    if (!isxdigit((unsigned char)b[0]) || !isxdigit((unsigned char)b[1]) || sscanf(b, "%x", &v) != 1) return false;
+    out[i] = (uint8_t)v;
+  }
+  return true;
+}
+void sidToHex(const uint8_t sid[6], char out[13]) {
+  snprintf(out, 13, "%02x%02x%02x%02x%02x%02x", sid[0], sid[1], sid[2], sid[3], sid[4], sid[5]);
+}
+
+bool peerSet(const uint8_t* mac, const uint8_t* lmk) {
+  esp_now_peer_info_t pi = {};
+  memcpy(pi.peer_addr, mac, 6);
+  pi.channel = 0;                  // current channel
+  pi.ifidx = WIFI_IF_STA;
+  pi.encrypt = lmk != nullptr;
+  if (lmk) memcpy(pi.lmk, lmk, KEY_LEN);
+  esp_err_t e = esp_now_is_peer_exist(mac) ? esp_now_mod_peer(&pi) : esp_now_add_peer(&pi);
+  memset(pi.lmk, 0, sizeof(pi.lmk));
+  if (e != ESP_OK) { Serial.printf("[FLT] peer %s failed (%d)\n", lmk ? "encrypt" : "add", (int)e); return false; }
+  applyRate(mac);
+  return true;
+}
+void peerDel(const uint8_t* mac) { if (esp_now_is_peer_exist(mac)) esp_now_del_peer(mac); }
+
+bool sendDone(const uint8_t* mac) {
+  bool hit = false;
+  portENTER_CRITICAL(&g_sentMux);
+  for (int i = 0; i < 4; i++)
+    if (g_sentUsed[i] && !memcmp(g_sentMac[i], mac, 6)) { g_sentUsed[i] = false; hit = true; }
+  portEXIT_CRITICAL(&g_sentMux);
+  return hit;
+}
+
+bool sendClear(const uint8_t* mac, const void* frame, size_t len) {
+  if (!g_active || len > g_maxPayload) return false;
+  return esp_now_send(mac, (const uint8_t*)frame, len) == ESP_OK;
+}
+
+bool sendSealed(const uint8_t* mac, uint8_t* frame, size_t len, Msg type, uint16_t sess, uint32_t& txSeq,
+                const uint8_t sk[KEY_LEN]) {
+  if (len < sizeof(Hdr) || len + TAG_LEN > g_maxPayload) return false;
+  Hdr* h = (Hdr*)frame;
+  h->ver = FLEET_PROTO_VERSION; h->type = (uint8_t)type; h->sess = sess; h->seq = ++txSeq;
+  uint8_t t[32];
+  if (!Hmac(sk, KEY_LEN).add(frame, len).finish(t)) return false;
+  memcpy(frame + len, t, TAG_LEN);
+  return sendClear(mac, frame, len + TAG_LEN);
+}
+
+bool tagOk(const uint8_t* frame, size_t len, const uint8_t sk[KEY_LEN]) {
+  if (len < sizeof(Hdr) + TAG_LEN) return false;
+  uint8_t t[32];
+  if (!Hmac(sk, KEY_LEN).add(frame, len - TAG_LEN).finish(t)) return false;
+  return ctEqual(t, frame + len - TAG_LEN, TAG_LEN);
+}
+
+bool SeqWin::accept(uint32_t s) {
+  if (s == 0) return false;
+  if (s > top) {
+    uint32_t d = s - top;
+    bits = d >= 32 ? 0 : bits << d;
+    bits |= 1;
+    top = s;
+    return true;
+  }
+  uint32_t d = top - s;
+  if (d >= 32 || (bits & (1u << d))) return false;   // too old, or a duplicate
+  bits |= 1u << d;
+  return true;
+}
+
+void setRadioChannel(uint8_t ch) { if (g_active && ch >= 1 && ch <= 13) esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE); }
+void event(const char* op) { g_events++; if (g_eventSink) g_eventSink(op); }
+uint32_t eventCount() { return g_events; }
+
+}}  // namespace fleet::detail
 
 namespace fleet {
 
@@ -464,11 +609,19 @@ void service() {
   for (int n = 0; n < DRAIN_MAX; n++) {
     uint8_t i;
     if (xQueueReceive(g_fullQ, &i, 0) != pdTRUE) break;
+    const Slot* s = slotAt(i);
+    const uint8_t type = s->len >= 2 ? s->data[1] : 0;
 #ifdef FLEET_DEBUG
-    dbgHandle(slotAt(i));
+    if (type == (uint8_t)Msg::DbgPing || type == (uint8_t)Msg::DbgPong) { dbgHandle(s); xQueueSend(g_freeQ, &i, 0); continue; }
 #endif
-    xQueueSend(g_freeQ, &i, 0);   // P1: nothing else consumes frames
+    if (g_active && !(s->flags & SF_TRUNC) && s->len >= sizeof(Hdr)) {   // (a handler may stop the radio mid-drain)
+      Rx f{ s->mac, s->rssi, s->data, s->len };
+      if (g_leader) leader::onFrame(f); else client::onFrame(f);
+    }
+    xQueueSend(g_freeQ, &i, 0);
   }
+  if (!g_active) return;   // a frame handler can stop the radio (rerandomizeMac failure)
+  if (g_leader) leader::tick(); else client::tick();
 #ifdef FLEET_DEBUG
   dbgTick();
 #endif
@@ -500,14 +653,21 @@ bool rerandomizeMac() {
 
 const uint8_t* staMac()   { return g_mac; }
 uint16_t       maxPayload() { return g_maxPayload; }
-void onRekey() { Serial.println("[FLT] key changed: any fleet session is dropped (P1: none)"); }
+// The device key changed, so this unit's fleet key changed too: a client drops its session and re-derives FK (the
+// leader must re-add it with the new key). A leader's stored member FKs don't depend on its own key.
+void onRekey() {
+  detail::client::forgetKey();
+  if (g_active && !g_leader) detail::client::dropSession("rekey");
+}
+void setEventSink(void (*fn)(const char* op)) { g_eventSink = fn; }
 
 void uiSnapshot(Ui& u) {
   memset(&u, 0, sizeof(u));
   u.active = g_active; u.role = g_role; u.channel = g_ch;
   u.txOk = g_txOk; u.txFail = g_txFail; u.rxFrames = g_rxFrames; u.rxDrop = g_rxDrop;
+  if (g_active) { if (g_leader) detail::leader::fillUi(u); else detail::client::fillUi(u); }
 #ifdef FLEET_DEBUG
-  if (g_dbg && g_dbg->haveLeader && millis() - g_dbg->lastRxMs < 6000) {
+  if (!u.leaderSeen && g_dbg && g_dbg->haveLeader && millis() - g_dbg->lastRxMs < 6000) {
     u.leaderSeen = true;
     memcpy(u.leaderMac, g_dbg->leader, 6);
     u.rssi = g_dbg->lrssi;
@@ -526,8 +686,9 @@ void printStatus() {
 #ifdef FLEET_DEBUG
                 "FLEET_DEBUG (ping/pong on)");
 #else
-                "release (no frames sent)");
+                "release");
 #endif
+  if (g_active) { if (g_leader) detail::leader::printStatus(); else detail::client::printStatus(); }
   printHeap("now");
 }
 

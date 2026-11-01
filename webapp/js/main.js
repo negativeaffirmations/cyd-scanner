@@ -19,7 +19,8 @@ import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
-import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';   // new module: versioned so it loads fresh with main.js
+import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';
+import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261031d';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
@@ -114,6 +115,15 @@ $("wfJoinedBtn").onclick  = markJoined;
 $("wfOpen").addEventListener("click", pageOpened);
 $("wfBackBtn").onclick    = reopenPage;
 $("wfStopBtn").onclick    = stopWifiFlow;
+// Fleet card (Settings, features/fleet.js): members are added from the stored scanner keys.
+$("fltAddBtn").onclick       = fleetAdd;
+$("fltChSel").addEventListener("change", fleetChannel);
+$("fltLeaderOnBtn").onclick  = () => fleetLeader(true);
+$("fltLeaderOffBtn").onclick = () => fleetLeader(false);
+$("fltLeaveBtn").onclick     = fleetLeave;
+$("fltClientBtn").onclick    = fleetMakeClient;
+$("fltMembers").addEventListener("click", onMemberClick);
+initFleet();
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;

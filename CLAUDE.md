@@ -713,7 +713,7 @@ location. **While building the remote-server integration, keep HANDOFF #11 and t
 work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
 context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
 
-## Fleet mode (P1, in progress, fw 0.20.0)
+## Fleet mode (P1 done, P2 built + bench-passed; fw 0.20.0)
 
 Cooperating scanners over **ESP-NOW on the host radios** (one fixed channel, default 1). Design + phases +
 owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides earlier sections). **P1 = transport +
@@ -723,8 +723,17 @@ client** boots with `esp_bt_mem_release` BEFORE anything touches BT, never calls
 SoftAP download disabled), forces scanning on / logs to the bg stream, and shows `SCR_FLEET` as its root (Settings
 -> "Fleet client..." enters, "Leave fleet" exits; both reboot). Minis keep NimBLE in either role. Code:
 `src/host_common/fleet*.{h,cpp}`; serial `fleet` / `fleet leave|client|leader on|off|ch <n>|remac` (+ `fleet rate 1|12`, `fleet pad 250|1300|0`, `fleet trace on|off` = per-ping tx/rx lines with the actual RF channel, `fleet crash` = boot-guard test panic, in debug builds). `-DFLEET_DEBUG`
-(envs `cyd_fleetdbg`, `xiao_s3_rgb_fleetdbg`) adds the cleartext ping/pong bench frames; release builds send no fleet
-frames. Normal-mode static footprint is tiny; every fleet buffer is heap-allocated by `beginClient()/beginLeader()`.
+(envs `cyd_fleetdbg`, `xiao_s3_rgb_fleetdbg`) adds the cleartext ping/pong bench frames. Normal-mode static footprint is
+tiny; every fleet buffer is heap-allocated by `beginClient()/beginLeader()`.
+**P2 = enrollment + auth (docs §17 "as built"):** the leader stores members in NVS `fltmem` (sid, kg, name and the
+member's FLEET key `FK = HMAC(devkey,"CFLO-FLT-KEY-1|"+sid)[0..16)`, never its phone key), probes while one is
+un-joined, matches Hello tags off-air (no sid/name/fixed MAC in any cleartext frame), and runs Join/JoinAck into an
+ESP-NOW-encrypted session (LMK = SK) whose frames ALSO carry an 8-byte HMAC(SK) tag + a 32-wide seq window. Sync /
+MStat heartbeats (lost after 10 s / 15 s); the client searches its saved channel then 1/6/11 and rejoins from a fresh
+MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` add — FK wrapped under the LEADER's key by
+`webapp/js/ble/fleetcrypto.js` —, `r` remove, `x` release, `c` channel, `L1/L0`, `j` become client); STATUS part 2
+`flt=<role>,<joined>/<enrolled>,<ch>`; web **Settings → Fleet** card (`features/fleet.js`). Code: `fleet_leader.cpp`,
+`fleet_client.cpp`, `fleet_internal.h`. Debug-only bench enrollment: `fleet fk` / `fleet add` / `fleet m <cmd>`.
 
 ## Subagents (`.claude/agents/`)
 

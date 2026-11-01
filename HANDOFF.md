@@ -1,6 +1,21 @@
-# Handoff — 2026-10-31 (work branch: `fleet-mode`, UNCOMMITTED; `main` @ `c3bd4ff` is the trunk)
+# Handoff — 2026-10-31 (work branch: `fleet-mode`, local commits, NOT pushed; `main` @ `c9a9acb` is the trunk)
 
-## RESUME HERE — 2026-10-31: fleet mode P1 built + reviewed; NEXT = owner bench tests (nothing flashed)
+## RESUME HERE — 2026-10-31 (late): fleet P2 (enrollment + auth) BUILT, REVIEWED (reviewer + security, all fixed) + bench-PASSED; web card untested on a phone
+- **P1:** done (see below). Its sniffer check (step 9) moves to P2's sniffer check.
+- **P2:** built and bench-passed — details, deviations and results in **docs/fleet-mode.md §17**.
+  - Both boards run the `*_fleetdbg` builds: mini #2 = leader (channel 1) with the CYD enrolled + joined; the CYD is a
+    fleet client.
+  - The web Settings → Fleet card + `fleetcrypto.js` are written. The crypto was verified against the firmware in
+    Node; the card has NOT been tried on a phone. Webapp tokens are bumped to `20261031d` (`#uiver` `fleet-p2 d`) but
+    NOT deployed.
+- **Next:**
+  1. ~~Review + security fixes~~ DONE (docs §17.1). Committed on `fleet-mode` (local, not pushed).
+  2. Deploy the webapp (owner's go-ahead), then the owner tests the Fleet card from the phone (add a member from Scanner keys, remove/release, channel), then deploy
+     the webapp.
+  3. Sniffer check (spare S3).
+  4. P3 (time/position push). P4 must re-send member slots after a removal (§17.1).
+
+## Earlier — 2026-10-31: fleet mode P1 built + reviewed + bench-tested
 **What fleet mode is:** 2+ of the owner's scanners cooperate over ESP-NOW and split RF coverage. Design + every owner
 decision: **[docs/fleet-mode.md](docs/fleet-mode.md)**. §16 (2026-10-31) overrides earlier sections; all §15 questions
 are answered. Key decisions:

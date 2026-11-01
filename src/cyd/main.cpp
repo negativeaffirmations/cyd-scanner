@@ -461,9 +461,9 @@ static void drawStatusBar() {
   tft.drawString(t, 4, 4, 2);
   // phone connection icon (right) + C5-link status dot to its right
   int ix = W - 30;
-  if (fleet::isClient()) {                                     // fleet glyph: grey = searching, green = leader heard
+  if (fleet::isClient()) {                                     // fleet glyph: grey = searching, green = joined (authenticated session)
     fleet::Ui fu; fleet::uiSnapshot(fu);
-    iconFleet(ix, 3, fu.leaderSeen ? TFT_GREEN : 0x7BEF);
+    iconFleet(ix, 3, fu.joined ? TFT_GREEN : 0x7BEF);
   }
   else if (webshare::active()) iconWifi(ix, 3, TFT_CYAN);
   else if (phone::connected()) iconBle(ix + 2, 3, phone::authed() ? TFT_BLUE : TFT_LIGHTGREY);  // grey until the phone proves the key
@@ -1315,9 +1315,17 @@ static void drawFleetInfo() {
   if (!u.active) {
     tft.setTextColor(TFT_RED, TFT_BLACK);
     tft.drawString("Fleet radio failed to start", 6, 52, 2);
-  } else if (u.leaderSeen) {
+  } else if (u.joined) {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    snprintf(b, sizeof(b), "Leader %02x:%02x %d dBm %.1fs", u.leaderMac[4], u.leaderMac[5], (int)u.rssi, u.ageMs / 1000.0f);
+    snprintf(b, sizeof(b), "Leader %s", u.leaderName[0] ? u.leaderName : "(joined)");
+    tft.drawString(b, 6, 52, 2);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    snprintf(b, sizeof(b), "slot %u/%u  %d dBm  %.1fs ago", (unsigned)u.slot, (unsigned)u.nMembers, (int)u.rssi,
+             u.ageMs / 1000.0f);
+    tft.drawString(b, 150, 56, 1);
+  } else if (u.leaderSeen) {           // FLEET_DEBUG: bench pings heard, not joined
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    snprintf(b, sizeof(b), "Ping %02x:%02x %d dBm (not joined)", u.leaderMac[4], u.leaderMac[5], (int)u.rssi);
     tft.drawString(b, 6, 52, 2);
   } else {
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
@@ -3160,6 +3168,7 @@ void setup() {
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
   fleet::loadRole();   // fltrole/fltch + boot-loop guard
+  fleet::setEventSink([](const char* op) { logFleetEvent(op); });   // join / lost / release ... -> the SD log
   const bool fleetClient = fleet::isClient();
   if (fleetClient) {   // MUST precede anything that touches BT: frees ~43 KB so Wi-Fi + ESP-NOW fit (docs §1.2)
     esp_err_t e = esp_bt_mem_release(ESP_BT_MODE_BTDM);

@@ -1,7 +1,9 @@
 // fleet.h — fleet-mode facade (docs/fleet-mode.md). Cooperating scanners talk over ESP-NOW on the HOST
 // radios (CYD ESP32 / mini S3) on one fixed 2.4 GHz channel. P1 = transport + boot modes: roles in NVS, Wi-Fi
 // STA + ESP-NOW bring-up with a random per-boot MAC, the boot-loop fallback, and (under -DFLEET_DEBUG only)
-// cleartext ping/pong bench frames. No pairing/crypto yet and nothing is transmitted without FLEET_DEBUG.
+// cleartext ping/pong bench frames. P2 = enrollment + auth: the leader stores members (sid + fleet key, never the
+// member's phone key), probes while one is un-joined, and runs the Hello/Join/JoinAck handshake into an encrypted,
+// tagged session; Sync/MStat heartbeats detect loss. Frames are sent only while a fleet role is set.
 //
 // Normal-mode footprint: a few statics only. Every buffer is heap-allocated by beginClient()/beginLeader().
 #pragma once
@@ -31,21 +33,35 @@ bool    beginLeader();
 bool    active();                  // ESP-NOW is up (webshare keeps the STA, joins the fleet channel)
 void    service();                 // drain <= 8 RX frames, debug ping/stats, boot-guard timer. Cheap + safe when inactive.
 // Randomize the STA MAC again. Only while NOT joined (a joined unit never changes MAC): deinit ESP-NOW ->
-// esp_wifi_stop -> set_mac -> start -> re-init. Prints the elapsed ms. P2 calls it before answering a Probe.
+// esp_wifi_stop -> set_mac -> start -> re-init. Prints the elapsed ms. A client calls it before answering the first
+// Probe after it lost or left a session (docs §16.4); at boot the MAC is already fresh.
 bool    rerandomizeMac();
 const uint8_t* staMac();           // current fleet STA MAC (6 B)
 uint16_t maxPayload();             // 250 (ESP-NOW v1) or 1470 (v2); 0 before begin
-void    onRekey();                 // the unit's phone key changed: drop any session (P1: log only)
+void    onRekey();                 // the unit's phone key changed: its fleet key changed too, drop any session
+// Host log hook: fleet events ("join", "lost", "unjoin", "release", "member_add", ...) -> logFleetEvent(op).
+void    setEventSink(void (*fn)(const char* op));
+
+// --- phone commands (CMD "M:<op>[:args]", docs §9.4) ---
+// Runs on loop(). Writes ONE reply body ("OK<TAB>..." / "ERR<TAB><why>") that the host frames as LOGDATA "FLT=<n>".
+// Ops: l list | a add | r remove | x release | c channel | L1/L0 leader on/off | j become a client.
+enum CmdAction : uint8_t { CMD_NONE = 0, CMD_RESTART = 1 };   // RESTART: the host reboots after sending the reply
+CmdAction handlePhoneCmd(const char* cmd, char* reply, size_t cap);
+// STATUS part 2 field value: "<role>,<joined>/<enrolled>,<ch>" (client: joined 0/1 of 1).
+void    statusField(char* out, size_t cap);
 
 // --- UI / diagnostics ---
 struct Ui {
   bool     active;
   uint8_t  role, channel;
-  bool     joined;                 // P1: always false (no handshake yet)
-  bool     leaderSeen;             // FLEET_DEBUG: a ping was heard from a leader recently
+  bool     joined;                 // client: in an authenticated session with a leader
+  bool     leaderSeen;             // joined, or (FLEET_DEBUG) a ping heard recently
   uint8_t  leaderMac[6];
+  char     leaderName[21];         // from the encrypted Sync ("" before the first one)
+  uint8_t  slot, nMembers;         // from Join
   int8_t   rssi;                   // last leader frame (leaderSeen)
   uint32_t ageMs;                  // since the last leader frame (leaderSeen)
+  uint8_t  members, joinedMembers; // leader: enrolled / joined
   uint32_t txOk, txFail;           // ESP-NOW send results (send callback)
   uint32_t rxFrames, rxDrop;       // frames queued / dropped (queue full or oversize)
 };
@@ -54,5 +70,8 @@ void printStatus();                // serial `fleet`
 void dbgSetRate(int mbps);         // FLEET_DEBUG bench knobs (no-ops otherwise): peer PHY rate 1 or 12
 void dbgSetPad(int len);           //   ping frame size: 250 / 1300 / 0 = alternate
 void dbgSetTrace(bool on);         //   one console line per ping sent / received, with the actual RF channel
+// FLEET_DEBUG bench enrollment without a phone: the client prints its fleet key, the leader stores it directly.
+void dbgPrintFk();                 //   client: "fleet fk"
+bool dbgAddMember(const char* sidHex, const char* fkHex, const char* name);   // leader: "fleet add <sid> <fk> <name>"
 
 }  // namespace fleet
