@@ -668,6 +668,40 @@ bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
   if (!g_active) return false;
   return g_leader ? detail::leader::memberFix(lat, lon, ageMs, live) : detail::client::posFix(lat, lon, ageMs, live);
 }
+// The §8.3 role templates. A BLE role keeps the active AP scan (it coexists with BLE) but no passive windows, so BLE
+// runs at ~100% duty; Wi-Fi roles drop BLE so the passive capture gets all the airtime (longer windows, short gap).
+link_protocol::ScanPlan planForRole(uint8_t role, uint8_t gen) {
+  link_protocol::ScanPlan p = {};
+  using namespace link_protocol;
+  switch (role) {
+    case PLANROLE_WIFI:   p.phases = PLAN_AP24 | PLAN_AP5 | PLAN_PROM24 | PLAN_PROM5 | PLAN_154;
+                          p.prom24Ms = 6000; p.prom5Ms = 5000; p.gapMs = 500; break;
+    case PLANROLE_WIFI24: p.phases = PLAN_AP24 | PLAN_PROM24 | PLAN_154;
+                          p.prom24Ms = 6000; p.dwellMs = 200; p.gapMs = 500; break;
+    case PLANROLE_WIFI5:  p.phases = PLAN_AP5 | PLAN_PROM5;
+                          p.prom5Ms = 6000; p.gapMs = 500; break;
+    case PLANROLE_BLE:    p.phases = PLAN_BLE | PLAN_AP24 | PLAN_AP5; break;
+    default:              return p;                  // FULL = legacy (all-zero)
+  }
+  p.phases |= PLAN_VALID;
+  p.planId = gen;
+  return p;
+}
+const char* planRoleName(uint8_t role) {
+  return role == PLANROLE_WIFI ? "wifi" : role == PLANROLE_WIFI24 ? "wifi24" : role == PLANROLE_WIFI5 ? "wifi5"
+       : role == PLANROLE_BLE ? "ble" : "full";
+}
+link_protocol::ScanPlan currentPlan() {
+  uint8_t r = PLANROLE_FULL;
+  if (!g_active) return link_protocol::ScanPlan{};
+  return g_leader ? detail::leader::ownPlan(&r) : detail::client::plan(&r);
+}
+uint8_t currentPlanRole() {
+  uint8_t r = PLANROLE_FULL;
+  if (g_active) { if (g_leader) detail::leader::ownPlan(&r); else detail::client::plan(&r); }
+  return r;
+}
+
 bool isFleetSelf(const uint8_t mac[6]) {
   if (!g_active) return false;
   return g_leader ? detail::leader::isSelf(mac) : detail::client::isSelf(mac);
@@ -678,6 +712,7 @@ void uiSnapshot(Ui& u) {
   u.active = g_active; u.role = g_role; u.channel = g_ch;
   u.txOk = g_txOk; u.txFail = g_txFail; u.rxFrames = g_rxFrames; u.rxDrop = g_rxDrop;
   if (g_active) { if (g_leader) detail::leader::fillUi(u); else detail::client::fillUi(u); }
+  u.planRole = currentPlanRole();
 #ifdef FLEET_DEBUG
   if (!u.leaderSeen && g_dbg && g_dbg->haveLeader && millis() - g_dbg->lastRxMs < 6000) {
     u.leaderSeen = true;

@@ -1320,7 +1320,7 @@ static void drawFleetInfo() {
     snprintf(b, sizeof(b), "Leader %s", u.leaderName[0] ? u.leaderName : "(joined)");
     tft.drawString(b, 6, 52, 2);
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    snprintf(b, sizeof(b), "slot %u/%u  %d dBm  %.1fs ago", (unsigned)u.slot, (unsigned)u.nMembers, (int)u.rssi,
+    snprintf(b, sizeof(b), "%s  %d dBm  %.0fs", fleet::planRoleName(u.planRole), (int)u.rssi,
              u.ageMs / 1000.0f);
     tft.drawString(b, 150, 56, 1);
   } else if (u.leaderSeen) {           // FLEET_DEBUG: bench pings heard, not joined

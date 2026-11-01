@@ -27,6 +27,11 @@ constexpr uint32_t SYNC_MS = 2000, LOST_MS = 10000;
 constexpr uint32_t REMAC_IDLE_MS = 15UL * 60 * 1000;   // nobody joined: rotate the leader MAC this often (tracking)
 constexpr int      HELLOS_PER_S = 10;
 constexpr uint32_t MEMBER_FIX_LIVE_MS = 10000;   // a member's own GPS fix counts as live this long
+// P4 coverage split (docs §8.3-§8.4, §16.1): a member counts toward the role layout once it has been joined this long
+// (hysteresis against flapping), and keeps its role this long after it is lost (a quick reboot rejoins without a
+// reshuffle). Plans are re-sent every PLAN_RESEND_MS so a member that missed one converges.
+constexpr uint32_t ROLE_STABLE_MS = 10000, ROLE_GRACE_MS = 30000, PLAN_RESEND_MS = 10000;
+constexpr uint8_t  PLANMODE_AUTO = 0, PLANMODE_OFF = 3;
 
 struct MemberRec { uint8_t sid[6]; uint32_t kg; char name[21]; uint8_t fk[KEY_LEN]; };   // persisted
 struct Store { uint8_t n; MemberRec m[FLEET_MAX_MEMBERS]; };
@@ -50,6 +55,10 @@ struct MemberRt {
   float    fixLat, fixLon;             // its OWN live GPS fix from MStat (P3: fleet position fallback)
   uint32_t fixAtMs;                    // 0 = never
   uint8_t  phoneMac[6];                // its own connected phone (MStat), a fleet self MAC
+  uint32_t joinedAtMs, lostAtMs;       // P4 role hysteresis / grace
+  uint8_t  role;                       // assigned scan role (PlanRole)
+  uint8_t  planSentGen;                // last plan generation sent to it
+  uint32_t lastPlanMs;
 };
 
 struct Leader {
@@ -68,6 +77,9 @@ struct Leader {
   uint32_t chSwitchAtMs;
   uint32_t lastRemacMs;
   int8_t   fixMember;                  // member whose GPS is the fleet position fallback (sticky; -1 = none)
+  uint8_t  planGen;                    // bumped whenever the role layout changes
+  uint8_t  leaderRole;                 // this leader's own scan role
+  uint8_t  planMode;                   // PLANMODE_AUTO (template) / PLANMODE_OFF (everyone full); NVS fltpmode
 };
 Leader* L = nullptr;   // heap, created by the first use (normal-mode static footprint stays one pointer)
 
@@ -81,6 +93,7 @@ bool loadStore() {
   if (p.begin("cydscan", true)) {
     if (p.getBytesLength("fltmem") == sizeof(Store)) p.getBytes("fltmem", &L->st, sizeof(Store));
     L->addCtr = p.getULong("fltactr", 1);
+    L->planMode = p.getUChar("fltpmode", PLANMODE_AUTO);
     p.end();
   }
   if (!L->addCtr) L->addCtr = 1;
@@ -111,6 +124,7 @@ void restartProbing() { L->probing = false; }   // the next tick starts a fresh 
 
 void endSession(int i, uint8_t newState) {
   MemberRt& r = L->rt[i];
+  if (r.state == M_JOINED && newState == M_LOST) r.lostAtMs = millis();
   if (r.state == M_JOINING || r.state == M_JOINED) peerDel(r.mac);
   memset(r.sk, 0, sizeof(r.sk));
   r.state = newState;
@@ -273,6 +287,14 @@ void onJoinAck(const Rx& f) {
   r.lastRxMs = millis(); r.rssi = f.rssi;
   if (r.state != M_JOINED) {
     r.state = M_JOINED;
+    // Back within the grace period (a quick reboot): it keeps its role and counts at once -- no reshuffle. A new or
+    // long-gone member runs FULL until it has been joined for ROLE_STABLE_MS.
+    const uint32_t nowJ = millis();
+    const bool quick = r.lostAtMs && nowJ - r.lostAtMs < ROLE_GRACE_MS;
+    r.joinedAtMs = quick ? nowJ - ROLE_STABLE_MS : nowJ;
+    if (!quick) r.role = PLANROLE_FULL;
+    r.lostAtMs = 0;
+    r.planSentGen = (uint8_t)(L->planGen - 1);   // force a Plan to go out with the next tick
     r.board = a.board; r.caps = a.caps;
     memcpy(r.bleMac, a.bleMac, 6);
     copyPrintable(r.fw, a.fw, sizeof(r.fw));                     // reads at most sizeof(r.fw)-1 = sizeof(a.fw) bytes
@@ -295,6 +317,53 @@ void onMStat(const Rx& f) {
   if (m.gpsFix && m.lat >= -900000000 && m.lat <= 900000000 && m.lon >= -1800000000 && m.lon <= 1800000000) {
     r.fixLat = m.lat / 1e7f; r.fixLon = m.lon / 1e7f; r.fixAtMs = r.lastRxMs;
   }
+}
+
+// ---- P4: role layout (docs §8.3) ----
+void sendPlan(int i) {
+  MemberRt& r = L->rt[i];
+  uint8_t buf[sizeof(Plan) + TAG_LEN];
+  Plan* p = (Plan*)buf;
+  memset(buf, 0, sizeof(buf));
+  p->planGen = L->planGen; p->role = r.role; p->slot = (uint8_t)(i + 1); p->nMembers = L->st.n;
+  p->plan = fleet::planForRole(r.role, L->planGen);
+  sendSealed(r.mac, buf, sizeof(Plan), Msg::Plan, r.sess, r.txSeq, r.sk);
+  r.planSentGen = L->planGen;
+  r.lastPlanMs = millis();
+}
+
+// Template over the units that count (joined >= 10 s, or lost < 30 s ago), in member order:
+//   N=1 leader FULL | N=2 member WIFI + leader BLE | N=3 WIFI24 + WIFI5 + leader BLE | N>=4 extras FULL.
+// A member that doesn't count yet runs FULL. Mode OFF = everyone FULL. Bumps planGen when anything changes.
+void assignRoles() {
+  const uint32_t now = millis();
+  uint8_t roles[FLEET_MAX_MEMBERS] = {0};
+  uint8_t leaderRole = PLANROLE_FULL;
+  int pres[FLEET_MAX_MEMBERS], np = 0;
+  for (int i = 0; i < L->st.n; i++) {
+    const MemberRt& r = L->rt[i];
+    // A member mid-rejoin (lost within the grace, or joining again) keeps counting while it still holds a role, so a
+    // quick reboot never flips the layout -- not even for the instant between its Hello and its JoinAck.
+    const bool inGrace = !r.lostAtMs || now - r.lostAtMs < ROLE_GRACE_MS;
+    bool counts = (r.state == M_JOINED && now - r.joinedAtMs >= ROLE_STABLE_MS) ||
+                  ((r.state == M_LOST || r.state == M_JOINING) && r.role != PLANROLE_FULL && inGrace);
+    if (counts) pres[np++] = i;
+  }
+  if (L->planMode != PLANMODE_OFF && np >= 1) {
+    leaderRole = PLANROLE_BLE;
+    if (np == 1) roles[pres[0]] = PLANROLE_WIFI;
+    else { roles[pres[0]] = PLANROLE_WIFI24; roles[pres[1]] = PLANROLE_WIFI5; }   // 3rd+ member: FULL
+  }
+  bool changed = leaderRole != L->leaderRole;
+  for (int i = 0; i < L->st.n; i++) if (roles[i] != L->rt[i].role) changed = true;
+  if (!changed) return;
+  L->leaderRole = leaderRole;
+  for (int i = 0; i < L->st.n; i++) L->rt[i].role = roles[i];
+  L->planGen++;
+  Serial.printf("[FLT] plan %u: leader %s", (unsigned)L->planGen, fleet::planRoleName(leaderRole));
+  for (int i = 0; i < L->st.n; i++) Serial.printf(", %s %s", L->st.m[i].name, fleet::planRoleName(roles[i]));
+  Serial.println();
+  event("plan");
 }
 
 const char* stateName(uint8_t s) {
@@ -411,17 +480,19 @@ bool removeAt(int i) {
 
 void cmdList(char* out, size_t cap) {
   const uint32_t now = millis();
-  int n = snprintf(out, cap, "OK\t%u\t%u\t%u\t0\t%u\t%lu", (unsigned)fleet::role(), (unsigned)fleet::active(), (unsigned)g_ch,
-                   (unsigned)g_maxPayload, L ? (unsigned long)L->addCtr : 0UL);
+  int n = snprintf(out, cap, "OK\t%u\t%u\t%u\t%u\t%u\t%lu\t%s", (unsigned)fleet::role(), (unsigned)fleet::active(),
+                   (unsigned)g_ch, L ? (unsigned)L->planMode : 0u, (unsigned)g_maxPayload, L ? (unsigned long)L->addCtr : 0UL,
+                   fleet::planRoleName(L ? L->leaderRole : 0));
   if (!L) return;
   for (int i = 0; i < L->st.n && n > 0 && n < (int)cap; i++) {
     const MemberRec& m = L->st.m[i];
     const MemberRt& r = L->rt[i];
     char sh[13]; sidToHex(m.sid, sh);
     const bool live = r.state == M_JOINED;
-    n += snprintf(out + n, cap - n, "\n%d\t%s\t%s\t%lu\t%u\t%d\t%lu\t0\t0\t-1\t-1\t0\t0\t%u\t%s", i + 1, sh, m.name,
+    n += snprintf(out + n, cap - n, "\n%d\t%s\t%s\t%lu\t%u\t%d\t%lu\t%s\t0\t-1\t-1\t0\t0\t%u\t%s", i + 1, sh, m.name,
                   (unsigned long)m.kg, (unsigned)r.state, live ? (int)r.rssi : 0,
-                  live ? (unsigned long)((now - r.lastRxMs) / 1000) : 0UL, (unsigned)r.txFailPm, live ? r.fw : "");
+                  live ? (unsigned long)((now - r.lastRxMs) / 1000) : 0UL, fleet::planRoleName(r.role), (unsigned)r.txFailPm,
+                  live ? r.fw : "");
   }
 }
 
@@ -492,6 +563,11 @@ void tick() {
   } else {
     L->probing = false;
   }
+  assignRoles();
+  for (int i = 0; i < L->st.n; i++) {                              // deliver the layout (and refresh it every 10 s)
+    MemberRt& r = L->rt[i];
+    if (r.state == M_JOINED && r.enc && (r.planSentGen != L->planGen || now - r.lastPlanMs >= PLAN_RESEND_MS)) sendPlan(i);
+  }
   if (L->chPending && (int32_t)(now - L->chSwitchAtMs) >= 0) {   // members were told CTRL_SETCH; follow them
     uint8_t ch = L->chPending; L->chPending = 0;
     fleet::setChannel(ch);
@@ -506,6 +582,11 @@ void fillUi(Ui& u) {
 // The fleet-position fallback from members' own GPS. STICKY: keep the current member while its fix is live, so the
 // fleet track can't bounce between two members a few metres apart every Sync; otherwise switch to the freshest
 // live one. With none live, return the most recent one with its true age (the held fallback), live = false.
+link_protocol::ScanPlan ownPlan(uint8_t* role) {
+  *role = L ? L->leaderRole : PLANROLE_FULL;
+  return fleet::planForRole(*role, L ? L->planGen : 0);
+}
+
 bool memberFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
   if (!L) return false;
   const uint32_t now = millis();
@@ -551,13 +632,14 @@ void counts(uint8_t& enrolled, uint8_t& joined) {
 void printStatus() {
   if (!L) return;
   const uint32_t now = millis();
-  Serial.printf("[FLT] leader: %u member(s), probing %s, enroll ctr %lu\n", (unsigned)L->st.n, L->probing ? "yes" : "no",
-                (unsigned long)L->addCtr);
+  Serial.printf("[FLT] leader: %u member(s), probing %s, enroll ctr %lu, plan %u (%s), own role %s\n", (unsigned)L->st.n,
+                L->probing ? "yes" : "no", (unsigned long)L->addCtr, (unsigned)L->planGen,
+                L->planMode == PLANMODE_OFF ? "off" : "auto", fleet::planRoleName(L->leaderRole));
   for (int i = 0; i < L->st.n; i++) {
     const MemberRt& r = L->rt[i];
     char sh[13]; sidToHex(L->st.m[i].sid, sh);
-    Serial.printf("[FLT]   %d %-20s %s kg %lu  %s", i + 1, L->st.m[i].name, sh, (unsigned long)L->st.m[i].kg,
-                  stateName(r.state));
+    Serial.printf("[FLT]   %d %-20s %s kg %lu  %s  role %s", i + 1, L->st.m[i].name, sh, (unsigned long)L->st.m[i].kg,
+                  stateName(r.state), fleet::planRoleName(r.role));
     if (r.state == M_JOINED)
       Serial.printf("  rssi %d  %lus ago  heap %u KB  fw %s", (int)r.rssi, (unsigned long)((now - r.lastRxMs) / 1000),
                     (unsigned)r.heapKB, r.fw);
@@ -603,6 +685,16 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
   if (op == 'l') {
     if (canLead) loadStore();
     cmdList(out, cap);
+    return CMD_NONE;
+  }
+  if (op == 'p') {                                               // plan mode: 0 auto (role template) / 3 off (all full)
+    if (!canLead || !loadStore()) { reply(out, cap, "ERR\tthis scanner can only be a fleet client"); return CMD_NONE; }
+    int m = atoi(args);
+    if (m != PLANMODE_AUTO && m != PLANMODE_OFF) { reply(out, cap, "ERR\tmode must be 0 (auto) or 3 (off)"); return CMD_NONE; }
+    L->planMode = (uint8_t)m;
+    Preferences pr;
+    if (pr.begin("cydscan", false)) { pr.putUChar("fltpmode", L->planMode); pr.end(); }
+    reply(out, cap, "OK\tplan mode %d", m);
     return CMD_NONE;
   }
   if (op == 'c') {

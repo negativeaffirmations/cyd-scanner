@@ -3,6 +3,7 @@
 #include "host_link.h"
 #include "host_core.h"
 #include "phone.h"
+#include "fleet.h"
 
 HardwareSerial LinkSerial(1);  // UART1 (pins are supplied by the board via hostlink::begin)
 FrameParser    parser;
@@ -58,6 +59,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
   ScanConfig cfg{};
   cfg.sources  = g_srcMask;
   cfg.dwell_ms = 0;
+  cfg.plan     = fleet::currentPlan();   // v12: this unit's fleet scan role (all-zero = legacy full time-slice)
   sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
   uint32_t t0 = millis();
   uint32_t lastByte = millis();

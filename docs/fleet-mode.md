@@ -892,3 +892,42 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
 - **REV-009:** Sync flags bit0 is set only for UTC ≥ 2023, the same bar the client applies.
 - **Re-bench:** rejoin 4.5 s, time src 4 with the leader's tz, log renamed. Both boards must flash together (MStat
   size).
+
+## 19. P4 as built (2026-11-01) — coverage split (link v12)
+- **Link v12:** `ScanConfig` = `{sources, dwell_ms, ScanPlan plan}` (21 B; `ScanPlan` 18 B as in §8.1). It is sent on
+  every StartScan; all-zero = legacy. Every host and C5 must run v12 together (mini #1 is still v11 as a pair: it works
+  on its own but can't mix halves).
+- **C5:**
+  - `planAllows()` / `bleWanted()` gate every phase.
+  - The hop lists (2.4 / 5 GHz / 802.15.4) and window / dwell / gap timings are rebuilt from the plan (`buildPlanRuntime`).
+  - A new plan ends any passive window it no longer allows.
+  - A plan with 5 GHz but no 2.4 GHz capture enters the 5 GHz window directly (legacy never does).
+  - Each plan change prints `[C5] plan id=… phases=…`.
+- **Roles** (`fleet::planForRole`, §8.3):
+  - WIFI: AP + PROM24 + PROM5 (+15.4), 6 s / 5 s windows, 0.5 s gap, no BLE.
+  - WIFI24: AP24 + PROM24 (+15.4), dwell 200.
+  - WIFI5: AP5 + PROM5, 6 s.
+  - BLE: BLE + AP scan, no passive windows, so BLE is never paused.
+  - FULL: zeros.
+- **Layout (`assignRoles`, every tick):**
+  - N=2: member WIFI + leader BLE. N=3: WIFI24 + WIFI5 + leader BLE. A 3rd+ member runs FULL. Mode `M:p:3` = everyone
+    FULL (NVS `fltpmode`); `M:p:0` = auto.
+  - A member counts once joined ≥ 10 s.
+  - It keeps counting through a 30 s grace after it is lost, or while it re-joins holding a role, so a quick reboot
+    never reshuffles.
+  - Plans are re-sent every 10 s. A client that loses its leader reverts to FULL.
+  - `M:l` reports each member's role (column 8) and the leader's own role + plan mode in the header.
+- **Bench (2026-11-01, mini #2 leader + CYD client, all four boards on v12):**
+  - Roles applied on both C5s (`0xa3` BLE leader, `0x9f` WIFI client). The CYD's BLE count went 20 → 0; the mini's
+    probes went 17 → 0.
+  - CYD held off: lost at 8.7 s, roles kept through the 30 s grace, then the leader went FULL. Released: FULL until
+    stable 10 s, then roles restored.
+  - Leader crash: the client went FULL at +14 s and rejoined 1.2 s later; roles were back 10 s after that.
+  - Quick CYD reboot: rejoined with its role and **no** plan change. (A transient while the member was re-joining was
+    found and fixed: joining members holding a role keep counting.)
+- **Consequence until P5:** each unit's own table / log / phone view covers only its share. The leader's phone view
+  lacks the client's Wi-Fi-only finds (they are on the client's SD). Use `M:p:3` (everyone FULL) to field-test
+  without P5.
+- **Deferred:** the web layout editor + saved layout (`fltlay`, §16.1), the `M:o` per-member override, a user-set
+  grace (`fltgrace`), the 4+-member channel split, and the 5 GHz-caps preference (every C5 has 5 GHz).
+  FW_VERSION stays 0.20.0 on the bench builds; bump to 0.21.0 at the release flash.

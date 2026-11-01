@@ -22,7 +22,7 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 11;      // v11: Detection.bssid[6] (AP an associated data-frame client talks to) + FLAG_WIFI_DATA_CLIENT/_UPLINK
+static constexpr uint8_t  PROTOCOL_VERSION = 12;      // v12: ScanConfig carries a ScanPlan (fleet coverage split). v11: Detection.bssid[6] + FLAG_WIFI_DATA_CLIENT/_UPLINK
                                                       // v10: Status gains gpsEpoch (UTC secs from NEO-6M RMC) so the CYD can keep time with no phone
                                                       // v9: Status gains onboard C5 GPS fix (NEO-6M) - gpsLat/gpsLon (deg*1e7) + alt/sats/fix; phone GPS preferred, onboard is fallback
                                                           // (v8: Reply::RemoteId frame + RemoteId struct - decoded Remote-ID (ASTM F3411)
@@ -94,10 +94,35 @@ enum DetFlags : uint16_t {
 
 #pragma pack(push, 1)
 
+// Fleet coverage split (v12, docs/fleet-mode.md §8). Which capture phases this C5 runs, and their channels / timing.
+// All-zero (PLAN_VALID clear) = the legacy full time-slice, exactly the pre-v12 behaviour: a host that isn't in a
+// fleet always sends zeros. The plan rides on EVERY StartScan, so the C5 keeps no state the host must restore.
+enum PlanPhase : uint8_t {
+  PLAN_AP24   = 1 << 0,   // active AP scan, 2.4 GHz results
+  PLAN_AP5    = 1 << 1,   // active AP scan, 5 GHz results
+  PLAN_PROM24 = 1 << 2,   // passive 2.4 GHz capture (probes, IE fingerprints, data clients)
+  PLAN_PROM5  = 1 << 3,   // passive 5 GHz capture
+  PLAN_154    = 1 << 4,   // passive 802.15.4 window
+  PLAN_BLE    = 1 << 5,   // continuous BLE scan
+  PLAN_VALID  = 1 << 7,   // set = obey phases; clear = legacy (everything the source mask allows)
+};
+struct ScanPlan {
+  uint8_t  phases;        // PlanPhase bits; the C5 also requires the matching ScanConfig.sources bit
+  uint8_t  planId;        // leader plan generation (diagnostic: printed on the C5 console)
+  uint16_t ch24Mask;      // bit n = 2.4 GHz channel n+1 for PROM24 (0 = default 1..11)
+  uint16_t ch5Mask;       // bit i = the C5's i-th non-DFS 5 GHz hop channel (0 = all 9)
+  uint8_t  ch154Mask;     // bit i = the i-th 802.15.4 hop channel (0 = all 5)
+  uint8_t  rsv;
+  uint16_t prom24Ms, prom5Ms, win154Ms;   // window lengths (0 = 4500 / 4000 / 3000)
+  uint16_t dwellMs;       // passive per-channel dwell (0 = 160)
+  uint16_t gapMs;         // pause between capture cycles (0 = 3000)
+};
+
 // Config for a StartScan command.
 struct ScanConfig {
   uint8_t  sources;   // SourceMask bits: which radios to scan
   uint16_t dwell_ms;  // per-channel dwell time (0 = firmware default)
+  ScanPlan plan;      // v12: fleet coverage split (all-zero = legacy)
 };
 
 // One detected device reported by the C5 (Reply::Detection payload).
@@ -171,6 +196,7 @@ struct FrameHeader {
 static_assert(sizeof(Detection) == 81, "Detection wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(RemoteId)  == 75, "RemoteId wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(Status)    == 28, "Status wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(ScanPlan) == 18 && sizeof(ScanConfig) == 21, "ScanConfig wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.
 inline uint8_t checksum(const uint8_t* data, uint16_t len) {

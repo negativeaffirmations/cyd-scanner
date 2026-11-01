@@ -57,6 +57,9 @@ struct ClientSt {
   bool     fltPosLive;                 // the leader marked its fix live (Sync flags bit2)
   uint8_t  selfMacs[9][6];
   uint8_t  nSelf;
+  // P4: the scan role the leader assigned (reset to FULL whenever the session ends)
+  link_protocol::ScanPlan plan;
+  uint8_t  planRole, planGen;
 };
 ClientSt* C = nullptr;
 
@@ -84,6 +87,8 @@ bool ensureFk() {
 
 void toSearch(const char* why, bool remac) {
   if (C->st != C_SEARCH) peerDel(C->leaderMac);
+  if (C->planRole != PLANROLE_FULL) Serial.println("[FLT] client: no leader -> scanning everything (full)");
+  C->plan = link_protocol::ScanPlan{}; C->planRole = PLANROLE_FULL;   // a client on its own covers everything (§8.4)
   memset(C->sk, 0, sizeof(C->sk));
   C->st = C_SEARCH;
   C->needRemac = C->needRemac || remac;
@@ -117,6 +122,7 @@ void sendMStat() {
   m->heapKB = (uint16_t)(ESP.getFreeHeap() / 1024);
   m->txFailPm = tot ? (uint16_t)((uint64_t)u.txFail * 1000 / tot) : 0;
   m->bat = (int8_t)hostboard::batteryPercent();
+  m->planGen = C->planGen;
   m->c5Link = g_linkOk ? 1 : 0;
   // This unit's OWN live GPS fix (not the fleet position it stamps): the leader may use it as the fleet position
   // when it has no live fix of its own (docs §16.6). P5 fills the scan counters.
@@ -219,6 +225,18 @@ void onSync(const Rx& f) {
   }
 }
 
+void onPlan(const Rx& f) {
+  if (C->st != C_JOINED || !sessionOk(f, sizeof(Plan))) return;
+  Plan p; memcpy(&p, f.data, sizeof(p));
+  if (p.role > PLANROLE_BLE) return;
+  const bool changed = p.planGen != C->planGen || p.role != C->planRole;
+  C->plan = p.plan; C->planRole = p.role; C->planGen = p.planGen;
+  if (changed) {
+    Serial.printf("[FLT] client: scan role %s (plan %u)\n", fleet::planRoleName(p.role), (unsigned)p.planGen);
+    event("plan");
+  }
+}
+
 void onCtrl(const Rx& f) {
   if (C->st != C_JOINED || !sessionOk(f, sizeof(Ctrl))) return;
   Ctrl c; memcpy(&c, f.data, sizeof(c));
@@ -270,6 +288,7 @@ void onFrame(const Rx& f) {
     case Msg::Join:  onJoin(f); break;
     case Msg::Sync:  onSync(f); break;
     case Msg::Ctrl:  onCtrl(f); break;
+    case Msg::Plan:  onPlan(f); break;
     default: break;
   }
 }
@@ -340,6 +359,12 @@ void printStatus() {
 }
 
 bool joined() { return C && C->st == C_JOINED; }
+
+link_protocol::ScanPlan plan(uint8_t* role) {
+  if (!C || C->st != C_JOINED) { *role = PLANROLE_FULL; return link_protocol::ScanPlan{}; }
+  *role = C->planRole;
+  return C->plan;
+}
 
 bool timeFix(uint32_t* utc, uint32_t* atMs) {
   if (!C || !C->haveTime) return false;

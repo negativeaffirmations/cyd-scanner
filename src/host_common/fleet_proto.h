@@ -29,9 +29,6 @@ enum CtrlOp : uint8_t { CTRL_RELEASE = 1, CTRL_UNJOIN = 2, CTRL_NEWSESSION = 3, 
 enum PlanRole : uint8_t { PLANROLE_FULL = 0, PLANROLE_WIFI = 1, PLANROLE_WIFI24 = 2, PLANROLE_WIFI5 = 3, PLANROLE_BLE = 4 };   // scan-plan role (not fleet::ROLE_*)
 
 #pragma pack(push, 1)
-// Same shape as link_protocol::ScanPlan will have in link v12 (P4). Mirrored here so the P1 wire structs
-// compile without touching the link protocol; replaced by the real type in P4.
-struct ScanPlanWire { uint8_t b[18]; };
 
 struct Hdr     { uint8_t ver, type; uint16_t sess; uint32_t seq; };                       //  8
 struct Probe   { Hdr h; uint8_t nl[16]; uint8_t ch, rsv; };                                // 26 bcast, clear
@@ -43,7 +40,7 @@ struct JoinAck { Hdr h; uint8_t proof[16]; uint8_t board, caps; uint8_t bleMac[6
 struct Sync    { Hdr h; uint32_t utc; int16_t tzOffMin; uint8_t tsrc, psrc;
                  int32_t lat, lon; uint32_t fixAgeMs; uint8_t ch, flags; uint8_t leaderSid[6];
                  uint8_t nSelf; uint8_t selfMacs[9][6]; char leaderName[20]; };            // 111 encrypted, every 2 s; 9 = leader BLE + phone peer + SoftAP BSSID + 6 members
-struct Plan    { Hdr h; uint8_t planGen, role, slot, nMembers; ScanPlanWire plan; };       // 30 encrypted
+struct Plan    { Hdr h; uint8_t planGen, role, slot, nMembers; link_protocol::ScanPlan plan; };   // 30 encrypted (P4)
 struct Ctrl    { Hdr h; uint8_t op; uint8_t arg[3]; };                                     // 12 encrypted
 struct MStat   { Hdr h; uint8_t planGen, c5Link; int8_t bat; uint8_t gpsFix;
                  uint16_t dets, deauth; uint8_t evil, rid, tsrc, psrc; uint32_t uniq;

@@ -93,6 +93,12 @@ static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_P
 // Disabled sources are only skipped/dropped here - never transmitted around.
 static volatile uint8_t   g_srcMask = MASK_ALL & ~MASK_154;  // 802.15.4 is opt-in
 
+// v12 fleet coverage plan (docs/fleet-mode.md §8.2), from every StartScan. All-zero (PLAN_VALID clear) = legacy:
+// every phase the source mask allows, exactly the pre-v12 behaviour. A phase runs only if BOTH allow it.
+static ScanPlan g_plan = {};
+static inline bool planAllows(uint8_t bits) { return !(g_plan.phases & PLAN_VALID) || (g_plan.phases & bits); }
+static inline bool bleWanted() { return (g_srcMask & MASK_BLE) && planAllows(PLAN_BLE); }
+
 // Is this table entry's source currently enabled? Wi-Fi AP-scan detections are
 // filtered per band by channel.
 static bool sourceEnabled(const Detection& d) {
@@ -312,7 +318,7 @@ class ScanCB : public NimBLEScanCallbacks {
     mergeDetection(d);
   }
   void onScanEnd(const NimBLEScanResults&, int) override {
-    if ((g_srcMask & MASK_BLE) && !blePaused()) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->start(0, false); }  // keep scanning continuously
+    if (bleWanted() && !blePaused()) { NimBLEScan* s = NimBLEDevice::getScan(); if (s) s->start(0, false); }  // keep scanning continuously
   }
 };
 static ScanCB g_scanCB;
@@ -365,6 +371,31 @@ static uint32_t g_154Start = 0, g_154LastHop = 0;
 static int      g_154Idx    = 0;
 static bool     g_154Logged = false;
 
+// Hop lists + window timing actually in use: the defaults above, or the subset / timing a fleet plan asks for.
+static uint8_t  g_hop24[13], g_hop5[NUM_5G_HOPS], g_hop154[NUM_154_CHANS];
+static int      g_nHop24 = 0, g_nHop5 = 0, g_nHop154 = 0;
+static uint32_t g_promMs = PROMISC_MS, g_prom5Ms = PROMISC5_MS, g_win154Ms = IEEE154_MS;
+static uint32_t g_dwellMs = HOP_DWELL_MS, g_gapMs = WIFI_GAP_MS;
+
+static void buildPlanRuntime() {
+  const ScanPlan& p = g_plan;
+  g_nHop24 = 0;
+  for (int c = 1; c <= 13; c++)
+    if (p.ch24Mask ? ((p.ch24Mask >> (c - 1)) & 1) : c <= 11) g_hop24[g_nHop24++] = (uint8_t)c;
+  if (!g_nHop24) for (int i = 0; i < NUM_HOPS; i++) g_hop24[g_nHop24++] = kHopChans[i];
+  g_nHop5 = 0;
+  for (int i = 0; i < NUM_5G_HOPS; i++) if (!p.ch5Mask || ((p.ch5Mask >> i) & 1)) g_hop5[g_nHop5++] = kHopChans5[i];
+  if (!g_nHop5) for (int i = 0; i < NUM_5G_HOPS; i++) g_hop5[g_nHop5++] = kHopChans5[i];
+  g_nHop154 = 0;
+  for (int i = 0; i < NUM_154_CHANS; i++) if (!p.ch154Mask || ((p.ch154Mask >> i) & 1)) g_hop154[g_nHop154++] = k154Chans[i];
+  if (!g_nHop154) for (int i = 0; i < NUM_154_CHANS; i++) g_hop154[g_nHop154++] = k154Chans[i];
+  g_promMs   = p.prom24Ms ? p.prom24Ms : PROMISC_MS;
+  g_prom5Ms  = p.prom5Ms  ? p.prom5Ms  : PROMISC5_MS;
+  g_win154Ms = p.win154Ms ? p.win154Ms : IEEE154_MS;
+  g_dwellMs  = p.dwellMs  ? p.dwellMs  : HOP_DWELL_MS;
+  g_gapMs    = p.gapMs    ? p.gapMs    : WIFI_GAP_MS;
+}
+
 static void enter154() {
   esp_err_t e = ieee154::enable();
   if (!g_154Logged) {
@@ -381,11 +412,11 @@ static void enter154() {
   g_154Idx     = 0;
   g_154Start   = millis();
   g_154LastHop = g_154Start;
-  ieee154::setChannel(k154Chans[0]);
+  ieee154::setChannel(g_hop154[0]);
 }
 // Radio hand-off after the Wi-Fi phases: 802.15.4 window if enabled, else the gap.
 static void after154Slot() {
-  if (g_srcMask & MASK_154) enter154();
+  if ((g_srcMask & MASK_154) && planAllows(PLAN_154)) enter154();
   else g_lastWifiDone = millis();
 }
 
@@ -396,17 +427,23 @@ static void enterPromisc() {
   g_promStart = millis();
   g_lastHop   = g_promStart;
   promisc::enable();
-  promisc::setChannel(kHopChans[0]);
+  promisc::setChannel(g_hop24[0]);
 }
 
 // Transition from the 2.4 GHz promiscuous window into the 5 GHz one (same radio, BLE stays paused,
 // promiscuous mode stays enabled — just retune to the first 5 GHz channel and reset the hop timer).
-static void enterPromisc5() {
-  g_phase      = PH_PROMISC5;
+// `fresh`: entered straight from the AP-scan phase (a fleet plan with 5 GHz capture but no 2.4 GHz capture),
+// so pause BLE and enable promiscuous mode first, exactly as enterPromisc() does.
+static void enterPromisc5(bool fresh) {
+  g_phase      = PH_PROMISC5;           // publish first: blePaused() is now true
+  if (fresh) {
+    NimBLEScan* bs = NimBLEDevice::getScan(); if (bs && bs->isScanning()) bs->stop();
+    promisc::enable();
+  }
   g_hop5Idx    = 0;
   g_prom5Start = millis();
   g_lastHop5   = g_prom5Start;
-  promisc::setChannel(kHopChans5[0]);
+  promisc::setChannel(g_hop5[0]);
 }
 
 // Tear down promiscuous capture, hand the radio to 802.15.4 (if enabled) or the inter-scan gap, and
@@ -416,23 +453,25 @@ static void finishPromisc(uint32_t now) {
   g_phase        = PH_SCAN;
   g_lastWifiDone = now;             // honor WIFI_GAP_MS before the next scan
   after154Slot();                   // may hand the radio to 802.15.4 (which keeps BLE paused)
-  if (g_phase == PH_SCAN && (g_srcMask & MASK_BLE)) {  // back to scan phase -> resume BLE promptly
+  if (g_phase == PH_SCAN && bleWanted()) {  // back to scan phase -> resume BLE promptly
     NimBLEScan* bs = NimBLEDevice::getScan();
     if (bs && !bs->isScanning()) bs->start(0, false);
   }
 }
 
-// After the AP-scan phase: capture probes if enabled, else just wait out the gap.
+// After the AP-scan phase: capture probes if enabled, else just wait out the gap. A fleet plan with 5 GHz capture
+// but no 2.4 GHz capture goes straight to the 5 GHz window (legacy never does: 5 GHz follows 2.4 GHz).
 static void afterScanPhase() {
-  if (g_srcMask & MASK_PROBE) enterPromisc();
+  if ((g_srcMask & MASK_PROBE) && planAllows(PLAN_PROM24)) enterPromisc();
+  else if ((g_plan.phases & PLAN_VALID) && (g_plan.phases & PLAN_PROM5) && (g_srcMask & MASK_WIFI5)) enterPromisc5(true);
   else after154Slot();
 }
 
 static void wifiTick() {
   if (g_phase == PH_SCAN) {
     if (!g_wifiScanning) {
-      if (millis() - g_lastWifiDone < WIFI_GAP_MS) return;
-      if (!(g_srcMask & (MASK_WIFI24 | MASK_WIFI5))) {  // AP scan fully disabled
+      if (millis() - g_lastWifiDone < g_gapMs) return;
+      if (!(g_srcMask & (MASK_WIFI24 | MASK_WIFI5)) || !planAllows(PLAN_AP24 | PLAN_AP5)) {  // AP scan disabled / not in the plan
         afterScanPhase();
         return;
       }
@@ -444,8 +483,8 @@ static void wifiTick() {
     if (n >= 0) {
       for (int i = 0; i < n; i++) {
         uint8_t ch = (uint8_t)WiFi.channel(i);
-        if (ch > 14 && !(g_srcMask & MASK_WIFI5)) continue;    // 5 GHz disabled
-        if (ch <= 14 && !(g_srcMask & MASK_WIFI24)) continue;  // 2.4 GHz disabled
+        if (ch > 14 && (!(g_srcMask & MASK_WIFI5) || !planAllows(PLAN_AP5))) continue;     // 5 GHz disabled / another unit's job
+        if (ch <= 14 && (!(g_srcMask & MASK_WIFI24) || !planAllows(PLAN_AP24))) continue;  // 2.4 GHz disabled / another unit's
         Detection d{};
         d.source  = (uint8_t)Source::WifiScan;
         d.channel = (uint8_t)WiFi.channel(i);
@@ -469,11 +508,11 @@ static void wifiTick() {
 
   if (g_phase == PH_154) {
     uint32_t t = millis();
-    if (t - g_154Start >= IEEE154_MS) {
+    if (t - g_154Start >= g_win154Ms) {
       ieee154::disable();             // hand the PHY back before the next AP scan
       g_phase        = PH_SCAN;
       g_lastWifiDone = t;
-      if (g_srcMask & MASK_BLE) {         // resume BLE promptly (watchdog is the backstop)
+      if (bleWanted()) {                  // resume BLE promptly (watchdog is the backstop)
         NimBLEScan* bs = NimBLEDevice::getScan();
         if (bs && !bs->isScanning()) bs->start(0, false);
       }
@@ -481,41 +520,41 @@ static void wifiTick() {
     }
     if (t - g_154LastHop >= IEEE154_DWELL_MS) {
       g_154LastHop = t;
-      g_154Idx     = (g_154Idx + 1) % NUM_154_CHANS;
-      ieee154::setChannel(k154Chans[g_154Idx]);
+      g_154Idx     = (g_154Idx + 1) % g_nHop154;
+      ieee154::setChannel(g_hop154[g_154Idx]);
     }
     return;
   }
 
   if (g_phase == PH_PROMISC) {  // 2.4 GHz promiscuous sweep
     uint32_t now = millis();
-    if (now - g_promStart >= PROMISC_MS) {
+    if (now - g_promStart >= g_promMs) {
       uint32_t pm, pd, pdc; promisc::frameStats(pm, pd, pdc);  // field diagnostic: capture health
       Serial.printf("[C5] promisc 2.4 end: mgmt=%u data=%u dataClient=%u\n", (unsigned)pm, (unsigned)pd, (unsigned)pdc);
-      if (g_srcMask & MASK_WIFI5) { enterPromisc5(); return; }  // sweep 5 GHz next (BLE stays paused)
+      if ((g_srcMask & MASK_WIFI5) && planAllows(PLAN_PROM5)) { enterPromisc5(false); return; }  // sweep 5 GHz next (BLE stays paused)
       finishPromisc(now);
       return;
     }
-    if (now - g_lastHop >= HOP_DWELL_MS) {
+    if (now - g_lastHop >= g_dwellMs) {
       g_lastHop = now;
-      g_hopIdx  = (g_hopIdx + 1) % NUM_HOPS;
-      promisc::setChannel(kHopChans[g_hopIdx]);
+      g_hopIdx  = (g_hopIdx + 1) % g_nHop24;
+      promisc::setChannel(g_hop24[g_hopIdx]);
     }
     return;
   }
 
   if (g_phase == PH_PROMISC5) {  // 5 GHz promiscuous sweep (follows the 2.4 GHz window)
     uint32_t now = millis();
-    if (now - g_prom5Start >= PROMISC5_MS) {
+    if (now - g_prom5Start >= g_prom5Ms) {
       uint32_t pm, pd, pdc; promisc::frameStats(pm, pd, pdc);
       Serial.printf("[C5] promisc 5G end: mgmt=%u data=%u dataClient=%u\n", (unsigned)pm, (unsigned)pd, (unsigned)pdc);
       finishPromisc(now);
       return;
     }
-    if (now - g_lastHop5 >= HOP5_DWELL_MS) {
+    if (now - g_lastHop5 >= g_dwellMs) {
       g_lastHop5 = now;
-      g_hop5Idx  = (g_hop5Idx + 1) % NUM_5G_HOPS;
-      promisc::setChannel(kHopChans5[g_hop5Idx]);
+      g_hop5Idx  = (g_hop5Idx + 1) % g_nHop5;
+      promisc::setChannel(g_hop5[g_hop5Idx]);
     }
     return;
   }
@@ -572,9 +611,32 @@ static void streamTable() {
 static void applyBleMask() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   if (!scan) return;
-  bool want = (g_srcMask & MASK_BLE) && !blePaused();
+  bool want = bleWanted() && !blePaused();
   if (want && !scan->isScanning()) scan->start(0, false);
   else if (!want && scan->isScanning()) scan->stop();
+}
+
+// A new fleet plan (v12): rebuild the hop lists / timing, and end any passive window the plan no longer allows
+// (the next AP-scan cycle then follows the new plan). An unchanged plan (every 2 s poll) costs one memcmp.
+static void applyPlan(const ScanPlan& np) {
+  if (!memcmp(&np, &g_plan, sizeof(ScanPlan))) return;
+  g_plan = np;
+  buildPlanRuntime();
+  const uint32_t now = millis();
+  if ((g_phase == PH_PROMISC && !((g_srcMask & MASK_PROBE) && planAllows(PLAN_PROM24))) ||
+      (g_phase == PH_PROMISC5 && !planAllows(PLAN_PROM5))) {
+    finishPromisc(now);
+  } else if (g_phase == PH_154 && !planAllows(PLAN_154)) {
+    ieee154::disable();
+    g_phase = PH_SCAN;
+    g_lastWifiDone = now;
+  }
+  if (g_plan.phases & PLAN_VALID)
+    Serial.printf("[C5] plan id=%u phases=0x%02x 2.4:%d ch 5G:%d ch 15.4:%d ch prom %lu/%lu ms dwell %lu gap %lu\n",
+                  (unsigned)g_plan.planId, (unsigned)g_plan.phases, g_nHop24, g_nHop5, g_nHop154,
+                  (unsigned long)g_promMs, (unsigned long)g_prom5Ms, (unsigned long)g_dwellMs, (unsigned long)g_gapMs);
+  else
+    Serial.println("[C5] plan: legacy (full time-slice)");
 }
 
 static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
@@ -583,7 +645,9 @@ static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
     case Command::GetStatus: sendStatus(0, 0); break;
     case Command::StartScan:
       if (len >= sizeof(ScanConfig)) {
-        g_srcMask = ((const ScanConfig*)payload)->sources;
+        const ScanConfig* c = (const ScanConfig*)payload;
+        g_srcMask = c->sources;
+        applyPlan(c->plan);
         applyBleMask();
       }
       streamTable();
@@ -607,6 +671,7 @@ void setup() {
                 (int)esp_reset_reason());
 
   g_mux = xSemaphoreCreateMutex();
+  buildPlanRuntime();   // legacy hop lists / timing until a fleet plan arrives
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -641,7 +706,7 @@ void loop() {
   if (millis() - lastBleChk > 5000) {
     lastBleChk = millis();
     NimBLEScan* scan = NimBLEDevice::getScan();
-    if (scan && (g_srcMask & MASK_BLE) && !blePaused() && !scan->isScanning()) {
+    if (scan && bleWanted() && !blePaused() && !scan->isScanning()) {
       scan->start(0, false);
       Serial.println("[C5] BLE scan restarted by watchdog");
     }

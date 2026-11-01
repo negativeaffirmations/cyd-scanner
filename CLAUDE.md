@@ -713,7 +713,7 @@ location. **While building the remote-server integration, keep HANDOFF #11 and t
 work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
 context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
 
-## Fleet mode (P1 + P2 done, P3 time/position built; fw 0.20.0)
+## Fleet mode (P1-P4 built + bench-passed: transport, auth, time/position, coverage split; fw 0.20.0, link v12)
 
 Cooperating scanners over **ESP-NOW on the host radios** (one fixed channel, default 1). Design + phases +
 owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides earlier sections). **P1 = transport +
@@ -738,6 +738,11 @@ MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` 
 else a member's live GPS) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
 client stamps the fleet time/position ahead of its own (not under device-only), its tz follows the leader, and
 `isSelfDet()` drops the fleet's own radios. `devpos` lines + fleet meta keys wait for the P6 scan-analyzer contract.
+**P4 (docs §19):** link **v12** — `ScanConfig.plan` (`ScanPlan`, 18 B) rides every StartScan (all-zero = legacy); the C5
+gates each phase on it and rebuilds its hop lists/timing. The leader assigns roles (N=2: client WIFI + leader BLE;
+N=3: WIFI24 + WIFI5 + BLE) with 10 s join hysteresis and a 30 s loss grace, re-sends Plans every 10 s, and a client
+without a leader runs FULL. `M:p:0|3` = auto / everyone full. **Until P5 each unit sees only its share.** All hosts +
+C5s must run the same link version (flash together).
 
 ## Subagents (`.claude/agents/`)
 

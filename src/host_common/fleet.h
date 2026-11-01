@@ -9,6 +9,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "link_protocol.h"
 
 namespace fleet {
 
@@ -61,6 +62,12 @@ bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live);
 // MACs of the fleet's own radios (leader BLE advert, its phone, its SoftAP, members' BLE): never logged as detections.
 bool isFleetSelf(const uint8_t mac[6]);
 
+// --- P4: coverage split (link v12 ScanPlan, docs §8). The plan this unit's C5 should run, sent on every StartScan:
+// all-zero (legacy full time-slice) unless the fleet assigned this unit a role. Role ids = fleet_proto PlanRole.
+link_protocol::ScanPlan currentPlan();
+uint8_t currentPlanRole();
+const char* planRoleName(uint8_t role);   // "full" / "wifi" / "wifi24" / "wifi5" / "ble"
+
 // --- UI / diagnostics ---
 struct Ui {
   bool     active;
@@ -73,6 +80,7 @@ struct Ui {
   int8_t   rssi;                   // last leader frame (leaderSeen)
   uint32_t ageMs;                  // since the last leader frame (leaderSeen)
   uint8_t  members, joinedMembers; // leader: enrolled / joined
+  uint8_t  planRole;               // the scan role this unit runs now (PlanRole)
   uint32_t txOk, txFail;           // ESP-NOW send results (send callback)
   uint32_t rxFrames, rxDrop;       // frames queued / dropped (queue full or oversize)
 };

@@ -1,6 +1,12 @@
 # Handoff — 2026-10-31 (work branch: `fleet-mode`, local commits, NOT pushed; `main` @ `c9a9acb` is the trunk)
 
-## RESUME HERE — 2026-11-01: fleet P3 (time + position) BUILT; P2 done + owner-tested from the phone
+## RESUME HERE — 2026-11-01: fleet P4 (coverage split, link v12) BUILT + bench-PASSED; next P5 (forwarding + merge)
+- **P4:** docs/fleet-mode.md §19. All four bench boards run link v12 (mini #2 S3 COM10 + its C5 COM9, CYD COM13 + its C5
+  COM18). **Mini #1 is still v11** (fine on its own; flash both halves together when it joins the fleet).
+- **Until P5 each unit sees only its share** (see §19); `M:p:3` = everyone full for field use before P5.
+- Next: a reviewer pass on P4, then P5 (DetBatch/RidBatch forwarding + leader merge + DETS v9 + web via chips).
+
+## Earlier — 2026-11-01: fleet P3 (time + position) BUILT; P2 done + owner-tested from the phone
 - **P3:** docs/fleet-mode.md §18. Bench: the CYD client takes the fleet clock (src 4) + the leader's tz, and its bg log
   renamed 0.4 s after join. **Position PASSED** with the phone on the leader (CYD `pos src 4 live`, 2 self MACs; the
   owner confirmed `Pos: fleet`). Self-MAC drops: by inspection only. P3 review fixed (`fbd786e`, docs §18.1). Next: P4 (link v12 scan
