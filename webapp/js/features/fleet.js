@@ -90,8 +90,9 @@ function renderMembers(){
       .filter(Boolean).join(" · ");
     return `<div class="sessrow keyrow"><span class="material-symbols-outlined" style="color:${STATE_COL[m.state] || "#8b949e"}">radio_button_checked</span>` +
       `<div class="sessmain"><span class="sessdate">${esc(m.name)}</span><span class="sesssub">${esc(sub)}</span></div>` +
-      (live ? `<button class="secondary keyforget" data-act="x" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Release</button>` : "") +
-      `<button class="danger keyforget" data-act="r" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Remove</button></div>`;
+      `<div class="fltacts">` +   // stacked: two side-by-side buttons squeezed the name/details into wrapping
+      (live ? `<button class="secondary" data-act="x" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Release</button>` : "") +
+      `<button class="danger" data-act="r" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Remove</button></div></div>`;
   }).join("");
 }
 
