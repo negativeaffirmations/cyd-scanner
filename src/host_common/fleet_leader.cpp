@@ -295,6 +295,8 @@ void copyPrintable(char* dst, const char* src, size_t n) {   // member-supplied 
   dst[i] = 0;
 }
 
+bool nameOk(const char* s);   // defined with the M: helpers below
+
 void onJoinAck(const Rx& f) {
   int i = findMac(f.mac);
   if (i < 0 || !sessionOk(i, f, sizeof(JoinAck))) return;
@@ -318,6 +320,18 @@ void onJoinAck(const Rx& f) {
     r.board = a.board; r.caps = a.caps;
     memcpy(r.bleMac, a.bleMac, 6);
     copyPrintable(r.fw, a.fw, sizeof(r.fw));                     // reads at most sizeof(r.fw)-1 = sizeof(a.fw) bytes
+    // Placeholder name (the phone held this member's key without a unit name -> "member" / "scanner-…" / empty): take
+    // the name the member reports in its authenticated JoinAck, and save it, so the Fleet card + "seen by" chips show it.
+    {
+      MemberRec& mr = L->st.m[i];
+      char nm[21]; copyPrintable(nm, a.name, sizeof(nm));
+      if (nm[0] && nameOk(nm) && (!mr.name[0] || !strcmp(mr.name, "member") || !strncmp(mr.name, "scanner-", 8)) &&
+          strcmp(mr.name, nm)) {
+        Store next = L->st;
+        strncpy(next.m[i].name, nm, sizeof(next.m[i].name) - 1);
+        if (saveStore(next, L->addCtr)) L->st = next;
+      }
+    }
     Serial.printf("[FLT] member %d (%s) JOINED, fw %s\n", i + 1, L->st.m[i].name, r.fw);
     event("member_join");
     sendSync(i);

@@ -1017,3 +1017,10 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - A WIFI24 member's cycle drops from ~24 s to ~9.5 s.
 - **`M:o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>`:** a per-member role override (runtime only, not saved; it applies
   once the member counts). There is no web control yet; serial `fleet m o:…` or a future layout editor (§16.1).
+- **3-unit bench (2026-11-01, release fw 0.22.0: mini #2 leader + CYD + mini #1):**
+  - Layout `leader ble, CYD wifi24, mini #1 wifi5`; the ramp works (a new member runs `full` until it has been stable
+    10 s).
+  - The merge from two clients: e.g. 77 rows = 24 own + 24 member-only + 29 both. Leader `rx drop 0`.
+  - Mini #1 takes the fleet clock + position, with 3 self MACs.
+  - Fix: a member enrolled with a placeholder name (the phone's key had no unit name → "member") now takes the name it
+    reports in its authenticated JoinAck, saved to `fltmem`.
