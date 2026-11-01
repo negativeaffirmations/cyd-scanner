@@ -34,10 +34,12 @@ uint8_t srcTypeOf(const char* tag) {
 Detection          g_dets[MAX_DET];
 sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 int                g_detCount = 0;
+uint8_t            g_detVia[MAX_DET];
 // Decoded Remote-ID broadcasts (Reply::RemoteId), keyed by emitter MAC. Same lifecycle as g_dets:
 // reset at the top of each requestScan() so it mirrors the current burst.
 RemoteId           g_rids[MAX_RID];
 int                g_ridStoreCount = 0;
+uint8_t            g_ridVia[MAX_RID];
 const RemoteId* ridByMac(const uint8_t* mac) {
   for (int i = 0; i < g_ridStoreCount; i++)
     if (memcmp(g_rids[i].mac, mac, 6) == 0) return &g_rids[i];
@@ -434,7 +436,7 @@ int buildGroups() {
       DevGroup& g = g_groups[gi];
       memcpy(g.mac, d.mac, 6);
       g.tier = (int)g_score[i].tier; g.score = g_score[i].score; g.bestRssi = d.rssi; g.rep = i;
-      g.nameIdx = -1; g.ie = 0; g.companyId = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0;
+      g.nameIdx = -1; g.ie = 0; g.companyId = 0; g.whitelisted = false; g.srcMask = 0; g.flags = 0; g.via = 0;
     }
     DevGroup& g = g_groups[gi];
     if ((int)g_score[i].tier > g.tier) g.tier = (int)g_score[i].tier;
@@ -444,6 +446,7 @@ int buildGroups() {
     if (!g.ie && d.ie_hash) g.ie = d.ie_hash;
     g.flags |= (uint16_t)(d.flags & (FLAGS_NOTABLE | FLAGS_DATA));
     g.srcMask |= (uint8_t)(1u << srcTypeOf(srcTag(d)));
+    g.via |= g_detVia[i];
   }
   // Whitelist check per device (before the sort, which uses it): union of member sources,
   // first company ID / service UUID.
@@ -583,6 +586,7 @@ void updateFollowState() {
 
   for (int k = 0; k < g_groupCount; k++) {
     const DevGroup& g = g_groups[k];
+    if (!(g.via & 1)) continue;   // fleet: only devices THIS unit hears (a member's position isn't ours)
     FollowState* f = nullptr;
     for (int i = 0; i < g_followCount; i++)
       if (memcmp(g_follow[i].mac, g.mac, 6) == 0) { f = &g_follow[i]; break; }
@@ -743,7 +747,17 @@ void showLinkLed() { setLedPattern(linkColor(), linkColor()); }
 ScanCycleResult core::runScanCycle() {
   ScanCycleResult res{};
   hostboard::sample();  // refresh the battery reading every cadence (independent of the C5 link)
-  if (!requestScan()) {
+  bool fleetOnly = false;
+  const bool polled = requestScan();
+  // Fleet leader whose OWN C5 is really down (past the sticky window, not a busy miss) while members still report:
+  // run the pipeline on the members' rows alone so the merged view keeps working (docs/fleet-mode.md §9.2).
+  if (!polled && millis() - g_lastLinkOkMs >= LINK_STICKY_MS && fleet::hasRemote()) {
+    g_detCount = 0; g_ridStoreCount = 0;
+    g_deauthRecent = 0; g_evilCount = 0; g_ridCount = 0;   // no stale local C5 events
+    fleet::mergeRemote();
+    fleetOnly = true;
+  }
+  if (!polled && !fleetOnly) {
     // BUSY MISS: the C5 didn't answer (it's in its Wi-Fi-scan busy window). This is not a link
     // failure. Keep the last table/view (requestScan zeroed g_detCount but we skip the pipeline, so
     // g_groups/g_scanView and the on-screen list stay as they were), don't push the empty table to
@@ -757,7 +771,12 @@ ScanCycleResult core::runScanCycle() {
     res.busyMiss = true;
     return res;
   }
-  g_linkOk = true; g_lastLinkOkMs = millis();
+  if (polled) {
+    g_linkOk = true; g_lastLinkOkMs = millis();
+    fleet::mergeRemote();   // leader: members' rows join this cycle's table (no-op on every other unit)
+  } else {
+    g_linkOk = false;       // fleet-only cycle: the view is the members' rows
+  }
   computeScores();
   buildGroups();  // once per cycle; shared by the board's view and pushDetections()
   updateFollowState();
@@ -778,5 +797,6 @@ ScanCycleResult core::runScanCycle() {
   pushStatus();
   pushDetections();
   hostui::onScanCycle(res);  // CYD: rebuild the scan view + repaint if on the scanner screen
+  if (polled) fleet::forwardCycle();   // client: send what changed to the leader (no-op on every other unit)
   return res;
 }

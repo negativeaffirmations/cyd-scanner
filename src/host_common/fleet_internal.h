@@ -8,6 +8,7 @@
 
 namespace fleet {
 struct Ui;
+struct FwdStats;
 namespace detail {
 
 using namespace fleet_proto;
@@ -90,6 +91,10 @@ void printStatus();
 void counts(uint8_t& enrolled, uint8_t& joined);
 bool memberFix(float* lat, float* lon, uint32_t* ageMs, bool* live);   // a member's GPS fix (sticky choice; live < 10 s)
 link_protocol::ScanPlan ownPlan(uint8_t* role);                            // the leader's own role in the current assignment
+int  mergeRemote();
+bool hasRemote();
+void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid);
+void fwdStats(FwdStats& s);
 bool isSelf(const uint8_t mac[6]);                          // a member's BLE MAC
 }
 namespace client {
@@ -104,6 +109,8 @@ bool timeFresh();
 bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live);
 bool isSelf(const uint8_t mac[6]);                          // in the leader's Sync.selfMacs
 link_protocol::ScanPlan plan(uint8_t* role);                               // the plan from the leader (zeros = full) while joined
+void forwardCycle();
+void fwdStats(FwdStats& s);
 void dropSession(const char* why);         // back to searching (rekey, unjoin)
 void forgetKey();                          // the device key changed: recompute FK on next use
 }

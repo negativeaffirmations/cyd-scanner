@@ -10,7 +10,12 @@
 
 using namespace link_protocol;
 
-constexpr int MAX_DET = 96;
+// Detections held per poll. Fleet P5: a LEADER merges members' rows into this table, so the S3 envs build with
+// -DHOST_MAX_DET=192 (static, ~+27 KB internal SRAM); the CYD (a client only, tight DRAM) keeps 96.
+#ifndef HOST_MAX_DET
+#define HOST_MAX_DET 96
+#endif
+constexpr int MAX_DET = HOST_MAX_DET;
 
 // --- "Following me" detector (Phase 5, device-only). Tunables; these become NVS-settable in a
 // later increment. A device is FOLLOWING when it keeps showing up (persistence) while the
@@ -44,9 +49,13 @@ constexpr int MAX_DET = 96;
 extern Detection          g_dets[MAX_DET];
 extern sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 extern int                g_detCount;
+// Fleet "seen by" mask per row (docs/fleet-mode.md §9.2): bit 0 = this unit's own C5, bit k = member slot k.
+// A non-fleet unit only ever has bit 0. Logging and the follow engine use only rows with bit 0.
+extern uint8_t            g_detVia[MAX_DET];
 constexpr int MAX_RID = 8;
 extern RemoteId           g_rids[MAX_RID];
 extern int                g_ridStoreCount;
+extern uint8_t            g_ridVia[MAX_RID];   // same as g_detVia, for the Remote-ID store
 // "Unknown" sentinels in RemoteId fields (match the C5 decoder's values; tested by VALUE, not `have`).
 constexpr int32_t  RID_LL_UNK  = 0;      // lat/lon 0 = unknown
 constexpr int16_t  RID_ALT_UNK = -1000;  // height / geodetic altitude -1000 = unknown
@@ -163,6 +172,7 @@ struct DevGroup {
   char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
   char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
   uint16_t flags;     // union of the notable C5 detector flags (FLAGS_NOTABLE) across members
+  uint8_t  via;       // fleet "seen by" mask, OR across members (bit 0 = this unit)
   uint8_t  srcMask;   // union of srcType bits (2.4/5G/BLE/PRB/154) across members; computed at
                       // build time so the live-view/snapshot filter never depends on the transient
                       // g_dets table (which requestScan() zeroes, and an aborted scan leaves empty)

@@ -24,6 +24,22 @@ constexpr uint32_t ACK_EVERY_MS = 300, ACK_GIVEUP_MS = 1000, SYNC_LOST_MS = 1500
 constexpr uint8_t  ACK_TRIES = 5;
 constexpr uint32_t TIME_FRESH_MS = 15000;   // a joined client trusts the leader's clock this long after a Sync
 constexpr uint32_t MIN_UTC = 1700000000UL;  // anything earlier (~2023) is not a real clock
+// P5 forwarding (docs §9.1): resend a row when its RSSI moved >= 6 dB, its identity fields changed, or every 10 s
+// (keeps it alive in the leader's 30 s remote table); at most 6 frames per cycle, 5 ms apart.
+constexpr uint32_t FWD_REFRESH_MS = 10000;
+constexpr int      FWD_RSSI_DB = 6, FWD_MAX_FRAMES = 6;
+
+// What was last sent for one device (heap, MAX_DET entries; ~32 B each).
+struct SentRow {
+  bool     used;
+  uint8_t  src;
+  uint8_t  mac[6];
+  uint16_t pan;
+  int8_t   rssi;
+  uint16_t flags;
+  uint16_t cid;
+  uint32_t ie, nameHash, lastSentMs;
+};
 
 enum CState : uint8_t { C_SEARCH, C_HELLO, C_JOINING, C_JOINED };
 
@@ -60,8 +76,47 @@ struct ClientSt {
   // P4: the scan role the leader assigned (reset to FULL whenever the session ends)
   link_protocol::ScanPlan plan;
   uint8_t  planRole, planGen;
+  // P5 forwarding
+  uint16_t fwdCycle;
+  uint32_t rowsSent, framesSent, ridFrames;
 };
 ClientSt* C = nullptr;
+SentRow*  g_sent = nullptr;            // MAX_DET rows, allocated with the client state (normal mode: never)
+uint8_t*  g_fwdBuf = nullptr;          // one sealed DetBatch / RidBatch frame
+
+uint32_t fnv1a(const char* s) {
+  uint32_t h = 2166136261u;
+  for (; *s; s++) { h ^= (uint8_t)*s; h *= 16777619u; }
+  return h;
+}
+
+// Same device for forwarding purposes: source + MAC, plus the PAN for a short 802.15.4 address.
+bool sameKey(const SentRow& e, const Detection& d) {
+  if (e.src != d.source || memcmp(e.mac, d.mac, 6)) return false;
+  if (d.source == (uint8_t)Source::Ieee802154 && !(d.flags & FLAG_154_EXTENDED)) return e.pan == d.panId;
+  return true;
+}
+
+// Should this row go out now? Updates the sent table when it should.
+bool needsSend(const Detection& d, uint32_t now) {
+  const uint32_t nh = fnv1a(d.name);
+  int hit = -1, oldest = 0;
+  for (int i = 0; i < MAX_DET; i++) {
+    if (g_sent[i].used && sameKey(g_sent[i], d)) { hit = i; break; }
+    if (!g_sent[i].used) { if (g_sent[oldest].used) oldest = i; }
+    else if (g_sent[oldest].used && g_sent[i].lastSentMs < g_sent[oldest].lastSentMs) oldest = i;
+  }
+  if (hit >= 0) {
+    const SentRow& e = g_sent[hit];
+    const int dr = (int)d.rssi - (int)e.rssi;
+    if (dr < FWD_RSSI_DB && dr > -FWD_RSSI_DB && e.flags == d.flags && e.ie == d.ie_hash && e.cid == d.companyId &&
+        e.nameHash == nh && now - e.lastSentMs < FWD_REFRESH_MS) return false;
+  }
+  SentRow& e = g_sent[hit >= 0 ? hit : oldest];                    // new device: a free slot, else the stalest
+  e.used = true; e.src = d.source; memcpy(e.mac, d.mac, 6); e.pan = d.panId;
+  e.rssi = d.rssi; e.flags = d.flags; e.cid = d.companyId; e.ie = d.ie_hash; e.nameHash = nh; e.lastSentMs = now;
+  return true;
+}
 
 // Preferred pass: the saved channel, then 1 / 6 / 11. Full pass: the saved channel, then every other one, so a member
 // that missed a move to e.g. ch 3 still finds its leader.
@@ -123,6 +178,8 @@ void sendMStat() {
   m->txFailPm = tot ? (uint16_t)((uint64_t)u.txFail * 1000 / tot) : 0;
   m->bat = (int8_t)hostboard::batteryPercent();
   m->planGen = C->planGen;
+  m->dets = (uint16_t)g_detCount;                                   // P5: scan counters (the leader shows them)
+  m->deauth = g_deauthRecent; m->evil = g_evilCount; m->rid = g_ridCount;
   m->srcMask = g_srcMask;                                          // the leader only assigns roles this unit can run
   m->c5Link = g_linkOk ? 1 : 0;
   // This unit's OWN live GPS fix (not the fleet position it stamps): the leader may use it as the fleet position
@@ -188,6 +245,7 @@ void onJoin(const Rx& f) {
   if (!peerSet(C->leaderMac, C->sk)) { toSearch("encrypt failed", true); return; }
   C->txSeq = 0; C->rx.reset(); C->acks = 0;
   C->st = C_JOINING;
+  if (g_sent) memset(g_sent, 0, MAX_DET * sizeof(SentRow));        // a new session: forward every row afresh
   sendAck();
 }
 
@@ -279,6 +337,9 @@ void begin() {
   if (!C) { Serial.println("[FLT] client: out of memory"); return; }
   memset(C, 0, sizeof(*C));
   C->st = C_SEARCH;
+  if (!g_sent) g_sent = (SentRow*)calloc(MAX_DET, sizeof(SentRow));
+  if (!g_fwdBuf) g_fwdBuf = (uint8_t*)malloc(FLEET_V2_MAX);
+  if (!g_sent || !g_fwdBuf) Serial.println("[FLT] client: no memory for forwarding (rows stay local)");
   buildHops(false);                                                // the boot MAC is already fresh: no remac needed
 }
 
@@ -357,9 +418,57 @@ void printStatus() {
                 timeSource(), (unsigned long)epochLocal(), phone::tzOffsetMin(), (int)f.src, f.live ? " live" : "",
                 (unsigned long)(f.ageMs / 1000), C->haveTime ? (timeFresh() ? "fresh" : "stale") : "none",
                 C->havePos ? "yes" : "none", (unsigned)C->nSelf);
+  Serial.printf("[FLT] client: forwarded %lu rows in %lu frames, %lu RID frames\n", (unsigned long)C->rowsSent,
+                (unsigned long)C->framesSent, (unsigned long)C->ridFrames);
 }
 
 bool joined() { return C && C->st == C_JOINED; }
+
+// P5 (docs §9.1): after each successful scan cycle, forward the rows that changed (or are due a refresh) as sealed
+// DetBatch frames, and the Remote-IDs as a RidBatch. Raw Detections: the leader re-scores with its own DB.
+void forwardCycle() {
+  if (!C || C->st != C_JOINED || !g_sent || !g_fwdBuf) return;
+  const uint32_t now = millis();
+  const int per = g_maxPayload >= sizeof(DetBatchHdr) + DETS_PER_V2 * sizeof(Detection) + TAG_LEN ? DETS_PER_V2 : DETS_PER_V1;
+  C->fwdCycle++;
+  int frames = 0, cnt = 0;
+  auto flush = [&]() {
+    if (!cnt) return;
+    DetBatchHdr* h = (DetBatchHdr*)g_fwdBuf;
+    h->cycle = C->fwdCycle; h->idx = (uint8_t)frames; h->cnt = (uint8_t)cnt;
+    if (frames) delay(5);
+    if (sendSealed(C->leaderMac, g_fwdBuf, sizeof(DetBatchHdr) + cnt * sizeof(Detection), Msg::DetBatch, C->sess,
+                   C->txSeq, C->sk)) { C->rowsSent += cnt; C->framesSent++; }
+    frames++; cnt = 0;
+  };
+  memset(g_fwdBuf, 0, sizeof(DetBatchHdr));
+  for (int i = 0; i < g_detCount && frames < FWD_MAX_FRAMES; i++) {
+    if (!(g_detVia[i] & 1)) continue;                                // only what this unit's own C5 heard
+    if (!needsSend(g_dets[i], now)) continue;
+    memcpy(g_fwdBuf + sizeof(DetBatchHdr) + cnt * sizeof(Detection), &g_dets[i], sizeof(Detection));
+    if (++cnt == per) flush();
+  }
+  if (frames < FWD_MAX_FRAMES) flush();
+  int nr = 0;                                                        // Remote-IDs: every cycle while present
+  const int rper = per == DETS_PER_V2 ? RIDS_PER_V2 : RIDS_PER_V1;
+  for (int i = 0; i < g_ridStoreCount && nr < rper; i++) {
+    if (!(g_ridVia[i] & 1)) continue;
+    memcpy(g_fwdBuf + sizeof(RidBatchHdr) + nr * sizeof(RemoteId), &g_rids[i], sizeof(RemoteId));
+    nr++;
+  }
+  if (nr) {
+    RidBatchHdr* rh = (RidBatchHdr*)g_fwdBuf;
+    rh->cnt = (uint8_t)nr; rh->rsv = 0;
+    delay(5);
+    if (sendSealed(C->leaderMac, g_fwdBuf, sizeof(RidBatchHdr) + nr * sizeof(RemoteId), Msg::RidBatch, C->sess,
+                   C->txSeq, C->sk)) C->ridFrames++;
+  }
+}
+
+void fwdStats(FwdStats& s) {
+  if (!C) return;
+  s.rowsSent = C->rowsSent; s.framesSent = C->framesSent; s.ridFrames = C->ridFrames;
+}
 
 link_protocol::ScanPlan plan(uint8_t* role) {
   if (!C || C->st != C_JOINED) { *role = PLANROLE_FULL; return link_protocol::ScanPlan{}; }

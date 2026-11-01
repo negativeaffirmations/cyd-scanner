@@ -702,6 +702,19 @@ uint8_t currentPlanRole() {
   return r;
 }
 
+void forwardCycle() { if (g_active && !g_leader) detail::client::forwardCycle(); }
+int  mergeRemote()  { return g_active && g_leader ? detail::leader::mergeRemote() : 0; }
+bool hasRemote()    { return g_active && g_leader && detail::leader::hasRemote(); }
+void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid) {
+  *deauth = 0; *evil = 0; *rid = 0;
+  if (g_active && g_leader) detail::leader::alertMax(deauth, evil, rid);
+}
+void fwdStats(FwdStats& s) {
+  memset(&s, 0, sizeof(s));
+  if (!g_active) return;
+  if (g_leader) detail::leader::fwdStats(s); else detail::client::fwdStats(s);
+}
+
 bool isFleetSelf(const uint8_t mac[6]) {
   if (!g_active) return false;
   return g_leader ? detail::leader::isSelf(mac) : detail::client::isSelf(mac);

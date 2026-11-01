@@ -86,7 +86,8 @@ function renderMembers(){
   if (!members.length) { box.innerHTML = '<div class="sub" style="padding:6px;margin:0">No members yet. Add a scanner below.</div>'; return; }
   box.innerHTML = members.map(m => {
     const live = m.state === 2;
-    const sub = [m.sid, STATE_TXT[m.state] || "?", live ? `${m.rssi} dBm` : "", live ? `${m.age} s ago` : "", m.fw ? `fw ${m.fw}` : ""]
+    const sub = [m.sid, STATE_TXT[m.state] || "?", live && m.role ? `scans ${m.role}` : "", live ? `${m.rssi} dBm` : "",
+                 live ? `${m.age} s ago` : "", m.fw ? `fw ${m.fw}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="sessrow keyrow"><span class="material-symbols-outlined" style="color:${STATE_COL[m.state] || "#8b949e"}">radio_button_checked</span>` +
       `<div class="sessmain"><span class="sessdate">${esc(m.name)}</span><span class="sesssub">${esc(sub)}</span></div>` +
@@ -114,8 +115,9 @@ export async function refreshMembers(){
     addCtr = +(t.split("\n")[0].split("\t")[6] || 0);   // the leader's enrollment counter (header field 7)
     members = t.split("\n").slice(1).filter(Boolean).map(l => {
       const c = l.split("\t");
-      return { slot:+c[0], sid:c[1], name:c[2], kg:+c[3], state:+c[4], rssi:+c[5], age:+c[6], fw:c[14] || "" };
+      return { slot:+c[0], sid:c[1], name:c[2], kg:+c[3], state:+c[4], rssi:+c[5], age:+c[6], role:c[7] || "", fw:c[14] || "" };
     });
+    state.fleetMembers = members.map(m => ({ slot:m.slot, name:m.name }));   // "seen by" chip names (detections.js)
     renderMembers();
     await renderAddChoices();
   } catch (e) { if (!/busy|download/.test(e.message)) log("Fleet: " + e.message); }
@@ -185,8 +187,10 @@ export function initFleet(){
     const f = state.status.flt || "";
     if (f !== lastFlt || !state.connected) { lastFlt = f; renderFleet(); }
     const st = fltStatus();
-    if (state.connected && st && st.role === 2 && settingsOpen() && Date.now() - lastPoll >= POLL_MS) refreshMembers();
-    if (!state.connected && members.length) { members = []; renderMembers(); }
+    // Member list: every 5 s while the Fleet card is open, every 30 s otherwise (the live list's "seen by" names).
+    const due = settingsOpen() ? POLL_MS : 30000;
+    if (state.connected && st && st.role === 2 && state.dl.mode === null && Date.now() - lastPoll >= due) refreshMembers();
+    if (!state.connected && members.length) { members = []; state.fleetMembers = []; renderMembers(); }
   }, 1000);
   renderFleet();
 }

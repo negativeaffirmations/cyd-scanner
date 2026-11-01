@@ -15,6 +15,8 @@
 #include "phone.h"
 #include "host_core.h"
 #include <WiFi.h>
+#include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
 
 using namespace fleet::detail;
 
@@ -32,6 +34,12 @@ constexpr uint32_t MEMBER_FIX_LIVE_MS = 10000;   // a member's own GPS fix count
 // reshuffle). Plans are re-sent every PLAN_RESEND_MS so a member that missed one converges.
 constexpr uint32_t ROLE_STABLE_MS = 10000, ROLE_GRACE_MS = 30000, PLAN_RESEND_MS = 10000;
 constexpr uint8_t  PLANMODE_AUTO = 0, PLANMODE_OFF = 3;
+// P5 (docs §9.2): members' forwarded rows live this long (= the C5 table TTL); member alert counts this long.
+constexpr uint32_t REMOTE_TTL_MS = 30000, MEMBER_STAT_FRESH_MS = 10000;
+constexpr int      REMOTE_ROWS = 256, REMOTE_ROWS_NOPSRAM = 64, REMOTE_RIDS = 16;
+
+struct RemoteRow { Detection d; uint8_t member; bool used; uint32_t lastMs; };   // ~88 B; PSRAM
+struct RemoteRid { RemoteId r; uint8_t member; bool used; uint32_t lastMs; };
 
 struct MemberRec { uint8_t sid[6]; uint32_t kg; char name[21]; uint8_t fk[KEY_LEN]; };   // persisted
 struct Store { uint8_t n; MemberRec m[FLEET_MAX_MEMBERS]; };
@@ -60,6 +68,8 @@ struct MemberRt {
   uint8_t  planSentGen;                // last plan generation sent to it
   uint32_t lastPlanMs;
   uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
+  uint16_t deauth; uint8_t evil, rid;  // its latest alert counts (MStat), for the fleet-wide maxima
+  uint32_t statAtMs;
 };
 
 struct Leader {
@@ -81,6 +91,11 @@ struct Leader {
   uint8_t  planGen;                    // bumped whenever the role layout changes
   uint8_t  leaderRole;                 // this leader's own scan role
   uint8_t  planMode;                   // PLANMODE_AUTO (template) / PLANMODE_OFF (everyone full); NVS fltpmode
+  // P5 remote table (heap: PSRAM when present)
+  RemoteRow* remote;
+  int        nRemote;                  // capacity
+  RemoteRid  rids[REMOTE_RIDS];
+  uint32_t   rowsRx, framesRx, merged, appended;
 };
 Leader* L = nullptr;   // heap, created by the first use (normal-mode static footprint stays one pointer)
 
@@ -318,6 +333,7 @@ void onMStat(const Rx& f) {
   r.heapKB = m.heapKB; r.txFailPm = m.txFailPm;
   memcpy(r.phoneMac, m.phoneMac, 6);
   r.srcMask = m.srcMask;
+  r.deauth = m.deauth; r.evil = m.evil; r.rid = m.rid; r.statAtMs = r.lastRxMs;
   if (m.planGen != L->planGen && r.planSentGen == L->planGen && millis() - r.lastPlanMs > 1000)
     r.planSentGen = (uint8_t)(L->planGen - 1);                     // it missed the last Plan: resend on the next tick
   if (m.gpsFix && m.lat >= -900000000 && m.lat <= 900000000 && m.lon >= -1800000000 && m.lon <= 1800000000) {
@@ -386,6 +402,80 @@ void assignRoles() {
   for (int i = 0; i < L->st.n; i++) Serial.printf(", %s %s", L->st.m[i].name, fleet::planRoleName(roles[i]));
   Serial.println();
   event("plan");
+}
+
+// ---- P5: members' detections (docs §9.2) ----
+// A variable-length sealed frame from member i: exact length for the row count it declares, then the usual checks.
+bool batchOk(int i, const Rx& f, size_t hdrLen, size_t rowLen, uint8_t cnt, uint8_t maxCnt) {
+  MemberRt& r = L->rt[i];
+  if (!r.enc || r.state != M_JOINED || cnt == 0 || cnt > maxCnt || f.len != hdrLen + cnt * rowLen + TAG_LEN) return false;
+  const Hdr* h = (const Hdr*)f.data;
+  if (h->sess != r.sess || !tagOk(f.data, f.len, r.sk)) return false;
+  return r.rx.accept(h->seq);
+}
+
+bool sameDet(const Detection& a, const Detection& b) {
+  if (a.source != b.source || memcmp(a.mac, b.mac, 6)) return false;
+  if (a.source == (uint8_t)Source::Ieee802154 && !(a.flags & FLAG_154_EXTENDED)) return a.panId == b.panId;
+  return true;
+}
+
+void onDetBatch(const Rx& f) {
+  int i = findMac(f.mac);
+  if (i < 0 || !L->remote || f.len < sizeof(DetBatchHdr) + TAG_LEN) return;
+  const uint8_t cnt = ((const DetBatchHdr*)f.data)->cnt;
+  if (!batchOk(i, f, sizeof(DetBatchHdr), sizeof(Detection), cnt, DETS_PER_V2)) return;
+  L->rt[i].lastRxMs = millis();                                    // traffic counts as alive too
+  const uint32_t now = millis();
+  for (int k = 0; k < cnt; k++) {
+    Detection d; memcpy(&d, f.data + sizeof(DetBatchHdr) + k * sizeof(Detection), sizeof(d));
+    d.name[sizeof(d.name) - 1] = 0;                                // member text: always terminated
+    int hit = -1, freeIx = -1, oldest = -1;
+    for (int j = 0; j < L->nRemote; j++) {
+      RemoteRow& rr = L->remote[j];
+      if (!rr.used || now - rr.lastMs >= REMOTE_TTL_MS) { rr.used = false; if (freeIx < 0) freeIx = j; continue; }
+      if (rr.member == i && sameDet(rr.d, d)) { hit = j; break; }
+      if (oldest < 0 || rr.lastMs < L->remote[oldest].lastMs) oldest = j;
+    }
+    const int j = hit >= 0 ? hit : freeIx >= 0 ? freeIx : oldest;
+    if (j < 0) break;
+    L->remote[j].d = d; L->remote[j].member = (uint8_t)i; L->remote[j].used = true; L->remote[j].lastMs = now;
+  }
+  L->rowsRx += cnt; L->framesRx++;
+}
+
+void onRidBatch(const Rx& f) {
+  int i = findMac(f.mac);
+  if (i < 0 || f.len < sizeof(RidBatchHdr) + TAG_LEN) return;
+  const uint8_t cnt = ((const RidBatchHdr*)f.data)->cnt;
+  if (!batchOk(i, f, sizeof(RidBatchHdr), sizeof(RemoteId), cnt, RIDS_PER_V2)) return;
+  const uint32_t now = millis();
+  for (int k = 0; k < cnt; k++) {
+    RemoteId r; memcpy(&r, f.data + sizeof(RidBatchHdr) + k * sizeof(RemoteId), sizeof(r));
+    int hit = -1, freeIx = -1, oldest = -1;
+    for (int j = 0; j < REMOTE_RIDS; j++) {
+      RemoteRid& e = L->rids[j];
+      if (!e.used || now - e.lastMs >= REMOTE_TTL_MS) { e.used = false; if (freeIx < 0) freeIx = j; continue; }
+      if (e.member == i && !memcmp(e.r.mac, r.mac, 6)) { hit = j; break; }
+      if (oldest < 0 || e.lastMs < L->rids[oldest].lastMs) oldest = j;
+    }
+    const int j = hit >= 0 ? hit : freeIx >= 0 ? freeIx : oldest;
+    if (j < 0) break;
+    L->rids[j].r = r; L->rids[j].member = (uint8_t)i; L->rids[j].used = true; L->rids[j].lastMs = now;
+  }
+}
+
+// Drop a removed member's rows and renumber the rows of the members that slid down one slot (removeAt).
+void remoteForget(int removed) {
+  for (int j = 0; j < L->nRemote; j++) {
+    RemoteRow& rr = L->remote[j];
+    if (!rr.used) continue;
+    if (rr.member == removed) rr.used = false; else if (rr.member > removed) rr.member--;
+  }
+  for (auto& e : L->rids) {
+    if (!e.used) continue;
+    if (e.member == removed) e.used = false; else if (e.member > removed) e.member--;
+  }
 }
 
 const char* stateName(uint8_t s) {
@@ -491,6 +581,7 @@ bool removeAt(int i) {
   bool ok = saveStore(next, L->addCtr);
   if (ok) {
     endSession(i, M_ENROLLED);
+    if (L->remote) remoteForget(i);
     // Slots shift down; joined members keep the slot number from their Join until they rejoin (P4 must re-send it).
     for (int k = i; k < L->st.n - 1; k++) L->rt[k] = L->rt[k + 1];
     memset(&L->rt[L->st.n - 1], 0, sizeof(MemberRt));
@@ -529,6 +620,14 @@ void begin() {
   L->probing = false;
   L->lastRemacMs = millis();
   L->fixMember = -1;
+  if (!L->remote) {                                                // P5 remote table: PSRAM on the S3
+    L->remote = (RemoteRow*)heap_caps_calloc(REMOTE_ROWS, sizeof(RemoteRow), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    L->nRemote = REMOTE_ROWS;
+    if (!L->remote) {
+      L->remote = (RemoteRow*)calloc(REMOTE_ROWS_NOPSRAM, sizeof(RemoteRow));
+      L->nRemote = L->remote ? REMOTE_ROWS_NOPSRAM : 0;
+    }
+  }
   Serial.printf("[FLT] leader: %u member(s) enrolled\n", (unsigned)L->st.n);
 }
 
@@ -538,6 +637,8 @@ void onFrame(const Rx& f) {
     case Msg::Hello:   onHello(f); break;
     case Msg::JoinAck: onJoinAck(f); break;
     case Msg::MStat:   onMStat(f); break;
+    case Msg::DetBatch: onDetBatch(f); break;
+    case Msg::RidBatch: onRidBatch(f); break;
     default: break;                    // Probe/Join/Sync/Ctrl are leader -> client only
   }
 }
@@ -604,6 +705,79 @@ void fillUi(Ui& u) {
 // The fleet-position fallback from members' own GPS. STICKY: keep the current member while its fix is live, so the
 // fleet track can't bounce between two members a few metres apart every Sync; otherwise switch to the freshest
 // live one. With none live, return the most recent one with its true age (the held fallback), live = false.
+// Fold fresh member rows into this cycle's table (right after requestScan(); docs §9.2). A row this unit also has:
+// keep the stronger RSSI, OR the flags, fill blanks, add the member's "seen by" bit. Otherwise append it. Member
+// rows go through the same self / phone filters as local ones. Remote-IDs likewise into g_rids.
+int mergeRemote() {
+  if (!L || !L->remote) return 0;
+  const uint32_t now = millis();
+  uint8_t peer[6]; const bool havePeer = phone::peerMac(peer);
+  int added = 0;
+  for (int j = 0; j < L->nRemote; j++) {
+    RemoteRow& rr = L->remote[j];
+    if (!rr.used) continue;
+    if (now - rr.lastMs >= REMOTE_TTL_MS || rr.member >= L->st.n) { rr.used = false; continue; }
+    const Detection& d = rr.d;
+    if (isSelfDet(d) || (havePeer && d.source == (uint8_t)Source::BleScan && !memcmp(d.mac, peer, 6))) continue;
+    const uint8_t bit = (uint8_t)(1u << (rr.member + 1));
+    int k = -1;
+    for (int x = 0; x < g_detCount; x++) if (sameDet(g_dets[x], d)) { k = x; break; }
+    if (k >= 0) {
+      Detection& t = g_dets[k];
+      if (d.rssi > t.rssi) t.rssi = d.rssi;
+      t.flags |= d.flags;
+      if (!t.name[0] && d.name[0]) memcpy(t.name, d.name, sizeof(t.name));
+      if (!t.ie_hash) t.ie_hash = d.ie_hash;
+      if (!t.companyId) t.companyId = d.companyId;
+      bool svcBlank = true; for (int q = 0; q < 16; q++) if (t.svc[q]) { svcBlank = false; break; }
+      if (svcBlank) memcpy(t.svc, d.svc, sizeof(t.svc));
+      if (!t.svc16[0]) memcpy(t.svc16, d.svc16, sizeof(t.svc16));
+      bool bssidBlank = true; for (int q = 0; q < 6; q++) if (t.bssid[q]) { bssidBlank = false; break; }
+      if (bssidBlank) memcpy(t.bssid, d.bssid, 6);
+      g_detVia[k] |= bit;
+      L->merged++;
+    } else if (g_detCount < MAX_DET) {
+      g_dets[g_detCount] = d;
+      g_detVia[g_detCount++] = bit;
+      added++; L->appended++;
+    }
+  }
+  for (auto& e : L->rids) {
+    if (!e.used) continue;
+    if (now - e.lastMs >= REMOTE_TTL_MS || e.member >= L->st.n) { e.used = false; continue; }
+    const uint8_t bit = (uint8_t)(1u << (e.member + 1));
+    int k = -1;
+    for (int x = 0; x < g_ridStoreCount; x++) if (!memcmp(g_rids[x].mac, e.r.mac, 6)) { k = x; break; }
+    if (k >= 0) g_ridVia[k] |= bit;
+    else if (g_ridStoreCount < MAX_RID) { g_rids[g_ridStoreCount] = e.r; g_ridVia[g_ridStoreCount++] = bit; }
+  }
+  return added;
+}
+
+bool hasRemote() {
+  if (!L || !L->remote) return false;
+  const uint32_t now = millis();
+  for (int j = 0; j < L->nRemote; j++) if (L->remote[j].used && now - L->remote[j].lastMs < REMOTE_TTL_MS) return true;
+  return false;
+}
+
+void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid) {
+  if (!L) return;
+  const uint32_t now = millis();
+  for (int i = 0; i < L->st.n; i++) {
+    const MemberRt& r = L->rt[i];
+    if (r.state != M_JOINED || !r.statAtMs || now - r.statAtMs >= MEMBER_STAT_FRESH_MS) continue;
+    if (r.deauth > *deauth) *deauth = r.deauth;
+    if (r.evil > *evil) *evil = r.evil;
+    if (r.rid > *rid) *rid = r.rid;
+  }
+}
+
+void fwdStats(FwdStats& s) {
+  if (!L) return;
+  s.rowsRx = L->rowsRx; s.framesRx = L->framesRx; s.merged = L->merged; s.appended = L->appended;
+}
+
 link_protocol::ScanPlan ownPlan(uint8_t* role) {
   *role = L ? L->leaderRole : PLANROLE_FULL;
   return fleet::planForRole(*role, L ? L->planGen : 0);
@@ -657,6 +831,14 @@ void printStatus() {
   Serial.printf("[FLT] leader: %u member(s), probing %s, enroll ctr %lu, plan %u (%s), own role %s\n", (unsigned)L->st.n,
                 L->probing ? "yes" : "no", (unsigned long)L->addCtr, (unsigned)L->planGen,
                 L->planMode == PLANMODE_OFF ? "off" : "auto", fleet::planRoleName(L->leaderRole));
+  Serial.printf("[FLT] leader: remote rows rx %lu in %lu frames, merged %lu, appended %lu, table %d (%s)\n",
+                (unsigned long)L->rowsRx, (unsigned long)L->framesRx, (unsigned long)L->merged,
+                (unsigned long)L->appended, L->nRemote, L->remote && esp_ptr_external_ram(L->remote) ? "psram" : "internal");
+  int own = 0, mem = 0, both = 0;                                  // this cycle's table by "seen by"
+  for (int i = 0; i < g_detCount; i++) {
+    if (g_detVia[i] == 1) own++; else if (g_detVia[i] & 1) both++; else mem++;
+  }
+  Serial.printf("[FLT] leader: table %d rows = %d own only + %d members only + %d both\n", g_detCount, own, mem, both);
   for (int i = 0; i < L->st.n; i++) {
     const MemberRt& r = L->rt[i];
     char sh[13]; sidToHex(L->st.m[i].sid, sh);

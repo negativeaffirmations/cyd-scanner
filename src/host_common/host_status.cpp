@@ -22,6 +22,10 @@ void pushStatus() {
   // are read together (dl + apssid/appsk/apurl) stay in the same part.
   //   part 1: live counts / state (~215 B)   part 2: dl + gav/tav/tpref/gpref + identity + pos/pfa (+ AP creds) (<= ~200 B)
   char s[300];
+  // Fleet P5: the alert counts are the worst any unit sees (a member's deauth flood raises the leader's banner too);
+  // each unit still LOGS only what it observed itself (updateEvents uses the local values).
+  uint16_t fDeauth = 0; uint8_t fEvil = 0, fRid = 0;
+  fleet::alertMax(&fDeauth, &fEvil, &fRid);
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d",
@@ -30,7 +34,7 @@ void pushStatus() {
            susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, (int)hostboard::brightness(), (int)g_srcMask,
            whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
-           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
+           (int)max(g_deauthRecent, fDeauth), (int)max(g_evilCount, fEvil), (int)max(g_ridCount, fRid), g_touchLocked ? 1 : 0,
            hostboard::batteryPercent(), posSource(), (int)g_onbSats, timeSource());
   // gav/tav = per-source availability (bit0 phone, bit1 device) for the web status dots. In part 2:
   // part 1's worst case already sits near the notify limit.
@@ -163,7 +167,10 @@ void pushDetections() {
       for (; l && l[k] && k + 1 < sizeof(sig); k++) sig[k] = ((uint8_t)l[k] < 0x20 || l[k] == 0x7F) ? ' ' : l[k];
       sig[k] = 0;
     }
-    snprintf(row + len, sizeof(row) - len, "\t%s\t%s\t%s", cid, uuid, sig);
+    len += snprintf(row + len, sizeof(row) - len, "\t%s\t%s\t%s", cid, uuid, sig);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v9 trailing (fleet P5): "seen by" mask, decimal. bit 0 = this scanner, bit k = fleet member slot k.
+    snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.via);
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }

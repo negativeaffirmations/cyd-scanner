@@ -80,6 +80,21 @@ export function openCatModal(catId){
 // GPS, so the map plots this device's SIGHTING TRAIL — the phone's own positions each time the MAC
 // was seen this session (see sightings.js). Shown when a live row OR a category-modal row is tapped;
 // carries the whitelist add/manage action.
+// Fleet "seen by" (DETS v9 `via`: bit 0 = the connected scanner, bit k = fleet member slot k). Names come from the
+// Fleet card's member list (state.fleetMembers, set by features/fleet.js). Kept local to this module on purpose: a
+// new export in a shared module would break a phone still holding a cached copy of it.
+function viaUnits(via){
+  const out = [];
+  for (let k = 0; k < 8; k++) {
+    if (!(via & (1 << k))) continue;
+    const m = k === 0 ? null : (state.fleetMembers || []).find(x => x.slot === k);
+    const name = k === 0 ? (state.scannerName || "this scanner") : (m ? m.name : "member " + k);
+    const tail = String(name).split(/[-\s]/).filter(Boolean).pop() || "?";
+    out.push({ k, name, letter: tail[0].toUpperCase() });
+  }
+  return out;
+}
+
 export function openLiveDetail(r){
   const tn = rowTier(r);
   const sig = (r.sources||[]).slice().sort((a,b)=>b.rssi-a.rssi).map(s=>s.tag+" "+s.rssi+" dBm").join(", ") || "?";
@@ -88,6 +103,7 @@ export function openLiveDetail(r){
     ["Signals", sig],
     ...(()=>{ const ro = wifiRoles((r.sources||[]).map(s=>s.tag)); return ro.length ? [["Wi-Fi role", ro.join(" + ")]] : []; })(),
     ["Strongest RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
+  if (r.via & ~1) rowsKv.push(["Seen by", viaUnits(r.via).map(u => u.name).join(", ")]);   // fleet (DETS v9)
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
   if (r.cid) rowsKv.push(["BLE company", r.cid]);
   if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);

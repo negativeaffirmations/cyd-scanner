@@ -391,6 +391,7 @@ int logNewDetections() {
   uint32_t ms = millis();
   uint32_t epoch = epochLocal();
   for (int i = 0; i < g_detCount; i++) {
+    if (!(g_detVia[i] & 1)) continue;   // fleet: a member's row is logged on ITS card, never twice (docs §9.5)
     const Detection& d = g_dets[i];
     int si = seenFind(st, d);
     if (si >= 0) {
@@ -523,7 +524,7 @@ void logEvent(const char* evt, int count) {
     char ssid[97] = {0};
     int emitted = 0;
     for (int i = 0; i < g_detCount; i++) {
-      if (!(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) continue;
+      if (!(g_detVia[i] & 1) || !(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) continue;   // this unit's own BSSIDs only
       if (!ssid[0] && g_dets[i].name[0]) jsonEscape(ssid, sizeof(ssid), g_dets[i].name);
       if (emitted >= EVIL_MAX_BSSID) continue;
       const uint8_t* m = g_dets[i].mac;
@@ -594,6 +595,7 @@ void logRidEvents() {
   static int      ringNext = 0;
   uint32_t now = millis();
   for (int i = 0; i < g_ridStoreCount; i++) {
+    if (!(g_ridVia[i] & 1)) continue;   // a member's Remote-ID is logged by that member
     const RemoteId& r = g_rids[i];
     int slot = -1;
     for (int k = 0; k < MAX_RID; k++)

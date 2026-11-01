@@ -68,6 +68,15 @@ link_protocol::ScanPlan currentPlan();
 uint8_t currentPlanRole();
 const char* planRoleName(uint8_t role);   // "full" / "wifi" / "wifi24" / "wifi5" / "ble"
 
+// --- P5: detection forwarding + merge (docs §9). Both are no-ops outside the matching role. ---
+void forwardCycle();           // client: after a successful scan cycle, send changed rows + Remote-IDs to the leader
+int  mergeRemote();            // leader: right after requestScan(), fold fresh member rows into g_dets / g_rids
+                               // (g_detVia bit k = member slot k); returns the number of rows appended
+bool hasRemote();              // leader: fresh member rows exist (drives the fleet-only cycle when its own C5 is down)
+void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid);   // worst fresh member alert counts (0 when none)
+struct FwdStats { uint32_t rowsSent, framesSent, ridFrames, rowsRx, framesRx, merged, appended; };
+void fwdStats(FwdStats& s);
+
 // --- UI / diagnostics ---
 struct Ui {
   bool     active;

@@ -141,3 +141,13 @@
 .tcard .tc { font-family:ui-monospace,monospace; font-weight:700; font-size:1rem; color:$color-text-muted; }
 .tcard.hot .tn { color:$color-text; }
 .tcard:active { filter:brightness(1.25); }
+
+// Fleet "seen by" chips (DETS v9 `via`, features/detections.js): one small letter per unit that heard the device,
+// coloured by fleet slot (0 = the connected scanner). Shown only when a fleet member contributed.
+.vias { display:inline-flex; gap:2px; margin-left:6px; vertical-align:middle; }
+.via {
+  display:inline-flex; align-items:center; justify-content:center; width:1.15rem; height:1.15rem; border-radius:50%;
+  font-size:.62rem; font-weight:700; color:#0d1117; background:#8b949e;
+  &.v0 { background:#c9d1d9; } &.v1 { background:#58a6ff; } &.v2 { background:#3fb950; } &.v3 { background:#d29922; }
+  &.v4 { background:#f778ba; } &.v5 { background:#a371f7; } &.v6 { background:#39c5cf; }
+}
