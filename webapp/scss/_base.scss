@@ -53,8 +53,19 @@ button:disabled { opacity: .45; }
 .hometop { margin:12px 0; cursor:pointer; }                     // merged top summary card (tap -> #countsDlg)
 .hometop:focus-visible { outline:2px solid $color-accent; outline-offset:2px; }
 // The connected scanner's unit name (STATUS name=, e.g. CFLO-MINI-KOBALI), atop the summary card.
-.hometop-unit { text-align:center; font-size:.75rem; font-weight:500; color:$color-text-muted; letter-spacing:.03em;
-                margin-bottom:8px; &:empty { display:none; } }
+// One line, always: a flex row that never wraps; if space runs out only the unit name shrinks (ellipsis), so fleet
+// mode adds no height to the card.
+.hometop-unit { display:flex; justify-content:center; align-items:center; white-space:nowrap; font-size:.75rem;
+                font-weight:500; color:$color-text-muted; letter-spacing:.03em; margin-bottom:8px;
+                &:has(> #unitName:empty) { display:none; }
+                #unitName { min-width:0; overflow:hidden; text-overflow:ellipsis; } }
+// Fleet mode cue on that same line (features/fleet.js): a small accent pill ("FLEET · <units>") before the name and
+// "| FLEET LEADER" / "| FLEET CLIENT" after it.
+.fltpill { flex:none; margin-right:6px; padding:0 6px; border-radius:8px; background:$color-accent; color:#fff;
+           font-size:.62rem; font-weight:700; line-height:1.35; letter-spacing:.04em; }
+.fltrole { flex:none; color:$color-text; font-weight:600; letter-spacing:.02em;
+           &::before { content:"|"; margin:0 .4em; color:$color-text-muted; font-weight:500; } }
+.fltpill[hidden], .fltrole[hidden] { display:none; }   // their display rules would otherwise beat the hidden attribute
 // Scan-summary modal rows: verbose label left, count right.
 .cnrow { display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:9px 4px;
          border-top:1px solid $color-border; }

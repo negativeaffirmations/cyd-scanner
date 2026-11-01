@@ -191,14 +191,52 @@ button:disabled {
 }
 
 .hometop-unit {
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  white-space: nowrap;
   font-size: 0.75rem;
   font-weight: 500;
   color: #8b949e;
   letter-spacing: 0.03em;
   margin-bottom: 8px;
 }
-.hometop-unit:empty {
+.hometop-unit:has(> #unitName:empty) {
+  display: none;
+}
+.hometop-unit #unitName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fltpill {
+  flex: none;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #aa00aa;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+}
+
+.fltrole {
+  flex: none;
+  color: #e6edf3;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.fltrole::before {
+  content: "|";
+  margin: 0 0.4em;
+  color: #8b949e;
+  font-weight: 500;
+}
+
+.fltpill[hidden], .fltrole[hidden] {
   display: none;
 }
 
