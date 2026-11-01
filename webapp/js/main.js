@@ -1,9 +1,9 @@
 // Entry point: wires every DOM event listener to its handler. Loaded as <script type="module">,
 // which is deferred, so the DOM is ready by the time this runs.
 import { $, log } from './util/dom.js';
-import { connect, reconnect } from './ble/connection.js?v=20261029b';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
+import { connect, reconnect } from './ble/connection.js?v=20261031b';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
 import { handleDevKeyHash, addPasted, forgetKey, renderKeysUI, askConfirm, answerConfirm, mayShareLocation } from './ble/auth.js';
-import { toggleScan, newSession, reloadDb, toggleWifi, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
+import { toggleScan, newSession, reloadDb, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
 import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';
 import { gpsOnce } from './gps.js';
 import { refreshSessions, downloadSession, downloadSessionRange, deleteSession, wipeAllLogs, mapSelectedSession, exploreSelected, uploadSelectedSessions, selectAllSessions } from './features/sessions.js';
@@ -19,6 +19,7 @@ import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
+import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031b';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
@@ -104,23 +105,15 @@ $("dlfBleBtn").onclick = downloadFilteredAll;
 $("dlfWifiBtn").onclick = downloadFilteredWifi;
 $("sessDlfBtn").onclick = downloadSessionRange;
 $("sessAll").addEventListener("change", e=>selectAllSessions(e.target.checked));
-$("wifiBtn").onclick = toggleWifi;
-// Wi-Fi download join card: the QR is drawn on this same phone, so it can't scan it. Copy the PSK and hand
-// off to Android's Wi-Fi settings instead (an intent: link; if Chrome won't resolve it the page simply stays
-// visible, so after a beat show the manual hint). Wired here, not in wifiap.js, so it works on first load.
-$("apCopyBtn").onclick = async ()=>{
-  const psk = state.ap && state.ap.psk, b = $("apCopyBtn");
-  if(!psk) return;
-  try { await navigator.clipboard.writeText(psk); }
-  catch(e){ log("Copy failed — type the password shown above."); return; }
-  b.textContent = "Copied ✓";
-  setTimeout(()=>{ b.textContent = "Copy password"; }, 1500);
-};
-$("apWifiSetBtn").onclick = ()=>{
-  $("apWifiHint").hidden = true;
-  location.href = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
-  setTimeout(()=>{ if(document.visibilityState === "visible") $("apWifiHint").hidden = false; }, 1500);
-};
+// Wi-Fi download stepper (features/wififlow.js): the dialog opens on tap, then walks join -> open -> stop.
+$("wifiBtn").onclick      = openWifiFlow;
+$("wfClose").onclick      = ()=>$("wifiDlg").close();   // the AP keeps running; the Data button reopens the flow
+$("wfCopyBtn").onclick    = copyPassword;
+$("wfWifiSetBtn").onclick = openWifiSettings;
+$("wfJoinedBtn").onclick  = markJoined;
+$("wfOpen").addEventListener("click", pageOpened);
+$("wfBackBtn").onclick    = reopenPage;
+$("wfStopBtn").onclick    = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
 $("sessDelBtn").onclick = deleteSession;

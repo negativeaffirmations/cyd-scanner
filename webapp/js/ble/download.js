@@ -116,6 +116,6 @@ export async function downloadFilteredAll(){
 export function downloadFilteredWifi(){
   const sp=exportSpec(); if(!sp) return;
   const url="http://192.168.4.1/dlf?f=all&mode="+sp.mode+(sp.mode===2?"&arg="+sp.arg:"");
-  log("Opening "+url+" — join the device Wi-Fi first (Wi-Fi download mode). (all logs)");
+  log("Opening "+url+" — join the scanner Wi-Fi first (Data → Download over Wi-Fi). (all logs)");
   window.open(url,"_blank");
 }

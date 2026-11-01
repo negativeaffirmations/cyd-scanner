@@ -23,6 +23,8 @@ export async function newSession(){
   catch(e){ log("New session failed: " + e.message); }
 }
 
+// Legacy: only a cached pre-20261031b main.js still calls this; the stepper (features/wififlow.js) owns
+// Wi-Fi download now. Remove once caches have turned over.
 export async function toggleWifi(){
   state.wifiOn = !state.wifiOn;
   try{ await state.chars.cmd.writeValue(enc.encode(state.wifiOn?"1":"0"));

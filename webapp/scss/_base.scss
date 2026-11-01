@@ -203,3 +203,38 @@ select {
 .authmsg { color:$color-warn; font-weight:600; overflow-wrap:anywhere; }
 .secmsg { white-space:pre-line; overflow-wrap:anywhere; line-height:1.4; }
 .dlgactions { margin-top:1em; }
+
+// --- Wi-Fi download stepper (#wifiDlg, js/features/wififlow.js): numbered steps on a rail; only the
+// active step shows its body + big action, done steps collapse to a one-line summary, later ones dim. ---
+a.btnlink {   // an <a> that must look like the primary button (it opens the device's http:// page in a new tab)
+  display:block; box-sizing:border-box; width:100%; margin:.35em 0; padding:.8em 1em; border-radius:10px;
+  background:$color-accent; color:#fff; font-size:1rem; text-align:center; text-decoration:none;
+}
+.wfsteps { list-style:none; margin:0; padding:0; }
+.wfstep { position:relative; margin-left:.8em; padding:0 0 1em 1.3em; border-left:2px solid $color-border; }
+.wfstep:last-child { border-left-color:transparent; padding-bottom:0; }
+.wfhead { display:flex; align-items:center; gap:.6em; margin-left:calc(-1.3em - .68rem - 1px); }   // centre the 1.36rem circle on the rail
+.wfnum {
+  flex:none; display:inline-flex; align-items:center; justify-content:center; width:1.6em; height:1.6em;
+  border-radius:50%; background:$color-border; color:$color-text; font-size:.85rem; font-weight:600;
+}
+.wftitle { font-weight:600; }
+.wfbody { margin-top:.5em; }
+.wfdone { margin:.2em 0 0; }
+.wfstep:not(.active) .wfbody { display:none; }
+.wfstep:not(.done) .wfdone { display:none; }
+.wfstep.todo { opacity:.5; }
+.wfstep.active .wfnum { background:$color-accent; color:#fff; }
+.wfstep.done .wfnum { background:$color-ok; color:#000; }
+.wfnet { font-size:1.25rem; font-weight:600; overflow-wrap:anywhere; }
+.wfpsk {
+  display:inline-block; padding:.15em .45em; border-radius:6px; background:$color-surface-inset;
+  font-family:ui-monospace, monospace; font-size:1.05rem; overflow-wrap:anywhere;
+}
+.wftip { color:$color-warn; }
+.wfok { color:$color-ok; font-weight:600; margin:.5em 0 .2em; }
+.wfspin {
+  display:inline-block; width:1em; height:1em; vertical-align:-.15em; border-radius:50%;
+  border:2px solid $color-border; border-top-color:$color-accent; animation:wfspin .8s linear infinite;
+}
+@keyframes wfspin { to { transform:rotate(360deg); } }

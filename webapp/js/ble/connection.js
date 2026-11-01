@@ -164,7 +164,7 @@ export function onDisconnect(){ setConn("disconnected"); clearLinkSecurity(); lo
   $("sessUploadBtn").disabled=true; renderRemoteUI(); updateSessButtons();   // disable session/current upload (no link)
   $("wlBtn").disabled=true; if($("wlDlg").open) $("wlDlg").close();
   if($("scanSetDlg").open) $("scanSetDlg").close();
-  state.wifiOn=false; $("wifiBtn").textContent="Wi-Fi download mode"; state.ap=null; $("apCard").style.display="none";
+  state.wifiOn=false; $("wifiBtn").textContent="Download over Wi-Fi"; state.ap=null;   // wififlow.js shows the disconnect in #wifiDlg
   state.scanning=false; updateScanBtn(); resetPause();
   $("scanPanel").style.display="none"; $("exploreView").style.display="none";
   if($("detDlg").open) $("detDlg").close();
