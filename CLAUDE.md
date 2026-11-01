@@ -713,7 +713,7 @@ location. **While building the remote-server integration, keep HANDOFF #11 and t
 work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
 context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
 
-## Fleet mode (P1-P4 built + bench-passed: transport, auth, time/position, coverage split; fw 0.20.0, link v12)
+## Fleet mode (P1-P5 built + bench-passed: transport, auth, time/position, coverage split, merge; fw 0.20.0, link v12)
 
 Cooperating scanners over **ESP-NOW on the host radios** (one fixed channel, default 1). Design + phases +
 owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides earlier sections). **P1 = transport +
@@ -743,6 +743,12 @@ gates each phase on it and rebuilds its hop lists/timing. The leader assigns rol
 N=3: WIFI24 + WIFI5 + BLE) with 10 s join hysteresis and a 30 s loss grace, re-sends Plans every 10 s, and a client
 without a leader runs FULL. `M:p:0|3` = auto / everyone full. **Until P5 each unit sees only its share.** All hosts +
 C5s must run the same link version (flash together).
+**P5 (docs §20):** clients forward changed rows (sealed DetBatch/RidBatch, ≤ 6 frames/cycle) and the leader merges
+them into `g_dets` after `requestScan()` with a **`g_detVia` "seen by" mask** (bit 0 = own C5, bit k = member slot k;
+`DevGroup.via`). A row the leader also heard keeps ITS OWN values (members' RSSI/flags go to display-only
+`g_detFleetRssi/Flags`). Display/tiles/counts/DETS are fleet-wide; the **SD log, follow engine, uniq and event lines use
+own rows only** (no log-schema change). DETS **v9** appends `via`; the web shows "seen by" chips. S3 envs build with
+`-DHOST_MAX_DET=192`; the CYD keeps 96.
 
 ## Subagents (`.claude/agents/`)
 

@@ -950,3 +950,58 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   C5 first; currently each role still runs the dual-band AP scan and drops the other band's results.
 - Re-bench: roles, then release (leader FULL at once), then rejoin (roles back after 10 s). All hosts + C5s flash
   together (MStat size).
+
+## 20. P5 as built (2026-11-01) — forwarding + merge + DETS v9
+- **Client** (`fleet::forwardCycle()`, end of each successful `runScanCycle()`):
+  - A heap sent-table (`MAX_DET` × ~32 B) forwards a row when it is new, its RSSI moved ≥ 6 dB, its flags / name hash /
+    IE / company ID changed, or every 10 s.
+  - Rows go as raw `Detection`s in sealed **DetBatch** frames (16/frame on v2), ≤ 6 frames per cycle, 5 ms apart. A
+    capped cycle resumes at the next row next time. Remote-IDs go as a **RidBatch** every cycle while present.
+  - The sent-table resets on each new session.
+  - MStat now carries `dets` (the last successful cycle), `deauth`, `evil`, `rid`.
+- **Leader:**
+  - **Remote table:** 768 rows in PSRAM (20 s TTL, members refresh every 10 s), keyed by member + source + MAC (+ PAN
+    for a short 802.15.4 address). Member RIDs: 16 slots. RX pool 48 slots (PSRAM).
+  - **`fleet::mergeRemote()`** runs right after `requestScan()`:
+    - a row the leader also heard keeps the leader's **own** values; it gains the member's `g_detVia` bit, and the
+      member's strongest RSSI / flags go to display-only `g_detFleetRssi` / `g_detFleetFlags`;
+    - other member rows are **appended** with only the member's bit;
+    - the same self / phone filters apply. RIDs merge the same way (`g_ridVia`).
+  - **Fleet-only cycle:** when its own C5 is past the sticky window and member rows are fresh, the pipeline runs on the
+    member rows alone at the normal 2 s cadence.
+  - **No coverage split while the leader's own C5 is down** (it holds the BLE share); everyone runs FULL until it is
+    back. This deviates from §8.4's "the leader keeps planning", found on the bench.
+- **What uses which rows:**
+  - **Merged (fleet-wide):** groups / `DevGroup.via`, categories + HOME / web threat tiles, band + tier counts, the
+    tier LED, the DETS phone list, STATUS `deauth`/`evil`/`rid` (max of local and fresh members' MStat).
+  - **Own only (bit 0):** the SD log (detections, `lastseen`, RID events, the evil-twin BSSID list), the follow
+    engine, `uniq`, and the deauth / evil-twin event lines + LED (`updateEvents`). Each unit logs what it heard; nothing
+    is double-counted, and **no log-schema change** (the `via` / `pos_via` / fleet meta keys wait for P6).
+- **`HOST_MAX_DET=192`** on the S3 envs (static +25 KB; S3 internal free heap ~88 KB, min ~84 KB). The CYD stays at 96
+  (+~0.4 KB static, ~4.5 KB heap for forwarding; client free heap ~78 KB, min ~73 KB).
+- **DETS v9:** `\tvia` (decimal mask, bit 0 = the connected scanner, bit k = member slot k) is appended to each row.
+- **Web:**
+  - Per-row "seen by" chips (one letter per unit, coloured by slot, shown only when a member contributed) and "Seen by"
+    in the device modal (`detections.js` / `categories.js`; `viaUnits()` is inlined in each for cache safety).
+  - `fleet.js` publishes `state.fleetMembers` (refreshed every 30 s, or 5 s while the card is open) and shows each
+    member's scan role.
+  - Tokens `20261101b`, `#uiver` `fleet-p5 b`. **Not deployed.**
+- **Bench (mini #2 leader + CYD client, all PASS):**
+  - The BLE-role leader shows the client's probes (13-17 PRB that its own C5 doesn't capture in that role).
+  - Overlap dedups: e.g. 82 rows = 10 own + 14 member-only + 58 both.
+  - Client off → its rows age out (re-tested with a 20 s TTL).
+  - ~0.75 DetBatch frames per cycle; leader `rx drop 0`.
+  - Leader C5 parked in its bootloader → fleet-only view (50/50 member rows), and roles drop to FULL within ~8 s;
+    restored → the split returns in 2 s.
+- **Review (`77b65bf`) fixed:**
+  - REV-001: member data must never reach the leader's own log rows.
+  - REV-002: the RX pool.
+  - REV-003: forward starvation.
+  - REV-004: remote-table size.
+  - REV-005: unterminated RID strings.
+  - REV-006: the fleet-only cadence.
+- **Accepted / open:**
+  - A group's `rep` (display + the follow line's `src`) can be a member row.
+  - `needsSend` doesn't track bssid / channel / svc16 changes (they arrive with the 10 s refresh).
+  - A failed send isn't retried before the next refresh.
+  - Multi-member (N ≥ 2 clients) delivery is untested: only one client is on the bench.
