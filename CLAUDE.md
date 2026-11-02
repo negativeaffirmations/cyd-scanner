@@ -760,16 +760,18 @@ lat/lon + **`pos_src`** `phone|gps|fleet` (the fix's origin, held included); **`
 `fid`/`fld` → the web live-POST meta.
 **P6 item 6 (fw 0.25.0, fleet proto v3; docs §22):** store-and-forward. Every `meta` line (fg/bg/fleet) now ends with
 `"file_id":"<8 hex>"` (`LogStream.fileId`, random per file, made in `ensureLogFile`, survives the sync rename). A joined
-**client** forwards its CURRENT log file from line 1 to the leader (`pumpLog()` in `fleet_client.cpp`, called from `tick()`
-so backfill isn't tied to the 2 s scan cycle): it reads its own SD file at an acked byte offset (no RAM queue) and sends
-complete lines in sealed `Msg::LogRows` frames (`LogRowsHdr` 22 B: fileId[4], firstRow, byteOff, flags bit0 = re-sent
-anchor, nLines; stop-and-wait, resend after 600 ms, ~8 KB/s; unforwardable/oversized lines are skipped + counted). On
-every (re)join it first re-sends its meta line and timesync line (flag bit0), then continues from the acked offset. The
-**leader** (`onLogRows`) validates, appends each line to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` + timesync
-anchor on sync; third `LogStream` `g_fleetLog`, protected, capped, listed, in `thisBootFiles`) with `"scanner","ofile","orow"`
-inserted after the `{`, and answers `Msg::LogAck`; per-member `{file, nextRow}` dedups resends. Its meta carries
-`"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`), and
-`MultiExport` neither backfills nor ms-windows fleet-file rows (foreign clocks). Web Data page lists `fleet-` files as a
+**client** forwards this boot's log files to the leader (`pumpLog()` in `fleet_client.cpp`, called from `tick()`): it reads its
+own SD files at per-file acked byte offsets (`LogPos`, one per file: live fg/bg + rotated ones from the `g_bootFiles` ring, so
+fg/bg switches and New Session resume instead of re-sending; no RAM queue) and sends complete lines in sealed `Msg::LogRows`
+frames (`LogRowsHdr` 22 B: fileId[4], firstRow, byteOff, flags bit0 = re-sent anchor, nLines; stop-and-wait, resend after
+600 ms backing off to 5 s, ~8 KB/s; unforwardable lines skipped + counted; disabled on a v1 link). Each file's meta and first
+timesync line are recorded as acked and re-sent on every (re)join. The **leader** (`onLogRows`) validates, appends each line
+to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` on sync, **no leader timesync anchor**; third `LogStream`
+`g_fleetLog`, protected, capped, listed, in `thisBootFiles`) with `"scanner","ofile","orow"` inserted after the `{`, and answers
+`Msg::LogAck`; per member `{file, nextRow}` for its last 4 origin files dedups resends and re-sent anchors. Its meta carries
+`"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`). Fleet files
+are epoch-only in exports (no ms windowing / backfill / tail pruning; forwarded member meta kept). Web: `parse.js` keys
+timesync anchors by `ofile` and `joinLogParts` passes `ofile` lines through untouched; the Data page lists `fleet-` files as a
 "Fleet" scan kind. Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
 a member's role at runtime (§20.1).

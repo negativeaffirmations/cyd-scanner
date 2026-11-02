@@ -199,7 +199,7 @@ static void sweepEmptySessions() {
 // Session files that ENDED this boot (New Session / bg toggle). They keep valid ms-since-boot, so the
 // time-window export can still date them, and renameSessionOnSync() appends a timesync anchor to
 // any that ended before the clock was known (else their epoch:0 rows could never be dated).
-struct BootFile { char path[48]; bool anchored; };
+struct BootFile { char path[48]; char fileId[9]; bool anchored; };
 static constexpr int BOOT_FILES = 8;
 static BootFile g_bootFiles[BOOT_FILES];
 static int g_bootFileN = 0;  // ring write count
@@ -207,6 +207,7 @@ static void rememberBootFile(const LogStream& st) {
   if (!st.started || !st.path[0]) return;
   BootFile& b = g_bootFiles[g_bootFileN++ % BOOT_FILES];
   snprintf(b.path, sizeof(b.path), "%s", st.path);
+  memcpy(b.fileId, st.fileId, sizeof(b.fileId));
   b.anchored = st.named;  // a date-named file was created/renamed after sync (rows dated or anchored)
 }
 int thisBootFiles(const char** out, int cap) {
@@ -315,7 +316,9 @@ static void renameStreamOnSync(LogStream& st, const char* prefix) {   // prefix:
     // This file already holds pre-sync rows (epoch:0, ms = ms-since-boot). Append a one-line
     // timesync ANCHOR so a reader can backfill their real time: epoch = sync.epoch +
     // (row.ms - sync.ms)/1000 (same formula epochNow() uses; valid because it's one boot).
-    File mf = SD.open(st.path, FILE_APPEND);
+    // (Not the fleet file: its rows are members' lines on foreign clocks, each origin's own forwarded timesync dates them.)
+    File mf;
+    if (&st != &g_fleetLog) mf = SD.open(st.path, FILE_APPEND);
     if (mf) {
       mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
                 (unsigned long)epochLocal(), (unsigned long)millis());
@@ -962,6 +965,7 @@ void transferFiltered(int mode, int minutes, const char* pathIn) {
   }
   if (mode != 1 && mode != 2) { streamFileOverBle(path); return; }
   logfilter::Cutoff c = logfilter::make(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis());
+  c.epochOnly = !strncasecmp(path, "/logs/fleet-", 12);   // a fleet file: members' lines, window by epoch only
   streamFilteredOverBle(path, c);
 }
 
@@ -1217,20 +1221,25 @@ void logDevPos() {
 // ---- P6 item 6 (docs/fleet-mode.md §22): fleet store-and-forward -------------------------------------------------
 // CLIENT side: which of this unit's own log files to forward, and a raw reader for it (the packing/ack logic lives in
 // fleet_client.cpp; this file only knows the streams and the SD card).
-bool logFwdSource(const char* curId, char* path, size_t cap, char idOut[9]) {
+int logFwdList(FwdFile* out, int cap) {
+  int n = 0;
+  auto add = [&](const char* id, const char* path, bool live) {
+    if (n >= cap || !id[0] || !path[0]) return;
+    for (int i = 0; i < n; i++) if (!strcmp(out[i].id, id)) return;
+    memcpy(out[n].id, id, 9);
+    snprintf(out[n].path, sizeof(out[n].path), "%s", path);
+    out[n++].live = live;
+  };
   LogStream& act = activeStream();
   LogStream& oth = (&act == &g_fg) ? g_bg : g_fg;
-  auto usable = [](const LogStream& s) { return s.started && s.fileId[0] && s.path[0]; };
-  const LogStream* pick = nullptr;
-  if (curId && curId[0]) {
-    if (usable(act) && !strcmp(act.fileId, curId)) pick = &act;
-    else if (usable(oth) && !strcmp(oth.fileId, curId)) pick = &oth;
+  if (act.started) add(act.fileId, act.path, true);
+  if (oth.started) add(oth.fileId, oth.path, true);
+  const int have = g_bootFileN < BOOT_FILES ? g_bootFileN : BOOT_FILES;
+  for (int i = 0; i < have; i++) {                                   // newest rotated file first
+    const BootFile& bf = g_bootFiles[(g_bootFileN - 1 - i + BOOT_FILES * 2) % BOOT_FILES];
+    add(bf.fileId, bf.path, false);
   }
-  if (!pick) pick = usable(act) ? &act : usable(oth) ? &oth : nullptr;
-  if (!pick) return false;
-  snprintf(path, cap, "%s", pick->path);
-  memcpy(idOut, pick->fileId, 9);
-  return true;
+  return n;
 }
 
 int logFwdRead(const char* path, uint32_t off, uint8_t* buf, size_t cap, uint32_t* size) {
@@ -1280,7 +1289,7 @@ bool fleetLogStore(const char* sidHex, const char* ofile, uint32_t firstRow, boo
     if (!nl) { ok = false; break; }
     const size_t ll = (size_t)(nl - ln) + 1;
     off += ll;
-    if (!anchor && row < *nextRow) continue;   // already stored (a resent frame)
+    if (row < *nextRow) continue;   // already stored this boot (a resent frame, or an anchor re-sent on a rejoin)
     char pre[64];
     const int pn = snprintf(pre, sizeof(pre), "{\"scanner\":\"%s\",\"ofile\":\"%s\",\"orow\":%lu,", sidHex, ofile, (unsigned long)row);
     if (pn <= 0 || pn >= (int)sizeof(pre) || f.write((const uint8_t*)pre, pn) != (size_t)pn ||

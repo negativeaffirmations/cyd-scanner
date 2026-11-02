@@ -204,6 +204,7 @@ void handleDlf() {
   File file = SD.open(path, "r");
   if (!file) { g_server.send(500, "text/plain", "open failed"); return; }
   logfilter::Cutoff c = logfilter::make(mode, arg, epochLocal(), millis());
+  c.epochOnly = path.startsWith("/logs/fleet-");   // a fleet file: members' lines, window by epoch only
   String base = path.substring(path.lastIndexOf('/') + 1);
   if ((mode == 1 || mode == 2) && base.endsWith(".jsonl")) {  // name a range by its contents' span
     uint32_t lo = 0xFFFFFFFFUL, hi = 0;

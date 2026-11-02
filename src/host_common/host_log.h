@@ -123,10 +123,11 @@ void transferFile(const char* path);
 void deleteSession(const char* path);
 // --- P6 item 6 (docs/fleet-mode.md §22): store-and-forward of a fleet client's log file to the leader ---
 bool logXferActive();   // a blocking phone transfer / log sweep is running: the fleet neither reads nor appends logs
-// CLIENT: pick the file to forward. `curId` = the file_id being forwarded now ("" = none): it is kept while a stream
-// still holds it (rename-on-sync changes the path, not the id), else the active stream's file, else the other stream's.
-// Fills `path` + `idOut`; false = no log file exists yet.
-bool logFwdSource(const char* curId, char* path, size_t cap, char idOut[9]);
+// CLIENT: the log files of THIS boot that may still hold unforwarded lines, most urgent first: the active stream's file,
+// the other stream's, then files rotated away earlier this boot (New Session / bg toggle), newest first. Only files that
+// were actually created. `live` = a stream still writes it. Returns the count (<= cap).
+struct FwdFile { char id[9]; char path[48]; bool live; };
+int  logFwdList(FwdFile* out, int cap);
 // CLIENT: read up to `cap` bytes of `path` from byte `off` (raw, any line boundary). Returns bytes read; *size = file size.
 int  logFwdRead(const char* path, uint32_t off, uint8_t* buf, size_t cap, uint32_t* size);
 // LEADER: append a client's validated lines to the fleet file, each with "scanner","ofile","orow" inserted after the

@@ -75,11 +75,13 @@ struct MemberRt {
   uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (runtime only, not saved)
   uint16_t deauth; uint8_t evil, rid;  // its latest alert counts (MStat), for the fleet-wide maxima
   uint32_t statAtMs;
-  // P6 item 6 store-and-forward: which of its files the member is forwarding + the next origin row not stored yet.
-  // Kept across a rejoin (so resent rows dedup); a new leader boot starts clean (and a new fleet file).
-  uint8_t  lfFile[4];
+  // P6 item 6 store-and-forward: the member's last LF_RECS origin files and, per file, the next origin row not stored
+  // yet (a client alternates between its live streams and a rotated file). Kept across a rejoin so resent rows dedup;
+  // a new leader boot starts clean (and a new fleet file).
+  struct LfRec { uint8_t file[4]; bool used; uint32_t nextRow, stamp; } lf[4];
+  uint32_t lfClock;
+  uint8_t  lfLast[4];                  // the file of the latest frame (console)
   bool     lfHave;
-  uint32_t lfNextRow;
   uint32_t lfStored, lfFrames;         // lines stored / LogRows frames accepted from this member
 };
 
@@ -547,14 +549,20 @@ void onLogRows(const Rx& f) {
     else off += ll;
   }
   if (!ok || cnt != hd.nLines) { L->logBad++; return; }
-  if (!r.lfHave || memcmp(r.lfFile, hd.fileId, 4)) {               // a new origin file (New Session / reboot): rows restart
-    memcpy(r.lfFile, hd.fileId, 4); r.lfHave = true; r.lfNextRow = 0;
+  MemberRt::LfRec* rec = nullptr;                                  // this origin file's record, else a free / least recent one
+  for (auto& e : r.lf) if (e.used && !memcmp(e.file, hd.fileId, 4)) { rec = &e; break; }
+  if (!rec) {
+    for (auto& e : r.lf) if (!e.used) { rec = &e; break; }
+    if (!rec) { rec = &r.lf[0]; for (auto& e : r.lf) if (e.stamp < rec->stamp) rec = &e; }
+    memcpy(rec->file, hd.fileId, 4); rec->used = true; rec->nextRow = 0;   // a file not seen lately: store from its first row
   }
+  rec->stamp = ++r.lfClock;
+  memcpy(r.lfLast, hd.fileId, 4); r.lfHave = true;
   char ofile[9], sh[13];
   for (int k = 0; k < 4; k++) snprintf(ofile + 2 * k, 3, "%02x", hd.fileId[k]);
   sidToHex(L->st.m[i].sid, sh);
   uint32_t stored = 0;
-  if (!fleetLogStore(sh, ofile, hd.firstRow, (hd.flags & LOGROWS_ANCHOR) != 0, lines, blen, &r.lfNextRow, &stored)) {
+  if (!fleetLogStore(sh, ofile, hd.firstRow, (hd.flags & LOGROWS_ANCHOR) != 0, lines, blen, &rec->nextRow, &stored)) {
     r.lfStored += stored; L->logBusy++;                            // partial storage is fine: the resend dedups by row
     return;
   }
@@ -963,9 +971,11 @@ void printStatus() {
     if (r.state == M_JOINED)
       Serial.printf("  rssi %d  %lus ago  heap %u KB  fw %s", (int)r.rssi, (unsigned long)((now - r.lastRxMs) / 1000),
                     (unsigned)r.heapKB, r.fw);
-    if (r.lfHave)
-      Serial.printf("  log %02x%02x%02x%02x: %lu line(s) stored, next row %lu", r.lfFile[0], r.lfFile[1], r.lfFile[2],
-                    r.lfFile[3], (unsigned long)r.lfStored, (unsigned long)r.lfNextRow);
+    if (r.lfHave) {
+      Serial.printf("  log: %lu line(s) stored", (unsigned long)r.lfStored);
+      for (const auto& e : r.lf)
+        if (e.used) Serial.printf(" [%02x%02x%02x%02x next %lu]", e.file[0], e.file[1], e.file[2], e.file[3], (unsigned long)e.nextRow);
+    }
     Serial.println();
   }
 }
