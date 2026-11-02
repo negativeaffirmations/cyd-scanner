@@ -1,5 +1,24 @@
 # Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `7f86e00` = trunk + webapp)
 
+## RESUME HERE — 2026-11-01 (night): fw 0.27.0 + Fleet-file bundling LIVE; owner offline
+- **Live on all 3 hosts (flashed), pushed; webapp on `main` `a65d317` (footer `fleet-bundle m`).** Commits on `fleet-mode`:
+  `dd0eb63` webapp (a ticked leader scan auto-includes its time-matching `fleet-` group: saved as a SECOND file, uploaded as
+  its OWN POST, mapped together; Delete never auto-includes), `edc3d30` fw 0.27.0 (a rebooted member forwards the previous
+  boot's unsent tail first: NVS `cydscan/fltcarry` v2 + boot counter `fltbootn`; anchors re-sent = meta, timesync, last
+  `fleet` line with a fleet_id — scan-analyzer's request), `a02e5ca` review fixes (REV-001..010: carry only from the
+  immediately previous boot + cleared on any role change/leave/fallback; backlog survives back-to-back reboots; one
+  connection-generation/scanner guard per Data action; fleetSpan trims carried head rows + webapp requires the fleet end
+  inside the scan span ±300 s; upload summary toast, stop on auth; NVS writes ≤ every 3 min + on lost/file change;
+  logFwdFind only for undated names, cap 150; no NVS write during a transfer). No fleet/link protocol change.
+- **Verified:** builds (5 host envs), flash, fleet rejoined (roles split, forwarding into `/logs/fleet-20261101-234130.jsonl`).
+  As at every flash, members' previous-boot files were re-forwarded during the flash window (leader flashed first).
+- **NOT yet tested:** (a) carry-over on hardware — needs a REAL backlog: take a member out of the leader's reach (or power the
+  leader off) for a few minutes, power-cycle the member, then bring the leader back; the member's `fleet` console should show
+  `carry-over … loaded 1` and forward the old file first. (An RTS-toggle over USB did NOT reset the S3, and a caught-up member
+  correctly carries nothing.) (b) Data page bundling in the browser (tick a leader scan → "+ Fleet", two files / two POSTs).
+  scan-analyzer will check the earlier-boot `ofile` session once the fleet file is uploaded.
+- 0.26.0 (log cache / tail fetch / switch scanner) is PHONE-VERIFIED (see the next entry).
+
 ## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix 0.24.1 FLASHED + VERIFIED
 - **0.26.0 LIVE (2026-11-01 ~22:40):** the log cache / tail fetch / switch-scanner commits + review fixes `6118839` are
   FLASHED on all 3 hosts, pushed, and the webapp deployed (`main` `7f86e00`, footer `log-cache+switch i`). Owner granted
