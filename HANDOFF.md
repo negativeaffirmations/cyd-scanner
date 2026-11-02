@@ -1,6 +1,6 @@
 # Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `7f86e00` = trunk + webapp)
 
-## RESUME HERE — 2026-11-01 (night): fw 0.27.0 + Fleet-file bundling LIVE; owner offline
+## RESUME HERE — 2026-11-01 (night): fw 0.27.0 + Fleet-file bundling LIVE; carry-over server-verified
 - **Live on all 3 hosts (flashed), pushed; webapp on `main` `a65d317` (footer `fleet-bundle m`).** Commits on `fleet-mode`:
   `dd0eb63` webapp (a ticked leader scan auto-includes its time-matching `fleet-` group: saved as a SECOND file, uploaded as
   its OWN POST, mapped together; Delete never auto-includes), `edc3d30` fw 0.27.0 (a rebooted member forwards the previous
@@ -12,7 +12,10 @@
   logFwdFind only for undated names, cap 150; no NVS write during a transfer). No fleet/link protocol change.
 - **Verified:** builds (5 host envs), flash, fleet rejoined (roles split, forwarding into `/logs/fleet-20261101-234130.jsonl`).
   As at every flash, members' previous-boot files were re-forwarded during the flash window (leader flashed first).
-- **NOT yet tested:** (a) carry-over on hardware — needs a REAL backlog: take a member out of the leader's reach (or power the
+- **Carry-over VERIFIED on the server (scan-analyzer, bridge):** a joined upload of 3 fleet files split into 17 sessions (per
+  origin boot file × fleet segment, own anchors, 0 duplicate rows); mini#1's previous-boot `a76a5cd2` tail (7 rows) was
+  carried over after its reflash and stayed in its fleet segment via the re-sent fleet line.
+- **Earlier note, now superseded for (a):** (a) carry-over on hardware — needs a REAL backlog: take a member out of the leader's reach (or power the
   leader off) for a few minutes, power-cycle the member, then bring the leader back; the member's `fleet` console should show
   `carry-over … loaded 1` and forward the old file first. (An RTS-toggle over USB did NOT reset the S3, and a caught-up member
   correctly carries nothing.) (b) Data page bundling in the browser (tick a leader scan → "+ Fleet", two files / two POSTs).
