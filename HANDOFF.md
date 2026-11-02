@@ -20,7 +20,16 @@
   use) until the transfer ends so an export's SIZE= count stays exact. All 5 host envs build. Fleet proto/link
   unchanged → can flash the leader alone. **Next:** flash (needs owner OK), re-test a phone download on the leader
   and on a client while the fleet runs: roles should stay split. No reviewer pass yet.
-- Open: mini #2 key rotation (owner's call); item 6 deferred; server-side fleet grouping UI is scan-analyzer's.
+- **Mini #2 key ROTATED (gen 2)** at the owner's request; new pairing QR written to the git-ignored
+  `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg` by a script that never printed the key/link (deleted after). The phone must
+  re-pair mini #2 from that QR. Fleet unaffected (members' fleet keys derive from THEIR keys).
+- **Reviewer pass on `1cbbee6`:** launched (background) — fold in its findings.
+- **P6 item 6 (P5b store-and-forward) — owner wants it built.** Contract PROPOSAL posted to the bridge (2026-11-01 late
+  evening): meta `file_id` (random per file, survives the sync rename); leader `/logs/fleet-…jsonl` of member lines
+  verbatim + `scanner`/`ofile`(=origin file_id)/`orow`(1-based line no.); leader's own rows NOT duplicated. Waiting for
+  scan-analyzer's answers (a)-(d), then owner sign-off, THEN build (new `Msg::LogRows`/`LogAck`, client resume from
+  ackedThrough, fleet-proto bump → flash all hosts together; web Data page groups the `fleet-` stream).
+- Open: server-side fleet grouping UI is scan-analyzer's.
 
 ## RESUME HERE — 2026-11-01 (afternoon): P6 agreed; item 5 (fleet live-POST) DONE end to end
 - **P6 contract agreed** (bridge 10:05 proposal, 10:20 owner-approved reply, then Q&A). Decisions: `pos_src` =
