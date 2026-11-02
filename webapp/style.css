@@ -539,6 +539,11 @@ summary {
   color: #8b949e;
 }
 
+.sesscache {
+  color: #388bfd;
+  font-weight: 600;
+}
+
 .fspath {
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;

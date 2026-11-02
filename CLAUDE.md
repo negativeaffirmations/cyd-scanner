@@ -605,7 +605,15 @@ back (5 GHz included). Things that matter, learned the hard way:
       are fetched one at a time (`ble/transfer.js` `bleFetch`, a promise over the LOGDATA stream) and
       joined by `parse.js` `joinLogParts` (per-part timesync backfill; each distinct meta line kept in part order, since parts can span a reflash and readers take the last) into ONE file;
       Upload sends ONE `/api/v1/uploads` body per scan; Delete queues `D:` per file. The Explore picker
-      lists the same groups.
+      lists the same groups. **Phone-side log cache (webapp 2026-11-01):** every log file fetched over BLE is kept in
+      IndexedDB (`data/logcache.js`, store `cflo.logcache`; Blobs; key = STATUS `sid` + the file's `file_id` from line 1,
+      else sid + path; 200 MB cap, LRU eviction, quota errors -> no cache). `ble/logfetch.js` `fetchLog()` is the one
+      path for Download/Map/Upload/Explore of listed scans and of the current session (`F:/logs/<STATUS sess>.jsonl`
+      instead of `L`): a saved copy at least as big as the device's listed size (equal size when no file_id) costs
+      no transfer; the whole file always goes to uploads. Session rows show `saved` / `+N KB new` / `partly saved`;
+      Data has "Clear saved logs (size)" (`features/cacheui.js`). Filtered (`T:`) exports are never cached.
+      Rule for stale-module safety: new exports live in NEW files (`logfetch.js`, `logcache.js`, `cacheui.js`);
+      old modules only gain internals.
     - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager.
   Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
   follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS

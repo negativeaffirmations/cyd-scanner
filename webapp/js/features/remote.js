@@ -18,6 +18,7 @@ import { state } from '../state.js';
 import { $, log, esc, toast } from '../util/dom.js';
 import { enc, TIER_NAMES } from '../config.js';
 import { scannerFix } from '../gps.js';
+import { fetchCurrent } from '../ble/logfetch.js';
 
 // --- persisted config (localStorage) ------------------------------------------------------------
 const LS = { server:"rs.server", key:"rs.key", dev:"rs.deviceId", live:"rs.live" };
@@ -290,6 +291,8 @@ export async function uploadCurrentSession(){
   setUploadBusy(true);                                        // optimistic: lock buttons the instant it's tapped
   toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
   try{
+    const cur = await fetchCurrent(fname);   // through the phone-side cache (whole file); null = plain "L"
+    if(cur){ await uploadSessionText(cur.text, fname); return; }
     state.dl = { mode:null, expect:0, got:0, chunks:[], name:fname, sink:"upload" };
     await state.chars.cmd.writeValue(enc.encode("L"));
     log("Remote: fetching current session ("+fname+") to upload…");

@@ -6,6 +6,7 @@ import { $, log, esc } from '../util/dom.js';
 import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
 import { parseScanLog, parseScanEvents } from '../data/parse.js';
 import { showPage } from '../nav.js';
+import { fetchCurrent } from '../ble/logfetch.js';
 
 let lmap=null, mapLayer=null, mapDets=[], mapEvents=[], mapRidEvents=[], mapByMac=new Map();
 
@@ -136,8 +137,11 @@ export function renderMap(){
 
 export async function mapCurrent(){
   if(!state.connected){ log("Connect first to map the current session."); return; }
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map"};
+  try{
     $("mapMsg").textContent="Loading current session…";
+    const cur = await fetchCurrent();   // through the phone-side cache; null = plain "L"
+    if(cur){ if(cur.text) plotCsvText(cur.text, "current session"); else $("mapMsg").textContent="That session is empty."; return; }
+    state.dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map"};
     await state.chars.cmd.writeValue(enc.encode("L")); }
   catch(e){ log("Map current failed: "+e.message); }
 }

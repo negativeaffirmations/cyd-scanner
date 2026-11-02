@@ -2,6 +2,7 @@
 // A short header notification announces the payload ("SIZE=<n>" = a file, "SESS=<n>" = the session
 // list, "WL=<n>" = the whitelist), then <n> bytes of chunks follow.
 // sink "promise" = a queued request from ble/transfer.js bleFetch(): any payload resolves its promise.
+// With state.dl.raw (ble/logfetch.js) a file resolves as {kind:"file", n, blob} instead of text.
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, log, toast, saveBlob } from '../util/dom.js';
@@ -13,6 +14,7 @@ import { populateWhitelist } from '../features/whitelist.js';
 import { uploadSessionText } from '../features/remote.js';
 import { exportSpec, exportCmd, rangeFileName } from '../features/timerange.js';
 import { resetDl } from './transfer.js';
+import { fetchCurrent } from './logfetch.js';
 
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
 // hiccup, a short send), give up after IDLE_MS instead of leaving state.dl stuck in "file" mode, which
@@ -71,6 +73,12 @@ export function onLogData(ev){
     // text and appends ".txt" to the .jsonl download name. octet-stream = "save the bytes as named".
     const blob = new Blob(state.dl.chunks, { type: "application/octet-stream" });
     const mode = state.dl.mode;
+    if (isPromise && state.dl.raw && mode==="file") {   // ble/logfetch.js: hand over the exact bytes (the cache needs them)
+      const res = state.dl.resolve, n = state.dl.expect;
+      resetDl();
+      if(res) res({ kind:"file", n, blob });
+      return;
+    }
     if (isPromise) {
       const res = state.dl.resolve;
       resetDl();
@@ -97,8 +105,14 @@ export async function downloadLog(){
   // "scanlog.jsonl". Falls back to scanlog.jsonl before any session name is known.
   const sess=($("sessName").textContent.replace(/^Session:\s*/,"").trim())||"scanlog";
   const fname=sess.endsWith(".jsonl")?sess:sess+".jsonl";
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save"};
+  try{
     toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
+    const cur = await fetchCurrent(fname);   // through the phone-side cache; null = use the plain "L" command
+    if(cur){
+      if(!cur.blob || !cur.blob.size){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
+      saveBlob(cur.blob, fname); return;
+    }
+    state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save"};
     await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session ("+fname+")…"); }
   catch(e){ log("Download failed: "+e.message); toast("Download failed: "+e.message, {err:true}); }
 }

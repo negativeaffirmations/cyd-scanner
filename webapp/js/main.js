@@ -22,6 +22,7 @@ import { state } from './state.js';
 import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';
 import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261101e';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
+import { initCacheUI } from './features/cacheui.js';
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -124,6 +125,7 @@ $("fltLeaveBtn").onclick     = fleetLeave;
 $("fltClientBtn").onclick    = fleetMakeClient;
 $("fltMembers").addEventListener("click", onMemberClick);
 initFleet();
+initCacheUI();   // Data page: saved-log cache readout + Clear button
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
