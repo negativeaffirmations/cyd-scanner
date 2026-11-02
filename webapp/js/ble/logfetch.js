@@ -91,7 +91,7 @@ export async function fetchLog(path, o){
 }
 async function fetchLogInner(path, o){
   const size = o.size || 0, fileId = o.fileId || "", name = o.name || path.split("/").pop();
-  const gen = o.gen !== undefined ? o.gen : connGen(), sid = state.scannerId;
+  const gen = o.gen !== undefined ? o.gen : connGen(), sid = o.sid !== undefined ? o.sid : state.scannerId;   // a multi-step action passes its own, captured once
   const alive = ()=>{ if(connGen() !== gen || (sid && state.scannerId !== sid)) throw new Error("the scanner changed during the transfer"); };
   alive();
   await ready;

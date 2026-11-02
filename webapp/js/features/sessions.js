@@ -23,7 +23,7 @@ import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
 
-const FLEET_SLACK_S = 120;         // a Fleet group "overlaps" a scan when their dated spans touch within this
+const FLEET_SLACK_S = 300;         // a Fleet group "overlaps" a scan when their dated spans touch within this
 const GROUP_GAP_S = 6*60;          // next part starts within 6 min of the previous part's last row
 let groups = [];                   // [{key, kind, parts:[{path,base,size,flag,first,last}], start, end, size, flag}]
 const selected = new Set();        // group keys (first part's path) — survives a list refresh
@@ -82,7 +82,9 @@ function groupTitle(g){
 }
 // Fleet groups that ride along with the selected scans (not already ticked themselves).
 function fleetOf(g){
-  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && f.start && f.start<=g.end+FLEET_SLACK_S && g.start<=f.end+FLEET_SLACK_S);
+  // The fleet file's END must fall inside the scan (+slack): a carried tail only skews a fleet file's START, so a fleet
+  // file that merely touches a neighbouring scan is not pulled in.
+  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && f.start && f.start<=g.end+FLEET_SLACK_S && f.end>=g.start-FLEET_SLACK_S && f.end<=g.end+FLEET_SLACK_S);
 }
 function includedFleet(gs){
   const out=[];
@@ -206,12 +208,13 @@ export function updateButtons(){
 // Fetch every part of the given groups (one BLE request at a time), joined per group.
 // cmdFor(part) -> a custom CMD for that part (filtered exports; fetched uncached). Default = the whole file
 // through the phone-side cache (ble/logfetch.js): a saved copy that is still current costs no transfer.
-// opts.trim: uploads drop a torn last row. The connection generation is captured here: if the scanner changes
-// (Switch scanner, reconnect) the whole action aborts instead of joining two scanners' parts.
+// opts.trim: uploads drop a torn last row. opts.ctx = the action's {gen, sid} captured ONCE at its start (actionCtx): if the
+// scanner changes (Switch scanner, reconnect) the whole multi-step action aborts instead of joining two scanners' parts.
+const actionCtx = ()=>({gen:connGen(), sid:state.scannerId});
 async function fetchGroups(gs, cmdFor, opts){
   const total=gs.reduce((s,g)=>s+g.parts.length,0);
-  const gen=connGen();
-  const alive=()=>{ if(connGen()!==gen) throw new Error("the scanner changed during the transfer"); };
+  const {gen, sid}=(opts && opts.ctx) || actionCtx();
+  const alive=()=>{ if(connGen()!==gen || (sid && state.scannerId!==sid)) throw new Error("the scanner changed during the transfer"); };
   let k=0; const texts=[];
   for(const g of gs){
     const pt=[];
@@ -220,7 +223,7 @@ async function fetchGroups(gs, cmdFor, opts){
       const saved = !cmdFor && cacheStatus(p.path, p.size, p.fid).st==="full";
       toast((saved?"Loading saved ":"Fetching ")+(total>1?"file "+k+"/"+total+" — ":"")+p.base+"…", {work:true, sticky:true});
       alive();
-      pt.push(cmdFor ? await bleFetch(cmdFor(p), p.base) : (await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base, gen, trim:!!(opts && opts.trim)})).text);
+      pt.push(cmdFor ? await bleFetch(cmdFor(p), p.base) : (await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base, gen, sid, trim:!!(opts && opts.trim)})).text);
       alive();
     }
     texts.push(joinLogParts(pt));
@@ -252,13 +255,14 @@ const pause = ms=>new Promise(r=>setTimeout(r, ms));
 // no zip library and a leader file must stay free of member lines). Chrome may ask once to allow multiple downloads.
 async function saveSplit(gs, cmdFor, tag, empty){
   const {own, fleet}=splitFleet(gs);
+  const ctx=actionCtx();   // one guard for the whole action (scan + fleet files)
   let saved=0;
   if(own.length){
-    const text=joinLogParts(await fetchGroups(own, cmdFor));
+    const text=joinLogParts(await fetchGroups(own, cmdFor, {ctx}));
     if(text){ saveBlob(new Blob([text], {type:"application/octet-stream"}), tag===undefined ? groupFileName(own) : rangeFileName(text, groupFileName(own, tag))); saved++; }
   }
   for(const f of fleet){
-    const text=joinLogParts(await fetchGroups([f], cmdFor));
+    const text=joinLogParts(await fetchGroups([f], cmdFor, {ctx}));
     if(!text) continue;
     if(saved) await pause(400);
     saveBlob(new Blob([text], {type:"application/octet-stream"}), tag===undefined ? groupFileName([f]) : rangeFileName(text, groupFileName([f], tag)));
@@ -285,7 +289,7 @@ export function mapSelectedSession(){
   const all=gs.concat(includedFleet(gs)).sort((a,b)=>(a.start||0)-(b.start||0));   // plot the scan AND its fleet file
   runBusy("Map", async()=>{
     $("mapMsg").textContent="Loading "+all.length+" scan(s)…";
-    const text=joinLogParts(await fetchGroups(all));
+    const text=joinLogParts(await fetchGroups(all, null, {ctx:actionCtx()}));
     toast("Loaded "+groupFileName(all)+".");
     plotCsvText(text, groupFileName(all));
   });
@@ -295,9 +299,17 @@ export function uploadSelectedSessions(){
   if(!isPaired()){ toast("Not paired — pair a server in Settings.", {err:true}); return; }
   const gs=needSel(); if(!gs) return;
   runBusy("Upload", async()=>{
-    for(const g of gs.concat(includedFleet(gs))){   // the Fleet file is its OWN body, after the scan
-      const [text]=await fetchGroups([g], null, {trim:true});
-      await uploadSessionText(text, groupFileName([g]));
+    const ctx=actionCtx(), list=gs.concat(includedFleet(gs)), res=[];   // the Fleet file is its OWN body, after the scan
+    for(const g of list){
+      const [text]=await fetchGroups([g], null, {trim:true, ctx});
+      const r=await uploadSessionText(text, groupFileName([g]));
+      res.push({g, r});
+      if(r==="auth") break;   // a revoked key fails every body: stop
+    }
+    if(list.length>1){   // one closing summary (each body already toasted its own result)
+      const what=x=>(x.g.kind==="fleet"?"fleet":"scan")+(x.r===true?" uploaded":x.r==="auth"?" rejected (re-pair)":" failed");
+      const parts=res.map(what).concat(list.slice(res.length).map(g=>(g.kind==="fleet"?"fleet":"scan")+" skipped"));
+      toast("Upload: "+parts.join(", ")+".", {err:res.length<list.length || res.some(x=>x.r!==true)});
     }
   });
 }

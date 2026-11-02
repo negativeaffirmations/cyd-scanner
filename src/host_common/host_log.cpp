@@ -1392,11 +1392,16 @@ static bool headHasId(const char* path, const char* id, uint32_t* size) {
 int logFwdFind(char* path, size_t cap, const char* id, uint32_t minSize, uint32_t* size) {
   if (!g_sdOk) return -1;
   if (path[0] && headHasId(path, id, size)) return 1;
-  const bool bg = !strncmp(path, "/logs/bg-", 9);                    // a rename keeps the stream kind (sess-/date vs bg-)
+  // Only an undated boot-counter name (/logs/sess-NNNNN or /logs/bg-NNNNN) is explained by a later sync rename.
+  const char* bn = !strncmp(path, "/logs/bg-", 9) ? path + 9 : !strncmp(path, "/logs/sess-", 11) ? path + 11 : nullptr;
+  if (!bn || !isdigit((unsigned char)*bn)) return 0;
+  while (isdigit((unsigned char)*bn)) bn++;
+  if (strcasecmp(bn, ".jsonl")) return 0;                            // already date-named (or foreign): nothing renamed it
+  const bool bg = !strncmp(path, "/logs/bg-", 9);                    // a rename keeps the stream kind (fg date name vs bg-)
   File dir = SD.open("/logs");
   if (!dir) return 0;
   int seen = 0, opens = 0, found = 0;
-  for (File e = dir.openNextFile(); e && seen < 600 && opens < 80 && !found; e = dir.openNextFile()) {
+  for (File e = dir.openNextFile(); e && seen < 150 && opens < 40 && !found; e = dir.openNextFile()) {
     seen++;
     char full[48];
     const bool isDir = e.isDirectory();

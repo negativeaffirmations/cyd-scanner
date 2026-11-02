@@ -108,21 +108,25 @@ struct LogPos {
 };
 // Carry-over across a reboot (fw 0.27.0): the acked positions of the most recent not-fully-forwarded files (this boot's
 // plus still-pending carried ones), kept in NVS "cydscan"/"fltcarry" so the NEXT boot forwards what this one did not. At
-// most CARRY_MAX are stored and CARRY_LOAD loaded; written when the file set / a path changes and otherwise at most
-// every CARRY_PUT_MS (flash wear: a few writes/min while rows flow, none when idle).
-constexpr int      CARRY_MAX = 3, CARRY_LOAD = 2;
-constexpr uint8_t  CARRY_VER = 1;
-constexpr uint32_t CARRY_PUT_MS = 30000, CARRY_CHK_MS = 1000;
+// most CARRY_MAX are stored (all loaded); written when the file set / a path changes or the leader is lost and otherwise at
+// most every CARRY_PUT_MS (flash wear: ~20 writes/h while rows flow, none when idle). The record is stamped with the boot
+// number that wrote it and only the IMMEDIATELY following boot accepts it (then re-stamps it at once, so pending tails
+// survive back-to-back reboots); a role change / leave / release / boot-guard fallback deletes it (fleet_link.cpp).
+constexpr int      CARRY_MAX = 3, CARRY_LOAD = CARRY_MAX;
+constexpr uint8_t  CARRY_VER = 2;
+constexpr uint32_t CARRY_PUT_MS = 180000, CARRY_CHK_MS = 1000;
+constexpr uint32_t CARRY_MIN_BYTES = 1024;    // a new file with nothing acked yet and less than this is just its anchors
 struct CarryEnt {
   char     id[9], path[48];
   uint32_t ackOff, ackRow, metaLen, tsOff, tsRow, tsLen, flOff, flRow, flLen;
 };
-struct CarryRec { uint8_t ver, n; CarryEnt e[CARRY_MAX]; };
+struct CarryRec { uint8_t ver, n; uint32_t boot; CarryEnt e[CARRY_MAX]; };
 struct LogFwd {
   LogPos   pos[LOG_POS];
   CarryRec saved;                      // what NVS holds (zero-padded, so memcmp compares it)
   CarryEnt carry[CARRY_LOAD];          // previous-boot files still to drain / verify (id "" = empty)
-  uint32_t savedMs, carryChkMs;
+  uint32_t savedMs, carryChkMs, bootNo;
+  bool     forcePut;                   // write the record at the next check (the leader was just lost)
   uint32_t carryLoaded, carryGone, carryDone;
   uint32_t inflFlOff, inflFlRow, inflFlLen;   // last fleet evt line found in the in-flight data frame
   uint32_t clock;
@@ -196,6 +200,7 @@ bool ensureFk() {
 }
 
 void toSearch(const char* why, bool remac) {
+  if (C->st == C_JOINED && g_lf) g_lf->forcePut = true;               // carry-over: save the acked positions now
   if (C->st != C_SEARCH) peerDel(C->leaderMac);
   if (C->planRole != PLANROLE_FULL) Serial.println("[FLT] client: no leader -> scanning everything (full)");
   C->plan = link_protocol::ScanPlan{}; C->planRole = PLANROLE_FULL;   // a client on its own covers everything (§8.4)
@@ -533,19 +538,29 @@ void carryLoad() {
   W->saved.ver = CARRY_VER;
   Preferences p;
   if (!p.begin("cydscan", false)) return;
+  const uint32_t prev = p.getULong("fltbootn", 0), cur = prev + 1;   // client boots in a row (a role change clears the record)
+  p.putULong("fltbootn", cur);
+  W->bootNo = W->saved.boot = cur;
   CarryRec r;
   const bool ok = p.getBytesLength("fltcarry") == sizeof(r) && p.getBytes("fltcarry", &r, sizeof(r)) == sizeof(r);
-  p.end();
-  if (!ok || r.ver != CARRY_VER || r.n > CARRY_MAX) return;
-  W->saved = r;
-  int k = 0;
-  for (int i = 0; i < r.n && k < CARRY_LOAD; i++) {
-    CarryEnt c = r.e[i];
-    c.path[sizeof(c.path) - 1] = 0;
-    if (!carryIdOk(c.id) || strncmp(c.path, "/logs/", 6) || c.ackRow < 1) continue;
-    W->carry[k++] = c;
-    W->carryLoaded++;
+  if (ok && (r.ver != CARRY_VER || r.n > CARRY_MAX || r.boot != prev)) {   // an older boot's: never forward it
+    p.remove("fltcarry");
+    p.end();
+    return;
   }
+  if (ok) {
+    int k = 0;
+    for (int i = 0; i < r.n && k < CARRY_LOAD; i++) {
+      CarryEnt c = r.e[i];
+      c.path[sizeof(c.path) - 1] = 0;
+      if (!carryIdOk(c.id) || strncmp(c.path, "/logs/", 6) || c.ackRow < 1) continue;
+      W->carry[k++] = c;
+      W->carryLoaded++;
+    }
+    r.boot = cur;                                                    // re-stamp now: a reboot before the first persist still carries
+    if (p.putBytes("fltcarry", &r, sizeof(r)) == sizeof(r)) W->saved = r;
+  }
+  p.end();
 }
 
 // Verify one carried file the first time we are joined (the SD is up) and register its position. False = SD not ready.
@@ -577,45 +592,69 @@ LogPos* findPosQuiet(LogFwd* W, const char* id) {
   return nullptr;
 }
 
-// ~1/s: keep NVS in step with the acked positions (this boot's files first, then still-pending carried ones).
+uint32_t logSize(const char* path) {
+  uint32_t sz = 0; uint8_t b;
+  logFwdRead(path, 0, &b, 0, &sz);
+  return sz;
+}
+
+// ~1/s: keep NVS in step with the acked positions. Order: still-pending carried tails (<= CARRY_MAX-1), then this boot's
+// files that hold unacked data, then any carried tail left over. Fully-acked files and files that are only their anchors
+// (nothing acked, < CARRY_MIN_BYTES) are not worth a slot yet.
 void carryPersist() {
   LogFwd* W = g_lf;
   const uint32_t now = millis();
-  if (!W || now - W->carryChkMs < CARRY_CHK_MS) return;
+  if (!W || now - W->carryChkMs < CARRY_CHK_MS || logXferActive()) return;
   W->carryChkMs = now;
   CarryRec r;
   memset(&r, 0, sizeof(r));
-  r.ver = CARRY_VER;
-  auto add = [&](const char* id, const char* path, const CarryEnt* own) {
-    if (r.n >= CARRY_MAX || !id[0]) return;
-    for (int i = 0; i < r.n; i++) if (!strcmp(r.e[i].id, id)) return;
-    const LogPos* P = findPosQuiet(W, id);
-    if (P && P->finished) return;
-    CarryEnt& c = r.e[r.n++];
-    memcpy(c.id, id, 9);
-    snprintf(c.path, sizeof(c.path), "%s", path);
+  r.ver = CARRY_VER; r.boot = W->bootNo;
+  auto push = [&](const CarryEnt& c) {
+    if (r.n >= CARRY_MAX) return;
+    for (int i = 0; i < r.n; i++) if (!strcmp(r.e[i].id, c.id)) return;
+    memcpy(&r.e[r.n++], &c, sizeof(c));
+  };
+  auto carried = [&](int limit) {
+    for (CarryEnt& c : W->carry) {
+      if (!c.id[0] || r.n >= limit) continue;
+      const LogPos* P = findPosQuiet(W, c.id);
+      if (P) {
+        if (P->finished) continue;
+        c.ackOff = P->ackOff; c.ackRow = P->ackRow; c.metaLen = P->metaLen;   // live progress back into the carried copy
+        c.tsOff = P->tsOff; c.tsRow = P->tsRow; c.tsLen = P->tsLen; c.flOff = P->flOff; c.flRow = P->flRow; c.flLen = P->flLen;
+      }
+      push(c);
+    }
+  };
+  carried(CARRY_MAX - 1);
+  FwdFile list[10];
+  const int nf = logFwdList(list, 10);
+  for (int k = 0; k < nf && r.n < CARRY_MAX; k++) {
+    const LogPos* P = findPosQuiet(W, list[k].id);
+    if (P && P->finished) continue;
+    CarryEnt c;
+    memset(&c, 0, sizeof(c));
+    memcpy(c.id, list[k].id, 9);
+    snprintf(c.path, sizeof(c.path), "%s", list[k].path);
     c.ackRow = 1;
     if (P) {
       c.ackOff = P->ackOff; c.ackRow = P->ackRow; c.metaLen = P->metaLen; c.tsOff = P->tsOff; c.tsRow = P->tsRow;
       c.tsLen = P->tsLen; c.flOff = P->flOff; c.flRow = P->flRow; c.flLen = P->flLen;
-    } else if (own) {
-      const CarryEnt o = *own; memcpy(c.id, o.id, 9);
-      c.ackOff = o.ackOff; c.ackRow = o.ackRow; c.metaLen = o.metaLen; c.tsOff = o.tsOff; c.tsRow = o.tsRow;
-      c.tsLen = o.tsLen; c.flOff = o.flOff; c.flRow = o.flRow; c.flLen = o.flLen;
     }
-  };
-  FwdFile list[10];
-  const int nf = logFwdList(list, 10);
-  for (int k = 0; k < nf; k++) add(list[k].id, list[k].path, nullptr);
-  for (const CarryEnt& c : W->carry) add(c.id, c.path, &c);
-  if (!memcmp(&r, &W->saved, sizeof(r))) return;
+    const uint32_t sz = logSize(c.path);
+    if (sz <= c.ackOff || (!c.ackOff && sz < CARRY_MIN_BYTES)) continue;
+    push(c);
+  }
+  carried(CARRY_MAX);
+  if (!memcmp(&r, &W->saved, sizeof(r))) { W->forcePut = false; return; }
   bool sameSet = r.n == W->saved.n;                                  // same files + paths: only progress moved
   for (int i = 0; sameSet && i < r.n; i++) sameSet = !strcmp(r.e[i].id, W->saved.e[i].id) && !strcmp(r.e[i].path, W->saved.e[i].path);
-  if (sameSet && now - W->savedMs < CARRY_PUT_MS) return;           // a new / rotated / renamed file is written at once
+  if (sameSet && !W->forcePut && now - W->savedMs < CARRY_PUT_MS) return;   // a new / rotated / renamed file is written at once
   Preferences p;
   if (!p.begin("cydscan", false)) return;
-  if (p.putBytes("fltcarry", &r, sizeof(r)) == sizeof(r)) { W->saved = r; W->savedMs = now; }
+  const bool ok = r.n ? p.putBytes("fltcarry", &r, sizeof(r)) == sizeof(r) : (p.remove("fltcarry"), true);
   p.end();
+  if (ok) { W->saved = r; W->savedMs = now; W->forcePut = false; }
 }
 
 // Called from tick() while JOINED. Cheap when idle (a few SD opens per LOG_IDLE_POLL_MS).

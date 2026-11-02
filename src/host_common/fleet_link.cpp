@@ -546,6 +546,7 @@ void loadRole() {
   if (g_role > ROLE_LEADER || (g_role == ROLE_LEADER && !hostboard::fleetLeaderCapable())) {   // the CYD refuses leader
     g_role = ROLE_OFF;
     p.putUChar("fltrole", ROLE_OFF);
+    p.remove("fltcarry");
   }
   if (g_role != ROLE_OFF) {   // boot-loop guard (docs §1.4): counted only while a fleet role is set
     // fltboot = CONSECUTIVE crash boots: a clean boot resets it, and service() clears it after 60 s of
@@ -563,6 +564,7 @@ void loadRole() {
       g_fellBack = true;
       p.putUChar("fltrole", ROLE_OFF);
       p.putUChar("fltboot", 0);
+      p.remove("fltcarry");     // a leave: the carried log tail must not reach some later, unrelated fleet
     } else {
       if (n != was) p.putUChar("fltboot", n);
       g_bootCounted = n != 0;
@@ -581,6 +583,7 @@ bool setRole(uint8_t r) {
   if (r > ROLE_LEADER || (r == ROLE_LEADER && !hostboard::fleetLeaderCapable())) return false;
   Preferences p;
   if (!p.begin("cydscan", false)) return false;
+  if (r != g_role) p.remove("fltcarry");   // leave / release / role change: drop the carried log tail (fleet_client.cpp)
   bool ok = p.putUChar("fltrole", r) == sizeof(uint8_t);
   p.putUChar("fltboot", 0);
   p.end();

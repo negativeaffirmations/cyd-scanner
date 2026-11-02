@@ -1140,7 +1140,7 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   ones dropped; max `CARRY_MAX` = 3) into NVS blob `cydscan`/`fltcarry` (`CarryRec`, ver 1: per file `{id, path, ackOff, ackRow,
   metaLen, tsOff/tsRow/tsLen, flOff/flRow/flLen}`, ~0.3 KB). Written immediately when the file set or a path changes (a new
   boot's file, a rotation, the sync rename) and otherwise at most every 30 s (`CARRY_PUT_MS`) -- a few writes/min while rows
-  flow, none when idle. `carryLoad()` (client `begin()`) takes the first `CARRY_LOAD` = 2 entries. The first `pumpLog()` after
+  flow, none when idle (see the review fixes below: 3 min). `carryLoad()` (client `begin()`) takes the entries of the previous boot only. The first `pumpLog()` after
   a join runs `carryActivate()` per entry: `logFwdFind()` opens `path` and checks line 1 is a `meta` whose `file_id` equals the
   stored one; if not (sync rename) it scans `/logs/*.jsonl` (same stream kind, size >= ackOff, <= 80 opens / 600 entries)
   for it. Not found -> dropped (`carryGone`); `size <= ackOff` -> already forwarded, dropped (`carryDone`); SD not ready ->
@@ -1150,6 +1150,24 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   stores them (server dedups by content). No wire change, `FLEET_PROTO_VERSION` stays 3: the leader's per-member table keeps
   4 origin files (LRU) and creates a record for the old `file_id` on the first frame. Serial `fleet` (client) prints the
   carry-over summary and each carried file's state.
+- **Carry-over review fixes (fw 0.27.0, REV-001..010):** (1) the record carries `CarryRec.boot` (NVS `fltbootn`, +1 per client
+  boot) and only the IMMEDIATELY following boot accepts it, re-stamping it at once (so pending tails survive back-to-back
+  reboots); `fltcarry` is deleted by `setRole()` on any role change (leave, release, `leader on`...), by the boot-guard
+  fallback and by the invalid-role reset, so a weeks-old tail never reaches an unrelated fleet. (2) `CARRY_LOAD` = `CARRY_MAX`
+  = 3; `carryPersist()` orders still-pending carried tails (<= 2), then this boot's files that hold unacked data (fully acked,
+  or nothing acked and < 1 KB = only anchors, are skipped), then leftover carried tails -- a real backlog is never pushed out
+  by this boot's live files. (3) the web Data page captures {connection generation, scanner id} ONCE per multi-step action
+  (`actionCtx()`) and passes it to every `fetchGroups` / `fetchLog`: scan + fleet files abort together when the scanner
+  changes. (4) a fleet file's session-list span (`fleetSpan`) trims the head to the newest cluster (within 10 min of the
+  head's newest epoch; a carried tail comes first and is older), and the web app includes a fleet group only when its END
+  falls inside the scan span +- 5 min. (5) `uploadSessionText` returns true / false / `"auth"`; the multi-body upload
+  stops on `"auth"` and ends with one summary toast. (6) `CARRY_PUT_MS` = 3 min, plus an immediate write on joined->lost
+  and on any file-set / path change. (7) `logFwdFind` scans `/logs` only when the stored path is an undated
+  `sess-NNNNN` / `bg-NNNNN` name, <= 40 opens / 150 entries. (8) `carryPersist` copies each carried file's live progress back
+  into `W->carry[]`. (9) `carryPersist` is skipped while `logXferActive()`. (10) A leader scan that is still undated (no
+  time sync yet, no epoch span) never auto-includes its fleet file on the Data page: tick the Fleet row yourself.
 - **Open:** a timesync line appended to an already-finished
   rotated file (renameSessionOnSync) is not forwarded; a member removed and re-enrolled starts a fresh record; leader reboot ->
-  new fleet file, and a client continues from its acked offsets (earlier rows live in the previous leader file).
+  new fleet file, and a client continues from its acked offsets (earlier rows live in the previous leader file); carry-over keeps at most
+  3 files (a unit that reboots many times without ever joining drops the oldest tails -- they stay on its own card), and a
+  sync-renamed file beyond the 150-entry /logs scan window is given up on.

@@ -305,9 +305,20 @@ class MultiExport {
       if (r <= 0) continue;
       b[r] = 0;
       if (pass == 0 && idOut) fileIdOfHead(b, idOut);
+      // The head block can start with a rebooted member's CARRIED tail (older rows, forwarded first): trim the span start
+      // to the newest cluster in the head (within 10 min of its newest epoch), so the file is dated by its own session.
+      uint32_t hmax = 0;
+      if (pass == 0)
+        for (const char* p = strstr(b, "\"epoch\":"); p; p = strstr(p + 8, "\"epoch\":")) {
+          uint32_t v;
+          if (epochAfter(p, v) && v > hmax) hmax = v;
+        }
       for (const char* p = strstr(b, "\"epoch\":"); p; p = strstr(p + 8, "\"epoch\":")) {
         uint32_t v;
-        if (epochAfter(p, v) && v) { if (!first || v < first) first = v; if (v > last) last = v; }
+        if (!epochAfter(p, v) || !v) continue;
+        if (v > last) last = v;
+        if (pass == 0 && v + 600 < hmax) continue;           // an older carried row at the head
+        if (!first || v < first) first = v;
       }
     }
     free(b);

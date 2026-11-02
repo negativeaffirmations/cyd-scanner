@@ -816,11 +816,14 @@ are epoch-only in exports (no ms windowing / backfill / tail pruning; forwarded 
 timesync anchors by `ofile` and `joinLogParts` passes `ofile` lines through untouched; the Data page lists `fleet-` files as a
 "Fleet" scan kind; ticking a leader's own scan there auto-includes its time-overlapping Fleet group (tag "+ Fleet", Fleet row
 "included"): Download saves it as a SECOND file, Upload POSTs it as its OWN body, Map plots both (`features/sessions.js`;
-Delete never auto-includes). Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
-**fw 0.27.0 carry-over:** the client persists the acked positions of its most recent not-fully-forwarded files (≤ 3; this boot's
-+ pending carried ones) in NVS `cydscan`/`fltcarry` (`CarryRec`: path, file_id, ackOff/ackRow, meta/timesync/last-fleet-evt anchor
-offsets; written at once when the file set or a path changes, else ≤ every 30 s), and after the next boot joins it verifies each
-(≤ 2: `logFwdFind` = line-1 `file_id`, path first then a bounded `/logs` scan for a sync-renamed copy; gone / fully acked ->
+Delete never auto-includes). A fleet group is included only when its END falls inside the scan span ±5 min (an undated scan never
+auto-includes); one {connection generation, scanner id} guard covers the whole multi-file action; the upload stops on a 401/403
+and ends with one summary toast. Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
+**fw 0.27.0 carry-over:** the client persists the acked positions of its most recent not-fully-forwarded files (≤ 3; pending carried
+tails first, then this boot's files with unacked data) in NVS `cydscan`/`fltcarry` (`CarryRec`: boot number, path, file_id,
+ackOff/ackRow, meta/timesync/last-fleet-evt anchor offsets; written at once when the file set or a path changes or the leader is
+lost, else ≤ every 3 min; ONLY the immediately following boot accepts it and re-stamps it, and any role change / leave / release /
+fallback deletes it), and after the next boot joins it verifies each (`logFwdFind` = line-1 `file_id`, path first then a bounded `/logs` scan for a sync-renamed copy; gone / fully acked ->
 dropped) and drains the remainder BEFORE this boot's files, re-sending meta, timesync and the file's LAST `"evt":"fleet"` line
 carrying a `fleet_id` as anchors first (the fleet-line anchor also rides every ordinary rejoin). No protocol change (fleet proto
 stays v3: the leader's per-member 4-file table takes the old `file_id`).
