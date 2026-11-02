@@ -30,8 +30,9 @@
   then repeat the 2 MB leader-download test (planGen must not move).
 - **P6 item 6 (P5b store-and-forward): owner SIGNED OFF; design = docs/fleet-mode.md §22 (`577c123`).** Owner chose:
   a member forwards its WHOLE current file from line 1. scan-analyzer server READY on `343a5d4` (schema v12; content dedup,
-  `orow` informational; wants each origin's meta + timesync re-sent when forwarding starts — in the spec). **Build in
-  progress via the fixer agent (fw 0.25.0, fleet proto v3 → flash all hosts together).** If this session died: check
+  `orow` informational; wants each origin's meta + timesync re-sent when forwarding starts — in the spec). **Built `866f40e`
+  (fw 0.25.0, fleet proto v3); reviewer found 2 P1 (fg/bg toggle re-sends whole files; webapp parse.js strips/mixes
+  members' timesync anchors) + 5 P2 + P3s → fixer re-run in progress. Owner: flash all 3 WITHOUT asking once fixes build.** If this session died: check
   `git log` for its commits, then build all envs, run reviewer, flash with owner OK, ping scan-analyzer, bench-test.
 - Open: server-side fleet grouping UI is scan-analyzer's.
 
