@@ -3355,7 +3355,7 @@ void loop() {
           // LINK_STICKY_MS grace so a single missed reply can't false-drop the link.
           if (!(g_bgScan && g_scanActive)) {
             if (pingC5()) g_lastLinkOkMs = millis();
-            g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+            g_linkOk = c5LinkAgeMs() < LINK_STICKY_MS;
           }
           drawStatusBar();  // just the top bar — no full-screen flicker
           drawMenuThreats();  // live bg-scan tier counts (own band only)

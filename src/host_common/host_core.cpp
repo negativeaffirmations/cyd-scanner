@@ -426,6 +426,25 @@ bool     g_scanActive = false;   // C5 polling on (START/STOP); independent of t
 uint32_t g_lastCycleMs = 0;
 uint32_t g_lastLinkOkMs = 0;                // millis() of the last successful scan exchange / ping
 
+static uint8_t  s_xferDepth = 0;
+static uint32_t s_xferStartMs = 0, s_xferPausedMs = 0;   // total ms spent inside transfers (wraps harmlessly)
+static uint32_t pausedNowMs() { return s_xferPausedMs + (s_xferDepth ? millis() - s_xferStartMs : 0); }
+uint32_t c5LinkAgeMs() {
+  static uint32_t seenOk = 0, pausedAtOk = 0;   // the paused total when g_lastLinkOkMs last changed
+  if (!g_lastLinkOkMs) return UINT32_MAX;
+  if (g_lastLinkOkMs != seenOk) { seenOk = g_lastLinkOkMs; pausedAtOk = pausedNowMs(); }
+  const uint32_t age = millis() - g_lastLinkOkMs, paused = pausedNowMs() - pausedAtOk;
+  return age > paused ? age - paused : 0;
+}
+void hostXferBegin() {
+  if (s_xferDepth++) return;
+  c5LinkAgeMs();             // snapshot a fresh link-OK before the pause starts counting
+  s_xferStartMs = millis();
+}
+void hostXferEnd() {
+  if (s_xferDepth && !--s_xferDepth) s_xferPausedMs += millis() - s_xferStartMs;
+}
+
 int buildGroups() {
   buildSorted(g_sortIdx);
   int n = 0;
@@ -757,7 +776,7 @@ ScanCycleResult core::runScanCycle() {
   const bool polled = requestScan();
   // Fleet leader whose OWN C5 is really down (past the sticky window, not a busy miss) while members still report:
   // run the pipeline on the members' rows alone so the merged view keeps working (docs/fleet-mode.md §9.2).
-  if (!polled && millis() - g_lastLinkOkMs >= LINK_STICKY_MS && fleet::hasRemote()) {
+  if (!polled && c5LinkAgeMs() >= LINK_STICKY_MS && fleet::hasRemote()) {
     g_detCount = 0; g_ridStoreCount = 0;
     g_deauthRecent = 0; g_evilCount = 0; g_ridCount = 0;   // no stale local C5 events
     fleet::mergeRemote();
@@ -769,7 +788,7 @@ ScanCycleResult core::runScanCycle() {
     // g_groups/g_scanView and the on-screen list stay as they were), don't push the empty table to
     // the phone, and keep the link dot/LED green until LINK_STICKY_MS of total silence. Re-poll soon
     // so we catch the C5 the moment it frees up, instead of waiting the full cadence.
-    g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+    g_linkOk = c5LinkAgeMs() < LINK_STICKY_MS;
     if (!g_linkOk) { g_deauthRecent = 0; g_evilCount = 0; g_ridCount = 0; }  // no stale C5 events
     applyScanLed();
     hostui::onBusyMiss();  // link dot + clock only (never touches the list region); headless in background

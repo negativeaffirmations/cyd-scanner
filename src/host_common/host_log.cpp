@@ -57,23 +57,28 @@ LogStream g_fg;  // zero-init (.bss); path set by openSession()
 LogStream g_bg;
 char g_streamingPath[100] = "";
 
-// Blocking BLE transfers (see XferScope below). Fleet event lines raised meanwhile (fleet::service() keeps running
+// Blocking phone transfers (see XferScope below). Fleet event lines raised meanwhile (fleet::service() keeps running
 // between chunks) are formatted at once but appended only after the transfer, so a file never grows between an
 // export's counting pass and its send pass (the SIZE= header would undercount).
 static uint8_t  g_xferDepth = 0;
-static uint32_t g_xferEndMs = 0;
-static constexpr int XFER_DEFER_MAX = 4;
-static char*    g_xferDefer = nullptr;            // XFER_DEFER_MAX x LOG_LINE, allocated on the first deferral
+static constexpr int XFER_DEFER_MAX = 8;
+static char*    g_xferDefer = nullptr;            // XFER_DEFER_MAX x LOG_LINE, heap only while lines are held
 static uint16_t g_xferDeferLen[XFER_DEFER_MAX];
-static int      g_xferDeferN = 0;
+static int      g_xferDeferN = 0, g_xferDeferDropped = 0;
 static void appendActiveLine(const char* ln, int n);   // defined with logFleetEvent
 
-bool hostTransferRecent(uint32_t windowMs) {
-  return g_xferDepth || (g_xferEndMs && millis() - g_xferEndMs < windowMs);
+// Keepalive for long non-sending passes (counting, directory scans) that serve a phone request: services the phone
+// link + fleet (phone::transferAlive) at most every 20 ms and reports whether the requesting phone (ep = its
+// authEpoch when the request started) is still the authenticated one. The send loops call transferAlive per chunk.
+static bool xferAlive(uint32_t ep) {
+  static uint32_t last = 0, lastEp = 0;
+  static bool alive = true;
+  if (ep == lastEp && millis() - last < 20) return alive;
+  last = millis(); lastEp = ep;
+  alive = phone::transferAlive(ep);
+  return alive;
 }
-
-// Keeps the phone link + fleet serviced inside long non-sending passes (counting, directory scans); the send loops
-// get the same from phone::transferAlive() per chunk. Throttled: these run per line.
+// Same servicing for sweeps no phone is waiting on (log cap, bulk delete).
 static void xferKeepAlive() {
   static uint32_t last = 0;
   if (millis() - last < 20) return;
@@ -83,12 +88,15 @@ static void xferKeepAlive() {
 }
 
 struct XferScope {
-  XferScope() { g_xferDepth++; }
+  XferScope() { g_xferDepth++; hostXferBegin(); }
   ~XferScope() {
+    hostXferEnd();
     if (--g_xferDepth) return;
-    g_xferEndMs = millis() | 1;
     for (int i = 0; i < g_xferDeferN; i++) appendActiveLine(g_xferDefer + i * LOG_LINE, g_xferDeferLen[i]);
     g_xferDeferN = 0;
+    free(g_xferDefer); g_xferDefer = nullptr;
+    if (g_xferDeferDropped) Serial.printf("[log] %d fleet line(s) dropped during a transfer (buffer full)\n", g_xferDeferDropped);
+    g_xferDeferDropped = 0;
   }
 };
 
@@ -645,9 +653,10 @@ void logFleetEvent(const char* op, const char* role, const fleet::EventInfo* x) 
   if (n > (int)LOG_LINE - 2) return;   // no room to close the object: drop (never write truncated JSON)
   lnAppend(ln, n, "}\n");
   if (n > (int)LOG_LINE) return;
-  if (g_xferDepth) {                   // mid-transfer: keep the line (its own epoch/ms) for after
+  // Mid-transfer: keep the line (its own epoch/ms) for after -- except radio_fail, which a reboot follows at once.
+  if (g_xferDepth && strcmp(op, "radio_fail")) {
     if (!g_xferDefer) g_xferDefer = (char*)malloc(XFER_DEFER_MAX * LOG_LINE);
-    if (!g_xferDefer || g_xferDeferN >= XFER_DEFER_MAX) return;
+    if (!g_xferDefer || g_xferDeferN >= XFER_DEFER_MAX) { g_xferDeferDropped++; return; }
     memcpy(g_xferDefer + g_xferDeferN * LOG_LINE, ln, n);
     g_xferDeferLen[g_xferDeferN++] = (uint16_t)n;
     return;
@@ -823,6 +832,7 @@ static void padToSize(uint32_t& sent, uint32_t total, uint32_t ep) {
 // file -- pass 1 sums the byte length of the lines inside the window (for the SIZE= header), pass 2
 // streams only those lines. Same LineReader + predicate for both, so the totals always agree.
 static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) {
+  const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
   if (!g_sdOk || !SD.exists(path)) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
   File f = SD.open(path, "r");
   if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
@@ -831,10 +841,12 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
   char line[logfilter::LINE_CAP];
   size_t len;
   uint32_t total = 0, nlines = 0;
+  bool alive = true;
   {
     logfilter::LineReader rd(f);
-    while (rd.next(line, len)) { xferKeepAlive(); if (logfilter::keep(line, c)) { total += len; nlines++; } }
+    while (rd.next(line, len) && (alive = xferAlive(ep))) if (logfilter::keep(line, c)) { total += len; nlines++; }
   }
+  if (!alive) { f.close(); g_streamingPath[0] = 0; Serial.println("[CYD] BLE filtered: phone left while counting"); return; }
   char hdr[24];
   int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
   phone::logNotify((const uint8_t*)hdr, hn);
@@ -845,7 +857,6 @@ static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) 
   size_t on = 0;
   uint32_t sent = 0;
   logfilter::LineReader rd2(f);
-  const uint32_t ep = phone::authEpoch();
   while (rd2.next(line, len) && phone::transferAlive(ep)) {
     if (!logfilter::keep(line, c)) continue;
     for (size_t off = 0; off < len; ) {
@@ -875,9 +886,10 @@ int sessionMetaLine(char* out, size_t cap) {
 // Time-window export of ALL session files ("T:<mode>[:<minutes>]:*"): one joined NDJSON stream of
 // every row in the window across every /logs/*.jsonl (fg + bg, New Session, earlier boots), dated
 // and filtered on the CYD (logfilter::MultiExport). Two passes like the single-file export: count
-// for the SIZE= header, then send. Both are deterministic, and nothing logs while this runs (same
-// loop task), so the totals agree.
+// for the SIZE= header, then send. Both are deterministic, and no file grows in between (loop() is
+// blocked; fleet lines raised meanwhile wait in XferScope's buffer), so the totals agree.
 static void streamMultiOverBle(int mode, int minutes) {
+  const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
   if (!g_sdOk) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
   const char* boot[BOOT_FILES + 2];
   int nb = thisBootFiles(boot, BOOT_FILES + 2);
@@ -885,7 +897,8 @@ static void streamMultiOverBle(int mode, int minutes) {
   int nf = mx.begin();
   char meta[160];
   int metaN = sessionMetaLine(meta, sizeof(meta));
-  uint32_t rows = mx.run([](const char*, size_t) { xferKeepAlive(); return true; });
+  uint32_t rows = mx.run([ep](const char*, size_t) { return xferAlive(ep); });
+  if (!phone::transferAlive(ep)) { Serial.println("[CYD] BLE multi export: phone left while counting"); return; }
   uint32_t total = rows ? rows + (uint32_t)metaN : 0;
   char hdr[24];
   int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
@@ -895,7 +908,6 @@ static void streamMultiOverBle(int mode, int minutes) {
   if (!total) return;
   delay(30);
   struct Out { uint8_t b[180]; size_t n = 0; uint32_t sent = 0; } o;  // chunk < MTU-3
-  const uint32_t ep = phone::authEpoch();
   auto put = [&o, ep](const char* p, size_t len) {
     for (size_t off = 0; off < len; ) {
       size_t rem = len - off, avail = sizeof(o.b) - o.n;
@@ -985,6 +997,7 @@ static String logBase(const String& nm) {  // dir entry -> bare basename (core m
 // deleting while iterating a directory is unsafe; re-scans until a pass finds nothing left to
 // delete, bounded so a huge card can't spin forever.
 static int wipeAllLogs() {
+  XferScope xs;                                  // up to 64 directory scans: keep the fleet serviced
   int removed = 0;
   for (int pass = 0; pass < 64; pass++) {       // up to 64 * 24 files
     File dir = SD.open("/logs");
@@ -992,6 +1005,7 @@ static int wipeAllLogs() {
     char victims[24][48];
     int nv = 0;
     for (File e = dir.openNextFile(); e && nv < 24; e = dir.openNextFile()) {
+      xferKeepAlive();
       if (!e.isDirectory()) {
         char full[48];
         snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
@@ -1022,6 +1036,7 @@ bool logPathProtected(const char* full) {
 }
 void enforceLogCap() {
   if (!g_sdOk) return;
+  XferScope xs;                                  // up to 64 full directory scans on a full card
   int removed = 0;
   for (int pass = 0; pass < 64; pass++) {
     File dir = SD.open("/logs");
@@ -1030,6 +1045,7 @@ void enforceLogCap() {
     time_t oldT = 0;
     char oldest[48] = "";
     for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+      xferKeepAlive();
       if (!e.isDirectory()) {
         total += (uint64_t)e.size();
         char full[48];
@@ -1060,6 +1076,8 @@ void enforceLogCap() {
 // app parses it into a picker and labels/floats the flagged row.
 void sendSessionList() {
   XferScope xs;
+  const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
+  bool alive = true;
   // The newest file is the current session when its file exists this boot; otherwise the
   // most recently written prior file (by FS timestamp).
   const LogStream& cs = activeStream();   // the stream "current"/"L" refers to right now
@@ -1071,7 +1089,7 @@ void sendSessionList() {
     time_t newestT = -1;
     File d = SD.open("/logs");
     if (d) {
-      for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+      for (File e = d.openNextFile(); e && (alive = xferAlive(ep)); e = d.openNextFile()) {
         if (!e.isDirectory()) {
           time_t t = e.getLastWrite();
           if (t >= newestT) { newestT = t; newestBase = logBase(String(e.name())); }
@@ -1087,25 +1105,25 @@ void sendSessionList() {
   list.reserve(4096);
   File dir = SD.open("/logs");
   if (dir) {
-    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+    for (File e = dir.openNextFile(); e && alive && (alive = xferAlive(ep)); e = dir.openNextFile()) {
       if (e.isDirectory()) continue;
       String base = logBase(String(e.name()));
       const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
       uint32_t first = 0, last = 0;  // dated span (local epoch; 0 = unknown) -> the phone groups a scan's parts
-      xferKeepAlive();
       if (base.endsWith(".jsonl")) logfilter::MultiExport::fileSpan(e, first, last);
       list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\t" + String(first) +
               "\t" + String(last) + "\n";
     }
     dir.close();
   }
+  if (!alive) { Serial.println("[CYD] session list: phone left"); return; }
   char hdr[24];
   int hn = snprintf(hdr, sizeof(hdr), "SESS=%u", (unsigned)list.length());
   phone::logNotify((const uint8_t*)hdr, hn);
   delay(30);
   const char* p = list.c_str();
   size_t rem = list.length();
-  while (rem) {
+  while (rem && phone::transferAlive(ep)) {
     size_t n = rem > 180 ? 180 : rem;
     phone::logNotify((const uint8_t*)p, n);
     p += n; rem -= n;

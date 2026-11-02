@@ -114,7 +114,7 @@ void loop() {
       lastIdle = millis();
       hostboard::sample();  // keep the battery reading fresh while idle (runScanCycle samples otherwise)
       if (pingC5()) g_lastLinkOkMs = millis();
-      g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+      g_linkOk = c5LinkAgeMs() < LINK_STICKY_MS;
       showLinkLed();  // headless: the LED is the only link readout
       pushStatus();
     }

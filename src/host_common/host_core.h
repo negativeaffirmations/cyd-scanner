@@ -210,6 +210,12 @@ static constexpr uint32_t SCAN_CYCLE_DOWN_MS = 5000; // headless bg-scan poll sp
                                                      // (each poll costs ~800ms of no-reply wait; back off so menus stay snappy)
 static constexpr uint32_t LINK_STICKY_MS = 8000;   // treat the link as up this long after the last reply
 extern uint32_t g_lastLinkOkMs;      // millis() of the last successful scan exchange / ping
+// A blocking phone transfer (log download/export, session list, log-cap sweep) pauses loop() and so the C5 poll.
+// hostXferBegin/End bracket one (host_log.cpp XferScope, nestable); c5LinkAgeMs() = ms since the last C5 reply NOT
+// counting that paused time (UINT32_MAX = never) -- use it, not millis() - g_lastLinkOkMs, to judge "C5 down".
+void     hostXferBegin();
+void     hostXferEnd();
+uint32_t c5LinkAgeMs();
 
 // --- Following-me engine ---
 struct FollowState {
