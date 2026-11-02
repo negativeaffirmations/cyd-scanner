@@ -1057,3 +1057,36 @@ file uploads grouped by `fleet_id` cover it.
 - **STATUS part 2:** `;fid=<16hex>;fld=<12hex>` after `flt=`, only while in a session and only whole (skipped past 249 B,
   i.e. with the download AP's creds, when live-POST is paused anyway). The web app (`ble/status.js`) re-reads them with
   every `flt=` and adds `fleet_role` / `fleet_id` / `fleet_leader` to the live-POST meta (`remote.js` `metaLine()`).
+
+## 22. P5b / P6 item 6 — store-and-forward (DESIGN, 2026-11-01; owner-approved, contract agreed with scan-analyzer)
+
+Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12) already accepts it.
+
+**NDJSON contract (all optional keys):**
+- **`file_id`** on EVERY `meta` line of every stream (fg/bg/fleet, fleet or not): 8 random lowercase hex, fixed for that
+  file's life (`LogStream.fileId`, made when the file is created; survives the sync rename).
+- **Leader fleet file** `/logs/fleet-NNNNN.jsonl` → renamed `fleet-YYYYMMDD-HHMMSS.jsonl` on time sync, like bg/fg. One per
+  leader fleet session (`fleet_id`), created on the first forwarded line. Line 1 = a `meta` with `"stream":"fleet"`, the
+  leader's `scanner_id`/`fw`/`db_gen`, `fleet_role:"leader"`, `fleet_id`, `fleet_leader`, its own `file_id`. It holds
+  ONLY member lines; the leader's own rows stay in its own bg/fg file (no double SD write). It is a protected live file,
+  counts toward the 512 MB cap, gets a timesync anchor on sync like the others, and is listed by `Q`/the exports.
+- **Forwarded line** = the member's line VERBATIM with `"scanner":"<origin sid>","ofile":"<origin file_id>","orow":N`
+  inserted right after `{` (`orow` = 1-based line number in the origin file; informational — the server dedups by content).
+  Every line type is forwarded: detection rows and all `evt` lines (meta, timesync, fleet, lastseen, devpos, rid, …).
+- A forwarded `meta`/`timesync` is that ORIGIN file's provenance/backfill anchor on the server.
+
+**Behaviour:**
+- **Client forwards its CURRENT active log file from line 1** (owner decision: whole file, even when it joins mid-file),
+  reading its own SD file from a saved byte offset — no RAM queue. It tracks `{fileId, byteOff, row}` acked; a new file
+  (New Session / reboot) restarts at 0. Files from earlier boots are not forwarded (the member's own file is the backup).
+- **New fleet session (leader reboot → new `fleet_id`) or rejoin:** the client first re-sends its file's `meta` line and its
+  `timesync` line (if it already has one) — scan-analyzer's request (c) — then continues from its acked offset.
+- **Wire:** new sealed messages `Msg::LogRows` (client→leader: fileId, first row, byte offset, flags bit0 = re-sent anchor,
+  then ≥1 complete `\n`-terminated lines, ≤ maxPayload) and `Msg::LogAck` (leader→client: fileId, through-row, next
+  byte offset). Stop-and-wait: one frame in flight, resent after ~600 ms, rate-limited so DetBatch/Sync keep airtime.
+  `FLEET_PROTO_VERSION` 2 → 3: all host units flash together.
+- **Leader:** per member `{fileId, nextRow}`; appends a frame's lines it hasn't stored yet (re-sent anchors always), then
+  acks. No scoring, no dedup tables. Fleet lines raised during a phone transfer are held like the other streams'
+  (XferScope); a LogRows frame arriving during a transfer is not appended/acked until it ends (the client resends).
+- **Web:** the Data page lists/groups the `fleet-` stream as its own scan kind ("Fleet"), and a leader's scan download /
+  upload offers its own file + its fleet file together (grouped by time span, as the stream groups are today).
