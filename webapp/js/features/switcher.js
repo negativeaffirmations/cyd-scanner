@@ -103,16 +103,19 @@ function render(){
   }).join("") : '<div class="sub" style="padding:6px;margin:0">No remembered scanners yet. Use Add scanner to pick one.</div>';
   $("switchAddBtn").disabled = switching;
   const present = presenceSupported();
-  let info = `Browser: ${browserText()}${fullVersion ? " (" + fullVersion + ")" : ""}<br>` +
-    `Live presence (watchAdvertisements): <b>${present ? "supported" : "not supported"}</b> · ` +
+  // One short line; the browser details + flag suggestion fold away (they read like an error on a phone).
+  const full = present && canGetDevices();
+  let info = full ? "In-range detection: on" :
+    (present ? "In-range detection: on · scanners forgotten on reload" : "In-range detection: off (Switch just tries to connect)");
+  let more = `Browser: ${browserText()}${fullVersion ? " (" + fullVersion + ")" : ""}<br>` +
+    `Live presence (watchAdvertisements): <b>${present ? "supported" : "not supported"}</b><br>` +
     `Remembered across reloads (getDevices): <b>${canGetDevices() ? "supported" : "not supported"}</b>`;
-  if(!present || !canGetDevices()){
-    info += `<br><span class="switchhint">Suggestion, flag names may differ by version: open <code>chrome://flags</code> ` +
-      `(<code>vivaldi://flags</code> in Vivaldi), enable <b>Experimental Web Platform features</b> ` +
-      `(<code>#enable-experimental-web-platform-features</code>)` +
-      (canGetDevices() ? "" : ` and <b>Use the new permissions backend for Web Bluetooth</b> (<code>#enable-web-bluetooth-new-permissions-backend</code>)`) +
-      `, then relaunch the browser. Without them scanners are only remembered until the page reloads and Switch tries to connect blindly.</span>`;
+  if(!full){
+    more += `<br>To try enabling them (names may differ by version): open <code>chrome://flags</code> ` +
+      `(<code>vivaldi://flags</code> in Vivaldi), enable <b>Experimental Web Platform features</b>` +
+      (canGetDevices() ? "" : ` and <b>Use the new permissions backend for Web Bluetooth</b>`) + `, then relaunch the browser.`;
   }
+  info += `<details class="switchhint"><summary>Details</summary>${more}</details>`;
   $("switchInfo").innerHTML = info;
 }
 
