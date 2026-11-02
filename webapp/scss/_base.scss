@@ -217,6 +217,8 @@ select {
   }
   .sesssub { font-family:ui-monospace, monospace; }
 }
+.switchinfo { margin-top:.8em; line-height:1.4; overflow-wrap:anywhere; code { font-size:.8rem; } }
+.switchhint { color:$color-warn; }
 .authmsg { color:$color-warn; font-weight:600; overflow-wrap:anywhere; }
 .secmsg { white-space:pre-line; overflow-wrap:anywhere; line-height:1.4; }
 .dlgactions { margin-top:1em; }

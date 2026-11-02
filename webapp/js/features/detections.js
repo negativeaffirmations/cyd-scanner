@@ -11,6 +11,7 @@
 // v6 appends a trailing "R:<n>" Remote-ID block (n rows: mac uas dlat dlon olat olon h alt spd hdg oid).
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
+import { onUnitReset } from '../unitreset.js';
 import { tierNum, fmtTimecode, flagBadges } from '../util/format.js';
 import { wifiRoles } from '../util/format.js';
 import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
@@ -194,6 +195,11 @@ export function togglePause(){
   paintPauseBtn();
   if (!state.paused) renderDets(state.lastDetRows || []);   // resume -> refresh to current data
 }
+onUnitReset(()=>{   // a different scanner is about to connect: forget the old one's snapshot buffers + Remote-ID
+  detState = { expect:0, rows:[], rendered:false }; curSeq = -1; emptyStreak = 0;
+  ridExpect = 0; ridStage = null; ridDone = false;
+  state.rids = {}; state.lastDetRows = [];
+});
 export function resetPause(){ state.paused = false; paintPauseBtn(); }   // called on disconnect
 function paintPauseBtn(){
   const b = $("pauseBtn"); if (!b) return;

@@ -1,6 +1,16 @@
 # Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `0bd3fe9` = trunk + webapp)
 
 ## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix 0.24.1 FLASHED + VERIFIED
+- **NEWER (late 2026-11-01, 3 local commits on `fleet-mode`, NOTHING flashed / pushed / deployed): log cache + tail fetch +
+  switch scanner.** (1) webapp phone-side IndexedDB log cache (`data/logcache.js`, `ble/logfetch.js`, `features/cacheui.js`;
+  200 MB LRU; saved/+N KB tags + Clear on the Data page). (2) **fw 0.26.0**: SESS= 6th field `file_id`, CMD
+  `F:<path>@<offset>:<file_id>` -> `TAIL=<n>@<off>` / `TAILERR=path|id|off` (no link/fleet change; flash units one at a time;
+  an older unit just never gets the tail form because the phone gates on STATUS `fw` >= 0.26.0). (3) webapp Switch scanner
+  (`ble/devices.js`, `features/switcher.js`, `unitreset.js`, `connection.js` `switchTo`). Webapp tokens bumped once
+  (`?v=20261101h`, footer `log-cache+switch h`); `connection.js` + `fleet.js` imports in main.js carry the same token.
+  To ship: flash 0.26.0 (all 5 host envs build), push, deploy Pages (~10 min cache), then test on the phone: Data -> Session
+  logs -> Refresh, Download one scan twice (2nd is instant, row says `saved`), let a live scan grow it (`+N KB new`), Download
+  again (log line "Fetched only the new N bytes"); Settings -> Scanners -> Switch scanner... between two units.
 - **fw 0.24.0 (P6 items 1-4) flashed on all 3 hosts** (mini #2 `xiao_s3_rgb` COM10 = leader, mini #1 `xiao_s3` COM16,
   CYD `cyd` COM13). `fleet-mode` `f3e7798` (fw) + `90a559e` (webapp) pushed; webapp on `main` `0bd3fe9` (footer
   `fleet-p6 e`). **Field test VERIFIED by scan-analyzer (server `b036384`, schema v11):** fleet_id `57289e09c2931f8c`

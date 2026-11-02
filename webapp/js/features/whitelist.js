@@ -2,7 +2,9 @@
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, log, esc } from '../util/dom.js';
+import { onUnitReset } from '../unitreset.js';
 
+onUnitReset(()=>{ $("wlList").innerHTML=""; });   // the whitelist belongs to the scanner it was read from
 export async function wlCmd(c, msg){
   try{ await state.chars.cmd.writeValue(enc.encode(c)); if(msg) log(msg); }
   catch(e){ log("Whitelist command failed: "+e.message); }

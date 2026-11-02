@@ -7,8 +7,16 @@ import { tierNum, hasGps, fmtEpoch } from '../util/format.js';
 import { parseScanLog, parseScanEvents } from '../data/parse.js';
 import { showPage } from '../nav.js';
 import { fetchCurrent } from '../ble/logfetch.js';
+import { onUnitReset } from '../unitreset.js';
 
 let lmap=null, mapLayer=null, mapDets=[], mapEvents=[], mapRidEvents=[], mapByMac=new Map();
+let mapFromDevice=false;   // the plotted data was fetched from a scanner (a local file isn't dropped when the scanner changes)
+onUnitReset(()=>{
+  if(!mapFromDevice) return;
+  mapDets=[]; mapEvents=[]; mapRidEvents=[]; mapByMac=new Map(); mapFromDevice=false;
+  $("mapMsg").textContent="Load the current session, pick one from Session logs, or open a .jsonl/.csv file.";
+  renderMap();
+});
 
 // Look up a parsed detection row by MAC (lowercased) — used by the evil-twin event popup to open
 // the full device detail for a clicked BSSID. Returns undefined if that MAC isn't in the dataset.
@@ -40,7 +48,7 @@ const EVT_STYLE={deauth:{col:"#f85149",ch:"D",name:"Deauth flood"}, eviltwin:{co
   droneid:{col:"#58a6ff",ch:"R",name:"Drone Remote ID"}, follow:{col:"#ff5cbf",ch:"F",name:"Follower"}};
 
 // Plot a scanlog (.jsonl or legacy .csv)'s geolocated rows on the wardriving map.
-export function plotCsvText(text, label){
+export function plotCsvText(text, label, local){   // local = read from a file on this phone (not a scanner)
   const all=parseScanLog(text);
   mapByMac=new Map();                       // MAC -> row, for the evil-twin popup's clickable BSSIDs
   for(const d of all) if(d.mac) mapByMac.set(d.mac.toLowerCase(), d);
@@ -48,7 +56,7 @@ export function plotCsvText(text, label){
   mapEvents=evs.filter(e=>e.evt!=="rid" && hasGps(e));
   mapRidEvents=evs.filter(e=>e.evt==="rid");   // positions come from the drone/operator fix, not the phone's
   if(!all.length && !mapEvents.length && !mapRidEvents.length){ $("mapMsg").textContent="No scanlog rows in "+(label||"file")+"."; return; }
-  mapDets=all.filter(hasGps);
+  mapDets=all.filter(hasGps); mapFromDevice=!local;
   openMap();   // switch to the Map page, ensure Leaflet is sized, and render
   const pts=new Set(mapDets.map(d=>d.lat.toFixed(5)+","+d.lon.toFixed(5))).size;
   $("mapMsg").textContent=(label?label+": ":"")+mapDets.length+" geolocated detections at "+pts+" points"+

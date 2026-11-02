@@ -622,7 +622,25 @@ back (5 GHz included). Things that matter, learned the hard way:
       the tail (`TAIL=0@N` = unchanged, a one-packet round trip).
       Rule for stale-module safety: new exports live in NEW files (`logfetch.js`, `logcache.js`, `cacheui.js`);
       old modules only gain internals.
-    - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager.
+    - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager, Scanners (Switch scanner…).
+  **Switch scanner (webapp 2026-11-01; no firmware involved):** `ble/devices.js` remembers every `BluetoothDevice` picked
+  this page session (+ `navigator.bluetooth.getDevices()` when Chrome has it; unit names kept in localStorage
+  `cflo.unitNames`); `features/switcher.js` owns the app-bar swap button (`#switchBtn`, beside the Bluetooth icon), the
+  `#switchDlg` dialog and the Settings → Scanners button (always reachable; also how a second scanner is added via
+  the chooser, `connect()`). Presence = `device.watchAdvertisements()` on every remembered scanner except the connected
+  one, only while the page is visible and `state.xferBusy` is 0 / no BLE transfer runs; "in range" for 10 s after the
+  last advertisement. The app-bar button is enabled only when another remembered scanner is in range; without
+  `watchAdvertisements` it stays enabled and Switch tries `gatt.connect()` with an 8 s timeout ("not found"). The
+  dialog shows the browser/Chromium version and whether presence / getDevices exist, with a suggested flags hint
+  (`chrome://flags` or `vivaldi://flags`: Experimental Web Platform features `#enable-experimental-web-platform-features`,
+  Use the new permissions backend for Web Bluetooth `#enable-web-bluetooth-new-permissions-backend` — suggestion only,
+  names vary by version). `connection.js` `switchTo(device, timeoutMs)` = clean disconnect (waits for `onDisconnect`'s
+  resets) -> `connectDevice()` (normal AUTH flow with the per-sid key); `connect()` (the chooser) now keeps the current
+  unit connected until another is actually picked. `onDisconnect` also clears `scannerId/Fw/DbGen` (the AUTH read sets
+  `scannerId` early). When a DIFFERENT device id connects, `unitreset.js` `runUnitReset()` runs the hooks that
+  status/detections/sessions/explore/map/whitelist/fleet/files register with `onUnitReset()` (readouts, DETS buffers,
+  Remote-ID, session list, Explore rows, a device-sourced Map — a local file loaded with `plotCsvText(...,true)` stays —
+  whitelist view, fleet members, file-explorer state). New webapp state/exports go in NEW files (the stale-module rule).
   Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
   follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS
   `deauth`/`evil`) + behavioral-flag badges on rows. On connect it takes a **Screen Wake Lock**

@@ -13,6 +13,7 @@ import { openMap, plotCsvText } from './map.js';
 import { bleFetch } from '../ble/transfer.js';
 import { fetchLog, cacheStatus } from '../ble/logfetch.js';
 import { onCacheChange } from '../data/logcache.js';
+import { onUnitReset } from '../unitreset.js';
 import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
@@ -163,6 +164,13 @@ function renderList(){
   }));
   updateButtons();
 }
+onUnitReset(()=>{   // a different scanner is about to connect: its session list is not this one's
+  endListWait(true);
+  groups=[]; selected.clear(); state.exploreWant=false;
+  $("sessList").innerHTML='<div class="sub">\u2014 connect and refresh \u2014</div>';
+  $("expSel").innerHTML="<option>\u2014 no sessions \u2014</option>";
+  updateButtons();
+});
 onCacheChange(()=>{ if(groups.length) renderList(); });   // a fetch finished / the cache was cleared: refresh the saved tags
 export function selectAllSessions(on){ selected.clear(); if(on) groups.forEach(g=>selected.add(g.key)); renderList(); }
 function selGroups(){ return groups.filter(g=>selected.has(g.key)); }

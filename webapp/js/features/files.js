@@ -8,6 +8,7 @@ import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
+import { onUnitReset } from '../unitreset.js';
 import { askConfirm } from '../ble/auth.js';
 
 const REPLY_MS = 25000;   // the device may be mid scan cycle before it services the request
@@ -146,6 +147,7 @@ async function refresh(dir){
   setBusy(false); render();
 }
 
+onUnitReset(() => { cwd = "/"; entries = []; picked = -1; if ($("filesDlg").open) $("filesDlg").close(); });   // another scanner's SD card
 export function openFiles(){
   if (!state.connected) { toast("Connect to the scanner first.", { err:true }); return; }
   if (!fwOk()) { toast("The file explorer needs scanner firmware 0.18.0 or newer (this one: " + (state.scannerFw || "?") + ").", { err:true }); return; }

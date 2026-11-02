@@ -696,6 +696,19 @@ select {
   font-family: ui-monospace, monospace;
 }
 
+.switchinfo {
+  margin-top: 0.8em;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.switchinfo code {
+  font-size: 0.8rem;
+}
+
+.switchhint {
+  color: #d29922;
+}
+
 .authmsg {
   color: #d29922;
   font-weight: 600;
@@ -898,6 +911,31 @@ a.btnlink {
 
 .conn.down .material-symbols-outlined {
   color: #8b949e;
+}
+
+.swbtn {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  color: #e6edf3;
+}
+
+.swbtn .material-symbols-outlined {
+  font-size: 20px;
+  background: none;
+}
+
+.swbtn.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.swbtn.ready .material-symbols-outlined {
+  color: #388bfd;
+}
+
+.swbtn[hidden] {
+  display: none;
 }
 
 .conn {
