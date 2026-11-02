@@ -26,11 +26,11 @@ export function parseScanCsv(text){
 // uuid pan name score tier sig wl; blank/inapplicable keys are omitted). Normalized to the SAME
 // row shape parseScanCsv returns. Bad lines are skipped.
 export function parseScanNdjson(text){
-  const rows=[]; let sync=null;
+  const rows=[]; const sync={};   // sync: anchors keyed by origin file ("" = this file's own; a fleet file's lines carry "ofile")
   for(const ln of (text||"").split(/\r?\n/)){
     if(!ln.trim()) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
-    if(o && o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }
+    if(o && o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync[o.ofile||""]={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }
     if(!o || typeof o!=="object" || !o.mac || o.evt) continue;   // evt lines (incl. "rid", which carries a mac) are events, not rows
     const s=v=>v==null?"":String(v);
     rows.push({epoch:parseInt(o.epoch,10)||0, ms:parseInt(o.ms,10)||0,
@@ -38,7 +38,7 @@ export function parseScanNdjson(text){
       source:s(o.src), mac:s(o.mac), rssi:parseInt(o.rssi,10)||0, channel:s(o.ch),
       ie:s(o.ie), bssid:s(o.bssid), cid:s(o.cid), uuid:s(o.uuid), pan:s(o.pan), name:s(o.name),
       score:parseInt(o.score,10)||0, tier:s(o.tier)||"none", signature:s(o.sig),
-      flags:s(o.flags), wl:(o.wl==1||o.wl===true)});
+      flags:s(o.flags), wl:(o.wl==1||o.wl===true), ofile:s(o.ofile)});
   }
   backfillEpoch(rows, sync);   // pre-sync rows (epoch:0) -> real time from their ms + the timesync anchor
   return rows;
@@ -46,9 +46,14 @@ export function parseScanNdjson(text){
 // Pre-sync rows/events carry epoch:0 + ms-since-boot; the CYD appends one {"evt":"timesync"} anchor
 // when the phone sets the clock. Recover their real time in place: epoch = sync.epoch + (ms - sync.ms)/1000
 // (the anchor usually appears AFTER the pre-sync rows, so this is applied after the full parse pass).
+// A fleet leader's fleet file holds MEMBERS' lines (each tagged "ofile" = the origin file): a row is backfilled only from
+// a timesync of the SAME ofile (its own clock); lines without "ofile" use the file-level anchor, as before.
 function backfillEpoch(items, sync){
-  if(!sync) return;
-  for(const it of items) if(!it.epoch) it.epoch = sync.epoch + Math.round((it.ms - sync.ms)/1000);
+  for(const it of items){
+    if(it.epoch) continue;
+    const sy=sync[it.ofile||""];
+    if(sy) it.epoch = sy.epoch + Math.round((it.ms - sy.ms)/1000);
+  }
 }
 // Join several session files (a scan's parts, or several picked scans) into ONE NDJSON text that
 // stays self-consistent. Timesync anchors only date rows from their own boot, so each part's pre-sync
@@ -57,22 +62,27 @@ function backfillEpoch(items, sync){
 // order (repeats dropped): a scan's parts can span a reflash, so the parts may carry different fw /
 // scanner_name, and readers (scan-analyzer: last meta wins) then see the newest firmware. Keeping
 // only the first meta mislabelled a 0.11.0 walk as 0.9.0 (2026-10-22).
+// Lines carrying "ofile" (a fleet leader's forwarded member lines) are passed through untouched: their meta / timesync
+// are the ORIGIN's anchors (never this file's meta or sync), and their rows are never rewritten here. A member meta
+// can therefore not become the file-level meta; if one is the last meta emitted, the last file-level meta is repeated
+// at the end so a naive last-meta reader still sees the leader's own.
 // Legacy CSV parts can't be merged with NDJSON: a lone CSV part passes through as-is, otherwise
 // CSV parts are skipped.
 export function joinLogParts(texts){
   const parts=(texts||[]).filter(t=>t && t.trim());
   if(parts.length===1 && parts[0].trimStart()[0]!=="{") return parts[0];
-  const out=[]; const metas=new Set();
+  const out=[]; const metas=new Set(); let lastMeta="", memberMetaAfter=false;
   for(const t of parts){
     if(t.trimStart()[0]!=="{") continue;
     const lines=t.split(/\r?\n/);
     let sync=null;
-    for(const ln of lines) if(ln.includes('"evt":"timesync"')){
+    for(const ln of lines) if(ln.includes('"evt":"timesync"') && !ln.includes('"ofile"')){
       try{ const o=JSON.parse(ln), e=parseInt(o.epoch,10)||0; if(e>0){ sync={epoch:e, ms:parseInt(o.ms,10)||0}; break; } }catch(e){}
     }
     for(const ln of lines){
       if(!ln.trim()) continue;
-      if(ln.includes('"evt":"meta"')){ const k=ln.trim(); if(!metas.has(k)){ metas.add(k); out.push(ln); } continue; }
+      if(ln.includes('"ofile"')){ if(ln.includes('"evt":"meta"')) memberMetaAfter=true; out.push(ln); continue; }
+      if(ln.includes('"evt":"meta"')){ const k=ln.trim(); if(!metas.has(k)){ metas.add(k); out.push(ln); memberMetaAfter=false; } lastMeta=ln; continue; }
       if(sync && ln.includes('"evt":"timesync"')) continue;
       if(sync && ln.startsWith('{"epoch":0,')){
         const m=/"ms":(\d+)/.exec(ln);
@@ -82,6 +92,7 @@ export function joinLogParts(texts){
       out.push(ln);
     }
   }
+  if(memberMetaAfter && lastMeta) out.push(lastMeta);
   return out.length ? out.join("\n")+"\n" : "";
 }
 // Detect the log format: first non-empty char "{" = NDJSON, else legacy CSV.
@@ -92,16 +103,17 @@ export function parseScanLog(text){
 // Event lines (NDJSON objects with an "evt" key: deauth / eviltwin / droneid / rid / follow) are skipped by
 // the row parser above; this collects the geolocated ones for the map's event pins.
 export function parseScanEvents(text){
-  const out=[]; let sync=null;
+  const out=[]; const sync={};   // keyed by origin file, as in parseScanNdjson
   for(const ln of (text||"").split(/\r?\n/)){
     if(ln[0]!=="{" || !ln.includes('"evt"')) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
     if(!o || !o.evt) continue;
-    if(o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }  // anchor, not a map pin
+    if(o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync[o.ofile||""]={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }  // anchor, not a map pin
     if(o.evt==="meta") continue;   // scan-provenance anchor (scanner_id/fw/db_gen) — server-side only, not a map pin
     if(o.evt==="lastseen") continue;   // per-device departure line (presence/dwell) — server-side only, not a map pin
     const ev={evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
-      ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon)};
+      ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon),
+      ofile:o.ofile==null?"":String(o.ofile)};
     if(ev.evt==="eviltwin"){   // suspect SSID + its BSSIDs (CYD enriches the line, up to 8 macs)
       ev.ssid=o.ssid==null?"":String(o.ssid);
       ev.macs=o.macs==null?[]:String(o.macs).split(",").filter(Boolean);
