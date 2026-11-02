@@ -32,7 +32,10 @@
   a member forwards its WHOLE current file from line 1. scan-analyzer server READY on `343a5d4` (schema v12; content dedup,
   `orow` informational; wants each origin's meta + timesync re-sent when forwarding starts — in the spec). **Built `866f40e`
   (fw 0.25.0, fleet proto v3); reviewer found 2 P1 (fg/bg toggle re-sends whole files; webapp parse.js strips/mixes
-  members' timesync anchors) + 5 P2 + P3s → fixer re-run in progress. Owner: flash all 3 WITHOUT asking once fixes build.** If this session died: check
+  members' timesync anchors) + 5 P2 + P3s → ALL FIXED in `c246e70`. **FLASHED on all 3 + pushed; webapp on `main` `7d8ea2a` (footer `fleet-p6 g`). Live:
+  leader writes `/logs/fleet-…jsonl`, both members forwarding, 0 bad frames.** Next: owner's hardware test with
+  scan-analyzer (download/upload leader file + fleet- file + member files); extra checks in the fixer's list (fg/bg
+  switch, backoff during a leader transfer, `T:2:60:/logs/fleet-…` export epoch-only).** If this session died: check
   `git log` for its commits, then build all envs, run reviewer, flash with owner OK, ping scan-analyzer, bench-test.
 - Open: server-side fleet grouping UI is scan-analyzer's.
 
