@@ -1,6 +1,6 @@
 # Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `0bd3fe9` = trunk + webapp)
 
-## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix built, NOT flashed
+## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix 0.24.1 FLASHED on all 3, untested
 - **fw 0.24.0 (P6 items 1-4) flashed on all 3 hosts** (mini #2 `xiao_s3_rgb` COM10 = leader, mini #1 `xiao_s3` COM16,
   CYD `cyd` COM13). `fleet-mode` `f3e7798` (fw) + `90a559e` (webapp) pushed; webapp on `main` `0bd3fe9` (footer
   `fleet-p6 e`). **Field test VERIFIED by scan-analyzer (server `b036384`, schema v11):** fleet_id `57289e09c2931f8c`
@@ -14,7 +14,7 @@
   transfer on the LEADER pauses its C5 poll → `ownC5Up` false after 8 s → `assignRoles()` drops everyone to FULL;
   (2) export counting passes + the session-list dir scan never serviced the fleet. Exact timeline not confirmed --
   if flips persist after the fix, ask scan-analyzer for the ordered leader + mini#1 `fleet` lines (epoch/op/plan/n).
-- **Fix `1cbbee6` (fw 0.24.1), committed locally, NOT pushed / flashed:** leader holds its own-C5 verdict while
+- **Fix `1cbbee6` (fw 0.24.1), pushed + flashed on all 3 hosts (fleet rejoined, split roles OK); download re-test pending:** leader holds its own-C5 verdict while
   `hostTransferRecent(LINK_STICKY_MS)`; `xferKeepAlive()` (throttled phone+fleet service) in counting passes + session
   list; `XferScope` around transferLog/Filtered/File + sendSessionList defers fleet event lines (≤4, heap on first
   use) until the transfer ends so an export's SIZE= count stays exact. All 5 host envs build. Fleet proto/link
