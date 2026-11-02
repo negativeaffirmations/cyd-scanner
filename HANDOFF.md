@@ -5,8 +5,9 @@
   FLASHED on all 3 hosts, pushed, and the webapp deployed (`main` `7f86e00`, footer `log-cache+switch i`). Owner granted
   no-ask flash/deploy for the rest of this work. Fleet rejoined on 0.26.0, forwarding into a new fleet file. NOT yet
   phone-tested: cache reuse, `+N KB new` tail fetch (JS CRC vs firmware CRC untested on hardware — mismatch falls back to a
-  full fetch), scanner switching / presence in Vivaldi. Observation: after the reflash the leader showed each member
-  forwarding TWO file ids (previous boot's + current); check whether earlier-boot files are being forwarded (spec says no).
+  full fetch), scanner switching / presence in Vivaldi. After the reflash the leader showed each member with TWO
+  file ids: EXPLAINED, not a bug — the leader was flashed first, so for ~1-2 min the members (still on their old boot)
+  forwarded their old live files to the new leader; then each rebooted into a new file.
   Review-fix summary: single-flight transfers + connection generation (a switch mid-fetch can no longer mix scanners'
   data), pending request rejected on disconnect, tail form now carries a prefix CRC (`F:<path>@<off>:<file_id>:<crc32>`),
   SESS= file_id comes from fileSpan's head read, cache tags only trust matching file_ids, uploads trim a torn last row.
