@@ -99,10 +99,11 @@ function setUploadBusy(busy){
 
 // Upload raw NDJSON text (as fetched from the device) to the server. sessionName -> X-Session-Name.
 // This is the terminal step of the BLE fetch -> upload flow (download.js routes the "upload" sink
-// here), so it always clears the busy state, success or fail.
+// here), so it always clears the busy state, success or fail. Returns true = stored, false = failed, "auth" = rejected (401/403:
+// the caller should stop sending more bodies).
 export async function uploadSessionText(text, sessionName){
-  if(!isPaired()){ log("Remote: not paired — pair with a server first (Settings)."); toast("Not paired — pair a server in Settings.", {err:true}); setUploadBusy(false); return; }
-  if(!text || !text.trim()){ log("Remote: nothing to upload (empty session)."); toast("Nothing to upload — that session is empty.", {err:true}); setUploadBusy(false); return; }
+  if(!isPaired()){ log("Remote: not paired — pair with a server first (Settings)."); toast("Not paired — pair a server in Settings.", {err:true}); setUploadBusy(false); return false; }
+  if(!text || !text.trim()){ log("Remote: nothing to upload (empty session)."); toast("Nothing to upload — that session is empty.", {err:true}); setUploadBusy(false); return false; }
   const isCsv = /\.csv$/i.test(sessionName||"");
   const bytes = enc.encode(text);
   log("Remote: uploading "+(sessionName||"session")+" ("+bytes.length+" bytes)…");
@@ -116,9 +117,9 @@ export async function uploadSessionText(text, sessionName){
     });
     if(r.status===401 || r.status===403){
       log("Remote: upload rejected ("+r.status+") — the device key may be revoked. Re-pair in Settings.");
-      toast("Upload rejected ("+r.status+") — re-pair in Settings.", {err:true}); return;
+      toast("Upload rejected ("+r.status+") — re-pair in Settings.", {err:true}); return "auth";
     }
-    if(!r.ok){ log("Remote: upload failed ("+r.status+" "+r.statusText+")."); toast("Upload failed ("+r.status+" "+r.statusText+").", {err:true}); return; }
+    if(!r.ok){ log("Remote: upload failed ("+r.status+" "+r.statusText+")."); toast("Upload failed ("+r.status+" "+r.statusText+").", {err:true}); return false; }
     const j = await r.json().catch(()=>null);
     if(j){
       // The server dedups per ROW (rows this scanner already sent are skipped); sightings/events = rows
@@ -130,9 +131,11 @@ export async function uploadSessionText(text, sessionName){
         : "Uploaded "+nm+": "+s+" new sighting(s), "+ev+" new event(s)"+(skipped ? "; "+skipped+" row(s) already on the server" : "")+".";
       log("Remote: "+msg); toast(msg);
     } else { log("Remote: upload accepted."); toast("Uploaded "+(sessionName||"session")+" — accepted."); }
+    return true;
   }catch(e){
     log("Remote: upload error — "+e.message+" (HTTPS + server CORS for "+location.origin+" required).");
     toast("Upload error — "+e.message, {err:true});
+    return false;
   }finally{
     setUploadBusy(false);
   }
