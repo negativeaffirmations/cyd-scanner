@@ -18,7 +18,7 @@
 - **Earlier note, now superseded for (a):** (a) carry-over on hardware — needs a REAL backlog: take a member out of the leader's reach (or power the
   leader off) for a few minutes, power-cycle the member, then bring the leader back; the member's `fleet` console should show
   `carry-over … loaded 1` and forward the old file first. (An RTS-toggle over USB did NOT reset the S3, and a caught-up member
-  correctly carries nothing.) (b) Data page bundling in the browser (tick a leader scan → "+ Fleet", two files / two POSTs).
+  correctly carries nothing.) (b) Data page bundling — VERIFIED by the owner in the browser ("+ Fleet" tag, upload worked).
   scan-analyzer will check the earlier-boot `ofile` session once the fleet file is uploaded.
 - 0.26.0 (log cache / tail fetch / switch scanner) is PHONE-VERIFIED (see the next entry).
 
