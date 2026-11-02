@@ -1,9 +1,11 @@
 // Session-log management: list ("Q" -> SESS= stream), download, map, upload, delete, wipe.
 // Files are grouped into SCANS: one scan is normally one file, but older firmware split a busy drive
 // into many parts (and New Session / reboots split a day), so consecutive files of the same stream
-// (fg / bg) whose dated spans sit within GROUP_GAP_S of each other form one group. The Session-logs
+// (fg / bg / fleet) whose dated spans sit within GROUP_GAP_S of each other form one group. The Session-logs
 // list is a multi-select of groups; every action fetches the selected groups' parts one at a time
 // over BLE (bleFetch) and joins them (joinLogParts) into ONE file / ONE upload per scan.
+// A fleet LEADER also has /logs/fleet-*.jsonl (the members' lines, forwarded to it): its own "Fleet" kind of scan,
+// grouped like the others (docs/fleet-mode.md §22). It is listed next to the leader's own scans, not merged into them.
 // The one grouped list feeds both the Session-logs list and the Explore picker (#expSel).
 import { state } from '../state.js';
 import { $, log, esc, toast, saveBlob } from '../util/dom.js';
@@ -37,10 +39,10 @@ function buildGroups(text){
     const f=parseInt(first,10)||0, l=parseInt(last,10)||0;
     const start=f||nameEpoch(base), end=Math.max(l, start);
     return {path, base, size:parseInt(size,10)||0, flag:flag||"", start, end,
-            kind: base.startsWith("bg-") ? "bg" : "fg", csv: /\.csv$/i.test(base)};
+            kind: base.startsWith("bg-") ? "bg" : base.startsWith("fleet-") ? "fleet" : "fg", csv: /\.csv$/i.test(base)};
   });
   const out=[];
-  for(const kind of ["fg","bg"]){
+  for(const kind of ["fg","bg","fleet"]){
     const ps=parts.filter(p=>p.kind===kind && p.start && !p.csv).sort((a,b)=>a.start-b.start);
     let g=null;
     for(const p of ps){
@@ -48,7 +50,7 @@ function buildGroups(text){
       else { g={kind, parts:[p], start:p.start, end:p.end}; out.push(g); }
     }
   }
-  // Undated files (pre-sync boots: sess-/bg-NNNNN) and legacy CSV: one group each.
+  // Undated files (pre-sync boots: sess-/bg-/fleet-NNNNN) and legacy CSV: one group each.
   for(const p of parts) if(!p.start || p.csv) out.push({kind:p.kind, parts:[p], start:p.start, end:p.end});
   for(const g of out){
     g.key=g.parts[0].path;
@@ -70,7 +72,7 @@ function groupTitle(g){
   return fmtDay(g.start)+(g.end-g.start>=60 ? " – "+(same?fmtTime(g.end):fmtDay(g.end)) : "");
 }
 function groupSub(g){
-  const bits=[g.kind==="bg"?"Background":"Scan"];
+  const bits=[g.kind==="bg"?"Background":g.kind==="fleet"?"Fleet":"Scan"];
   if(g.parts.length>1) bits.push(g.parts.length+" parts");
   bits.push(fmtSize(g.size));
   if(g.flag==="current") bits.push("current");

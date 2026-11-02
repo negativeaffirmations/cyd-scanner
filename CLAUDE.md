@@ -757,7 +757,20 @@ per unit (member rows tagged `"scanner":<sid>` + `pos_src:"fleet"`; own rows unt
 `peer_name`, `slot`, `n` (units), `plan` (plan/start; `ap24+ap5+prom24+prom5+154+ble` or `full`); every line with
 lat/lon + **`pos_src`** `phone|gps|fleet` (the fix's origin, held included); **`"evt":"devpos"`**
 `{…,"scanner","dlat","dlon","sats","used"}` every 30 s / 25 m from a fleet unit with a live own GPS fix. STATUS part 2
-`fid`/`fld` → the web live-POST meta. Item 6 (store-and-forward) deferred.
+`fid`/`fld` → the web live-POST meta.
+**P6 item 6 (fw 0.25.0, fleet proto v3; docs §22):** store-and-forward. Every `meta` line (fg/bg/fleet) now ends with
+`"file_id":"<8 hex>"` (`LogStream.fileId`, random per file, made in `ensureLogFile`, survives the sync rename). A joined
+**client** forwards its CURRENT log file from line 1 to the leader (`pumpLog()` in `fleet_client.cpp`, called from `tick()`
+so backfill isn't tied to the 2 s scan cycle): it reads its own SD file at an acked byte offset (no RAM queue) and sends
+complete lines in sealed `Msg::LogRows` frames (`LogRowsHdr` 22 B: fileId[4], firstRow, byteOff, flags bit0 = re-sent
+anchor, nLines; stop-and-wait, resend after 600 ms, ~8 KB/s; unforwardable/oversized lines are skipped + counted). On
+every (re)join it first re-sends its meta line and timesync line (flag bit0), then continues from the acked offset. The
+**leader** (`onLogRows`) validates, appends each line to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` + timesync
+anchor on sync; third `LogStream` `g_fleetLog`, protected, capped, listed, in `thisBootFiles`) with `"scanner","ofile","orow"`
+inserted after the `{`, and answers `Msg::LogAck`; per-member `{file, nextRow}` dedups resends. Its meta carries
+`"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`), and
+`MultiExport` neither backfills nor ms-windows fleet-file rows (foreign clocks). Web Data page lists `fleet-` files as a
+"Fleet" scan kind. Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
 a member's role at runtime (§20.1).
 

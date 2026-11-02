@@ -14,6 +14,7 @@
 #include "webshare.h"
 #include "phone.h"
 #include "host_core.h"
+#include "host_log.h"
 
 using namespace fleet::detail;
 
@@ -85,6 +86,23 @@ struct ClientSt {
   uint16_t lastDets;                   // rows of the last successful cycle (MStat.dets; steady across a busy miss)
   uint32_t rowsSent, framesSent, ridFrames;
 };
+// P6 item 6 store-and-forward (docs §22): the client's CURRENT log file goes to the leader from line 1, read straight
+// from its own SD file at an acked byte offset (no RAM queue). Stop-and-wait: one LogRows frame in flight, rebuilt and
+// resent if no LogAck within LOG_RESEND_MS; at most ~LOG_BYTES_PER_S so DetBatch / MStat keep their airtime.
+constexpr uint32_t LOG_RESEND_MS = 600, LOG_IDLE_POLL_MS = 500, LOG_BYTES_PER_S = 8192;
+enum AnchorSt : uint8_t { A_NONE = 0, A_SCAN, A_META, A_TS };   // after (re)joining: meta line, then timesync line, re-sent
+struct LogFwd {
+  char     id[9];                      // file_id being forwarded ("" = none yet)
+  uint32_t ackOff, ackRow;             // acked position: byte offset of the next unsent line + its 1-based row
+  bool     infl, inflAnchor;           // a frame awaits its LogAck
+  uint32_t inflOff, inflLen, inflLines, inflRow, inflMs;
+  uint32_t nextMs;                     // rate limit / idle poll
+  uint8_t  anchor;                     // AnchorSt
+  uint32_t scanOff, scanRow, metaLen, tsOff, tsRow, tsLen;
+  uint32_t rowsFwd, frames, resends, skipped, anchorsSent;
+};
+LogFwd* g_lf = nullptr;
+
 ClientSt* C = nullptr;
 SentRow*  g_sent = nullptr;            // MAX_DET rows, allocated with the client state (normal mode: never)
 uint8_t*  g_fwdBuf = nullptr;          // one sealed DetBatch / RidBatch frame
@@ -251,6 +269,7 @@ void onJoin(const Rx& f) {
   C->txSeq = 0; C->rx.reset(); C->acks = 0;
   C->st = C_JOINING;
   if (g_sent) memset(g_sent, 0, MAX_DET * sizeof(SentRow));        // a new session: forward every row afresh
+  if (g_lf) { g_lf->infl = false; g_lf->anchor = A_NONE; }         // (onSync, once JOINED, restarts the anchors)
   sendAck();
 }
 
@@ -300,6 +319,11 @@ void onSync(const Rx& f) {
                   (unsigned)C->nMembers, (unsigned)g_ch);
     clientEvent("join");
     C->lastMStatMs = 0;
+    if (g_lf) {                                                     // P6 item 6: this leader gets the file's meta + timesync again
+      g_lf->infl = false; g_lf->nextMs = 0;
+      g_lf->anchor = g_lf->ackOff ? A_SCAN : A_NONE;                // nothing acked yet: line 1 goes out as an ordinary row
+      g_lf->scanOff = 0; g_lf->scanRow = 1; g_lf->metaLen = g_lf->tsLen = 0;
+    }
   }
 }
 
@@ -345,6 +369,159 @@ void onCtrl(const Rx& f) {
   }
 }
 
+// ---- P6 item 6: log store-and-forward (client side) ----
+bool idToBytes(const char* id, uint8_t out[4]) {
+  for (int i = 0; i < 4; i++) {
+    unsigned v;
+    if (sscanf(id + 2 * i, "%2x", &v) != 1) return false;
+    out[i] = (uint8_t)v;
+  }
+  return true;
+}
+
+// Build + send one LogRows frame from the `len` line bytes already placed at g_fwdBuf + sizeof(LogRowsHdr).
+void sendLogFrame(const char* id, uint32_t row, uint32_t off, uint32_t len, uint32_t lines, bool anchor) {
+  LogFwd* W = g_lf;
+  LogRowsHdr* h = (LogRowsHdr*)g_fwdBuf;
+  memset(h, 0, sizeof(*h));
+  if (!idToBytes(id, h->fileId)) return;
+  h->firstRow = row; h->byteOff = off; h->flags = anchor ? LOGROWS_ANCHOR : 0; h->nLines = (uint8_t)lines;
+  const uint32_t now = millis();
+  if (!sendSealed(C->leaderMac, g_fwdBuf, sizeof(LogRowsHdr) + len, Msg::LogRows, C->sess, C->txSeq, C->sk)) {
+    W->nextMs = now + 200;                                           // radio queue busy / crypto: try again shortly
+    return;
+  }
+  W->infl = true; W->inflAnchor = anchor; W->inflMs = now;
+  W->inflOff = off; W->inflLen = len; W->inflLines = lines; W->inflRow = row;
+}
+
+// One incremental step of the anchor scan: read <= 1 KB of the ALREADY-acked part of the file (a timesync line written
+// later goes out as an ordinary row), noting line 1 (meta) and the first timesync line. Lines are <= LOG_LINE bytes.
+void anchorScanStep(LogFwd* W, const char* path) {
+  uint8_t blk[1024];
+  uint32_t sz = 0;
+  const uint32_t want = W->ackOff - W->scanOff < sizeof(blk) ? W->ackOff - W->scanOff : sizeof(blk);
+  const int n = want ? logFwdRead(path, W->scanOff, blk, want, &sz) : 0;
+  size_t used = 0;
+  bool found = false;
+  while (n > 0 && used < (size_t)n && !found) {
+    const uint8_t* nl = (const uint8_t*)memchr(blk + used, '\n', n - used);
+    if (!nl) break;
+    const size_t ll = (size_t)(nl - (blk + used)) + 1;
+    char tmp[96];                                                    // the evt marker sits in the first ~100 bytes of a line
+    const size_t cp = ll < sizeof(tmp) - 1 ? ll : sizeof(tmp) - 1;
+    memcpy(tmp, blk + used, cp); tmp[cp] = 0;
+    if (W->scanRow == 1) W->metaLen = strstr(tmp, "\"evt\":\"meta\"") ? (uint32_t)ll : 0;
+    else if (tmp[0] == '{' && strstr(tmp, "\"evt\":\"timesync\"")) {
+      W->tsOff = W->scanOff + (uint32_t)used; W->tsRow = W->scanRow; W->tsLen = (uint32_t)ll;
+      found = true;
+    }
+    used += ll;
+    W->scanRow++;
+  }
+  W->scanOff += (uint32_t)used;
+  if (found || n <= 0 || used == 0 || W->scanOff >= W->ackOff)       // done: found it, or the end of the acked part
+    W->anchor = W->metaLen ? A_META : W->tsLen ? A_TS : A_NONE;
+}
+
+// Called from tick() while JOINED. Cheap when idle (one SD open per LOG_IDLE_POLL_MS).
+void pumpLog() {
+  LogFwd* W = g_lf;
+  if (!W || !g_fwdBuf || C->st != C_JOINED || logXferActive()) return;
+  const uint32_t now = millis();
+  if (W->infl) {
+    if (now - W->inflMs < LOG_RESEND_MS) return;
+    W->infl = false; W->resends++;                                   // no LogAck: rebuild the frame from the file and resend
+  } else if ((int32_t)(now - W->nextMs) < 0) {
+    return;
+  }
+  char path[48], fid[9];
+  if (!logFwdSource(W->id, path, sizeof(path), fid)) { W->nextMs = now + LOG_IDLE_POLL_MS; return; }
+  if (strcmp(fid, W->id)) {                                          // first file, a New Session / reboot, or the old one is gone
+    Serial.printf("[FLT] client: forwarding log file %s (%s)\n", fid, path);
+    memcpy(W->id, fid, 9);
+    W->ackOff = 0; W->ackRow = 1; W->anchor = A_NONE;
+  }
+  const size_t maxFrame = g_maxPayload < FLEET_V2_MAX ? g_maxPayload : FLEET_V2_MAX;
+  if (maxFrame < sizeof(LogRowsHdr) + TAG_LEN + 16) return;
+  const size_t room = maxFrame - TAG_LEN - sizeof(LogRowsHdr);
+  uint8_t* body = g_fwdBuf + sizeof(LogRowsHdr);
+  if (W->anchor == A_SCAN) { anchorScanStep(W, path); return; }
+  if (W->anchor == A_META || W->anchor == A_TS) {
+    const bool meta = W->anchor == A_META;
+    const uint32_t off = meta ? 0 : W->tsOff, len = meta ? W->metaLen : W->tsLen, row = meta ? 1 : W->tsRow;
+    uint32_t sz;
+    if (len == 0 || len > room || logFwdRead(path, off, body, len, &sz) != (int)len || body[len - 1] != '\n') {
+      W->anchor = meta && W->tsLen ? A_TS : A_NONE;                  // unreadable / too big: skip this anchor
+      return;
+    }
+    sendLogFrame(W->id, row, off, len, 1, true);
+    return;
+  }
+  uint32_t sz = 0;
+  const int n = logFwdRead(path, W->ackOff, body, room, &sz);
+  if (n <= 0) {                                                      // caught up (or the file is gone): maybe move to a newer file
+    char p2[48], f2[9];
+    if (W->id[0] && logFwdSource("", p2, sizeof(p2), f2) && strcmp(f2, W->id)) {
+      Serial.printf("[FLT] client: log file %s fully forwarded -> %s\n", W->id, f2);
+      memcpy(W->id, f2, 9); W->ackOff = 0; W->ackRow = 1;
+      return;
+    }
+    W->nextMs = now + LOG_IDLE_POLL_MS;
+    return;
+  }
+  size_t used = 0;
+  uint32_t lines = 0;
+  while (used < (size_t)n && lines < 255) {                          // whole, plausible lines only
+    const uint8_t* ln = body + used;
+    const uint8_t* nl = (const uint8_t*)memchr(ln, '\n', n - used);
+    if (!nl) break;
+    const size_t ll = (size_t)(nl - ln) + 1;
+    if (ln[0] != '{' || ll < 3) break;
+    used += ll; lines++;
+  }
+  if (lines == 0) {                                                  // the leading line can't go: skip it, or wait for its end
+    const uint8_t* nl = (const uint8_t*)memchr(body, '\n', n);
+    uint32_t ll = nl ? (uint32_t)(nl - body) + 1 : 0;
+    if (!nl && (size_t)n >= room) {                                  // longer than a frame can carry: find its end
+      uint8_t tmp[128];
+      uint32_t pos = W->ackOff + (uint32_t)n;
+      for (int k = 0; k < 16 && !ll; k++) {
+        const int m = logFwdRead(path, pos, tmp, sizeof(tmp), &sz);
+        if (m <= 0) break;
+        const uint8_t* e = (const uint8_t*)memchr(tmp, '\n', m);
+        if (e) ll = pos + (uint32_t)(e - tmp) + 1 - W->ackOff;
+        pos += m;
+      }
+    }
+    if (!ll) { W->nextMs = now + LOG_IDLE_POLL_MS; return; }         // a partial tail: the writer hasn't finished it
+    W->ackOff += ll; W->ackRow++; W->skipped++;
+    Serial.printf("[FLT] client: skipped an unforwardable log line (%lu B)\n", (unsigned long)ll);
+    return;
+  }
+  sendLogFrame(W->id, W->ackRow, W->ackOff, (uint32_t)used, lines, false);
+}
+
+void onLogAck(const Rx& f) {
+  LogFwd* W = g_lf;
+  if (!W || C->st != C_JOINED || !sessionOk(f, sizeof(LogAck))) return;
+  LogAck a; memcpy(&a, f.data, sizeof(a));
+  uint8_t id[4];
+  if (!W->infl || !idToBytes(W->id, id) || memcmp(id, a.fileId, 4) || a.nextByteOff != W->inflOff + W->inflLen) return;
+  if (a.throughRow != W->inflRow + W->inflLines - 1) return;
+  const uint32_t now = millis();
+  W->infl = false;
+  if (W->inflAnchor) {
+    W->anchorsSent++;
+    W->anchor = W->anchor == A_META && W->tsLen ? A_TS : A_NONE;
+    W->nextMs = now;
+    return;
+  }
+  W->ackOff += W->inflLen; W->ackRow += W->inflLines;
+  W->rowsFwd += W->inflLines; W->frames++;
+  W->nextMs = now + W->inflLen * 1000UL / LOG_BYTES_PER_S;           // ~8 KB/s ceiling
+}
+
 const char* stName(CState s) { return s == C_JOINED ? "joined" : s == C_JOINING ? "joining" : s == C_HELLO ? "hello sent" : "searching"; }
 
 }  // namespace
@@ -360,6 +537,9 @@ void begin() {
   if (!g_sent) g_sent = (SentRow*)calloc(MAX_DET, sizeof(SentRow));
   if (!g_fwdBuf) g_fwdBuf = (uint8_t*)malloc(FLEET_V2_MAX);
   if (!g_sent || !g_fwdBuf) Serial.println("[FLT] client: no memory for forwarding (rows stay local)");
+  if (!g_lf) g_lf = (LogFwd*)calloc(1, sizeof(LogFwd));
+  if (g_lf) { g_lf->ackRow = 1; g_lf->scanRow = 1; }
+  else Serial.println("[FLT] client: no memory for log forwarding");
   buildHops(false);                                                // the boot MAC is already fresh: no remac needed
 }
 
@@ -371,6 +551,7 @@ void onFrame(const Rx& f) {
     case Msg::Sync:  onSync(f); break;
     case Msg::Ctrl:  onCtrl(f); break;
     case Msg::Plan:  onPlan(f); break;
+    case Msg::LogAck: onLogAck(f); break;
     default: break;
   }
 }
@@ -403,7 +584,10 @@ void tick() {
       break;
     case C_JOINED:
       if (now - C->lastSyncMs > SYNC_LOST_MS) { clientEvent("lost"); toSearch("leader lost", true); }
-      else if (!C->lastMStatMs || now - C->lastMStatMs >= MSTAT_MS) sendMStat();
+      else {
+        if (!C->lastMStatMs || now - C->lastMStatMs >= MSTAT_MS) sendMStat();
+        pumpLog();                                                 // P6 item 6: after MStat, so heartbeats never wait on the SD
+      }
       break;
   }
 }
@@ -440,6 +624,20 @@ void printStatus() {
                 C->havePos ? "yes" : "none", (unsigned)C->nSelf);
   Serial.printf("[FLT] client: forwarded %lu rows in %lu frames, %lu RID frames\n", (unsigned long)C->rowsSent,
                 (unsigned long)C->framesSent, (unsigned long)C->ridFrames);
+  if (g_lf) {                                                      // P6 item 6: log store-and-forward
+    uint32_t backlog = 0, sz = 0;
+    char path[48], fid[9];
+    if (g_lf->id[0] && logFwdSource(g_lf->id, path, sizeof(path), fid) && !strcmp(fid, g_lf->id)) {
+      uint8_t b;
+      logFwdRead(path, 0, &b, 0, &sz);
+      backlog = sz > g_lf->ackOff ? sz - g_lf->ackOff : 0;
+    }
+    Serial.printf("[FLT] client: log fwd file %s acked row %lu off %lu, backlog %lu B, %lu lines in %lu frames, %lu resends, %lu skipped, %lu anchors%s\n",
+                  g_lf->id[0] ? g_lf->id : "-", (unsigned long)(g_lf->ackRow - 1), (unsigned long)g_lf->ackOff,
+                  (unsigned long)backlog, (unsigned long)g_lf->rowsFwd, (unsigned long)g_lf->frames,
+                  (unsigned long)g_lf->resends, (unsigned long)g_lf->skipped, (unsigned long)g_lf->anchorsSent,
+                  g_lf->infl ? " (frame in flight)" : "");
+  }
 }
 
 bool joined() { return C && C->st == C_JOINED; }

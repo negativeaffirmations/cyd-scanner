@@ -14,6 +14,7 @@
 #include "webshare.h"
 #include "phone.h"
 #include "host_core.h"
+#include "host_log.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -74,6 +75,12 @@ struct MemberRt {
   uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (runtime only, not saved)
   uint16_t deauth; uint8_t evil, rid;  // its latest alert counts (MStat), for the fleet-wide maxima
   uint32_t statAtMs;
+  // P6 item 6 store-and-forward: which of its files the member is forwarding + the next origin row not stored yet.
+  // Kept across a rejoin (so resent rows dedup); a new leader boot starts clean (and a new fleet file).
+  uint8_t  lfFile[4];
+  bool     lfHave;
+  uint32_t lfNextRow;
+  uint32_t lfStored, lfFrames;         // lines stored / LogRows frames accepted from this member
 };
 
 struct Leader {
@@ -102,6 +109,7 @@ struct Leader {
   int        nRemote;                  // capacity
   RemoteRid  rids[REMOTE_RIDS];
   uint32_t   rowsRx, framesRx, merged, appended;
+  uint32_t   logBad, logBusy;          // P6 item 6: malformed LogRows dropped / not stored (transfer active, SD error)
 };
 Leader* L = nullptr;   // heap, created by the first use (normal-mode static footprint stays one pointer)
 
@@ -516,6 +524,50 @@ void onRidBatch(const Rx& f) {
   }
 }
 
+// ---- P6 item 6: members' log lines (docs §22) ----
+// LogRows from member i: complete newline-terminated lines of its log file. Validate, store with the origin tags, ack.
+// A malformed frame is dropped un-acked; while a phone transfer runs (or the SD fails) nothing is stored or acked and
+// the member resends after 600 ms, so exports see a stable fleet file.
+void onLogRows(const Rx& f) {
+  int i = findMac(f.mac);
+  if (i < 0 || f.len < sizeof(LogRowsHdr) + TAG_LEN + 3) return;
+  MemberRt& r = L->rt[i];
+  const Hdr* h = (const Hdr*)f.data;
+  if (!r.enc || r.state != M_JOINED || h->sess != r.sess || !tagOk(f.data, f.len, r.sk) || !r.rx.accept(h->seq)) return;
+  r.lastRxMs = millis();                                           // traffic counts as alive too
+  LogRowsHdr hd; memcpy(&hd, f.data, sizeof(hd));
+  const char* lines = (const char*)f.data + sizeof(LogRowsHdr);
+  const size_t blen = f.len - sizeof(LogRowsHdr) - TAG_LEN;
+  uint32_t cnt = 0;
+  bool ok = hd.nLines > 0 && lines[blen - 1] == '\n';
+  for (size_t off = 0; ok && off < blen; cnt++) {
+    const char* nl = (const char*)memchr(lines + off, '\n', blen - off);
+    const size_t ll = nl ? (size_t)(nl - (lines + off)) + 1 : 0;
+    if (!ll || ll < 3 || lines[off] != '{' || lines[off + 1] != '"') ok = false;   // every line a JSON object, no empty ones
+    else off += ll;
+  }
+  if (!ok || cnt != hd.nLines) { L->logBad++; return; }
+  if (!r.lfHave || memcmp(r.lfFile, hd.fileId, 4)) {               // a new origin file (New Session / reboot): rows restart
+    memcpy(r.lfFile, hd.fileId, 4); r.lfHave = true; r.lfNextRow = 0;
+  }
+  char ofile[9], sh[13];
+  for (int k = 0; k < 4; k++) snprintf(ofile + 2 * k, 3, "%02x", hd.fileId[k]);
+  sidToHex(L->st.m[i].sid, sh);
+  uint32_t stored = 0;
+  if (!fleetLogStore(sh, ofile, hd.firstRow, (hd.flags & LOGROWS_ANCHOR) != 0, lines, blen, &r.lfNextRow, &stored)) {
+    r.lfStored += stored; L->logBusy++;                            // partial storage is fine: the resend dedups by row
+    return;
+  }
+  r.lfStored += stored; r.lfFrames++;
+  uint8_t buf[sizeof(LogAck) + TAG_LEN];
+  LogAck* a = (LogAck*)buf;
+  memset(buf, 0, sizeof(buf));
+  memcpy(a->fileId, hd.fileId, 4);
+  a->throughRow = hd.firstRow + hd.nLines - 1;
+  a->nextByteOff = hd.byteOff + (uint32_t)blen;
+  sendSealed(r.mac, buf, sizeof(LogAck), Msg::LogAck, r.sess, r.txSeq, r.sk);
+}
+
 // Drop a removed member's rows and renumber the rows of the members that slid down one slot (removeAt).
 void remoteForget(int removed) {
   for (int j = 0; j < L->nRemote; j++) {
@@ -692,6 +744,7 @@ void onFrame(const Rx& f) {
     case Msg::MStat:   onMStat(f); break;
     case Msg::DetBatch: onDetBatch(f); break;
     case Msg::RidBatch: onRidBatch(f); break;
+    case Msg::LogRows: onLogRows(f); break;
     default: break;                    // Probe/Join/Sync/Ctrl are leader -> client only
   }
 }
@@ -890,6 +943,13 @@ void printStatus() {
   Serial.printf("[FLT] leader: remote rows rx %lu in %lu frames, merged %lu, appended %lu, table %d (%s)\n",
                 (unsigned long)L->rowsRx, (unsigned long)L->framesRx, (unsigned long)L->merged,
                 (unsigned long)L->appended, L->nRemote, L->remote && esp_ptr_external_ram(L->remote) ? "psram" : "internal");
+  {
+    uint32_t tot = 0;
+    for (int i = 0; i < L->st.n; i++) tot += L->rt[i].lfStored;
+    Serial.printf("[FLT] leader: fleet log %s, %lu member line(s) stored, %lu bad frame(s), %lu held back\n",
+                  fleetLogPath()[0] ? fleetLogPath() : "(none yet)", (unsigned long)tot, (unsigned long)L->logBad,
+                  (unsigned long)L->logBusy);
+  }
   int own = 0, mem = 0, both = 0;                                  // this cycle's table by "seen by"
   for (int i = 0; i < g_detCount; i++) {
     if (g_detVia[i] == 1) own++; else if (g_detVia[i] & 1) both++; else mem++;
@@ -903,6 +963,9 @@ void printStatus() {
     if (r.state == M_JOINED)
       Serial.printf("  rssi %d  %lus ago  heap %u KB  fw %s", (int)r.rssi, (unsigned long)((now - r.lastRxMs) / 1000),
                     (unsigned)r.heapKB, r.fw);
+    if (r.lfHave)
+      Serial.printf("  log %02x%02x%02x%02x: %lu line(s) stored, next row %lu", r.lfFile[0], r.lfFile[1], r.lfFile[2],
+                    r.lfFile[3], (unsigned long)r.lfStored, (unsigned long)r.lfNextRow);
     Serial.println();
   }
 }

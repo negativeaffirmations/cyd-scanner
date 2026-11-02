@@ -9,7 +9,7 @@
 
 namespace fleet_proto {
 
-constexpr uint8_t  FLEET_PROTO_VERSION = 2;   // 2 (fw 0.24.0): Sync.fleetId (P6 item 1); a v1 unit can't join a v2 fleet
+constexpr uint8_t  FLEET_PROTO_VERSION = 3;   // 3 (fw 0.25.0): LogRows/LogAck store-and-forward (P6 item 6); 2 (0.24.0): Sync.fleetId
 constexpr uint8_t  FLEET_DEFAULT_CH    = 1;
 constexpr uint16_t FLEET_V1_MAX = 250, FLEET_V2_MAX = 1470;
 // Clients per leader (docs/fleet-mode.md §16.5): the prebuilt libs allow 7 ENCRYPTED ESP-NOW peers (the
@@ -23,7 +23,7 @@ constexpr int8_t   FLEET_TXPWR_QDBM = 32;
 
 enum class Msg : uint8_t { Probe = 0x01, Hello = 0x02, Join = 0x03, JoinAck = 0x04,
                            Sync = 0x10, Plan = 0x11, Ctrl = 0x12,
-                           MStat = 0x20, DetBatch = 0x21, RidBatch = 0x22,
+                           MStat = 0x20, DetBatch = 0x21, RidBatch = 0x22, LogRows = 0x23, LogAck = 0x24,
                            DbgPing = 0xF0, DbgPong = 0xF1 };   // Dbg*: P1 bench frames, sent only under -DFLEET_DEBUG
 enum CtrlOp : uint8_t { CTRL_RELEASE = 1, CTRL_UNJOIN = 2, CTRL_NEWSESSION = 3, CTRL_SETCH = 4 };
 enum PlanRole : uint8_t { PLANROLE_FULL = 0, PLANROLE_WIFI = 1, PLANROLE_WIFI24 = 2, PLANROLE_WIFI5 = 3, PLANROLE_BLE = 4 };   // scan-plan role (not fleet::ROLE_*)
@@ -51,6 +51,13 @@ struct MStat   { Hdr h; uint8_t planGen, c5Link; int8_t bat; uint8_t gpsFix;
                  uint8_t srcMask; };                                                       // 43 encrypted, every 2 s (phoneMac: its own phone; srcMask: its enabled sources)
 struct DetBatchHdr { Hdr h; uint16_t cycle; uint8_t idx, cnt; };                          // 12 + cnt*81
 struct RidBatchHdr { Hdr h; uint8_t cnt, rsv; };                                          // 10 + cnt*75
+// P6 item 6 (docs §22): LogRows client->leader = complete newline-terminated lines of the client's own log file, verbatim,
+// right after the header (nLines of them; bytes = frame - sizeof(LogRowsHdr) - TAG_LEN). fileId = the origin file's
+// file_id (8 hex = 4 bytes); firstRow = the 1-based line number of the first line in that file; byteOff = its offset.
+// flags bit0 = a re-sent anchor (meta / timesync: stored every time). LogAck leader->client echoes the span it holds.
+struct LogRowsHdr { Hdr h; uint8_t fileId[4]; uint32_t firstRow, byteOff; uint8_t flags, nLines; };   // 22 + lines
+struct LogAck     { Hdr h; uint8_t fileId[4]; uint32_t throughRow, nextByteOff; };                       // 20
+constexpr uint8_t LOGROWS_ANCHOR = 0x01;
 // P1 bench frame (DbgPing leader->bcast, DbgPong client->leader): the whole frame is padded to the size the
 // leader picked; padLen = frame length - sizeof(DbgPing).
 struct DbgPing { Hdr h; uint16_t padLen; };                                                // 10 + padLen
@@ -60,6 +67,7 @@ static_assert(sizeof(Hdr) == 8, "fleet wire size");
 static_assert(sizeof(Probe) == 26 && sizeof(Hello) == 58 && sizeof(Join) == 60 && sizeof(JoinAck) == 64, "fleet wire size");
 static_assert(sizeof(Sync) == 120 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 43, "fleet wire size");
 // Sync.flags: bit0 time valid (utc >= 2023), bit1 position valid, bit2 position LIVE at the leader, bit3 tz known.
+static_assert(sizeof(LogRowsHdr) == 22 && sizeof(LogAck) == 20, "fleet wire size");
 static_assert(sizeof(DetBatchHdr) == 12 && sizeof(RidBatchHdr) == 10 && sizeof(DbgPing) == 10, "fleet wire size");
 // A full v2 DetBatch / RidBatch must fit one v2 ESP-NOW frame.
 static_assert(sizeof(DetBatchHdr) + DETS_PER_V2 * sizeof(link_protocol::Detection) <= FLEET_V2_MAX, "DetBatch v2 fits");

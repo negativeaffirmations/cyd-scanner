@@ -3,6 +3,7 @@
 #include <SD.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_random.h>
 #include <stdarg.h>
 #include "host_log.h"
 #include "host_board.h"
@@ -55,6 +56,7 @@ static const char* kLogHeader =
 
 LogStream g_fg;  // zero-init (.bss); path set by openSession()
 LogStream g_bg;
+LogStream g_fleetLog;  // fleet leader: forwarded member lines (P6 item 6)
 char g_streamingPath[100] = "";
 
 // Blocking phone transfers (see XferScope below). Fleet event lines raised meanwhile (fleet::service() keeps running
@@ -99,6 +101,8 @@ struct XferScope {
     g_xferDeferDropped = 0;
   }
 };
+
+bool logXferActive() { return g_xferDepth > 0; }
 
 bool bgCtx() { return g_bgScan && !hostboard::foregroundScan(); }
 LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
@@ -209,6 +213,7 @@ int thisBootFiles(const char** out, int cap) {
   int n = 0;
   if (n < cap && g_fg.path[0]) out[n++] = g_fg.path;
   if (n < cap && g_bg.path[0]) out[n++] = g_bg.path;
+  if (n < cap && g_fleetLog.path[0]) out[n++] = g_fleetLog.path;
   int have = g_bootFileN < BOOT_FILES ? g_bootFileN : BOOT_FILES;
   for (int i = 0; i < have && n < cap; i++) out[n++] = g_bootFiles[i].path;
   return n;
@@ -230,6 +235,7 @@ void beginSessionNamed(LogStream& st, bool bg) {
   snprintf(st.path, sizeof(st.path), bg ? "/logs/bg-%05lu.jsonl" : "/logs/sess-%05lu.jsonl", (unsigned long)n);
   st.named        = false;   // re-arm rename-on-sync
   st.started      = false;   // file is created lazily on the first row (ensureLogFile)
+  st.fileId[0]    = 0;       // a new file gets a new file_id when it is created
   st.seenCount    = 0;       // fresh per-session dedup
   st.uniqCount    = 0;
   st.rowCount     = 0;
@@ -268,13 +274,18 @@ void startNewSession(bool forceFg) {
 // write a one-line {"evt":"meta"} provenance anchor as the FIRST line (scan-analyzer tags each
 // session with the scanner + sig-DB generation that produced it; readers skip it by its "evt" like
 // the timesync anchor). No-op once created. Returns false if SD is unavailable or can't be opened.
-static void writeSessionMeta(File& f);  // defined with FW_VERSION/DB_GEN below
+static void writeSessionMeta(File& f, const LogStream& st);  // defined with FW_VERSION/DB_GEN below
 bool ensureLogFile(LogStream& st) {
   if (st.started) return true;
   if (!g_sdOk || !st.path[0]) return false;
   File f = SD.open(st.path, FILE_WRITE);
   if (!f) return false;
-  writeSessionMeta(f);
+  if (!st.fileId[0]) {   // P6 item 6: the file's own random id, fixed for its life (survives the sync rename)
+    uint8_t b[4];
+    esp_fill_random(b, sizeof(b));
+    snprintf(st.fileId, sizeof(st.fileId), "%02x%02x%02x%02x", b[0], b[1], b[2], b[3]);
+  }
+  writeSessionMeta(f, st);
   f.close();
   st.started = true;
   Serial.printf("[CYD] session log created: %s\n", st.path);
@@ -284,13 +295,13 @@ bool ensureLogFile(LogStream& st) {
 // Once the phone provides wall-clock time, rename a boot-counter session file to a date-time name
 // (fg: YYYYMMDD-HHMMSS.jsonl, bg: bg-YYYYMMDD-HHMMSS.jsonl). Runs once per session (even if the
 // rename fails, it won't retry-spam).
-static void renameStreamOnSync(LogStream& st, bool bg) {
+static void renameStreamOnSync(LogStream& st, const char* prefix) {   // prefix: "" fg, "bg-", "fleet-"
   if (st.named || !st.path[0] || !g_sdOk || !timeHasSync()) return;
   time_t t = (time_t)epochLocal();
   struct tm tmv;
   gmtime_r(&t, &tmv);  // epoch is stored already-localized, so gmtime gives local fields
   char nn[48];
-  snprintf(nn, sizeof(nn), "/logs/%s%04d%02d%02d-%02d%02d%02d.jsonl", bg ? "bg-" : "",
+  snprintf(nn, sizeof(nn), "/logs/%s%04d%02d%02d-%02d%02d%02d.jsonl", prefix,
            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
   if (SD.exists(nn)) { st.named = true; return; }  // name taken; keep the current one
@@ -319,8 +330,9 @@ static void renameStreamOnSync(LogStream& st, bool bg) {
   st.named = true;
 }
 void renameSessionOnSync() {
-  renameStreamOnSync(g_fg, false);
-  renameStreamOnSync(g_bg, true);
+  renameStreamOnSync(g_fg, "");
+  renameStreamOnSync(g_bg, "bg-");
+  renameStreamOnSync(g_fleetLog, "fleet-");
   if (g_sdOk && timeHasSync()) {  // earlier this-boot files that ended pre-sync: anchor them too
     int have = g_bootFileN < BOOT_FILES ? g_bootFileN : BOOT_FILES;
     for (int i = 0; i < have; i++) {
@@ -388,14 +400,17 @@ const char* scannerName() {
 // = scannerName() (the advertised unit name; scanner_id stays the stable key).
 // P6 item 1: + fleet_role while a fleet role is set, and fleet_id / fleet_leader while in a fleet session. A client
 // that joins after the file was created gets them from its "join" evt line instead.
-static void writeSessionMeta(File& f) {
+// P6 item 6: + "stream":"fleet" on the leader's fleet file, and "file_id" (the file's random id) last on every stream.
+static void writeSessionMeta(File& f, const LogStream& st) {
   f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"scanner_name\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu",
            scannerIdHex(), scannerName(), FW_VERSION, (unsigned long)DB_GEN);
+  if (&st == &g_fleetLog) f.print(",\"stream\":\"fleet\"");
   if (fleet::role() != fleet::ROLE_OFF) {
     f.printf(",\"fleet_role\":\"%s\"", fleet::role() == fleet::ROLE_LEADER ? "leader" : "client");
     char id[17], leader[13];
     if (fleet::fleetIdent(id, leader)) f.printf(",\"fleet_id\":\"%s\",\"fleet_leader\":\"%s\"", id, leader);
   }
+  if (st.fileId[0]) f.printf(",\"file_id\":\"%s\"", st.fileId);
   f.print("}\n");
 }
 
@@ -891,8 +906,8 @@ int sessionMetaLine(char* out, size_t cap) {
 static void streamMultiOverBle(int mode, int minutes) {
   const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
   if (!g_sdOk) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
-  const char* boot[BOOT_FILES + 2];
-  int nb = thisBootFiles(boot, BOOT_FILES + 2);
+  const char* boot[BOOT_FILES + 3];
+  int nb = thisBootFiles(boot, BOOT_FILES + 3);
   logfilter::MultiExport mx(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis(), boot, nb);
   int nf = mx.begin();
   char meta[160];
@@ -1009,7 +1024,8 @@ static int wipeAllLogs() {
       if (!e.isDirectory()) {
         char full[48];
         snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
-        if (strcmp(full, g_fg.path) != 0 && strcmp(full, g_bg.path) != 0 && !hostui::exploreHolds(full))
+        if (strcmp(full, g_fg.path) != 0 && strcmp(full, g_bg.path) != 0 && strcmp(full, g_fleetLog.path) != 0 &&
+            !hostui::exploreHolds(full))
           snprintf(victims[nv++], sizeof(victims[0]), "%s", full);
       }
       e.close();
@@ -1031,7 +1047,8 @@ static constexpr uint64_t LOG_CAP_BYTES = 512ULL * 1024 * 1024;
 // Case-insensitive: FAT resolves "/LOGS/SESS-00007.JSONL" to the same file, and the web file explorer
 // can send any spelling (files::safePath already rejects the trailing-dot/space aliases).
 bool logPathProtected(const char* full) {
-  return strcasecmp(full, g_fg.path) == 0 || strcasecmp(full, g_bg.path) == 0 || hostui::exploreHolds(full) ||
+  return strcasecmp(full, g_fg.path) == 0 || strcasecmp(full, g_bg.path) == 0 ||
+         (g_fleetLog.path[0] && strcasecmp(full, g_fleetLog.path) == 0) || hostui::exploreHolds(full) ||
          (g_streamingPath[0] && strcasecmp(full, g_streamingPath) == 0) || files::uploadHolds(full);
 }
 void enforceLogCap() {
@@ -1195,4 +1212,87 @@ void logDevPos() {
   if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
   f.close();
   lastMs = now; lastLat = g_onbLat; lastLon = g_onbLon;
+}
+
+// ---- P6 item 6 (docs/fleet-mode.md §22): fleet store-and-forward -------------------------------------------------
+// CLIENT side: which of this unit's own log files to forward, and a raw reader for it (the packing/ack logic lives in
+// fleet_client.cpp; this file only knows the streams and the SD card).
+bool logFwdSource(const char* curId, char* path, size_t cap, char idOut[9]) {
+  LogStream& act = activeStream();
+  LogStream& oth = (&act == &g_fg) ? g_bg : g_fg;
+  auto usable = [](const LogStream& s) { return s.started && s.fileId[0] && s.path[0]; };
+  const LogStream* pick = nullptr;
+  if (curId && curId[0]) {
+    if (usable(act) && !strcmp(act.fileId, curId)) pick = &act;
+    else if (usable(oth) && !strcmp(oth.fileId, curId)) pick = &oth;
+  }
+  if (!pick) pick = usable(act) ? &act : usable(oth) ? &oth : nullptr;
+  if (!pick) return false;
+  snprintf(path, cap, "%s", pick->path);
+  memcpy(idOut, pick->fileId, 9);
+  return true;
+}
+
+int logFwdRead(const char* path, uint32_t off, uint8_t* buf, size_t cap, uint32_t* size) {
+  if (!g_sdOk) return 0;
+  File f = SD.open(path, "r");
+  if (!f) return 0;
+  const uint32_t sz = (uint32_t)f.size();
+  if (size) *size = sz;
+  int n = 0;
+  if (off < sz && f.seek(off)) n = f.read(buf, cap);
+  f.close();
+  return n > 0 ? n : 0;
+}
+
+// LEADER side. The fleet file is created on the first forwarded line (one per leader boot), named by its own NVS
+// counter, and renamed + anchored on time sync like fg/bg (renameStreamOnSync). Counter names never repeat, but a
+// wiped NVS could reuse one: skip any that exist (FILE_WRITE would truncate it).
+static void fleetLogBegin() {
+  Preferences p; p.begin("cydscan", false);
+  uint32_t n = p.getULong("fltfcnt", 0);
+  do { n++; snprintf(g_fleetLog.path, sizeof(g_fleetLog.path), "/logs/fleet-%05lu.jsonl", (unsigned long)n); }
+  while (SD.exists(g_fleetLog.path) && n < 99999);
+  p.putULong("fltfcnt", n);
+  p.end();
+  g_fleetLog.named = false; g_fleetLog.started = false; g_fleetLog.fileId[0] = 0;
+  g_fleetLog.uniqCount = g_fleetLog.rowCount = 0;
+  Serial.printf("[CYD] fleet log (created on first forwarded line): %s\n", g_fleetLog.path);
+  renameStreamOnSync(g_fleetLog, "fleet-");   // clock already known: be born date-named
+}
+
+const char* fleetLogPath() { return g_fleetLog.path; }
+
+// `lines` = `len` bytes of complete '\n'-terminated lines (the leader validated them). Each stored line is the member's
+// text with {"scanner":"<sid>","ofile":"<id>","orow":N, in place of its opening brace.
+bool fleetLogStore(const char* sidHex, const char* ofile, uint32_t firstRow, bool anchor, const char* lines, size_t len,
+                   uint32_t* nextRow, uint32_t* stored) {
+  if (g_xferDepth || !g_sdOk) return false;   // a transfer is counting/sending file sizes: the client resends later
+  if (!g_fleetLog.path[0]) fleetLogBegin();
+  if (!ensureLogFile(g_fleetLog)) return false;
+  File f = SD.open(g_fleetLog.path, FILE_APPEND);
+  if (!f) return false;
+  bool ok = true;
+  uint32_t row = firstRow;
+  for (size_t off = 0; off < len; row++) {
+    const char* ln = lines + off;
+    const char* nl = (const char*)memchr(ln, '\n', len - off);
+    if (!nl) { ok = false; break; }
+    const size_t ll = (size_t)(nl - ln) + 1;
+    off += ll;
+    if (!anchor && row < *nextRow) continue;   // already stored (a resent frame)
+    char pre[64];
+    const int pn = snprintf(pre, sizeof(pre), "{\"scanner\":\"%s\",\"ofile\":\"%s\",\"orow\":%lu,", sidHex, ofile, (unsigned long)row);
+    if (pn <= 0 || pn >= (int)sizeof(pre) || f.write((const uint8_t*)pre, pn) != (size_t)pn ||
+        f.write((const uint8_t*)ln + 1, ll - 1) != ll - 1) {
+      f.write((const uint8_t*)"\n", 1);        // end a torn line so the next append starts clean
+      ok = false;
+      break;
+    }
+    if (!anchor) *nextRow = row + 1;
+    (*stored)++;
+    g_fleetLog.rowCount++;
+  }
+  f.close();
+  return ok;
 }

@@ -1031,7 +1031,7 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
 
 ## 21. P6 as built (2026-11-01) — fleet logging (contract agreed with scan-analyzer; owner-approved)
 
-All additions are optional NDJSON keys (old readers ignore them). Item 6 (P5b store-and-forward) is DEFERRED: per-unit
+All additions are optional NDJSON keys (old readers ignore them). Item 6 (P5b store-and-forward) was deferred here and built in fw 0.25.0 (§22); until then per-unit
 file uploads grouped by `fleet_id` cover it.
 
 - **Item 5 — live-POST member rows (fw 0.23.0, DETS v10):** see §20. Field-tested 2026-11-01 (3 per-scanner server
@@ -1058,7 +1058,7 @@ file uploads grouped by `fleet_id` cover it.
   i.e. with the download AP's creds, when live-POST is paused anyway). The web app (`ble/status.js`) re-reads them with
   every `flt=` and adds `fleet_role` / `fleet_id` / `fleet_leader` to the live-POST meta (`remote.js` `metaLine()`).
 
-## 22. P5b / P6 item 6 — store-and-forward (DESIGN, 2026-11-01; owner-approved, contract agreed with scan-analyzer)
+## 22. P5b / P6 item 6 — store-and-forward (BUILT fw 0.25.0, see §22.1; design 2026-11-01; owner-approved, contract agreed with scan-analyzer)
 
 Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12) already accepts it.
 
@@ -1090,3 +1090,32 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   (XferScope); a LogRows frame arriving during a transfer is not appended/acked until it ends (the client resends).
 - **Web:** the Data page lists/groups the `fleet-` stream as its own scan kind ("Fleet"), and a leader's scan download /
   upload offers its own file + its fleet file together (grouped by time span, as the stream groups are today).
+
+### 22.1 As built (fw 0.25.0, 2026-11-01)
+
+- **`file_id`:** `LogStream.fileId[9]` (8 lowercase hex, `esp_fill_random` in `ensureLogFile` when the file is created, cleared
+  by `beginSessionNamed`); `writeSessionMeta(f, st)` appends `"file_id"` LAST on every meta line. The joined-export
+  `sessionMetaLine()` (no single file) carries none.
+- **Wire (fleet proto v3, `fleet_proto.h`):** `Msg::LogRows` 0x23, `Msg::LogAck` 0x24.
+  `LogRowsHdr` = `Hdr`(8) + `fileId[4]` + `firstRow u32` + `byteOff u32` + `flags u8` (bit0 anchor) + `nLines u8` = 22 B, then the
+  lines verbatim, then the 8-byte tag. `LogAck` = `Hdr` + `fileId[4]` + `throughRow u32` + `nextByteOff u32` = 20 B (+ tag).
+  Frame payload cap = `min(maxPayload, 1470) - 8 - 22` (1440 B on a v2 link; on a v1 link only lines <= 220 B fit, longer are skipped).
+- **Client (`fleet_client.cpp`):** `LogFwd` (heap, ~100 B) = `{id, ackOff, ackRow}` + the in-flight frame + anchor state.
+  `logFwdSource()` (host_log) keeps forwarding the file whose `file_id` it holds while a stream still has it (the path changes
+  on the sync rename, the id does not) and only moves to the active stream's file once the old one is fully acked; a file no
+  stream holds (New Session rotated it) is abandoned and the new one starts at row 1. After a join the acked part of the file is
+  scanned 1 KB per tick for line 1 (meta) and the first `timesync` line; both are re-sent flagged as anchors, then data
+  continues at `ackOff`. A frame is rebuilt from the file on every (re)send. Lines are sent only when complete (`
+`) and
+  starting with `{`; a leading bad/oversized line is skipped and counted. Nothing is read while a phone transfer runs.
+- **Leader (`fleet_leader.cpp` + `host_log.cpp`):** `onLogRows` drops a frame un-acked when the tag/seq fails, a line is not a
+  `{"` object, or the line count != `nLines`; otherwise `fleetLogStore()` appends (anchors always; data rows only when
+  `row >= nextRow`), then `LogAck`. `fleetLogStore` returns false (no ack) during `XferScope` or on an SD error. The fleet file
+  is created on the first forwarded line (NVS counter `fltfcnt`; born date-named if the clock is already set), one per leader boot.
+- **Exports:** `MultiExport` marks `/logs/fleet-*` entries: no timesync backfill from the file's own anchor and no ms-since-boot
+  windowing (member `ms` is a foreign boot clock); only lines already carrying an epoch are exported. Forwarded meta/timesync
+  lines are dropped from joined exports like any other file's.
+- **A forwarded `devpos` line** carries its own `"scanner"` too (same sid as the inserted one; last key wins in JSON parsers).
+- **Open:** a New Session / bg toggle on a client abandons the old file's un-forwarded tail (its own card still has it); a
+  member removed and re-enrolled starts a fresh `{file,nextRow}`; leader reboot -> new fleet file, and a client continues from
+  its acked offset (rows before it live in the previous leader file).

@@ -102,6 +102,9 @@ class LineReader {
 // clock as its anchor. Rows that still can't be dated (an old file that never saw a clock) are
 // dropped, except in a live file when no clock is known at all (then the ms-since-boot cutoff applies).
 // Per-file meta + timesync lines are dropped; the caller writes one fresh meta line first.
+// A leader's fleet-*.jsonl holds MEMBERS' lines ("scanner"/"ofile"/"orow" inserted after the brace): their ms is a
+// foreign boot clock and the file's own timesync anchor says nothing about them, so no row there is backfilled or
+// ms-windowed -- only lines that already carry an epoch are exported.
 //
 // Output is file by file (oldest file first), not interleaved by time: readers sort if they need to.
 // Usage: MultiExport mx(mode, minutes, nowEpoch, nowMs, bootPaths, nBoot); mx.begin();
@@ -143,6 +146,7 @@ class MultiExport {
         int sl = nm.lastIndexOf('/');
         snprintf(en.path, sizeof(en.path), "/logs/%s", (sl >= 0 ? nm.substring(sl + 1) : nm).c_str());
         en.live = isLive(en.path);
+        en.fleet = !strncmp(en.path, "/logs/fleet-", 12);   // forwarded member lines: foreign ms, own epochs only
         if (!nowEpoch_ && !en.live) ok = false;  // no clock: only this boot's files can be windowed
       }
       if (ok) {
@@ -150,8 +154,8 @@ class MultiExport {
         bool headZero = false;
         ends(e, head, headZero, en.tail);
         if (!en.live && (en.tail == 0 || en.tail < cutEpoch_)) ok = false;  // undatable, or wholly older
-        else if (headZero) en.hasAnc = findAnchor(e, en.ancEpoch, en.ancMs);
-        if (ok && en.live && !en.hasAnc && nowEpoch_) { en.hasAnc = true; en.ancEpoch = nowEpoch_; en.ancMs = nowMs_; }
+        else if (headZero && !en.fleet) en.hasAnc = findAnchor(e, en.ancEpoch, en.ancMs);
+        if (ok && en.live && !en.fleet && !en.hasAnc && nowEpoch_) { en.hasAnc = true; en.ancEpoch = nowEpoch_; en.ancMs = nowMs_; }
         if (ok && en.tail == 0) en.tail = 0xFFFFFFFFUL;  // undated (this boot, no clock): sorts last
       }
       e.close();
@@ -226,7 +230,7 @@ class MultiExport {
         }
         bool keepIt;
         if (ep > 0) keepIt = nowEpoch_ ? ep >= cutEpoch_ : (en.live && ms >= cutMs_);
-        else        keepIt = en.live && !nowEpoch_ && ms >= cutMs_;  // undated: only this boot, no clock
+        else        keepIt = en.live && !en.fleet && !nowEpoch_ && ms >= cutMs_;  // undated: only this boot, no clock
         if (!keepIt) continue;
         total += slen;
         go = emit(src, slen);
@@ -238,7 +242,7 @@ class MultiExport {
   }
 
  private:
-  struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; bool hasAnc, live; };
+  struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; bool hasAnc, live, fleet; };
 
   bool isLive(const char* p) const {
     for (int i = 0; i < nBoot_; i++) if (boot_[i] && boot_[i][0] && !strcmp(p, boot_[i])) return true;
