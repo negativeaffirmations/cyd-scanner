@@ -2,7 +2,7 @@
 // A short header notification announces the payload ("SIZE=<n>" = a file, "SESS=<n>" = the session
 // list, "WL=<n>" = the whitelist), then <n> bytes of chunks follow.
 // sink "promise" = a queued request from ble/transfer.js bleFetch(): any payload resolves its promise.
-// With state.dl.raw (ble/logfetch.js) a file resolves as {kind:"file", n, blob} instead of text.
+// With state.dl.raw (ble/logfetch.js) a file resolves as {kind:"file", n, blob} (or "tail" with off) instead of text.
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, log, toast, saveBlob } from '../util/dom.js';
@@ -54,6 +54,21 @@ export function onLogData(ev){
         state.dl.mode=null; }
       return;
     }
+    // fw >= 0.26.0 tail form "F:<path>@<offset>:<file_id>" (ble/logfetch.js, raw requests only):
+    // "TAIL=<n>@<offset>" + n raw bytes, or "TAILERR=path|id|off" = refused -> the requester fetches the whole file.
+    if (txt.startsWith("TAILERR=")) {
+      if (isPromise && state.dl.raw) { const res = state.dl.resolve; resetDl(); if(res) res({ kind:"tailerr", why:txt.slice(8) }); }
+      return;
+    }
+    if (txt.startsWith("TAIL=")) {
+      if (!(isPromise && state.dl.raw)) return;
+      const m = /^TAIL=(\d+)@(\d+)$/.exec(txt);
+      if (!m) { const res = state.dl.resolve; resetDl(); if(res) res({ kind:"tailerr", why:"header" }); return; }
+      const n = parseInt(m[1],10), off = parseInt(m[2],10);
+      if (n===0) { const res = state.dl.resolve; resetDl(); if(res) res({ kind:"tail", n:0, off, blob:new Blob([]) }); return; }
+      state.dl.mode="file"; state.dl.expect=n; state.dl.got=0; state.dl.chunks=[]; state.dl.tail=off;
+      return;
+    }
     if (txt.startsWith("SESS=")) {
       state.dl.mode="list"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[];
       if (state.dl.expect===0){ populateSessions(""); if(isPromise) settlePromise(""); else state.dl.mode=null; }
@@ -74,9 +89,9 @@ export function onLogData(ev){
     const blob = new Blob(state.dl.chunks, { type: "application/octet-stream" });
     const mode = state.dl.mode;
     if (isPromise && state.dl.raw && mode==="file") {   // ble/logfetch.js: hand over the exact bytes (the cache needs them)
-      const res = state.dl.resolve, n = state.dl.expect;
+      const res = state.dl.resolve, n = state.dl.expect, off = state.dl.tail;
       resetDl();
-      if(res) res({ kind:"file", n, blob });
+      if(res) res(off===undefined ? { kind:"file", n, blob } : { kind:"tail", n, off, blob });
       return;
     }
     if (isPromise) {

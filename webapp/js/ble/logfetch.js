@@ -1,5 +1,5 @@
 // Fetching a scanner log file through the phone-side cache (data/logcache.js).
-//   fetchLog(path, {size, fileId, name})  -> {text, blob, how}   how: "hit" (no transfer) | "full"
+//   fetchLog(path, {size, fileId, name})  -> {text, blob, how}   how: "hit" (no transfer) | "tail" | "full"
 //   fetchCurrent(name)                    -> same, for the device's CURRENT session; null = not applicable
 //   cacheStatus(path, size, fileId)       -> {st:"none"|"part"|"full", fresh} for the Data page tags
 // Every caller gets the WHOLE file (uploads must carry line 1's meta + the timesync anchors), whether it
@@ -16,6 +16,9 @@ import { resetDl } from './transfer.js';
 import { ready, cacheUsable, find, getBlob, put } from '../data/logcache.js';
 
 const IDLE_MS = 20000;
+
+// fw >= 0.26.0 answers "F:<path>@<offset>:<file_id>" with only the bytes after <offset> (TAIL=<n>@<offset>).
+export const canTail = ()=>fwAtLeast(state.scannerFw, 0, 26, 0);
 
 export function fwAtLeast(fw, maj, min, pat){
   const v = (fw || "").split(".").map(n=>parseInt(n, 10) || 0);
@@ -70,6 +73,25 @@ async function fetchLogInner(path, o){
     if(cached && cached.size === meta.size){
       log("Using the saved copy of "+name+" ("+cached.size+" bytes) — no transfer.");
       return { text:await cached.text(), blob:cached, how:"hit" };
+    }
+  }
+  // A saved prefix of an append-only file + the device's new tail = the whole file again. The device checks
+  // line 1's file_id and the offset; any refusal / size mismatch just falls through to the full fetch.
+  if(meta && meta.fileId && canTail() && (size === 0 || meta.size < size)){
+    const base = await getBlob(meta);
+    if(base && base.size === meta.size){
+      const t = await rawFetch("F:"+path+"@"+meta.size+":"+meta.fileId, name, o.progress);
+      if(t && t.kind === "tail" && t.off === meta.size && t.blob.size === t.n){
+        if(t.n === 0){
+          log("Saved copy of "+name+" is current — no transfer.");
+          return { text:await base.text(), blob:base, how:"hit" };
+        }
+        const merged = new Blob([base, t.blob]);
+        log("Fetched only the new "+t.n+" bytes of "+name+" (saved copy was "+base.size+").");
+        await put(sid, path, merged);
+        return { text:await merged.text(), blob:merged, how:"tail" };
+      }
+      log("Tail of "+name+" not available ("+(t && t.why ? t.why : "unexpected reply")+") — fetching the whole file.");
     }
   }
   const r = await rawFetch("F:"+path, name, o.progress);

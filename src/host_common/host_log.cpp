@@ -969,10 +969,108 @@ void transferFiltered(int mode, int minutes, const char* pathIn) {
   streamFilteredOverBle(path, c);
 }
 
+// The file's own random id from line 1's meta ("file_id":"<8 hex>", fw >= 0.25.0). false / "" when the first line has none.
+// Reads the head of the file (any position; leaves it undefined), so callers seek afterwards.
+static bool readFileId(File& f, char out[9]) {
+  out[0] = 0;
+  char b[512];
+  if (!f.seek(0)) return false;
+  int r = f.read((uint8_t*)b, sizeof(b) - 1);
+  if (r <= 0) return false;
+  b[r] = 0;
+  char* nl = strchr(b, '\n');
+  if (nl) *nl = 0;                                   // line 1 only
+  const char* p = strstr(b, "\"file_id\":\"");
+  if (!p) return false;
+  p += 11;
+  for (int i = 0; i < 8; i++) {
+    char c = p[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    out[i] = c;
+  }
+  if (p[8] != '"') { out[0] = 0; return false; }
+  out[8] = 0;
+  return true;
+}
+
+// "F:<path>@<offset>:<file_id>" -- stream only the bytes [offset, size) of an append-only log the phone already holds
+// the first <offset> bytes of. Answers with ONE header, never confusable with a full send:
+//   "TAIL=<n>@<offset>" then exactly <n> raw bytes (n may be 0 = nothing new), or
+//   "TAILERR=path|id|off"  (bad/unsafe/missing path or malformed request | line 1 has a different file_id, or none |
+//   offset beyond the end = the file was replaced) -> the phone falls back to a full "F:<path>".
+// No newline padding on a short send (unlike the exports): the phone appends the tail to its cached copy only if it got
+// exactly <n> bytes, so a short send just times out there and the cache stays untouched.
+static void tailRefuse(const char* why) {
+  char h[16];
+  int n = snprintf(h, sizeof(h), "TAILERR=%s", why);
+  phone::logNotify((const uint8_t*)h, n);
+}
+static void transferTail(const char* req) {
+  char p[100];
+  strncpy(p, req, sizeof(p) - 1);
+  p[sizeof(p) - 1] = 0;
+  char* colon = strrchr(p, ':');
+  char* at = nullptr;
+  if (colon) { *colon = 0; at = strrchr(p, '@'); }
+  char id[9] = "";
+  uint32_t off = 0;
+  bool ok = colon && at && strlen(colon + 1) == 8;
+  if (ok) {
+    for (int i = 0; i < 8; i++) {
+      char c = colon[1 + i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { ok = false; break; }
+      id[i] = c;
+    }
+    id[8] = 0;
+  }
+  if (ok) {
+    *at = 0;
+    const char* d = at + 1;
+    if (!*d || strlen(d) > 9) ok = false;            // <= 9 digits: files stay far below 1 GB (512 MB log cap)
+    else for (; *d; d++) { if (*d < '0' || *d > '9') { ok = false; break; } off = off * 10 + (uint32_t)(*d - '0'); }
+  }
+  if (!ok || !files::safePath(p) || files::isDir(p) || !g_sdOk || !SD.exists(p)) {
+    tailRefuse("path");
+    Serial.printf("[CYD] BLE tail: rejected %s\n", req);
+    return;
+  }
+  File f = SD.open(p, "r");
+  if (!f) { tailRefuse("path"); return; }
+  const uint32_t sz = f.size();
+  char cur[9];
+  if (!readFileId(f, cur) || strcmp(cur, id) != 0) { f.close(); tailRefuse("id"); Serial.printf("[CYD] BLE tail: file_id mismatch %s\n", p); return; }
+  if (off > sz) { f.close(); tailRefuse("off"); Serial.printf("[CYD] BLE tail: offset %u > size %u (%s)\n", (unsigned)off, (unsigned)sz, p); return; }
+  strncpy(g_streamingPath, p, sizeof(g_streamingPath) - 1);   // guard: not rotated away mid-stream
+  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
+  const uint32_t n = sz - off;
+  char hdr[32];
+  int hn = snprintf(hdr, sizeof(hdr), "TAIL=%u@%u", (unsigned)n, (unsigned)off);
+  phone::logNotify((const uint8_t*)hdr, hn);
+  delay(30);
+  uint32_t sent = 0;
+  if (n && f.seek(off)) {
+    const uint32_t ep = phone::authEpoch();            // stop if the peer leaves / re-authenticates mid-transfer
+    uint8_t buf[180];
+    while (sent < n && phone::transferAlive(ep)) {
+      uint32_t want = n - sent > sizeof(buf) ? sizeof(buf) : n - sent;
+      int r = f.read(buf, want);
+      if (r <= 0) break;
+      phone::logNotify(buf, r);
+      sent += r;
+      delay(15);
+    }
+  }
+  f.close();
+  Serial.printf("[CYD] BLE tail sent %u/%u bytes of %s from %u\n", (unsigned)sent, (unsigned)n, p, (unsigned)off);
+  g_streamingPath[0] = 0;
+}
+
 // Download a file the phone requested ("F:<path>"): any file on the card (the web file explorer),
 // gated by files::safePath (absolute, no traversal or FAT-illegal characters). A folder sends SIZE=0.
+// "F:<path>@<offset>:<file_id>" is the tail form (transferTail); safePath forbids ':' so it can't be a plain path.
 void transferFile(const char* path) {
   XferScope xs;
+  if (strchr(path, ':')) { transferTail(path); return; }
   if (!files::safePath(path) || files::isDir(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.printf("[CYD] BLE dl: rejected path %s\n", path);
@@ -1091,8 +1189,9 @@ void enforceLogCap() {
 }
 
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of
-// "<path>\t<size>\t<flag>\t<firstEpoch>\t<lastEpoch>\n" lines (the epochs = the file's dated span,
-// 0 = unknown; older web apps read only the first three fields). <flag> marks the newest file: "current" while a scan
+// "<path>\t<size>\t<flag>\t<firstEpoch>\t<lastEpoch>\t<file_id>\n" lines (the epochs = the file's dated span,
+// 0 = unknown; <file_id> = line 1's "file_id" (fw 0.26.0), empty for older files; older web apps read only the
+// leading fields and ignore the rest). <flag> marks the newest file: "current" while a scan
 // is running (its file is being written), else "latest"; blank for all other rows. The web
 // app parses it into a picker and labels/floats the flagged row.
 void sendSessionList() {
@@ -1131,9 +1230,10 @@ void sendSessionList() {
       String base = logBase(String(e.name()));
       const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
       uint32_t first = 0, last = 0;  // dated span (local epoch; 0 = unknown) -> the phone groups a scan's parts
-      if (base.endsWith(".jsonl")) logfilter::MultiExport::fileSpan(e, first, last);
+      char fid[9] = "";
+      if (base.endsWith(".jsonl")) { logfilter::MultiExport::fileSpan(e, first, last); readFileId(e, fid); }
       list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\t" + String(first) +
-              "\t" + String(last) + "\n";
+              "\t" + String(last) + "\t" + fid + "\n";
     }
     dir.close();
   }
