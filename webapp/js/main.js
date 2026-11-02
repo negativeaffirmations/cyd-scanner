@@ -1,7 +1,7 @@
 // Entry point: wires every DOM event listener to its handler. Loaded as <script type="module">,
 // which is deferred, so the DOM is ready by the time this runs.
 import { $, log } from './util/dom.js';
-import { connect, reconnect, switchTo } from './ble/connection.js?v=20261101j';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
+import { connect, reconnect, switchTo } from './ble/connection.js?v=20261101k';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
 import { handleDevKeyHash, addPasted, forgetKey, renderKeysUI, askConfirm, answerConfirm, mayShareLocation } from './ble/auth.js';
 import { toggleScan, newSession, reloadDb, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
 import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';
@@ -20,7 +20,7 @@ import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
 import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';
-import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261101j';   // new module: versioned so it loads fresh with main.js
+import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261101k';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
 import { initSwitcher } from './features/switcher.js';

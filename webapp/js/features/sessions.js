@@ -6,6 +6,10 @@
 // over BLE (bleFetch) and joins them (joinLogParts) into ONE file / ONE upload per scan.
 // A fleet LEADER also has /logs/fleet-*.jsonl (the members' lines, forwarded to it): its own "Fleet" kind of scan,
 // grouped like the others (docs/fleet-mode.md §22). It is listed next to the leader's own scans, not merged into them.
+// Ticking a leader's own scan (fg / bg) automatically INCLUDES its time-overlapping Fleet group (same device, so the
+// spans alone decide): Download / Upload / Map act on both, the Fleet row shows "included". The fleet file is never
+// joined into the leader's file (a leader file must not carry member lines): Download saves it as a second file,
+// Upload POSTs it as its own body. Delete never auto-includes it.
 // The one grouped list feeds both the Session-logs list and the Explore picker (#expSel).
 import { state } from '../state.js';
 import { $, log, esc, toast, saveBlob } from '../util/dom.js';
@@ -19,6 +23,7 @@ import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
 
+const FLEET_SLACK_S = 120;         // a Fleet group "overlaps" a scan when their dated spans touch within this
 const GROUP_GAP_S = 6*60;          // next part starts within 6 min of the previous part's last row
 let groups = [];                   // [{key, kind, parts:[{path,base,size,flag,first,last}], start, end, size, flag}]
 const selected = new Set();        // group keys (first part's path) — survives a list refresh
@@ -75,10 +80,20 @@ function groupTitle(g){
   const same = fmtDay(g.start).split(",")[0]===fmtDay(g.end).split(",")[0];
   return fmtDay(g.start)+(g.end-g.start>=60 ? " – "+(same?fmtTime(g.end):fmtDay(g.end)) : "");
 }
+// Fleet groups that ride along with the selected scans (not already ticked themselves).
+function fleetOf(g){
+  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && f.start && f.start<=g.end+FLEET_SLACK_S && g.start<=f.end+FLEET_SLACK_S);
+}
+function includedFleet(gs){
+  const out=[];
+  for(const g of gs) for(const f of fleetOf(g)) if(!gs.includes(f) && !out.includes(f)) out.push(f);
+  return out;
+}
 function groupSub(g){
   const bits=[g.kind==="bg"?"Background":g.kind==="fleet"?"Fleet":"Scan"];
   if(g.parts.length>1) bits.push(g.parts.length+" parts");
   bits.push(fmtSize(g.size));
+  if(fleetOf(g).length) bits.push("+ Fleet");
   if(g.flag==="current") bits.push("current");
   else if(g.flag==="latest") bits.push("latest");
   return bits.join(" · ");
@@ -152,17 +167,18 @@ export function populateSessions(text){
 function renderList(){
   const box=$("sessList");
   if(!groups.length){ box.innerHTML='<div class="sub">— no sessions —</div>'; updateButtons(); return; }
+  const inc=includedFleet(selGroups());
   box.innerHTML=groups.map((g,i)=>{
     const tip=g.parts.map(p=>p.base+" ("+fmtSize(p.size)+")").join("\n");
     return `<label class="sessrow" title="${esc(tip)}"><input type="checkbox" data-i="${i}"${selected.has(g.key)?" checked":""}>`+
       `<span class="sessmain"><span class="sesst">${esc(groupNames(g))}</span>`+
       (groupTitle(g) ? `<span class="sessdate">${esc(groupTitle(g))}</span>` : "")+
-      `<span class="sesssub">${esc(groupSub(g))}${groupCache(g) ? ` · <span class="sesscache">${esc(groupCache(g))}</span>` : ""}</span></span></label>`;
+      `<span class="sesssub">${esc(groupSub(g))}${groupCache(g) ? ` · <span class="sesscache">${esc(groupCache(g))}</span>` : ""}${inc.includes(g) ? ` · <span class="sesscache">included with the ticked scan</span>` : ""}</span></span></label>`;
   }).join("");
   box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.addEventListener("change", ()=>{
     const g=groups[+cb.dataset.i]; if(!g) return;
     if(cb.checked) selected.add(g.key); else selected.delete(g.key);
-    updateButtons();
+    renderList();   // refreshes the "included" tags (also updates the buttons)
   }));
   updateButtons();
 }
@@ -181,8 +197,10 @@ export function updateButtons(){
   ["sessDlBtn","sessDlfBtn","sessMapBtn","sessDelBtn"].forEach(id=>$(id).disabled=!ok);
   $("sessUploadBtn").disabled = !(ok && isPaired());
   $("sessAll").checked = n>0 && n===groups.length;
-  const files=selGroups().reduce((s,g)=>s+g.parts.length,0);
-  $("sessSelInfo").textContent = n ? n+" scan(s) · "+files+" file(s) · "+fmtSize(selGroups().reduce((s,g)=>s+g.size,0)) : "";
+  const all=selGroups().concat(includedFleet(selGroups()));
+  const files=all.reduce((s,g)=>s+g.parts.length,0);
+  const nf=all.length-n;
+  $("sessSelInfo").textContent = n ? n+" scan(s)"+(nf?" + "+nf+" fleet":"")+" · "+files+" file(s) · "+fmtSize(all.reduce((s,g)=>s+g.size,0)) : "";
 }
 
 // Fetch every part of the given groups (one BLE request at a time), joined per group.
@@ -224,32 +242,52 @@ function needSel(){
   return gs.slice().sort((a,b)=>(a.start||0)-(b.start||0));   // joined output in time order
 }
 
+// Split a selection into the leader/own scans and the fleet groups (ticked or auto-included), each fleet group
+// fetched + saved/uploaded as its OWN file.
+function splitFleet(gs){
+  return {own: gs.filter(g=>g.kind!=="fleet"), fleet: gs.filter(g=>g.kind==="fleet").concat(includedFleet(gs))};
+}
+const pause = ms=>new Promise(r=>setTimeout(r, ms));
+// Save the own scans joined as ONE file, then each fleet group as a SEPARATE second download (no zip: the page has
+// no zip library and a leader file must stay free of member lines). Chrome may ask once to allow multiple downloads.
+async function saveSplit(gs, cmdFor, tag, empty){
+  const {own, fleet}=splitFleet(gs);
+  let saved=0;
+  if(own.length){
+    const text=joinLogParts(await fetchGroups(own, cmdFor));
+    if(text){ saveBlob(new Blob([text], {type:"application/octet-stream"}), tag===undefined ? groupFileName(own) : rangeFileName(text, groupFileName(own, tag))); saved++; }
+  }
+  for(const f of fleet){
+    const text=joinLogParts(await fetchGroups([f], cmdFor));
+    if(!text) continue;
+    if(saved) await pause(400);
+    saveBlob(new Blob([text], {type:"application/octet-stream"}), tag===undefined ? groupFileName([f]) : rangeFileName(text, groupFileName([f], tag)));
+    saved++;
+  }
+  if(!saved) toast(empty, {err:true});
+  else if(fleet.length && own.length) toast("Saved the scan + its Fleet file as separate downloads.");
+}
 export function downloadSession(){
   const gs=needSel(); if(!gs) return;
-  runBusy("Download", async()=>{
-    const text=joinLogParts(await fetchGroups(gs));
-    if(!text){ toast("Nothing to download — those sessions are empty.", {err:true}); return; }
-    saveBlob(new Blob([text], {type:"application/octet-stream"}), groupFileName(gs));
-  });
+  runBusy("Download", ()=>saveSplit(gs, null, undefined, "Nothing to download — those sessions are empty."));
 }
 // Selected scans, filtered to the Data page's time range ON the device (T:<mode>[:min]:<path> per file).
 export function downloadSessionRange(){
   const gs=needSel(); if(!gs) return;
   const sp=exportSpec(); if(!sp) return;
   runBusy("Filtered download", async()=>{
-    const text=joinLogParts(await fetchGroups(gs, p=>exportCmd(sp, p.path)));
-    if(!text){ toast("No rows in that time range.", {err:true}); return; }
-    saveBlob(new Blob([text], {type:"application/octet-stream"}), rangeFileName(text, groupFileName(gs, sp.tag)));
+    await saveSplit(gs, p=>exportCmd(sp, p.path), sp.tag, "No rows in that time range.");
   });
 }
 export function mapSelectedSession(){
   const gs=needSel(); if(!gs) return;
   openMap();
+  const all=gs.concat(includedFleet(gs)).sort((a,b)=>(a.start||0)-(b.start||0));   // plot the scan AND its fleet file
   runBusy("Map", async()=>{
-    $("mapMsg").textContent="Loading "+gs.length+" scan(s)…";
-    const text=joinLogParts(await fetchGroups(gs));
-    toast("Loaded "+groupFileName(gs)+".");
-    plotCsvText(text, groupFileName(gs));
+    $("mapMsg").textContent="Loading "+all.length+" scan(s)…";
+    const text=joinLogParts(await fetchGroups(all));
+    toast("Loaded "+groupFileName(all)+".");
+    plotCsvText(text, groupFileName(all));
   });
 }
 // One upload per selected scan (its parts joined), so the server gets one session per scan.
@@ -257,7 +295,7 @@ export function uploadSelectedSessions(){
   if(!isPaired()){ toast("Not paired — pair a server in Settings.", {err:true}); return; }
   const gs=needSel(); if(!gs) return;
   runBusy("Upload", async()=>{
-    for(const g of gs){
+    for(const g of gs.concat(includedFleet(gs))){   // the Fleet file is its OWN body, after the scan
       const [text]=await fetchGroups([g], null, {trim:true});
       await uploadSessionText(text, groupFileName([g]));
     }
