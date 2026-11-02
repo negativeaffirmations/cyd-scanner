@@ -19,6 +19,7 @@ import { $, log, esc, toast } from '../util/dom.js';
 import { enc, TIER_NAMES } from '../config.js';
 import { scannerFix } from '../gps.js';
 import { fetchCurrent } from '../ble/logfetch.js';
+import { reqBusy } from '../ble/xfer.js';
 
 // --- persisted config (localStorage) ------------------------------------------------------------
 const LS = { server:"rs.server", key:"rs.key", dev:"rs.deviceId", live:"rs.live" };
@@ -291,9 +292,10 @@ export async function uploadCurrentSession(){
   setUploadBusy(true);                                        // optimistic: lock buttons the instant it's tapped
   toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
   try{
-    const cur = await fetchCurrent(fname);   // through the phone-side cache (whole file); null = plain "L"
+    const cur = await fetchCurrent(fname, { trim:true });   // through the phone-side cache (whole file, no torn last row); null = plain "L"
     if(cur){ await uploadSessionText(cur.text, fname); return; }
-    state.dl = { mode:null, expect:0, got:0, chunks:[], name:fname, sink:"upload" };
+    if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); setUploadBusy(false); return; }
+    state.dl = { mode:null, expect:0, got:0, chunks:[], name:fname, sink:"upload", waiting:true, lastRx:Date.now() };
     await state.chars.cmd.writeValue(enc.encode("L"));
     log("Remote: fetching current session ("+fname+") to upload…");
   }catch(e){ log("Remote: could not request the session — "+e.message); toast("Could not request the session — "+e.message, {err:true}); setUploadBusy(false); }

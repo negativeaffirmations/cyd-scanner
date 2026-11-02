@@ -1,21 +1,19 @@
 # Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `0bd3fe9` = trunk + webapp)
 
-## PAUSED — 2026-11-01 late (owner usage limit; resume after 10:30)
-- Commits 9c13e85 (phone log cache) / d6e43d4 (fw 0.26.0 tail fetch) / d06c35d (scanner switching) are LOCAL, unpushed,
-  NOT flashed/deployed. Reviewer found REV-001..017 (P1: switch mid-fetch mixes scanners' data; rawFetch/bleFetch overlap
-  → stuck promise). The fixer was STOPPED mid-fix: uncommitted firmware edits in host_log.cpp/.h + logfilter.h (likely
-  REV-010/011/012), webapp fixes NOT started. Resume: review the uncommitted diff, finish REV-001..017 (list in the
-  session transcript / re-run reviewer), build, then ASK the owner before flashing/deploying (owner retracted the
-  no-ask permission). scan-analyzer was told a 0.26.0 deploy was coming — tell it the deploy is on hold.
-
 ## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix 0.24.1 FLASHED + VERIFIED
-- **NEWER (late 2026-11-01, 3 local commits on `fleet-mode`, NOTHING flashed / pushed / deployed): log cache + tail fetch +
+- **ON HOLD / ASK THE OWNER FIRST:** the commits below (log cache, fw 0.26.0 tail fetch, switch scanner + one "review fixes"
+  commit for the reviewer's REV-001..017) are LOCAL only. Before flashing, pushing or deploying, ask the owner (the earlier
+  no-ask permission was retracted). scan-analyzer was told a 0.26.0 deploy was coming: tell it the deploy is on hold.
+  Review-fix summary: single-flight transfers + connection generation (a switch mid-fetch can no longer mix scanners'
+  data), pending request rejected on disconnect, tail form now carries a prefix CRC (`F:<path>@<off>:<file_id>:<crc32>`),
+  SESS= file_id comes from fileSpan's head read, cache tags only trust matching file_ids, uploads trim a torn last row.
+- **NEWER (late 2026-11-01, 4 local commits on `fleet-mode`, NOTHING flashed / pushed / deployed): log cache + tail fetch +
   switch scanner.** (1) webapp phone-side IndexedDB log cache (`data/logcache.js`, `ble/logfetch.js`, `features/cacheui.js`;
   200 MB LRU; saved/+N KB tags + Clear on the Data page). (2) **fw 0.26.0**: SESS= 6th field `file_id`, CMD
   `F:<path>@<offset>:<file_id>` -> `TAIL=<n>@<off>` / `TAILERR=path|id|off` (no link/fleet change; flash units one at a time;
   an older unit just never gets the tail form because the phone gates on STATUS `fw` >= 0.26.0). (3) webapp Switch scanner
-  (`ble/devices.js`, `features/switcher.js`, `unitreset.js`, `connection.js` `switchTo`). Webapp tokens bumped once
-  (`?v=20261101h`, footer `log-cache+switch h`); `connection.js` + `fleet.js` imports in main.js carry the same token.
+  (`ble/devices.js`, `features/switcher.js`, `unitreset.js`, `connection.js` `switchTo`). Webapp tokens
+  (`?v=20261101i`, footer `log-cache+switch i`); `connection.js` + `fleet.js` imports in main.js carry the same token.
   To ship: flash 0.26.0 (all 5 host envs build), push, deploy Pages (~10 min cache), then test on the phone: Data -> Session
   logs -> Refresh, Download one scan twice (2nd is instant, row says `saved`), let a live scan grow it (`+N KB new`), Download
   again (log line "Fetched only the new N bytes"); Settings -> Scanners -> Switch scanner... between two units.

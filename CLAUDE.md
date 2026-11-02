@@ -463,10 +463,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
-    any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · **`"F:<path>@<offset>:<file_id>"`** tail
-    download (fw 0.26.0, `transferTail`): the device checks line 1's `file_id` and streams only bytes `[offset,size)`
-    behind a `TAIL=<n>@<offset>` header (n may be 0), or refuses with `TAILERR=path|id|off` (bad path / different or
-    missing file_id / offset past the end); the phone then fetches the whole file; no padding on a short send · `"D:<path>"` delete a session file (restricted to
+    any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · **`"F:<path>@<offset>:<file_id>:<crc>"`** tail
+    download (fw 0.26.0, `transferTail`; `<crc>` = 8 lowercase hex CRC-32 (IEEE) of the up-to-64 bytes before `<offset>`,
+    `00000000` at offset 0, so a file replaced under the same line 1 is refused): the device checks line 1's `file_id` and
+    the prefix CRC and streams only bytes `[offset,size)` behind a `TAIL=<n>@<offset>` header (n may be 0), or refuses with
+    `TAILERR=path|id|off` (unsafe/missing path / different or missing file_id or CRC / offset past the end); a request that
+    does not parse (the old 3-field form) gets `SIZE=0`; the phone then fetches the whole file; no padding on a short send · `"D:<path>"` delete a session file (restricted to
     `/logs/`; refuses the live session) · **`"Z<seq>:<op>:<arg>"` + `"U<seq byte><bytes>"`** = the **SD file
     explorer** (fw 0.18.0, `src/host_common/host_files.*`; op `l` list, paged ~4 KB / `m` mkdir / `r` rename
     `from\tto` / `d` delete file or empty folder / `u` upload `<size>:<path>` / `a` abort; each answered with ONE
@@ -617,8 +619,14 @@ back (5 GHz included). Things that matter, learned the hard way:
       no transfer; the whole file always goes to uploads. Session rows show `saved` / `+N KB new` / `partly saved`;
       Data has "Clear saved logs (size)" (`features/cacheui.js`). Filtered (`T:`) exports are never cached.
       **Tail fetch (fw >= 0.26.0, STATUS `fw`):** a saved prefix of a file that grew is topped up with `F:<path>@<size>:<file_id>`
-      (only the new bytes cross BLE; verified to be exactly `n` bytes, then appended to the cached Blob and re-saved); any
-      refusal/mismatch falls back to the full `F:<path>`. The current session has no listed size, so it always asks for
+      (only the new bytes cross BLE; verified to be exactly `n` bytes and that the merged file keeps its `file_id`, then
+      appended to the cached Blob and re-saved); any refusal/mismatch/failed request falls back to the full `F:<path>`.
+      **Safety (review fixes):** one request in flight (`ble/xfer.js` `reqBusy()`, `state.dl.waiting`; every requester checks it
+      and a superseded/timed-out request REJECTS); a connection generation (`connGen`, bumped on connect/disconnect) is
+      captured by `fetchLog`/`fetchGroups` and re-checked before each request and before caching, `onDisconnect` rejects the
+      pending request, ignores a late event from a previous unit, and Switch scanner / chooser Add refuse while a transfer runs;
+      a full fetch is cached only as a `file` reply whose `file_id` matches the list's; the current session's path comes from
+      this connection's STATUS `sess` (else plain `L`); uploads trim a torn last row. The current session has no listed size, so it always asks for
       the tail (`TAIL=0@N` = unchanged, a one-packet round trip).
       Rule for stale-module safety: new exports live in NEW files (`logfetch.js`, `logcache.js`, `cacheui.js`);
       old modules only gain internals.

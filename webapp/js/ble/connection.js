@@ -2,7 +2,8 @@
 // and the full UI enable/disable + teardown.
 import { state } from '../state.js';
 import { SVC, TIME, GPS, CMD, STAT, LOG, DETS } from '../config.js';
-import { $, log, setConn } from '../util/dom.js';
+import { $, log, setConn, toast } from '../util/dom.js';
+import { bumpGen, anyBusy, cancelTransfer } from './xfer.js';
 import { updateScanBtn, syncTime } from './commands.js';
 import { startGps } from '../gps.js';
 import { onStatus } from './status.js';
@@ -43,6 +44,7 @@ async function disconnectCurrent(){
 export async function connect(){
   if(!navigator.bluetooth){ log("Web Bluetooth not available. Use Chrome on Android."); return; }
   if(connecting) return;
+  if(state.connected && anyBusy()){ toast("Finish or cancel the transfer first, then switch scanners.", {err:true}); return; }
   connecting = true;
   try{
     const was = state.connected;
@@ -67,6 +69,7 @@ export async function connect(){
 export async function switchTo(device, timeoutMs){
   if(!device) return { ok:false, why:"failed" };
   if(connecting) return { ok:false, why:"busy" };
+  if(state.connected && anyBusy()){ toast("Finish or cancel the transfer first, then switch scanners.", {err:true}); return { ok:false, why:"busy" }; }
   connecting = true;
   try{
     await disconnectCurrent();
@@ -97,6 +100,7 @@ function once(target, ev, fn){
 
 async function connectDevice(timeoutMs){
   try{
+    bumpGen();   // a new connection: any multi-part fetch started on the previous one aborts
     if(lastDeviceId && lastDeviceId !== state.device.id) runUnitReset();   // a different scanner: drop everything the last one left
     lastDeviceId = state.device.id;
     once(state.device, "gattserverdisconnected", onDisconnect);
@@ -202,7 +206,11 @@ function onLegacyStatus(ev){
   showRefusal(r);
 }
 
-export function onDisconnect(){ setConn("disconnected"); clearLinkSecurity(); log("Disconnected."); state.connected=false;
+export function onDisconnect(ev){
+  // A late disconnect event from a PREVIOUS unit (after switchTo moved on) must not tear down the new connection.
+  if(ev && ev.target && state.device && ev.target !== state.device) return;
+  bumpGen(); cancelTransfer("disconnected");   // reject the pending request so its caller (and xferBusy) settles
+  setConn("disconnected"); clearLinkSecurity(); log("Disconnected."); state.connected=false;
   state.scannerName = ""; $("unitName").textContent = "";
   state.scannerId = ""; state.scannerFw = ""; state.scannerDbGen = 0;   // the next unit must never inherit these (log-cache key, live-POST meta)
   state.fleetRole = state.fleetId = state.fleetLeader = "";   // a stale fleet id must not tag the next unit's live-POST meta

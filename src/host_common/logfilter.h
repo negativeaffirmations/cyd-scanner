@@ -181,10 +181,12 @@ class MultiExport {
 
   // First and last non-zero epoch found in a file's head / tail block (0 = none there). Cheap (two
   // 1 KB reads); used by the session list so the phone can group a scan's files by time.
-  static void fileSpan(File& f, uint32_t& first, uint32_t& last) {
-    if (strstr(f.name(), "fleet-")) { fleetSpan(f, first, last); return; }
+  // idOut (optional, 9 bytes) = line 1's "file_id" from the same head read ("" = none), so the session list needs no second read.
+  static void fileSpan(File& f, uint32_t& first, uint32_t& last, char* idOut = nullptr) {
+    if (idOut) idOut[0] = 0;
+    if (strstr(f.name(), "fleet-")) { fleetSpan(f, first, last, idOut); return; }
     bool hz;
-    ends(f, first, hz, last);
+    ends(f, first, hz, last, idOut);
     if (hz) {  // head row is pre-sync: take the first dated line in the head block instead
       first = 0;
       char* b = (char*)malloc(1025);
@@ -270,7 +272,27 @@ class MultiExport {
   }
   // A fleet file's epochs are not monotonic (several members' clocks interleave): span = min/max over every epoch in its
   // first and last 1 KB (0/0 = none there). Coarse, but never inverted, and cheap like the other files' span.
-  static void fleetSpan(File& f, uint32_t& first, uint32_t& last) {
+ public:
+  // Line 1 file_id out of a NUL-terminated head buffer (only the first line is searched). false = none.
+  static bool fileIdOfHead(char* b, char out[9]) {
+    out[0] = 0;
+    char* nl = strchr(b, '\n');
+    char keep = 0;
+    if (nl) { keep = *nl; *nl = 0; }                 // line 1 only (restored below)
+    const char* p = strstr(b, "\"file_id\":\"");
+    bool ok = false;
+    if (p) {
+      p += 11;
+      ok = true;
+      for (int i = 0; i < 8 && ok; i++) { char c = p[i]; ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); if (ok) out[i] = c; }
+      if (ok && p[8] != '"') ok = false;
+      out[ok ? 8 : 0] = 0;
+    }
+    if (nl) *nl = keep;
+    return ok;
+  }
+ private:
+  static void fleetSpan(File& f, uint32_t& first, uint32_t& last, char* idOut = nullptr) {
     static constexpr size_t BLK = 1024;
     first = last = 0;
     char* b = (char*)malloc(BLK + 1);
@@ -282,6 +304,7 @@ class MultiExport {
       const int r = f.read((uint8_t*)b, BLK);
       if (r <= 0) continue;
       b[r] = 0;
+      if (pass == 0 && idOut) fileIdOfHead(b, idOut);
       for (const char* p = strstr(b, "\"epoch\":"); p; p = strstr(p + 8, "\"epoch\":")) {
         uint32_t v;
         if (epochAfter(p, v) && v) { if (!first || v < first) first = v; if (v > last) last = v; }
@@ -292,7 +315,7 @@ class MultiExport {
   }
   // headZero = the first dated-or-not data line has epoch 0 (pre-sync rows -> needs the anchor);
   // tail = the last non-zero epoch in the file's final block (any line, incl. the timesync anchor).
-  static void ends(File& f, uint32_t& head, bool& headZero, uint32_t& tail) {
+  static void ends(File& f, uint32_t& head, bool& headZero, uint32_t& tail, char* idOut = nullptr) {
     static constexpr size_t BLK = 1024;
     char* b = (char*)malloc(BLK + 1);
     head = tail = 0; headZero = false;
@@ -302,6 +325,7 @@ class MultiExport {
     int r = f.read((uint8_t*)b, BLK);
     if (r > 0) {
       b[r] = 0;
+      if (idOut) fileIdOfHead(b, idOut);
       const char* p = strstr(b, "\"epoch\":");
       if (p && epochAfter(p, head)) headZero = head == 0;
       else head = 0;

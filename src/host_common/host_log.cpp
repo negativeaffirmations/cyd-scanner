@@ -978,26 +978,33 @@ static bool readFileId(File& f, char out[9]) {
   int r = f.read((uint8_t*)b, sizeof(b) - 1);
   if (r <= 0) return false;
   b[r] = 0;
-  char* nl = strchr(b, '\n');
-  if (nl) *nl = 0;                                   // line 1 only
-  const char* p = strstr(b, "\"file_id\":\"");
-  if (!p) return false;
-  p += 11;
-  for (int i = 0; i < 8; i++) {
-    char c = p[i];
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
-    out[i] = c;
+  return logfilter::MultiExport::fileIdOfHead(b, out);
+}
+
+// CRC-32 (IEEE, reflected, bitwise: 64 bytes at most) of the bytes [max(0, off-64), off) of f -- the tail request's proof
+// that the phone's cached prefix and this file agree right before the join point. Same value as zlib crc32 / the web app's.
+static bool prefixCrc(File& f, uint32_t off, uint32_t* out) {
+  const uint32_t from = off > 64 ? off - 64 : 0;
+  uint8_t b[64];
+  const uint32_t n = off - from;
+  if (n && (!f.seek(from) || f.read(b, n) != (int)n)) return false;
+  uint32_t c = 0xFFFFFFFFu;
+  for (uint32_t i = 0; i < n; i++) {
+    c ^= b[i];
+    for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
   }
-  if (p[8] != '"') { out[0] = 0; return false; }
-  out[8] = 0;
+  *out = ~c;
   return true;
 }
 
-// "F:<path>@<offset>:<file_id>" -- stream only the bytes [offset, size) of an append-only log the phone already holds
-// the first <offset> bytes of. Answers with ONE header, never confusable with a full send:
+// "F:<path>@<offset>:<file_id>:<crc>" -- stream only the bytes [offset, size) of an append-only log the phone already holds
+// the first <offset> bytes of. <crc> = 8 lowercase hex, CRC-32 of the 64 bytes before <offset> (fewer if offset < 64; 00000000 for
+// offset 0): a file replaced under the same line 1 (SD explorer upload) fails it. Answers with ONE header, never confusable
+// with a full send:
 //   "TAIL=<n>@<offset>" then exactly <n> raw bytes (n may be 0 = nothing new), or
-//   "TAILERR=path|id|off"  (bad/unsafe/missing path or malformed request | line 1 has a different file_id, or none |
-//   offset beyond the end = the file was replaced) -> the phone falls back to a full "F:<path>".
+//   "TAILERR=path|id|off"  (unsafe/missing path | line 1 has a different file_id, or none, or the prefix CRC differs |
+//   offset beyond the end = the file was replaced) -> the phone falls back to a full "F:<path>"; or
+//   "SIZE=0" when the request does not even parse (an older phone's 3-field form).
 // No newline padding on a short send (unlike the exports): the phone appends the tail to its cached copy only if it got
 // exactly <n> bytes, so a short send just times out there and the cache stays untouched.
 static void tailRefuse(const char* why) {
@@ -1009,17 +1016,20 @@ static void transferTail(const char* req) {
   char p[100];
   strncpy(p, req, sizeof(p) - 1);
   p[sizeof(p) - 1] = 0;
-  char* colon = strrchr(p, ':');
+  char* c2 = strrchr(p, ':');                        // ":<crc>"
+  char* c1 = nullptr;                                // ":<file_id>"
   char* at = nullptr;
-  if (colon) { *colon = 0; at = strrchr(p, '@'); }
+  if (c2) { *c2 = 0; c1 = strrchr(p, ':'); }
+  if (c1) { *c1 = 0; at = strrchr(p, '@'); }
   char id[9] = "";
-  uint32_t off = 0;
-  bool ok = colon && at && strlen(colon + 1) == 8;
+  uint32_t off = 0, wantCrc = 0;
+  bool ok = c2 && c1 && at && strlen(c1 + 1) == 8 && strlen(c2 + 1) == 8;
   if (ok) {
     for (int i = 0; i < 8; i++) {
-      char c = colon[1 + i];
-      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { ok = false; break; }
+      char c = c1[1 + i], d = c2[1 + i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) || !((d >= '0' && d <= '9') || (d >= 'a' && d <= 'f'))) { ok = false; break; }
       id[i] = c;
+      wantCrc = (wantCrc << 4) | (uint32_t)(d <= '9' ? d - '0' : d - 'a' + 10);
     }
     id[8] = 0;
   }
@@ -1029,7 +1039,12 @@ static void transferTail(const char* req) {
     if (!*d || strlen(d) > 9) ok = false;            // <= 9 digits: files stay far below 1 GB (512 MB log cap)
     else for (; *d; d++) { if (*d < '0' || *d > '9') { ok = false; break; } off = off * 10 + (uint32_t)(*d - '0'); }
   }
-  if (!ok || !files::safePath(p) || files::isDir(p) || !g_sdOk || !SD.exists(p)) {
+  if (!ok) {                                         // does not parse (e.g. an older phone's 3-field form): plain empty reply
+    phone::logNotify((const uint8_t*)"SIZE=0", 6);
+    Serial.printf("[CYD] BLE tail: malformed request %s\n", req);
+    return;
+  }
+  if (!files::safePath(p) || files::isDir(p) || !g_sdOk || !SD.exists(p)) {
     tailRefuse("path");
     Serial.printf("[CYD] BLE tail: rejected %s\n", req);
     return;
@@ -1040,6 +1055,8 @@ static void transferTail(const char* req) {
   char cur[9];
   if (!readFileId(f, cur) || strcmp(cur, id) != 0) { f.close(); tailRefuse("id"); Serial.printf("[CYD] BLE tail: file_id mismatch %s\n", p); return; }
   if (off > sz) { f.close(); tailRefuse("off"); Serial.printf("[CYD] BLE tail: offset %u > size %u (%s)\n", (unsigned)off, (unsigned)sz, p); return; }
+  uint32_t haveCrc = 0;
+  if (!prefixCrc(f, off, &haveCrc) || haveCrc != wantCrc) { f.close(); tailRefuse("id"); Serial.printf("[CYD] BLE tail: prefix CRC mismatch %s\n", p); return; }
   strncpy(g_streamingPath, p, sizeof(g_streamingPath) - 1);   // guard: not rotated away mid-stream
   g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
   const uint32_t n = sz - off;
@@ -1231,7 +1248,7 @@ void sendSessionList() {
       const char* flag = (newestBase.length() && base == newestBase) ? flagWord : "";
       uint32_t first = 0, last = 0;  // dated span (local epoch; 0 = unknown) -> the phone groups a scan's parts
       char fid[9] = "";
-      if (base.endsWith(".jsonl")) { logfilter::MultiExport::fileSpan(e, first, last); readFileId(e, fid); }
+      if (base.endsWith(".jsonl")) logfilter::MultiExport::fileSpan(e, first, last, fid);   // file_id from the same head read
       list += "/logs/" + base + "\t" + String((uint32_t)e.size()) + "\t" + flag + "\t" + String(first) +
               "\t" + String(last) + "\t" + fid + "\n";
     }

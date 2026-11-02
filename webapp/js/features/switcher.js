@@ -11,6 +11,7 @@
 // NEW file, wired from main.js.
 import { state } from '../state.js';
 import { $, esc, toast, log } from '../util/dom.js';
+import { anyBusy } from '../ble/xfer.js';
 import { allDevices, getEntry, onDevicesChange, loadRemembered, unitNameFor, setUnitName, canGetDevices } from '../ble/devices.js';
 
 const PRESENT_MS = 10000;     // "not seen" after this long without an advertisement
@@ -48,7 +49,11 @@ async function startWatch(e){
   e.ctl = new AbortController();
   e.onAdv = ev=>{ e.lastSeen = Date.now(); e.rssi = typeof ev.rssi === "number" ? ev.rssi : null; schedule(); };
   e.device.addEventListener("advertisementreceived", e.onAdv);
-  try{ await e.device.watchAdvertisements({ signal:e.ctl.signal }); e.watching = true; }
+  try{
+    await e.device.watchAdvertisements({ signal:e.ctl.signal });
+    if(e.ctl.signal.aborted){ e.watching = false; return; }   // stopWatch() ran while the request was pending
+    e.watching = true;
+  }
   catch(err){ e.device.removeEventListener("advertisementreceived", e.onAdv); }   // aborted, or the browser refused: try again next tick
   finally{ e.starting = false; }
 }
@@ -59,7 +64,7 @@ function stopWatch(e){
   e.watching = false;
 }
 function tick(){
-  const want = document.visibilityState === "visible" && !state.xferBusy && state.dl.mode === null && !switching && presenceSupported();
+  const want = document.visibilityState === "visible" && !anyBusy() && !switching && presenceSupported();
   for(const e of allDevices()){
     if(want && !isCurrent(e)) startWatch(e); else stopWatch(e);
   }
@@ -111,8 +116,10 @@ function render(){
   $("switchInfo").innerHTML = info;
 }
 
+const BUSY_MSG = "Finish or cancel the transfer first, then switch scanners.";
 async function go(id){
   const e = getEntry(id); if(!e || switching || !actions) return;
+  if(anyBusy()){ toast(BUSY_MSG, { err:true }); return; }   // a switch mid-transfer would mix two scanners' data
   const name = labelOf(e);
   $("switchDlg").close();
   switching = true; tick();
@@ -136,13 +143,16 @@ export function openSwitcher(){
 
 export function initSwitcher(a){
   actions = a;
-  $("switchBtn").addEventListener("click", ()=>{ if(canSwitch()) openSwitcher(); else toast(presenceSupported() ? "No other remembered scanner is in range." : "Web Bluetooth isn't available.", { err:true }); });
+  $("switchBtn").addEventListener("click", ()=>{ if(anyBusy()) toast(BUSY_MSG, { err:true }); else if(canSwitch()) openSwitcher(); else toast(presenceSupported() ? "No other remembered scanner is in range." : "Web Bluetooth isn't available.", { err:true }); });
   $("switchBtn").addEventListener("keydown", ev=>{ if(ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); $("switchBtn").click(); } });
   $("switchOpenBtn").onclick = openSwitcher;   // Settings: always reachable (also how a second scanner gets added)
   $("switchClose").onclick = ()=>$("switchDlg").close();
   $("switchDlg").addEventListener("click", ev=>{ if(ev.target === $("switchDlg")) $("switchDlg").close(); });
   $("switchList").addEventListener("click", ev=>{ const b = ev.target.closest(".swgo"); if(b && !b.disabled) go(b.dataset.id); });
-  $("switchAddBtn").onclick = ()=>{ $("switchDlg").close(); if(actions.addScanner) actions.addScanner(); };   // the chooser needs this tap's user gesture
+  $("switchAddBtn").onclick = ()=>{
+    if(state.connected && anyBusy()){ toast(BUSY_MSG, { err:true }); return; }
+    $("switchDlg").close(); if(actions.addScanner) actions.addScanner();
+  };   // the chooser needs this tap's user gesture
   // Remember the connected unit's name (STATUS name=, mirrored into #unitName) against its device id.
   new MutationObserver(()=>{ const n = $("unitName").textContent.trim(); if(n && state.device) setUnitName(state.device.id, n); })
     .observe($("unitName"), { childList:true, characterData:true, subtree:true });

@@ -9,6 +9,7 @@ import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
 import { onUnitReset } from '../unitreset.js';
+import { reqBusy } from '../ble/xfer.js';
 import { askConfirm } from '../ble/auth.js';
 
 const REPLY_MS = 25000;   // the device may be mid scan cycle before it services the request
@@ -93,6 +94,8 @@ function fmtTime(t){   // FAT mtime; the CYD has no system clock (stamps read 19
 function msg(t, err){ $("fsMsg").textContent = t || ""; $("fsMsg").classList.toggle("err", !!err); }
 
 function setBusy(b){
+  if (b && !busy) state.xferBusy = (state.xferBusy || 0) + 1;      // presence watching / Switch scanner see the explorer's transfer
+  else if (!b && busy) state.xferBusy--;
   busy = b;
   ["fsUp","fsRefresh","fsMkdir","fsFile"].forEach(id => $(id).disabled = b);
   updateActions();
@@ -205,9 +208,9 @@ export async function fsDelete(){
 // Download through download.js's existing "save" sink ("F:<path>" -> SIZE= + raw bytes -> saved file).
 export async function fsDownload(){
   const e = entries[picked]; if (!e || e.dir) return;
-  if (pending || state.dl.mode !== null) { msg("Another transfer is in progress.", true); return; }
+  if (pending || reqBusy()) { msg("Another transfer is in progress.", true); return; }
   const p = join(cwd, e.name);
-  const mine = { mode:null, expect:0, got:0, chunks:[], name:e.name, sink:"save" };
+  const mine = { mode:null, expect:0, got:0, chunks:[], name:e.name, sink:"save", waiting:true };   // no lastRx: this loop times the reply itself
   state.dl = mine;
   setBusy(true); msg("Downloading " + e.name + "…");
   try { await gattWrite(state.chars.cmd, enc.encode("F:" + p)); }

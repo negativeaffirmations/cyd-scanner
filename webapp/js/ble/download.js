@@ -15,6 +15,7 @@ import { uploadSessionText } from '../features/remote.js';
 import { exportSpec, exportCmd, rangeFileName } from '../features/timerange.js';
 import { resetDl } from './transfer.js';
 import { fetchCurrent } from './logfetch.js';
+import { reqBusy } from './xfer.js';
 
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
 // hiccup, a short send), give up after IDLE_MS instead of leaving state.dl stuck in "file" mode, which
@@ -22,7 +23,7 @@ import { fetchCurrent } from './logfetch.js';
 const IDLE_MS = 20000;
 setInterval(()=>{
   const d = state.dl;
-  if (d.mode===null || d.sink==="promise" || !d.lastRx || Date.now()-d.lastRx < IDLE_MS) return;
+  if ((d.mode===null && !d.waiting) || d.sink==="promise" || !d.lastRx || Date.now()-d.lastRx < IDLE_MS) return;
   log("Transfer stalled ("+d.got+" of "+d.expect+" bytes) — cancelled. Try again.");
   toast("Transfer stalled — cancelled. Try again.", {err:true});
   if (d.sink==="upload") uploadSessionText("", d.name);   // clears the upload busy state
@@ -51,7 +52,7 @@ export function onLogData(ev){
         if(state.dl.sink==="explore") loadedExplore([], state.dl.name);
         if(state.dl.sink==="upload") uploadSessionText("", state.dl.name);   // report empty + clear the upload busy state
         if(state.dl.sink==="save") toast("Nothing to download — no rows in that range.", {err:true});
-        state.dl.mode=null; }
+        state.dl.mode=null; state.dl.waiting=false; }
       return;
     }
     // fw >= 0.26.0 tail form "F:<path>@<offset>:<file_id>" (ble/logfetch.js, raw requests only):
@@ -71,12 +72,12 @@ export function onLogData(ev){
     }
     if (txt.startsWith("SESS=")) {
       state.dl.mode="list"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[];
-      if (state.dl.expect===0){ populateSessions(""); if(isPromise) settlePromise(""); else state.dl.mode=null; }
+      if (state.dl.expect===0){ populateSessions(""); if(isPromise) settlePromise(""); else { state.dl.mode=null; state.dl.waiting=false; } }
       return;
     }
     if (txt.startsWith("WL=")) {
       state.dl.mode="wl"; state.dl.expect=parseInt(txt.slice(3),10)||0; state.dl.got=0; state.dl.chunks=[];
-      if (state.dl.expect===0){ populateWhitelist(""); if(isPromise) settlePromise(""); else state.dl.mode=null; }
+      if (state.dl.expect===0){ populateWhitelist(""); if(isPromise) settlePromise(""); else { state.dl.mode=null; state.dl.waiting=false; } }
       return;
     }
     return;                                   // ignore stray data
@@ -96,6 +97,7 @@ export function onLogData(ev){
     }
     if (isPromise) {
       const res = state.dl.resolve;
+      state.dl.completing = true;   // bleFetch's watchdog must not call this "superseded" while the text is decoded
       resetDl();
       blob.text().then(t=>{ if(mode==="list") populateSessions(t); else if(mode==="wl") populateWhitelist(t); if(res) res(t); });
       return;
@@ -127,7 +129,8 @@ export async function downloadLog(){
       if(!cur.blob || !cur.blob.size){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
       saveBlob(cur.blob, fname); return;
     }
-    state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save"};
+    if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
+    state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save",waiting:true,lastRx:Date.now()};
     await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session ("+fname+")…"); }
   catch(e){ log("Download failed: "+e.message); toast("Download failed: "+e.message, {err:true}); }
 }
@@ -137,7 +140,8 @@ export async function downloadLog(){
 // (A single selected session's range export lives in sessions.js.)
 export async function downloadFilteredAll(){
   const sp=exportSpec(); if(!sp) return;
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true};  // saved as <first>-<last>.jsonl
+  if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
+  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true,waiting:true,lastRx:Date.now()};  // saved as <first>-<last>.jsonl
     toast("Collecting "+sp.tag+" from all logs on the device…", {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode(exportCmd(sp, "*"))); log("Requesting "+state.dl.name+" (all logs, filtered on device)…"); }
   catch(e){ log("Filtered download failed: "+e.message); toast("Filtered download failed: "+e.message, {err:true}); }

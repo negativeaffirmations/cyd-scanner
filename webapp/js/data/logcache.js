@@ -57,6 +57,13 @@ export const ready = (async ()=>{
 
 export const cacheUsable = ()=>usable;
 
+// Another tab/window may have saved or cleared files meanwhile: re-read the index when this page comes back.
+async function reloadMetas(){
+  if(!usable) return;
+  try{ metas = (await tx("readonly", m=>m.getAll())) || []; changed(); }catch(e){}
+}
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState === "visible") ready.then(reloadMetas); });
+
 // The 8-hex file_id on line 1's meta ("" when the file has none).
 export async function fileIdOf(blob){
   try{

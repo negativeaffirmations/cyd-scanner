@@ -14,6 +14,7 @@ import { bleFetch } from '../ble/transfer.js';
 import { fetchLog, cacheStatus } from '../ble/logfetch.js';
 import { onCacheChange } from '../data/logcache.js';
 import { onUnitReset } from '../unitreset.js';
+import { connGen } from '../ble/xfer.js';
 import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
@@ -92,7 +93,8 @@ function groupCache(g){
   }
   if(fresh) return "+"+fmtSize(fresh)+" new";
   if(full===g.parts.length) return "saved";
-  return (full||any) ? "partly saved" : "";
+  if(!full && !any) return g.parts.some(p=>cacheStatus(p.path, p.size, p.fid).st==="path") ? "older copy saved" : "";   // same name, can't prove it's the same file
+  return "partly saved";
 }
 // Joined file name: a one-part scan keeps its own name; otherwise <first part>+<n>p.jsonl.
 function groupFileName(gs, tag){
@@ -186,8 +188,12 @@ export function updateButtons(){
 // Fetch every part of the given groups (one BLE request at a time), joined per group.
 // cmdFor(part) -> a custom CMD for that part (filtered exports; fetched uncached). Default = the whole file
 // through the phone-side cache (ble/logfetch.js): a saved copy that is still current costs no transfer.
-async function fetchGroups(gs, cmdFor){
+// opts.trim: uploads drop a torn last row. The connection generation is captured here: if the scanner changes
+// (Switch scanner, reconnect) the whole action aborts instead of joining two scanners' parts.
+async function fetchGroups(gs, cmdFor, opts){
   const total=gs.reduce((s,g)=>s+g.parts.length,0);
+  const gen=connGen();
+  const alive=()=>{ if(connGen()!==gen) throw new Error("the scanner changed during the transfer"); };
   let k=0; const texts=[];
   for(const g of gs){
     const pt=[];
@@ -195,7 +201,9 @@ async function fetchGroups(gs, cmdFor){
       k++;
       const saved = !cmdFor && cacheStatus(p.path, p.size, p.fid).st==="full";
       toast((saved?"Loading saved ":"Fetching ")+(total>1?"file "+k+"/"+total+" — ":"")+p.base+"…", {work:true, sticky:true});
-      pt.push(cmdFor ? await bleFetch(cmdFor(p), p.base) : (await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base})).text);
+      alive();
+      pt.push(cmdFor ? await bleFetch(cmdFor(p), p.base) : (await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base, gen, trim:!!(opts && opts.trim)})).text);
+      alive();
     }
     texts.push(joinLogParts(pt));
   }
@@ -250,7 +258,7 @@ export function uploadSelectedSessions(){
   const gs=needSel(); if(!gs) return;
   runBusy("Upload", async()=>{
     for(const g of gs){
-      const [text]=await fetchGroups([g]);
+      const [text]=await fetchGroups([g], null, {trim:true});
       await uploadSessionText(text, groupFileName([g]));
     }
   });

@@ -8,6 +8,7 @@ import { parseScanLog, parseScanEvents } from '../data/parse.js';
 import { showPage } from '../nav.js';
 import { fetchCurrent } from '../ble/logfetch.js';
 import { onUnitReset } from '../unitreset.js';
+import { reqBusy } from '../ble/xfer.js';
 
 let lmap=null, mapLayer=null, mapDets=[], mapEvents=[], mapRidEvents=[], mapByMac=new Map();
 let mapFromDevice=false;   // the plotted data was fetched from a scanner (a local file isn't dropped when the scanner changes)
@@ -149,7 +150,8 @@ export async function mapCurrent(){
     $("mapMsg").textContent="Loading current session…";
     const cur = await fetchCurrent();   // through the phone-side cache; null = plain "L"
     if(cur){ if(cur.text) plotCsvText(cur.text, "current session"); else $("mapMsg").textContent="That session is empty."; return; }
-    state.dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map"};
+    if(reqBusy()){ $("mapMsg").textContent="Another transfer is in progress — try again in a moment."; return; }
+    state.dl={mode:null,expect:0,got:0,chunks:[],name:"current session",sink:"map",waiting:true,lastRx:Date.now()};
     await state.chars.cmd.writeValue(enc.encode("L")); }
   catch(e){ log("Map current failed: "+e.message); }
 }
