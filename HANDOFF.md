@@ -24,15 +24,15 @@
   `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg` by a script that never printed the key/link (deleted after). The phone must
   re-pair mini #2 from that QR. Fleet unaffected (members' fleet keys derive from THEIR keys).
 - **Reviewer pass on `1cbbee6` DONE (no P1; 2 P2 + 5 P3, all fixed) → `6b98412` fw 0.24.2, all 5 host envs build,
-  NOT flashed:** `c5LinkAgeMs()` (host_core) excludes transfer time (replaces the leader's held verdict + the scan
+  FLASHED on all 3 + pushed (fleet rejoined):** `c5LinkAgeMs()` (host_core) excludes transfer time (replaces the leader's held verdict + the scan
   cycle's checks); exports / session list bound to the requesting phone's authEpoch; `radio_fail` never deferred;
   deferral buffer 8, freed after use; log-cap sweep + `D:*` wipe scoped + serviced. Flash all 3 hosts with the owner's OK,
   then repeat the 2 MB leader-download test (planGen must not move).
-- **P6 item 6 (P5b store-and-forward) — owner wants it built.** Contract PROPOSAL posted to the bridge (2026-11-01 late
-  evening): meta `file_id` (random per file, survives the sync rename); leader `/logs/fleet-…jsonl` of member lines
-  verbatim + `scanner`/`ofile`(=origin file_id)/`orow`(1-based line no.); leader's own rows NOT duplicated. Waiting for
-  scan-analyzer's answers (a)-(d), then owner sign-off, THEN build (new `Msg::LogRows`/`LogAck`, client resume from
-  ackedThrough, fleet-proto bump → flash all hosts together; web Data page groups the `fleet-` stream).
+- **P6 item 6 (P5b store-and-forward): owner SIGNED OFF; design = docs/fleet-mode.md §22 (`577c123`).** Owner chose:
+  a member forwards its WHOLE current file from line 1. scan-analyzer server READY on `343a5d4` (schema v12; content dedup,
+  `orow` informational; wants each origin's meta + timesync re-sent when forwarding starts — in the spec). **Build in
+  progress via the fixer agent (fw 0.25.0, fleet proto v3 → flash all hosts together).** If this session died: check
+  `git log` for its commits, then build all envs, run reviewer, flash with owner OK, ping scan-analyzer, bench-test.
 - Open: server-side fleet grouping UI is scan-analyzer's.
 
 ## RESUME HERE — 2026-11-01 (afternoon): P6 agreed; item 5 (fleet live-POST) DONE end to end
