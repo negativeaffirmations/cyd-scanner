@@ -5,6 +5,7 @@
 // call before the next. Rejects if nothing arrives for IDLE_MS.
 import { state } from '../state.js';
 import { enc } from '../config.js';
+import { reqBusy } from './xfer.js';
 
 const IDLE_MS = 20000;
 
@@ -13,14 +14,14 @@ export function resetDl(){ state.dl = { mode:null, expect:0, got:0, chunks:[], n
 export function bleFetch(cmd, name){
   return new Promise((resolve, reject)=>{
     if(!state.connected || !state.chars.cmd){ reject(new Error("not connected")); return; }
-    if(state.dl.mode!==null){ reject(new Error("another transfer is in progress")); return; }
+    if(reqBusy()){ reject(new Error("another transfer is in progress")); return; }   // one request in flight (ble/xfer.js)
     let timer = null;
     const finish = (fn, v)=>{ clearInterval(timer); fn(v); };
-    state.dl = { mode:null, expect:0, got:0, chunks:[], name:name||"file", sink:"promise", lastRx:Date.now(),
+    state.dl = { mode:null, expect:0, got:0, chunks:[], name:name||"file", sink:"promise", waiting:true, lastRx:Date.now(),
                  resolve: t=>finish(resolve, t), reject: e=>finish(reject, e) };
     const mine = state.dl;
     timer = setInterval(()=>{
-      if(state.dl!==mine){ clearInterval(timer); return; }   // completed (download.js reset state.dl)
+      if(state.dl!==mine){ if(!mine.completing) finish(reject, new Error("transfer superseded")); return; }   // completing = download.js is finishing it
       if(Date.now()-mine.lastRx > IDLE_MS){ resetDl(); finish(reject, new Error("transfer timed out")); }
     }, 1000);
     state.chars.cmd.writeValue(enc.encode(cmd)).catch(e=>{ if(state.dl===mine) resetDl(); finish(reject, e); });

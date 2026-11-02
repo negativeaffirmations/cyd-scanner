@@ -2,6 +2,7 @@
 // A short header notification announces the payload ("SIZE=<n>" = a file, "SESS=<n>" = the session
 // list, "WL=<n>" = the whitelist), then <n> bytes of chunks follow.
 // sink "promise" = a queued request from ble/transfer.js bleFetch(): any payload resolves its promise.
+// With state.dl.raw (ble/logfetch.js) a file resolves as {kind:"file", n, blob} (or "tail" with off) instead of text.
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, log, toast, saveBlob } from '../util/dom.js';
@@ -13,6 +14,8 @@ import { populateWhitelist } from '../features/whitelist.js';
 import { uploadSessionText } from '../features/remote.js';
 import { exportSpec, exportCmd, rangeFileName } from '../features/timerange.js';
 import { resetDl } from './transfer.js';
+import { fetchCurrent } from './logfetch.js';
+import { reqBusy } from './xfer.js';
 
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
 // hiccup, a short send), give up after IDLE_MS instead of leaving state.dl stuck in "file" mode, which
@@ -20,7 +23,7 @@ import { resetDl } from './transfer.js';
 const IDLE_MS = 20000;
 setInterval(()=>{
   const d = state.dl;
-  if (d.mode===null || d.sink==="promise" || !d.lastRx || Date.now()-d.lastRx < IDLE_MS) return;
+  if ((d.mode===null && !d.waiting) || d.sink==="promise" || !d.lastRx || Date.now()-d.lastRx < IDLE_MS) return;
   log("Transfer stalled ("+d.got+" of "+d.expect+" bytes) — cancelled. Try again.");
   toast("Transfer stalled — cancelled. Try again.", {err:true});
   if (d.sink==="upload") uploadSessionText("", d.name);   // clears the upload busy state
@@ -49,17 +52,32 @@ export function onLogData(ev){
         if(state.dl.sink==="explore") loadedExplore([], state.dl.name);
         if(state.dl.sink==="upload") uploadSessionText("", state.dl.name);   // report empty + clear the upload busy state
         if(state.dl.sink==="save") toast("Nothing to download — no rows in that range.", {err:true});
-        state.dl.mode=null; }
+        state.dl.mode=null; state.dl.waiting=false; }
+      return;
+    }
+    // fw >= 0.26.0 tail form "F:<path>@<offset>:<file_id>" (ble/logfetch.js, raw requests only):
+    // "TAIL=<n>@<offset>" + n raw bytes, or "TAILERR=path|id|off" = refused -> the requester fetches the whole file.
+    if (txt.startsWith("TAILERR=")) {
+      if (isPromise && state.dl.raw) { const res = state.dl.resolve; resetDl(); if(res) res({ kind:"tailerr", why:txt.slice(8) }); }
+      return;
+    }
+    if (txt.startsWith("TAIL=")) {
+      if (!(isPromise && state.dl.raw)) return;
+      const m = /^TAIL=(\d+)@(\d+)$/.exec(txt);
+      if (!m) { const res = state.dl.resolve; resetDl(); if(res) res({ kind:"tailerr", why:"header" }); return; }
+      const n = parseInt(m[1],10), off = parseInt(m[2],10);
+      if (n===0) { const res = state.dl.resolve; resetDl(); if(res) res({ kind:"tail", n:0, off, blob:new Blob([]) }); return; }
+      state.dl.mode="file"; state.dl.expect=n; state.dl.got=0; state.dl.chunks=[]; state.dl.tail=off;
       return;
     }
     if (txt.startsWith("SESS=")) {
       state.dl.mode="list"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[];
-      if (state.dl.expect===0){ populateSessions(""); if(isPromise) settlePromise(""); else state.dl.mode=null; }
+      if (state.dl.expect===0){ populateSessions(""); if(isPromise) settlePromise(""); else { state.dl.mode=null; state.dl.waiting=false; } }
       return;
     }
     if (txt.startsWith("WL=")) {
       state.dl.mode="wl"; state.dl.expect=parseInt(txt.slice(3),10)||0; state.dl.got=0; state.dl.chunks=[];
-      if (state.dl.expect===0){ populateWhitelist(""); if(isPromise) settlePromise(""); else state.dl.mode=null; }
+      if (state.dl.expect===0){ populateWhitelist(""); if(isPromise) settlePromise(""); else { state.dl.mode=null; state.dl.waiting=false; } }
       return;
     }
     return;                                   // ignore stray data
@@ -71,8 +89,15 @@ export function onLogData(ev){
     // text and appends ".txt" to the .jsonl download name. octet-stream = "save the bytes as named".
     const blob = new Blob(state.dl.chunks, { type: "application/octet-stream" });
     const mode = state.dl.mode;
+    if (isPromise && state.dl.raw && mode==="file") {   // ble/logfetch.js: hand over the exact bytes (the cache needs them)
+      const res = state.dl.resolve, n = state.dl.expect, off = state.dl.tail;
+      resetDl();
+      if(res) res(off===undefined ? { kind:"file", n, blob } : { kind:"tail", n, off, blob });
+      return;
+    }
     if (isPromise) {
       const res = state.dl.resolve;
+      state.dl.completing = true;   // bleFetch's watchdog must not call this "superseded" while the text is decoded
       resetDl();
       blob.text().then(t=>{ if(mode==="list") populateSessions(t); else if(mode==="wl") populateWhitelist(t); if(res) res(t); });
       return;
@@ -97,8 +122,15 @@ export async function downloadLog(){
   // "scanlog.jsonl". Falls back to scanlog.jsonl before any session name is known.
   const sess=($("sessName").textContent.replace(/^Session:\s*/,"").trim())||"scanlog";
   const fname=sess.endsWith(".jsonl")?sess:sess+".jsonl";
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save"};
+  try{
     toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
+    const cur = await fetchCurrent(fname);   // through the phone-side cache; null = use the plain "L" command
+    if(cur){
+      if(!cur.blob || !cur.blob.size){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
+      saveBlob(cur.blob, fname); return;
+    }
+    if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
+    state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save",waiting:true,lastRx:Date.now()};
     await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session ("+fname+")…"); }
   catch(e){ log("Download failed: "+e.message); toast("Download failed: "+e.message, {err:true}); }
 }
@@ -108,7 +140,8 @@ export async function downloadLog(){
 // (A single selected session's range export lives in sessions.js.)
 export async function downloadFilteredAll(){
   const sp=exportSpec(); if(!sp) return;
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true};  // saved as <first>-<last>.jsonl
+  if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
+  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true,waiting:true,lastRx:Date.now()};  // saved as <first>-<last>.jsonl
     toast("Collecting "+sp.tag+" from all logs on the device…", {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode(exportCmd(sp, "*"))); log("Requesting "+state.dl.name+" (all logs, filtered on device)…"); }
   catch(e){ log("Filtered download failed: "+e.message); toast("Filtered download failed: "+e.message, {err:true}); }

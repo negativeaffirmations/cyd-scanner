@@ -2,7 +2,8 @@
 // and the full UI enable/disable + teardown.
 import { state } from '../state.js';
 import { SVC, TIME, GPS, CMD, STAT, LOG, DETS } from '../config.js';
-import { $, log, setConn } from '../util/dom.js';
+import { $, log, setConn, toast } from '../util/dom.js';
+import { bumpGen, anyBusy, cancelTransfer } from './xfer.js';
 import { updateScanBtn, syncTime } from './commands.js';
 import { startGps } from '../gps.js';
 import { onStatus } from './status.js';
@@ -13,26 +14,70 @@ import { renderRemoteUI } from '../features/remote.js';
 import { updateButtons as updateSessButtons } from '../features/sessions.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
 import { acquireWake, releaseWake } from '../wakelock.js';
+import { rememberDevice } from './devices.js';
+import { runUnitReset } from '../unitreset.js';
 import { AUTH_UUID, authenticate, setLinkSecurity, clearLinkSecurity, openAuthDlg, legacyRefusal, legacyStatusRefusal, primeLegacyGuard, showRefusal, mayShareLocation } from './auth.js';
 
 // Re-entrancy guard (REV-018): one connect/reconnect at a time (double taps, Save & reconnect while
 // a connect is still running).
 let connecting = false;
+let lastDeviceId = "";    // the unit connected last: a DIFFERENT one starts from a clean slate (runUnitReset)
+let connectTimedOut = false;
 
+// Clean disconnect of the current unit. Resolves only after onDisconnect has run its resets (it was hooked first,
+// so it fires before our listener), so those can never land on top of the next connection.
+async function disconnectCurrent(){
+  const d = state.device;
+  if(!d || !d.gatt || !d.gatt.connected) return;
+  await new Promise(resolve=>{
+    let t = 0;
+    const done = ()=>{ clearTimeout(t); d.removeEventListener("gattserverdisconnected", done); resolve(); };
+    d.addEventListener("gattserverdisconnected", done);
+    t = setTimeout(done, 3000);
+    try{ d.gatt.disconnect(); }catch(e){ done(); }
+  });
+  await new Promise(r=>setTimeout(r, 150));   // let the BLE stack settle before the next connect
+}
+
+// The chooser ("Connect to scanner" / "Add scanner…"). When a unit is already connected it stays up until the
+// user actually picks another one (a cancelled chooser changes nothing).
 export async function connect(){
   if(!navigator.bluetooth){ log("Web Bluetooth not available. Use Chrome on Android."); return; }
   if(connecting) return;
+  if(state.connected && anyBusy()){ toast("Finish or cancel the transfer first, then switch scanners.", {err:true}); return; }
   connecting = true;
   try{
+    const was = state.connected;
+    let dev;
     try{
-      setConn("connecting");
-      state.device = await navigator.bluetooth.requestDevice({
+      if(!was) setConn("connecting");
+      dev = await navigator.bluetooth.requestDevice({
         // Filter by the advertised service UUID (robust) rather than the name,
         // which rides in the scan response and isn't always seen by the name filter.
         filters:[{services:[SVC]}], optionalServices:[SVC]
       });
-    }catch(e){ setConn("disconnected"); log("Connect failed: "+e.message); return; }
+    }catch(e){ if(!was) setConn("disconnected"); log("Connect failed: "+e.message); return; }
+    await disconnectCurrent();
+    state.device = dev; rememberDevice(dev);
     await connectDevice();
+  } finally { connecting = false; }
+}
+
+// Switch to a remembered scanner without the chooser (features/switcher.js): clean disconnect of the current unit,
+// then the normal connect + auth flow. timeoutMs bounds the gatt.connect() step only (a scanner that isn't there
+// would otherwise hang for ~30 s) -> why "not-found". Resolves {ok, why}.
+export async function switchTo(device, timeoutMs){
+  if(!device) return { ok:false, why:"failed" };
+  if(connecting) return { ok:false, why:"busy" };
+  if(state.connected && anyBusy()){ toast("Finish or cancel the transfer first, then switch scanners.", {err:true}); return { ok:false, why:"busy" }; }
+  connecting = true;
+  try{
+    await disconnectCurrent();
+    state.device = device; rememberDevice(device);
+    setConn("connecting");
+    connectTimedOut = false;
+    const ok = await connectDevice(timeoutMs);
+    return { ok:!!ok, why: ok ? "" : connectTimedOut ? "not-found" : "failed" };
   } finally { connecting = false; }
 }
 
@@ -53,11 +98,16 @@ function once(target, ev, fn){
   if(s.has(fn)) return; target.addEventListener(ev, fn); s.add(fn);
 }
 
-async function connectDevice(){
+async function connectDevice(timeoutMs){
   try{
+    bumpGen();   // a new connection: any multi-part fetch started on the previous one aborts
+    if(lastDeviceId && lastDeviceId !== state.device.id) runUnitReset();   // a different scanner: drop everything the last one left
+    lastDeviceId = state.device.id;
     once(state.device, "gattserverdisconnected", onDisconnect);
     log("Connecting to "+state.device.name+"…");
-    const server = await state.device.gatt.connect();
+    let server, to = 0;
+    if(timeoutMs) to = setTimeout(()=>{ connectTimedOut = true; try{ state.device.gatt.disconnect(); }catch(e){} }, timeoutMs);
+    try{ server = await state.device.gatt.connect(); } finally { clearTimeout(to); }
     const svc = await server.getPrimaryService(SVC);
     // Phone-link authentication (docs/ble-auth.md). The AUTH characteristic's presence marks new
     // firmware; without it this is an old, unauthenticated scanner -> legacy path + warning badge.
@@ -75,6 +125,7 @@ async function connectDevice(){
         return;
       }
       sec = "auth"; secInfo = { name:r.info.name || "", kg:r.info.kg, sid:r.info.sid };
+      state.scannerId = (r.info.sid || "").toLowerCase();   // known from the AUTH read, before STATUS: keys the log cache from the first request
       log("Authenticated to "+(r.info.name || r.info.sid)+".");
     }
     state.chars.time = await svc.getCharacteristic(TIME);
@@ -124,10 +175,12 @@ async function connectDevice(){
     // TIME / GPS only to an authenticated scanner, or a legacy one the user agreed to (one-time prompt per
     // device name). Not awaited: the prompt may stay open; the connect is done either way.
     shareLocation(false);
+    return true;
   }catch(e){
     setConn("disconnected"); clearLinkSecurity(); log("Connect failed: "+e.message);
     try{ if(state.device && state.device.gatt.connected) state.device.gatt.disconnect(); }catch(_){}
   }
+  return false;
 }
 
 // Send our time + start GPS if this link may have them (see mayShareLocation). ask=true re-prompts a
@@ -153,8 +206,13 @@ function onLegacyStatus(ev){
   showRefusal(r);
 }
 
-export function onDisconnect(){ setConn("disconnected"); clearLinkSecurity(); log("Disconnected."); state.connected=false;
+export function onDisconnect(ev){
+  // A late disconnect event from a PREVIOUS unit (after switchTo moved on) must not tear down the new connection.
+  if(ev && ev.target && state.device && ev.target !== state.device) return;
+  bumpGen(); cancelTransfer("disconnected");   // reject the pending request so its caller (and xferBusy) settles
+  setConn("disconnected"); clearLinkSecurity(); log("Disconnected."); state.connected=false;
   state.scannerName = ""; $("unitName").textContent = "";
+  state.scannerId = ""; state.scannerFw = ""; state.scannerDbGen = 0;   // the next unit must never inherit these (log-cache key, live-POST meta)
   state.fleetRole = state.fleetId = state.fleetLeader = "";   // a stale fleet id must not tag the next unit's live-POST meta
   clearSightings();   // drop the in-memory per-device sighting trails for this session
   $("folBanner").style.display = "none"; $("alertBanner").style.display = "none"; state.lastDetRows = [];   // clear the alerts

@@ -8,6 +8,7 @@ import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
+import { onUnitReset } from '../unitreset.js';
 import { askConfirm, listKeys } from '../ble/auth.js';
 import { buildAddCmd } from '../ble/fleetcrypto.js?v=20261031d';
 
@@ -197,6 +198,8 @@ export async function onMemberClick(ev){
     if (await run("x:" + sid, `Released ${name}`) !== null) refreshMembers();   // the leader marks it gone at once
   }
 }
+
+onUnitReset(() => { members = []; state.fleetMembers = []; lastFlt = ""; lastPoll = 0; renderMembers(); renderFleet(); });   // another scanner: not this fleet's members
 
 // Called once from main.js: watch STATUS flt= and poll the member list while it matters.
 export function initFleet(){

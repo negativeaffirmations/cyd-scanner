@@ -6,6 +6,7 @@ import { refreshSessions, setExploreLoader } from './sessions.js';
 import { parseScanLog } from '../data/parse.js';
 import { renderDetList, setScanMode } from './detections.js';
 import { openDetail } from './detail.js';
+import { onUnitReset } from '../unitreset.js';
 
 export function openExplore(){
   $("exploreView").style.display="";
@@ -17,6 +18,7 @@ export function openExplore(){
 setExploreLoader((text, name)=>loadedExplore(parseScanLog(text), name));   // sessions.js fetches + joins a scan's parts
 let expName="";                              // name of the loaded session (state.expAll holds the rows)
 const TYPE_ORDER={"2.4":0,"5G":1,"BLE":2,"PRB":3,"154":4};
+onUnitReset(()=>{ state.expAll=[]; expName=""; $("scanViewer").innerHTML=""; $("expMsg").textContent=""; });   // Explore rows came from the previous scanner
 export function loadedExplore(rows, name){
   state.expAll = rows.map((r,i)=>(r.idx=i, r)); expName = name;   // idx = file order (chronological)
   // New session: reset only the time window to its own extent; other filters stay as the user set them.

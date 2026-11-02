@@ -37,5 +37,6 @@ export const state = {
   lastDetRows: [],      // latest live DETS snapshot, for the follower + category modals
   rids: {},             // live Remote-ID by lowercase MAC, replaced each snapshot (DETS v6 R: block)
   expAll: [],         // raw parsed rows of the loaded Explore session (never mutated in place)
+  xferBusy: 0,          // >0 while a BLE file transfer / multi-file Data action runs (presence watching pauses)
   exploreWant: false,   // populateSessions auto-loads the newest session when set
 };

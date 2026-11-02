@@ -11,6 +11,10 @@ import { state } from '../state.js';
 import { $, log, esc, toast, saveBlob } from '../util/dom.js';
 import { openMap, plotCsvText } from './map.js';
 import { bleFetch } from '../ble/transfer.js';
+import { fetchLog, cacheStatus } from '../ble/logfetch.js';
+import { onCacheChange } from '../data/logcache.js';
+import { onUnitReset } from '../unitreset.js';
+import { connGen } from '../ble/xfer.js';
 import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
@@ -34,11 +38,11 @@ const fmtSize = b=>b>=1048576 ? (b/1048576).toFixed(1)+" MB" : Math.max(1,Math.r
 
 function buildGroups(text){
   const parts=(text||"").split("\n").filter(l=>l.includes("\t")).map(r=>{
-    const [path,size,flag,first,last]=r.split("\t");
+    const [path,size,flag,first,last,fid]=r.split("\t");   // fid (fw >= 0.26.0): the file's file_id, "" when it has none
     const base=path.split("/").pop();
     const f=parseInt(first,10)||0, l=parseInt(last,10)||0;
     const start=f||nameEpoch(base), end=Math.max(l, start);
-    return {path, base, size:parseInt(size,10)||0, flag:flag||"", start, end,
+    return {path, base, size:parseInt(size,10)||0, flag:flag||"", fid:/^[0-9a-f]{8}$/.test(fid||"") ? fid : "", start, end,
             kind: base.startsWith("bg-") ? "bg" : base.startsWith("fleet-") ? "fleet" : "fg", csv: /\.csv$/i.test(base)};
   });
   const out=[];
@@ -78,6 +82,19 @@ function groupSub(g){
   if(g.flag==="current") bits.push("current");
   else if(g.flag==="latest") bits.push("latest");
   return bits.join(" · ");
+}
+// Saved-copy tag for a scan's row: "saved" when every part is cached and current, "+N KB new" when a cached
+// part grew on the device, "partly saved" when only some parts are cached. "" = nothing cached.
+function groupCache(g){
+  let full=0, fresh=0, any=0;
+  for(const p of g.parts){
+    const c=cacheStatus(p.path, p.size, p.fid);
+    if(c.st==="full") full++; else if(c.st==="part"){ any++; fresh+=c.fresh; }
+  }
+  if(fresh) return "+"+fmtSize(fresh)+" new";
+  if(full===g.parts.length) return "saved";
+  if(!full && !any) return g.parts.some(p=>cacheStatus(p.path, p.size, p.fid).st==="path") ? "older copy saved" : "";   // same name, can't prove it's the same file
+  return "partly saved";
 }
 // Joined file name: a one-part scan keeps its own name; otherwise <first part>+<n>p.jsonl.
 function groupFileName(gs, tag){
@@ -140,7 +157,7 @@ function renderList(){
     return `<label class="sessrow" title="${esc(tip)}"><input type="checkbox" data-i="${i}"${selected.has(g.key)?" checked":""}>`+
       `<span class="sessmain"><span class="sesst">${esc(groupNames(g))}</span>`+
       (groupTitle(g) ? `<span class="sessdate">${esc(groupTitle(g))}</span>` : "")+
-      `<span class="sesssub">${esc(groupSub(g))}</span></span></label>`;
+      `<span class="sesssub">${esc(groupSub(g))}${groupCache(g) ? ` · <span class="sesscache">${esc(groupCache(g))}</span>` : ""}</span></span></label>`;
   }).join("");
   box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.addEventListener("change", ()=>{
     const g=groups[+cb.dataset.i]; if(!g) return;
@@ -149,6 +166,14 @@ function renderList(){
   }));
   updateButtons();
 }
+onUnitReset(()=>{   // a different scanner is about to connect: its session list is not this one's
+  endListWait(true);
+  groups=[]; selected.clear(); state.exploreWant=false;
+  $("sessList").innerHTML='<div class="sub">\u2014 connect and refresh \u2014</div>';
+  $("expSel").innerHTML="<option>\u2014 no sessions \u2014</option>";
+  updateButtons();
+});
+onCacheChange(()=>{ if(groups.length) renderList(); });   // a fetch finished / the cache was cleared: refresh the saved tags
 export function selectAllSessions(on){ selected.clear(); if(on) groups.forEach(g=>selected.add(g.key)); renderList(); }
 function selGroups(){ return groups.filter(g=>selected.has(g.key)); }
 export function updateButtons(){
@@ -161,16 +186,24 @@ export function updateButtons(){
 }
 
 // Fetch every part of the given groups (one BLE request at a time), joined per group.
-// cmdFor(part) -> the CMD for that part (default "F:<path>" = the whole file).
-async function fetchGroups(gs, cmdFor){
+// cmdFor(part) -> a custom CMD for that part (filtered exports; fetched uncached). Default = the whole file
+// through the phone-side cache (ble/logfetch.js): a saved copy that is still current costs no transfer.
+// opts.trim: uploads drop a torn last row. The connection generation is captured here: if the scanner changes
+// (Switch scanner, reconnect) the whole action aborts instead of joining two scanners' parts.
+async function fetchGroups(gs, cmdFor, opts){
   const total=gs.reduce((s,g)=>s+g.parts.length,0);
+  const gen=connGen();
+  const alive=()=>{ if(connGen()!==gen) throw new Error("the scanner changed during the transfer"); };
   let k=0; const texts=[];
   for(const g of gs){
     const pt=[];
     for(const p of g.parts){
       k++;
-      toast("Fetching "+(total>1?"file "+k+"/"+total+" — ":"")+p.base+"…", {work:true, sticky:true});
-      pt.push(await bleFetch(cmdFor ? cmdFor(p) : "F:"+p.path, p.base));
+      const saved = !cmdFor && cacheStatus(p.path, p.size, p.fid).st==="full";
+      toast((saved?"Loading saved ":"Fetching ")+(total>1?"file "+k+"/"+total+" — ":"")+p.base+"…", {work:true, sticky:true});
+      alive();
+      pt.push(cmdFor ? await bleFetch(cmdFor(p), p.base) : (await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base, gen, trim:!!(opts && opts.trim)})).text);
+      alive();
     }
     texts.push(joinLogParts(pt));
   }
@@ -180,9 +213,10 @@ async function runBusy(what, fn){
   if(busy) return;
   if(!state.connected || !state.chars.cmd){ toast("Connect to the scanner first.", {err:true}); return; }
   busy=true; updateButtons();
+  state.xferBusy=(state.xferBusy||0)+1;   // presence watching (features/switcher.js) pauses during transfers
   try{ await fn(); }
   catch(e){ log(what+" failed: "+e.message); toast(what+" failed: "+e.message, {err:true}); }
-  finally{ busy=false; updateButtons(); }
+  finally{ busy=false; state.xferBusy--; updateButtons(); }
 }
 function needSel(){
   const gs=selGroups();
@@ -224,7 +258,7 @@ export function uploadSelectedSessions(){
   const gs=needSel(); if(!gs) return;
   runBusy("Upload", async()=>{
     for(const g of gs){
-      const [text]=await fetchGroups([g]);
+      const [text]=await fetchGroups([g], null, {trim:true});
       await uploadSessionText(text, groupFileName([g]));
     }
   });

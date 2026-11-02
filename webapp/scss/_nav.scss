@@ -23,6 +23,12 @@ $nav-h: 60px;
 .conn.up   .material-symbols-outlined { color:$color-text; }        // connected = white
 .conn.wait .material-symbols-outlined { color:#f2cc60; }            // connecting = yellow
 .conn.down .material-symbols-outlined { color:$color-text-muted; }  // no connection = gray
+// Switch-scanner button (js/features/switcher.js): beside the Bluetooth icon; dimmed until another remembered scanner is in range.
+.swbtn { display:inline-flex; align-items:center; cursor:pointer; color:$color-text; }
+.swbtn .material-symbols-outlined { font-size:20px; background:none; }
+.swbtn.disabled { opacity:.45; cursor:default; }
+.swbtn.ready .material-symbols-outlined { color:$color-src-phone; }
+.swbtn[hidden] { display:none; }
 // Phone-link security (js/ble/auth.js paintConn): authenticated keeps the normal white; old firmware
 // with no AUTH characteristic = warning tint + a small badge on the icon.
 .conn { position:relative; }

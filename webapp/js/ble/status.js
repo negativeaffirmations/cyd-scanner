@@ -6,6 +6,7 @@ import { updateScanBtn } from './commands.js';
 import { renderApCard } from '../features/wifiap.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
 import { renderCounts } from '../features/counts.js';
+import { onUnitReset } from '../unitreset.js';
 
 // Clock + location icons: two stacked source dots (blue = phone on top, purple = device below; grey when
 // that source is unavailable) and the icon tinted with the source in use. Built from the merged
@@ -38,6 +39,19 @@ function renderSourceIcons(){
                                  : gs===3 ? "no live fix · logging the last known position"
                                  : "no fix") + " · available: " + avail(gav);
 }
+
+// A different scanner is about to connect: wipe every readout the previous one filled in (unitreset.js).
+onUnitReset(()=>{
+  ["w24","w5","ble","prb","z154","uniq","susp","lk","conf","wlCnt","wlCnt2","wlHdr","wlMuted","briVal","ledVal"].forEach(id=>{ $(id).textContent = "–"; });
+  $("conf").style.color = "";
+  ["st24","st5","stble","st154"].forEach(id=>$(id).classList.remove("off"));
+  ["timeState","gpsState","db"].forEach(id=>$(id).classList.remove("on"));
+  setSrc("timeState", 0, ""); setSrc("gpsState", 0, ""); $("gpsSats").textContent = "";
+  $("sessName").textContent = "Session: \u2014"; $("unitName").textContent = "";
+  $("ledCard").style.display = "none";
+  const lb = $("lockBtn"); lb.dataset.locked = "0"; lb.textContent = "Lock display"; lb.classList.remove("danger");
+  for(const k in state.status) delete state.status[k];
+});
 
 export function onStatus(ev){
   const txt = new TextDecoder().decode(ev.target.value);

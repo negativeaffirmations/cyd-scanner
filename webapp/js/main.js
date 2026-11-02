@@ -1,7 +1,7 @@
 // Entry point: wires every DOM event listener to its handler. Loaded as <script type="module">,
 // which is deferred, so the DOM is ready by the time this runs.
 import { $, log } from './util/dom.js';
-import { connect, reconnect } from './ble/connection.js?v=20261101e';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
+import { connect, reconnect, switchTo } from './ble/connection.js?v=20261101i';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
 import { handleDevKeyHash, addPasted, forgetKey, renderKeysUI, askConfirm, answerConfirm, mayShareLocation } from './ble/auth.js';
 import { toggleScan, newSession, reloadDb, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
 import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';
@@ -20,8 +20,10 @@ import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
 import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';
-import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261101e';   // new module: versioned so it loads fresh with main.js
+import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261101i';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
+import { initCacheUI } from './features/cacheui.js';
+import { initSwitcher } from './features/switcher.js';
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -124,6 +126,8 @@ $("fltLeaveBtn").onclick     = fleetLeave;
 $("fltClientBtn").onclick    = fleetMakeClient;
 $("fltMembers").addEventListener("click", onMemberClick);
 initFleet();
+initCacheUI();   // Data page: saved-log cache readout + Clear button
+initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + Settings card (features/switcher.js)
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
@@ -175,7 +179,7 @@ $("mapFiltDlg").addEventListener("click", e=>{ if(e.target === $("mapFiltDlg")) 
 $("mapFile").addEventListener("change", e=>{
   const f=e.target.files[0]; if(!f) return;
   const rd=new FileReader();
-  rd.onload=()=>plotCsvText(rd.result, f.name);
+  rd.onload=()=>plotCsvText(rd.result, f.name, true);   // true: a local file, kept when the scanner changes
   rd.readAsText(f);
   e.target.value="";   // allow re-loading the same file
 });

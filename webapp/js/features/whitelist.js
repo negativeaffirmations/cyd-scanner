@@ -2,12 +2,17 @@
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, log, esc } from '../util/dom.js';
+import { onUnitReset } from '../unitreset.js';
+import { reqBusy } from '../ble/xfer.js';
 
+onUnitReset(()=>{ $("wlList").innerHTML=""; });   // the whitelist belongs to the scanner it was read from
 export async function wlCmd(c, msg){
   try{ await state.chars.cmd.writeValue(enc.encode(c)); if(msg) log(msg); }
   catch(e){ log("Whitelist command failed: "+e.message); }
 }
-export function refreshWhitelist(){ state.dl={mode:null,expect:0,got:0,chunks:[],name:"",sink:"save"}; return wlCmd("Y"); }
+export function refreshWhitelist(){
+  if(reqBusy()) return;   // a transfer is in flight; the list refreshes on the next open
+  state.dl={mode:null,expect:0,got:0,chunks:[],name:"",sink:"save",waiting:true,lastRx:Date.now()}; return wlCmd("Y"); }
 export function populateWhitelist(text){
   const rows=(text||"").split("\n").filter(l=>l.trim());
   $("wlHdr").textContent=rows.length;
