@@ -1,5 +1,13 @@
 # Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `0bd3fe9` = trunk + webapp)
 
+## PAUSED — 2026-11-01 late (owner usage limit; resume after 10:30)
+- Commits 9c13e85 (phone log cache) / d6e43d4 (fw 0.26.0 tail fetch) / d06c35d (scanner switching) are LOCAL, unpushed,
+  NOT flashed/deployed. Reviewer found REV-001..017 (P1: switch mid-fetch mixes scanners' data; rawFetch/bleFetch overlap
+  → stuck promise). The fixer was STOPPED mid-fix: uncommitted firmware edits in host_log.cpp/.h + logfilter.h (likely
+  REV-010/011/012), webapp fixes NOT started. Resume: review the uncommitted diff, finish REV-001..017 (list in the
+  session transcript / re-run reviewer), build, then ASK the owner before flashing/deploying (owner retracted the
+  no-ask permission). scan-analyzer was told a 0.26.0 deploy was coming — tell it the deploy is on hold.
+
 ## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix 0.24.1 FLASHED + VERIFIED
 - **NEWER (late 2026-11-01, 3 local commits on `fleet-mode`, NOTHING flashed / pushed / deployed): log cache + tail fetch +
   switch scanner.** (1) webapp phone-side IndexedDB log cache (`data/logcache.js`, `ble/logfetch.js`, `features/cacheui.js`;
