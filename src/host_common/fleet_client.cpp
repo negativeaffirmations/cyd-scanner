@@ -6,6 +6,7 @@
 //   JOINED  first tagged Sync arrived; MStat every 2 s; leader lost after 15 s without a Sync
 // After a session ends the next Hello goes out from a fresh random MAC (docs §16.4).
 #include <Arduino.h>
+#include <Preferences.h>
 #include <new>
 #include "fleet.h"
 #include "fleet_internal.h"
@@ -94,18 +95,36 @@ struct ClientSt {
 constexpr uint32_t LOG_RESEND_MS = 600, LOG_RESEND_MAX_MS = 5000, LOG_IDLE_POLL_MS = 500, LOG_BYTES_PER_S = 8192;
 constexpr size_t   LOG_MIN_ROOM = 520;    // a full 512 B log line must fit one frame (false on a v1 / 250 B link: no forwarding)
 constexpr int      LOG_POS = 10;          // files tracked: live fg + bg + the 8 most recent rotated ones
-enum AnchorSt : uint8_t { A_NONE = 0, A_META, A_TS };   // after (re)joining: this file's meta line, then timesync line, re-sent
+enum AnchorSt : uint8_t { A_NONE = 0, A_META, A_TS, A_FL };   // after (re)joining: this file's meta line, timesync line, then its last fleet evt line, re-sent
 struct LogPos {
   char     id[9];                      // file_id ("" = free slot)
   uint32_t ackOff, ackRow;             // acked position: byte offset of the next unsent line + its 1-based row
   uint32_t metaLen;                    // line 1 when it is the meta line (recorded as it is acked), else 0
   uint32_t tsOff, tsRow, tsLen;        // the first timesync line (tsLen 0 = none acked yet)
+  uint32_t flOff, flRow, flLen;        // the LAST "evt":"fleet" line carrying a fleet_id (flLen 0 = none acked yet)
   uint32_t lastSz, stamp;              // size at the last torn-tail poll / LRU stamp
   uint8_t  anchor, torn;               // AnchorSt for the current session / unchanged torn-tail polls
   bool     finished;                   // a rotated file fully forwarded (or abandoned): never polled again
 };
+// Carry-over across a reboot (fw 0.27.0): the acked positions of the most recent not-fully-forwarded files (this boot's
+// plus still-pending carried ones), kept in NVS "cydscan"/"fltcarry" so the NEXT boot forwards what this one did not. At
+// most CARRY_MAX are stored and CARRY_LOAD loaded; written when the file set / a path changes and otherwise at most
+// every CARRY_PUT_MS (flash wear: a few writes/min while rows flow, none when idle).
+constexpr int      CARRY_MAX = 3, CARRY_LOAD = 2;
+constexpr uint8_t  CARRY_VER = 1;
+constexpr uint32_t CARRY_PUT_MS = 30000, CARRY_CHK_MS = 1000;
+struct CarryEnt {
+  char     id[9], path[48];
+  uint32_t ackOff, ackRow, metaLen, tsOff, tsRow, tsLen, flOff, flRow, flLen;
+};
+struct CarryRec { uint8_t ver, n; CarryEnt e[CARRY_MAX]; };
 struct LogFwd {
   LogPos   pos[LOG_POS];
+  CarryRec saved;                      // what NVS holds (zero-padded, so memcmp compares it)
+  CarryEnt carry[CARRY_LOAD];          // previous-boot files still to drain / verify (id "" = empty)
+  uint32_t savedMs, carryChkMs;
+  uint32_t carryLoaded, carryGone, carryDone;
+  uint32_t inflFlOff, inflFlRow, inflFlLen;   // last fleet evt line found in the in-flight data frame
   uint32_t clock;
   bool     infl, inflAnchor, warnedV1;   // a frame awaits its LogAck
   char     inflId[9];
@@ -424,10 +443,15 @@ void sendLogFrame(const char* id, uint32_t row, uint32_t off, uint32_t len, uint
   W->inflOff = off; W->inflLen = len; W->inflLines = lines; W->inflRow = row;
 }
 
-bool lineHasTimesync(const uint8_t* ln, size_t ll) {
-  static const char k[] = "\"evt\":\"timesync\"";
-  for (size_t i = 0; i + sizeof(k) - 1 <= ll; i++) if (ln[i] == '"' && !memcmp(ln + i, k, sizeof(k) - 1)) return true;
+bool lineHas(const uint8_t* ln, size_t ll, const char* k, size_t kl) {
+  for (size_t i = 0; i + kl <= ll; i++) if (ln[i] == '"' && !memcmp(ln + i, k, kl)) return true;
   return false;
+}
+bool lineHasTimesync(const uint8_t* ln, size_t ll) { static const char k[] = "\"evt\":\"timesync\""; return lineHas(ln, ll, k, sizeof(k) - 1); }
+// A fleet event line that names its session (join / plan / start ...): the anchor that keeps a file's tail attributed to its fleet.
+bool lineHasFleetEvt(const uint8_t* ln, size_t ll) {
+  static const char k[] = "\"evt\":\"fleet\"", k2[] = "\"fleet_id\":";
+  return lineHas(ln, ll, k, sizeof(k) - 1) && lineHas(ln, ll, k2, sizeof(k2) - 1);
 }
 
 // Make progress on one file. True = it sent a frame or changed state (the round is over); false = idle.
@@ -435,12 +459,14 @@ bool pumpFile(LogFwd* W, LogPos* P, const char* path, bool live, size_t room) {
   uint8_t* body = g_fwdBuf + sizeof(LogRowsHdr);
   uint32_t sz = 0;
   if (P->anchor == A_META && !P->metaLen) P->anchor = A_TS;
-  if (P->anchor == A_TS && !P->tsLen) P->anchor = A_NONE;
-  if (P->anchor != A_NONE) {                                         // re-send what the leader needs to date this file's rows
-    const bool meta = P->anchor == A_META;
-    const uint32_t off = meta ? 0 : P->tsOff, len = meta ? P->metaLen : P->tsLen, row = meta ? 1 : P->tsRow;
+  if (P->anchor == A_TS && !P->tsLen) P->anchor = A_FL;
+  if (P->anchor == A_FL && !P->flLen) P->anchor = A_NONE;
+  if (P->anchor != A_NONE) {                                         // re-send what the leader needs to date / attribute this file's rows
+    const bool meta = P->anchor == A_META, ts = P->anchor == A_TS;
+    const uint32_t off = meta ? 0 : ts ? P->tsOff : P->flOff, len = meta ? P->metaLen : ts ? P->tsLen : P->flLen,
+                   row = meta ? 1 : ts ? P->tsRow : P->flRow;
     if (len > room || logFwdRead(path, off, body, len, &sz) != (int)len || body[len - 1] != '\n') {
-      P->anchor = meta ? A_TS : A_NONE;                              // unreadable / too big: skip this anchor
+      P->anchor = meta ? A_TS : ts ? A_FL : A_NONE;                  // unreadable / too big: skip this anchor
       return true;
     }
     sendLogFrame(P->id, row, off, len, 1, true);
@@ -453,7 +479,7 @@ bool pumpFile(LogFwd* W, LogPos* P, const char* path, bool live, size_t room) {
   }
   size_t used = 0;
   uint32_t lines = 0;
-  W->inflMetaLen = W->inflTsLen = 0;
+  W->inflMetaLen = W->inflTsLen = W->inflFlLen = 0;
   while (used < (size_t)n && lines < 255) {                          // whole, plausible lines only
     const uint8_t* ln = body + used;
     const uint8_t* nl = (const uint8_t*)memchr(ln, '\n', n - used);
@@ -463,6 +489,9 @@ bool pumpFile(LogFwd* W, LogPos* P, const char* path, bool live, size_t room) {
     if (P->ackRow == 1 && lines == 0 && !P->metaLen && ll > 13 && !memcmp(ln, "{\"evt\":\"meta\"", 13)) W->inflMetaLen = (uint32_t)ll;
     if (!P->tsLen && !W->inflTsLen && lineHasTimesync(ln, ll)) {
       W->inflTsOff = P->ackOff + (uint32_t)used; W->inflTsRow = P->ackRow + lines; W->inflTsLen = (uint32_t)ll;
+    }
+    if (lineHasFleetEvt(ln, ll)) {                                   // keep the LAST one in the frame
+      W->inflFlOff = P->ackOff + (uint32_t)used; W->inflFlRow = P->ackRow + lines; W->inflFlLen = (uint32_t)ll;
     }
     used += ll; lines++;
   }
@@ -493,6 +522,102 @@ bool pumpFile(LogFwd* W, LogPos* P, const char* path, bool live, size_t room) {
   return true;
 }
 
+// ---- carry-over of the previous boot's unforwarded tail (fw 0.27.0) ----
+bool carryIdOk(const char* id) {
+  for (int i = 0; i < 8; i++) if (!isxdigit((unsigned char)id[i]) || isupper((unsigned char)id[i])) return false;
+  return id[8] == 0;
+}
+
+void carryLoad() {
+  LogFwd* W = g_lf;
+  W->saved.ver = CARRY_VER;
+  Preferences p;
+  if (!p.begin("cydscan", false)) return;
+  CarryRec r;
+  const bool ok = p.getBytesLength("fltcarry") == sizeof(r) && p.getBytes("fltcarry", &r, sizeof(r)) == sizeof(r);
+  p.end();
+  if (!ok || r.ver != CARRY_VER || r.n > CARRY_MAX) return;
+  W->saved = r;
+  int k = 0;
+  for (int i = 0; i < r.n && k < CARRY_LOAD; i++) {
+    CarryEnt c = r.e[i];
+    c.path[sizeof(c.path) - 1] = 0;
+    if (!carryIdOk(c.id) || strncmp(c.path, "/logs/", 6) || c.ackRow < 1) continue;
+    W->carry[k++] = c;
+    W->carryLoaded++;
+  }
+}
+
+// Verify one carried file the first time we are joined (the SD is up) and register its position. False = SD not ready.
+bool carryActivate(LogFwd* W, CarryEnt& c) {
+  char path[48];
+  snprintf(path, sizeof(path), "%s", c.path);
+  uint32_t sz = 0;
+  const int r = logFwdFind(path, sizeof(path), c.id, c.ackOff, &sz);
+  if (r < 0) return false;
+  if (r == 0 || sz <= c.ackOff) {                                    // deleted / cap-evicted, or everything was acked already
+    Serial.printf("[FLT] client: carried-over log %s %s\n", c.id, r == 0 ? "is gone (dropped)" : "was fully forwarded");
+    if (r == 0) W->carryGone++; else W->carryDone++;
+    c.id[0] = 0;
+    return true;
+  }
+  LogPos* P = findPos(W, c.id, true);
+  if (!P) { c.id[0] = 0; return true; }
+  snprintf(c.path, sizeof(c.path), "%s", path);                      // the live path (renamed on time sync since)
+  P->ackOff = c.ackOff; P->ackRow = c.ackRow; P->metaLen = c.metaLen;
+  P->tsOff = c.tsOff; P->tsRow = c.tsRow; P->tsLen = c.tsLen; P->flOff = c.flOff; P->flRow = c.flRow; P->flLen = c.flLen;
+  P->anchor = P->ackOff ? A_META : A_NONE;                           // meta + timesync + fleet line first, then the tail
+  Serial.printf("[FLT] client: carrying over %s (%s), %lu B unforwarded from row %lu\n", c.id, c.path,
+                (unsigned long)(sz - c.ackOff), (unsigned long)c.ackRow);
+  return true;
+}
+
+LogPos* findPosQuiet(LogFwd* W, const char* id) {
+  for (LogPos& q : W->pos) if (q.id[0] && !strcmp(q.id, id)) return &q;
+  return nullptr;
+}
+
+// ~1/s: keep NVS in step with the acked positions (this boot's files first, then still-pending carried ones).
+void carryPersist() {
+  LogFwd* W = g_lf;
+  const uint32_t now = millis();
+  if (!W || now - W->carryChkMs < CARRY_CHK_MS) return;
+  W->carryChkMs = now;
+  CarryRec r;
+  memset(&r, 0, sizeof(r));
+  r.ver = CARRY_VER;
+  auto add = [&](const char* id, const char* path, const CarryEnt* own) {
+    if (r.n >= CARRY_MAX || !id[0]) return;
+    for (int i = 0; i < r.n; i++) if (!strcmp(r.e[i].id, id)) return;
+    const LogPos* P = findPosQuiet(W, id);
+    if (P && P->finished) return;
+    CarryEnt& c = r.e[r.n++];
+    memcpy(c.id, id, 9);
+    snprintf(c.path, sizeof(c.path), "%s", path);
+    c.ackRow = 1;
+    if (P) {
+      c.ackOff = P->ackOff; c.ackRow = P->ackRow; c.metaLen = P->metaLen; c.tsOff = P->tsOff; c.tsRow = P->tsRow;
+      c.tsLen = P->tsLen; c.flOff = P->flOff; c.flRow = P->flRow; c.flLen = P->flLen;
+    } else if (own) {
+      const CarryEnt o = *own; memcpy(c.id, o.id, 9);
+      c.ackOff = o.ackOff; c.ackRow = o.ackRow; c.metaLen = o.metaLen; c.tsOff = o.tsOff; c.tsRow = o.tsRow;
+      c.tsLen = o.tsLen; c.flOff = o.flOff; c.flRow = o.flRow; c.flLen = o.flLen;
+    }
+  };
+  FwdFile list[10];
+  const int nf = logFwdList(list, 10);
+  for (int k = 0; k < nf; k++) add(list[k].id, list[k].path, nullptr);
+  for (const CarryEnt& c : W->carry) add(c.id, c.path, &c);
+  if (!memcmp(&r, &W->saved, sizeof(r))) return;
+  bool sameSet = r.n == W->saved.n;                                  // same files + paths: only progress moved
+  for (int i = 0; sameSet && i < r.n; i++) sameSet = !strcmp(r.e[i].id, W->saved.e[i].id) && !strcmp(r.e[i].path, W->saved.e[i].path);
+  if (sameSet && now - W->savedMs < CARRY_PUT_MS) return;           // a new / rotated / renamed file is written at once
+  Preferences p;
+  if (!p.begin("cydscan", false)) return;
+  if (p.putBytes("fltcarry", &r, sizeof(r)) == sizeof(r)) { W->saved = r; W->savedMs = now; }
+  p.end();
+}
+
 // Called from tick() while JOINED. Cheap when idle (a few SD opens per LOG_IDLE_POLL_MS).
 void pumpLog() {
   LogFwd* W = g_lf;
@@ -515,6 +640,18 @@ void pumpLog() {
   FwdFile list[10];
   const int nf = logFwdList(list, 10);
   bool did = false;
+  for (CarryEnt& c : W->carry) {                                     // the previous boot's tail goes first
+    if (!c.id[0] || did) continue;
+    LogPos* P = findPosQuiet(W, c.id);
+    if (!P) {
+      if (!carryActivate(W, c)) { W->nextMs = now + 2000; return; }  // SD not ready: try again shortly
+      P = c.id[0] ? findPosQuiet(W, c.id) : nullptr;
+      if (!P) continue;
+    }
+    P->stamp = ++W->clock;
+    did = pumpFile(W, P, c.path, false, room);
+    if (P->finished) { Serial.printf("[FLT] client: carried-over log %s forwarded\n", c.id); W->carryDone++; c.id[0] = 0; }
+  }
   for (int k = 0; k < nf && !did; k++) {                             // live streams first, then this boot's rotated files
     LogPos* P = findPos(W, list[k].id, true);
     if (!P || P->finished) continue;
@@ -537,12 +674,13 @@ void onLogAck(const Rx& f) {
   if (!P) return;
   if (W->inflAnchor) {
     W->anchorsSent++;
-    P->anchor = P->anchor == A_META ? A_TS : A_NONE;
+    P->anchor = P->anchor == A_META ? A_TS : P->anchor == A_TS ? A_FL : A_NONE;
     W->nextMs = now;
     return;
   }
   if (W->inflMetaLen) P->metaLen = W->inflMetaLen;                   // remember the anchors for the next join (same boot)
   if (W->inflTsLen && !P->tsLen) { P->tsOff = W->inflTsOff; P->tsRow = W->inflTsRow; P->tsLen = W->inflTsLen; }
+  if (W->inflFlLen) { P->flOff = W->inflFlOff; P->flRow = W->inflFlRow; P->flLen = W->inflFlLen; }
   P->ackOff += W->inflLen; P->ackRow += W->inflLines; P->torn = 0;
   W->rowsFwd += W->inflLines; W->frames++;
   W->nextMs = now + W->inflLen * 1000UL / LOG_BYTES_PER_S;           // ~8 KB/s ceiling
@@ -564,7 +702,7 @@ void begin() {
   if (!g_fwdBuf) g_fwdBuf = (uint8_t*)malloc(FLEET_V2_MAX);
   if (!g_sent || !g_fwdBuf) Serial.println("[FLT] client: no memory for forwarding (rows stay local)");
   if (!g_lf) g_lf = (LogFwd*)calloc(1, sizeof(LogFwd));
-  if (g_lf) g_lf->retryMs = LOG_RESEND_MS;
+  if (g_lf) { g_lf->retryMs = LOG_RESEND_MS; carryLoad(); }
   else Serial.println("[FLT] client: no memory for log forwarding");
   buildHops(false);                                                // the boot MAC is already fresh: no remac needed
 }
@@ -585,6 +723,7 @@ void onFrame(const Rx& f) {
 void tick() {
   if (!C) return;
   const uint32_t now = millis();
+  carryPersist();
   if (C->pendingCh && !webshare::active()) {                       // a channel move deferred while the AP was up
     uint8_t ch = C->pendingCh;
     C->pendingCh = 0;
@@ -654,6 +793,15 @@ void printStatus() {
     Serial.printf("[FLT] client: log fwd %lu lines in %lu frames, %lu resends, %lu skipped, %lu anchors%s\n",
                   (unsigned long)g_lf->rowsFwd, (unsigned long)g_lf->frames, (unsigned long)g_lf->resends,
                   (unsigned long)g_lf->skipped, (unsigned long)g_lf->anchorsSent, g_lf->infl ? " (frame in flight)" : "");
+    Serial.printf("[FLT] client: carry-over (NVS fltcarry, %u file(s) saved): loaded %lu, forwarded %lu, gone %lu\n",
+                  (unsigned)g_lf->saved.n, (unsigned long)g_lf->carryLoaded, (unsigned long)g_lf->carryDone,
+                  (unsigned long)g_lf->carryGone);
+    for (const CarryEnt& c : g_lf->carry) {
+      if (!c.id[0]) continue;
+      const LogPos* P = findPosQuiet(g_lf, c.id);
+      Serial.printf("[FLT]   carried %s %s %s from row %lu off %lu\n", c.id, c.path, P ? "draining" : "pending verify",
+                    (unsigned long)(P ? P->ackRow : c.ackRow), (unsigned long)(P ? P->ackOff : c.ackOff));
+    }
     FwdFile list[10];
     const int nf = logFwdList(list, 10);
     for (const LogPos& q : g_lf->pos) {

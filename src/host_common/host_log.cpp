@@ -1371,6 +1371,48 @@ int logFwdRead(const char* path, uint32_t off, uint8_t* buf, size_t cap, uint32_
   return n > 0 ? n : 0;
 }
 
+// Does `path`'s first line (its meta line) carry file_id `id`? *size = the file size.
+static bool headHasId(const char* path, const char* id, uint32_t* size) {
+  File f = SD.open(path, "r");
+  if (!f) return false;
+  if (size) *size = (uint32_t)f.size();
+  char b[384];
+  const int n = f.read((uint8_t*)b, sizeof(b) - 1);
+  f.close();
+  if (n < 20) return false;
+  b[n] = 0;
+  char* nl = strchr(b, '\n');
+  if (!nl) return false;                                             // no complete first line in the buffer: don't trust it
+  *nl = 0;
+  char key[28];
+  snprintf(key, sizeof(key), "\"file_id\":\"%s\"", id);
+  return !strncmp(b, "{\"evt\":\"meta\"", 13) && strstr(b, key);
+}
+
+int logFwdFind(char* path, size_t cap, const char* id, uint32_t minSize, uint32_t* size) {
+  if (!g_sdOk) return -1;
+  if (path[0] && headHasId(path, id, size)) return 1;
+  const bool bg = !strncmp(path, "/logs/bg-", 9);                    // a rename keeps the stream kind (sess-/date vs bg-)
+  File dir = SD.open("/logs");
+  if (!dir) return 0;
+  int seen = 0, opens = 0, found = 0;
+  for (File e = dir.openNextFile(); e && seen < 600 && opens < 80 && !found; e = dir.openNextFile()) {
+    seen++;
+    char full[48];
+    const bool isDir = e.isDirectory();
+    const uint32_t sz = (uint32_t)e.size();
+    snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
+    e.close();
+    const size_t l = strlen(full);
+    if (isDir || sz < minSize || sz == 0 || l < 7 || strcasecmp(full + l - 6, ".jsonl") ||
+        !strncasecmp(full, "/logs/fleet-", 12) || (!strncasecmp(full, "/logs/bg-", 9)) != bg) continue;
+    opens++;
+    if (headHasId(full, id, size)) { snprintf(path, cap, "%s", full); found = 1; }
+  }
+  dir.close();
+  return found;
+}
+
 // LEADER side. The fleet file is created on the first forwarded line (one per leader boot), named by its own NVS
 // counter, and renamed + anchored on time sync like fg/bg (renameStreamOnSync). Counter names never repeat, but a
 // wiped NVS could reuse one: skip any that exist (FILE_WRITE would truncate it).

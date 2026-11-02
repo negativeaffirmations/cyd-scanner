@@ -1110,8 +1110,8 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   are acked** (no scan, REV-005); after every (re)join each file with `ackOff > 0` first re-sends those two lines flagged as
   anchors, then continues at `ackOff`. A frame is rebuilt from the file on every (re)send; unacked frames are resent after
   `retryMs` = 600 ms doubling to 5 s, reset on an ack (REV-006). Only complete lines starting with `{` go out; a leading
-  bad/oversized line is skipped and counted. Nothing touches the SD while a phone transfer runs. Reboots abandon the backlog
-  (the member's own card has it; the previous boot's file is not forwarded).
+  bad/oversized line is skipped and counted. Nothing touches the SD while a phone transfer runs. A reboot's backlog is carried
+  over (see "Carry-over across a reboot" below, fw 0.27.0).
 - **Leader (`fleet_leader.cpp` + `host_log.cpp`):** `onLogRows` drops a frame un-acked when the tag/seq fails, a line is not a
   `{"` object, or the line count != `nLines`; otherwise `fleetLogStore()` appends every line whose `row >= nextRow` -- anchors
   too, so an anchor re-sent on a rejoin is not stored twice (REV-008); only data rows advance `nextRow` -- then `LogAck`.
@@ -1132,6 +1132,24 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   imported unversioned: an old cached copy only lacks the fix (the API is unchanged), so no main.js wiring change was needed;
   the main.js / style.css tokens are bumped.
 - **A forwarded `devpos` line** carries its own `"scanner"` too (same sid as the inserted one; last key wins in JSON parsers).
-- **Open:** a reboot abandons the unforwarded tail of the previous boot's file; a timesync line appended to an already-finished
+- **Anchors (fw 0.27.0):** besides the meta and first timesync line, the client records the LAST `"evt":"fleet"` line that
+  carries a `fleet_id` (`LogPos.flOff/flRow/flLen`, taken from acked frames) and re-sends it as the third anchor
+  (`A_META -> A_TS -> A_FL`) after every (re)join, so a file's tail stays attributed to its fleet session on the server.
+- **Carry-over across a reboot (fw 0.27.0):** `carryPersist()` (client `tick()`, checked 1/s) mirrors the acked positions of
+  the most recent not-fully-forwarded files (this boot's list in `logFwdList` order, then still-pending carried ones; `finished`
+  ones dropped; max `CARRY_MAX` = 3) into NVS blob `cydscan`/`fltcarry` (`CarryRec`, ver 1: per file `{id, path, ackOff, ackRow,
+  metaLen, tsOff/tsRow/tsLen, flOff/flRow/flLen}`, ~0.3 KB). Written immediately when the file set or a path changes (a new
+  boot's file, a rotation, the sync rename) and otherwise at most every 30 s (`CARRY_PUT_MS`) -- a few writes/min while rows
+  flow, none when idle. `carryLoad()` (client `begin()`) takes the first `CARRY_LOAD` = 2 entries. The first `pumpLog()` after
+  a join runs `carryActivate()` per entry: `logFwdFind()` opens `path` and checks line 1 is a `meta` whose `file_id` equals the
+  stored one; if not (sync rename) it scans `/logs/*.jsonl` (same stream kind, size >= ackOff, <= 80 opens / 600 entries)
+  for it. Not found -> dropped (`carryGone`); `size <= ackOff` -> already forwarded, dropped (`carryDone`); SD not ready ->
+  retried in 2 s. Otherwise the position is registered in the normal `LogPos` table with `anchor = A_META` and the tail is
+  forwarded BEFORE this boot's files, as for a rejoin (meta -> timesync -> fleet line -> rows from `ackRow`). The persisted
+  ackOff can lag the real one by <= 30 s: the leader dedups by `row < nextRow` (same leader boot) and a new leader file just
+  stores them (server dedups by content). No wire change, `FLEET_PROTO_VERSION` stays 3: the leader's per-member table keeps
+  4 origin files (LRU) and creates a record for the old `file_id` on the first frame. Serial `fleet` (client) prints the
+  carry-over summary and each carried file's state.
+- **Open:** a timesync line appended to an already-finished
   rotated file (renameSessionOnSync) is not forwarded; a member removed and re-enrolled starts a fresh record; leader reboot ->
   new fleet file, and a client continues from its acked offsets (earlier rows live in the previous leader file).

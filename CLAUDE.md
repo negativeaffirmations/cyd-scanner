@@ -814,7 +814,16 @@ to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` on sync, **no lead
 `"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`). Fleet files
 are epoch-only in exports (no ms windowing / backfill / tail pruning; forwarded member meta kept). Web: `parse.js` keys
 timesync anchors by `ofile` and `joinLogParts` passes `ofile` lines through untouched; the Data page lists `fleet-` files as a
-"Fleet" scan kind. Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
+"Fleet" scan kind; ticking a leader's own scan there auto-includes its time-overlapping Fleet group (tag "+ Fleet", Fleet row
+"included"): Download saves it as a SECOND file, Upload POSTs it as its OWN body, Map plots both (`features/sessions.js`;
+Delete never auto-includes). Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
+**fw 0.27.0 carry-over:** the client persists the acked positions of its most recent not-fully-forwarded files (≤ 3; this boot's
++ pending carried ones) in NVS `cydscan`/`fltcarry` (`CarryRec`: path, file_id, ackOff/ackRow, meta/timesync/last-fleet-evt anchor
+offsets; written at once when the file set or a path changes, else ≤ every 30 s), and after the next boot joins it verifies each
+(≤ 2: `logFwdFind` = line-1 `file_id`, path first then a bounded `/logs` scan for a sync-renamed copy; gone / fully acked ->
+dropped) and drains the remainder BEFORE this boot's files, re-sending meta, timesync and the file's LAST `"evt":"fleet"` line
+carrying a `fleet_id` as anchors first (the fleet-line anchor also rides every ordinary rejoin). No protocol change (fleet proto
+stays v3: the leader's per-member 4-file table takes the old `file_id`).
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
 a member's role at runtime (§20.1).
 
