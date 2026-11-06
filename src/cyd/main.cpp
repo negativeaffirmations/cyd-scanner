@@ -17,12 +17,14 @@
 #include <time.h>
 #include <algorithm>
 #include <ArduinoJson.h>
+#include <esp_bt.h>
 #include <TFT_eSPI.h>
 #include <qrcode.h>
 #include "pins.h"
 #include "link_protocol.h"
 #include "../host_common/phone.h"
 #include "../host_common/devkey.h"
+#include "../host_common/fleet.h"
 #include "../host_common/webshare.h"
 #include "../host_common/sigdb.h"
 #include "../host_common/whitelist.h"
@@ -144,7 +146,8 @@ enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCA
               SCR_WHITELIST, SCR_WLADD, SCR_WLRULE,
               SCR_SCANROW, SCR_SCANDETAIL, SCR_SCANCONFIRM, SCR_SCANFILTER,
               SCR_MENUCAT, SCR_MENUCATDETAIL,
-              SCR_PHONEKEY, SCR_REKEYCONFIRM };
+              SCR_PHONEKEY, SCR_REKEYCONFIRM,
+              SCR_FLEET, SCR_FLEETLEAVE, SCR_FLEETENTER };   // fleet mode (docs/fleet-mode.md §2): FLEET is the root while fltrole=1
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -163,7 +166,7 @@ static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int HOME_ICONS = 2;
 static constexpr int HOME_ICON_R = 11, HOME_ICON_CY = 44;  // radius + vertical centre on the title line
                                                            // (down from the status-bar line at y=21 for padding)
-static constexpr int SET_N  = 4;  // Calibrate Touch / Brightness / Phone key / Back
+static constexpr int SET_N  = 5;  // Calibrate Touch / Brightness / Phone key / Fleet client (Leave fleet) / Back
 static const char* kScanItems[] = { "Scanner", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
 
@@ -357,6 +360,12 @@ static void iconWifi(int x, int y, uint16_t c) {  // fan of arcs + node
   tft.drawCircleHelper(cx, cy, 7, 0x3, c);
   tft.drawCircleHelper(cx, cy, 10, 0x3, c);
 }
+static void iconFleet(int x, int y, uint16_t c) {  // two linked nodes (replaces the phone icon in fleet mode)
+  tft.fillCircle(x + 3, y + 10, 3, c);
+  tft.fillCircle(x + 15, y + 4, 3, c);
+  tft.drawLine(x + 3, y + 10, x + 15, y + 4, c);
+  tft.drawLine(x + 3, y + 11, x + 15, y + 5, c);
+}
 static void iconNoConn(int x, int y, uint16_t c) {  // circle with a slash
   int cx = x + 7, cy = y + 7;
   tft.drawCircle(cx, cy, 6, c);
@@ -452,7 +461,11 @@ static void drawStatusBar() {
   tft.drawString(t, 4, 4, 2);
   // phone connection icon (right) + C5-link status dot to its right
   int ix = W - 30;
-  if (webshare::active())      iconWifi(ix, 3, TFT_CYAN);
+  if (fleet::isClient()) {                                     // fleet glyph: grey = searching, green = joined (authenticated session)
+    fleet::Ui fu; fleet::uiSnapshot(fu);
+    iconFleet(ix, 3, fu.joined ? TFT_GREEN : 0x7BEF);
+  }
+  else if (webshare::active()) iconWifi(ix, 3, TFT_CYAN);
   else if (phone::connected()) iconBle(ix + 2, 3, phone::authed() ? TFT_BLUE : TFT_LIGHTGREY);  // grey until the phone proves the key
   else                         iconNoConn(ix, 3, TFT_DARKGREY);
   tft.fillCircle(W - 8, 10, 4, g_linkOk ? TFT_GREEN : TFT_RED);  // C5 link up/down
@@ -668,7 +681,8 @@ static void drawBodyButtonN(int i, int n, const char* label, uint16_t fill, bool
 
 // Body buttons (y76..101): START/STOP the scan · PAUSE/RESUME the list view · list FILTER · NEW session.
 static void drawScanButtons() {
-  drawBodyButtonN(0, 4, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
+  if (fleet::isClient()) drawBodyButtonN(0, 4, "SCAN ON", 0x2104, false);   // forced on: not a control
+  else drawBodyButtonN(0, 4, g_scanActive ? "STOP" : "START", g_scanActive ? TFT_MAROON : TFT_DARKGREEN, false);
   drawBodyButtonN(1, 4, g_viewFrozen ? "RESUME" : "PAUSE", g_viewFrozen ? TFT_BLUE : UI_ACCENT, false);
   drawBodyButtonN(2, 4, "FILTER", UI_ACCENT, g_lvType != 0x1F || g_lvThreat);
   drawBodyButtonN(3, 4, "NEW SES", UI_ACCENT, false);
@@ -684,11 +698,12 @@ static void drawScanInfo() {
   tft.setTextDatum(TL_DATUM);
   char buf[48];
   // Line 1 (y44): active session name (left) + unique-device count (right).
-  char sb[32]; sessBase(g_fg, sb, sizeof(sb));  // the scanner screen always logs to the fg stream
+  const LogStream& ls = fleet::isClient() ? g_bg : g_fg;  // the scanner screen logs to fg; a fleet client stays on bg
+  char sb[32]; sessBase(ls, sb, sizeof(sb));
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(buf, sizeof(buf), "Sess: %s", sb);
   tft.drawString(buf, 4, 44, 1);
-  snprintf(buf, sizeof(buf), "U:%lu", (unsigned long)g_fg.uniqCount);
+  snprintf(buf, sizeof(buf), "U:%lu", (unsigned long)ls.uniqCount);
   tft.setTextDatum(TR_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(buf, tft.width() - 4, 44, 1);
@@ -1134,7 +1149,9 @@ static int homeIconTapped() {
 
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top. Phone Link and
 // Settings are the two title-bar icons (phone right, cog left); the list holds just Scan.
+static void drawFleet();  // fleet screen, below
 static void drawMenu() {
+  if (fleet::isClient()) { g_screen = SCR_FLEET; drawFleet(); return; }   // the fleet screen is the root in fleet mode
   drawListMenu("COINTEL-FLO", kMenuItems, MENU_N, g_menuSel);
   // Recolor the HOME title to the logo magenta (#AA00AA); overdrawn at the same pos/font so the
   // opaque-background redraw cleanly replaces drawListMenu's default cyan. HOME only.
@@ -1156,7 +1173,8 @@ static void drawMenu() {
 static void drawSettings() {
   char bright[24];
   snprintf(bright, sizeof(bright), "Brightness: %d%%", g_brightness);
-  const char* items[SET_N] = { "Calibrate Touch", bright, "Phone key", "Back" };
+  const char* items[SET_N] = { "Calibrate Touch", bright, "Phone key",
+                               fleet::isClient() ? "Leave fleet..." : "Fleet client...", "Back" };
   drawListMenu("SETTINGS", items, SET_N, g_setSel);
   tft.drawString(g_touchOk ? "Touch OK - tap an item" : "Touch not calibrated yet",
                  10, tft.height() - 18, 1);
@@ -1166,6 +1184,7 @@ static void drawSettings() {
 // The QR encodes devkey::pairUrl() (web app + #devkey=&sid=&kg=); the key is also printed as 4x4 hex
 // groups for a phone that can't scan. Focus (BOOT nav): 0 = NEW KEY..., 1 = < BACK.
 static int g_pkSel = 0;
+static bool g_pkToFleet = false;  // Show key was opened from the FLEET screen: back returns there, not to Settings
 static uint32_t g_pkGen = 0;      // devkey::gen() the screen shows: a serial `rekey` while it is open triggers a redraw
 static uint32_t g_pkLastMs = 0;   // last input: the screen shows the secret, so it times out back to Settings
 static constexpr uint32_t PK_IDLE_MS = 60000;
@@ -1230,6 +1249,144 @@ static void drawRekeyConfirm() {
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   tft.drawString("Disconnects the phone and voids", tft.width() / 2, 170, 1);
   tft.drawString("the old key / QR sticker", tft.width() / 2, 182, 1);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// ---- Fleet client screens (docs/fleet-mode.md §2). SCR_FLEET replaces HOME as the root while fltrole=1.
+// Layout: title y24, info lines y52..134 (alert band y120), threat tiles reuse the HOME readout (y176..268),
+// 2x2 buttons y272..318. BOOT nav (g_fleetSel): 0..3 = the buttons, 4+ = the threat tiles (g_menuSel mirrors it
+// for drawMenuThreats' highlight). Everything is direct TFT draws: no heap.
+static constexpr int FL_BTN_N = 4, FL_BTN_Y0 = 272, FL_BTN_H = 22, FL_BTN_STEP = 24;
+static const char* const kFleetBtn[FL_BTN_N] = { "Live scan", "Show key", "Settings", "Leave fleet" };
+static bool g_flvFromSettings = false;   // LEAVE confirm opened from Settings: Cancel returns there
+static int g_fleetSel = 0, g_flvSel = 0, g_fleSel = 0;   // FLEET focus / LEAVE confirm / ENTER confirm
+
+static void flBtnRect(int i, int& x, int& y, int& w) {
+  w = (tft.width() - 12 - 4) / 2;
+  x = 6 + (i & 1) * (w + 4);
+  y = FL_BTN_Y0 + (i >> 1) * FL_BTN_STEP;
+}
+
+static void drawFleetButtons() {
+  for (int i = 0; i < FL_BTN_N; i++) {
+    int x, y, w; flBtnRect(i, x, y, w);
+    bool s = (g_fleetSel == i);
+    if (s) tft.fillRoundRect(x, y, w, FL_BTN_H, 6, UI_ACCENT);
+    else   tft.drawRoundRect(x, y, w, FL_BTN_H, 6, TFT_DARKGREY);
+    tft.setTextColor(s ? TFT_WHITE : TFT_LIGHTGREY, s ? UI_ACCENT : TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(kFleetBtn[i], x + w / 2, y + FL_BTN_H / 2, 2);
+  }
+  tft.setTextDatum(TL_DATUM);
+}
+
+// Fresh tap on a FLEET button -> index 0..3, else -1 (edge-detected like the other hit-tests).
+static int fleetButtonTapped() {
+  static bool prev = false;
+  if (!g_touchOk) { prev = false; return -1; }
+  bool now = g_touch.touched();
+  int  hit = -1;
+  if (now && !prev) {
+    int16_t sx, sy, z;
+    if (g_touch.getScreen(tft, sx, sy, z)) {
+      for (int i = 0; i < FL_BTN_N; i++) {
+        int x, y, w; flBtnRect(i, x, y, w);
+        if (sx >= x && sx < x + w && sy >= y && sy < y + FL_BTN_H) { hit = i; break; }
+      }
+    }
+  }
+  prev = now;
+  return hit;
+}
+
+static const char* srcWord(int s, bool pos) {
+  if (pos) return s == 1 ? "phone" : s == 2 ? "GPS" : s == 3 ? "held" : s == 4 ? "fleet" : "none";
+  return s == 1 ? "phone" : s == 2 ? "GPS" : s == 3 ? "RTC" : s == 4 ? "fleet" : "none";
+}
+
+// Info band y52..175: leader line, time/pos sources, band counts, TX stats, channel, session. Clears its own
+// band only, so the 2 s idle refresh doesn't repaint the whole screen.
+static void drawFleetInfo() {
+  int W = tft.width();
+  tft.fillRect(0, 52, W, 176 - 52, TFT_BLACK);
+  fleet::Ui u; fleet::uiSnapshot(u);
+  char b[56];
+  tft.setTextDatum(TL_DATUM);
+  if (!u.active) {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString("Fleet radio failed to start", 6, 52, 2);
+  } else if (u.joined) {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    snprintf(b, sizeof(b), "Leader %s", u.leaderName[0] ? u.leaderName : "(joined)");
+    tft.drawString(b, 6, 52, 2);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    snprintf(b, sizeof(b), "%s  %d dBm  %.0fs", fleet::planRoleName(u.planRole), (int)u.rssi,
+             u.ageMs / 1000.0f);
+    tft.drawString(b, 150, 56, 1);
+  } else if (u.leaderSeen) {           // FLEET_DEBUG: bench pings heard, not joined
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    snprintf(b, sizeof(b), "Ping %02x:%02x %d dBm (not joined)", u.leaderMac[4], u.leaderMac[5], (int)u.rssi);
+    tft.drawString(b, 6, 52, 2);
+  } else {
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    snprintf(b, sizeof(b), "Searching... ch %u", (unsigned)u.channel);
+    tft.drawString(b, 6, 52, 2);
+  }
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  snprintf(b, sizeof(b), "Time: %s   Pos: %s", srcWord(timeSource(), false), srcWord(posSource(), true));
+  tft.drawString(b, 6, 72, 1);
+  int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
+  snprintf(b, sizeof(b), "2.4:%d 5G:%d BLE:%d PRB:%d U:%lu", n24, n5, nble, nprb, (unsigned long)g_bg.uniqCount);
+  tft.drawString(b, 6, 84, 1);
+  uint32_t tot = u.txOk + u.txFail;
+  snprintf(b, sizeof(b), "TX %lu ok  %.1f%% fail  C5 link", (unsigned long)u.txOk, tot ? 100.0f * u.txFail / tot : 0.0f);
+  tft.drawString(b, 6, 96, 1);
+  tft.fillCircle(6 + tft.textWidth(b, 1) + 8, 100, 3, g_linkOk ? TFT_GREEN : TFT_RED);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  snprintf(b, sizeof(b), "ch %u   payload %u B   rx %lu", (unsigned)u.channel, (unsigned)fleet::maxPayload(),
+           (unsigned long)u.rxFrames);
+  tft.drawString(b, 6, 108, 1);
+  char sb[32]; sessBase(g_bg, sb, sizeof(sb));   // a fleet client always logs to the background stream
+  snprintf(b, sizeof(b), "Sess: %s", sb);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawString(b, 6, 134, 1);
+  drawHomeAlerts();   // deauth / evil-twin band (y120); clears itself
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+}
+
+static void drawFleet() {
+  tft.fillScreen(TFT_BLACK);
+  drawStatusBar();
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(UI_ACCENT, TFT_BLACK);
+  tft.drawString("FLEET CLIENT", tft.width() / 2, 24, 4);
+  tft.setTextDatum(TL_DATUM);
+  drawFleetInfo();
+  g_menuSel = g_fleetSel >= FL_BTN_N ? MENU_CHIP0 + (g_fleetSel - FL_BTN_N) : 0;   // tile highlight for drawMenuThreats
+  drawMenuThreats();
+  drawFleetButtons();
+}
+
+static const char* const kFleetLeaveItems[] = { "Cancel", "Leave fleet" };
+static const char* const kFleetEnterItems[] = { "Cancel", "Reboot" };
+static constexpr int FLEETCONF_N = 2;
+
+static void drawFleetLeave() {
+  drawListMenu("LEAVE FLEET?", kFleetLeaveItems, FLEETCONF_N, g_flvSel);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Reboots as a normal scanner", tft.width() / 2, 170, 1);
+  tft.drawString("with the phone link back on", tft.width() / 2, 182, 1);
+  tft.setTextDatum(TL_DATUM);
+}
+
+static void drawFleetEnter() {
+  drawListMenu("FLEET CLIENT?", kFleetEnterItems, FLEETCONF_N, g_fleSel);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString("Reboots as a fleet client.", tft.width() / 2, 170, 1);
+  tft.drawString("Phone link OFF until you", tft.width() / 2, 182, 1);
+  tft.drawString("leave the fleet.", tft.width() / 2, 194, 1);
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -2185,6 +2342,7 @@ static void openScanConfirm() {
 }
 
 static void backFromScan() {
+  if (fleet::isClient()) { g_screen = SCR_FLEET; drawFleet(); return; }  // fleet client: the scanner hangs off the FLEET screen
   if (g_scanActive && !g_bgScan) { openScanConfirm(); return; }  // background scan keeps running: no confirm
   showLinkLed();
   g_screen = SCR_SCANMENU;
@@ -2681,6 +2839,7 @@ static void activateScanSettings(int sel) {
   else if (sel == 2) g_srcMask ^= MASK_WIFI5;
   else if (sel == 3) g_srcMask ^= MASK_154;
   else if (sel == 4) {                                                           // Background scan
+    if (fleet::isClient()) return;                                               // a fleet client always scans (docs §1.2 step 7)
     g_bgScan = !g_bgScan;
     saveBgScan();
     if (g_bgScan) { openBgSession(); syncSharePath(); g_scanActive = true; g_lastCycleMs = 0; }  // start now; first cycle right away
@@ -2707,7 +2866,11 @@ static void activateSettings(int sel) {
     saveBrightness();
     drawSettings();
   } else if (sel == 2) {                           // Phone key: pairing QR + key text + re-key
+    g_pkToFleet = false;
     g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey();
+  } else if (sel == 3) {                           // Fleet client... (normal) / Leave fleet... (fleet client)
+    if (fleet::isClient()) { g_flvSel = 0; g_flvFromSettings = true; g_screen = SCR_FLEETLEAVE; drawFleetLeave(); }
+    else                   { g_fleSel = 0; g_screen = SCR_FLEETENTER; drawFleetEnter(); }
   } else {                                         // Back
     g_screen = SCR_MENU; g_menuSel = 0; drawMenu();
   }
@@ -2715,12 +2878,64 @@ static void activateSettings(int sel) {
 
 // Act on a re-key confirmation row (touch tap or long-press select).
 static void activateRekeyConfirm(int sel) {
-  if (sel == 1) phone::rekeyAndKick();             // new key + generation, audit line, phone dropped (drawPhoneKey shows "NOT SAVED" if NVS failed)
+  if (sel == 1) {
+    if (fleet::isClient()) { devkey::rekey(); fleet::onRekey(); }  // no phone link on a fleet client: new key + drop the fleet session
+    else phone::rekeyAndKick();                    // new key + generation, audit line, phone dropped (drawPhoneKey shows "NOT SAVED" if NVS failed)
+  }
   g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey();  // Cancel / done: back to the (new) key
+}
+
+// Leave the Show-key / Phone-key screen: back to FLEET when it was opened from there, else Settings.
+static void leavePhoneKey() {
+  if (g_pkToFleet && fleet::isClient()) { g_screen = SCR_FLEET; drawFleet(); }
+  else                                   { g_screen = SCR_SETTINGS; drawSettings(); }
+}
+
+// Persist the new role and restart (Bluetooth memory is released/claimed at boot, so a mode change reboots).
+static void fleetRebootInto(uint8_t role, const char* msg) {
+  if (!fleet::setRole(role)) {
+    tft.setTextDatum(TC_DATUM); tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawString("Could not save (NVS)", tft.width() / 2, 230, 2);
+    tft.setTextDatum(TL_DATUM);
+    return;
+  }
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM); tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(msg, tft.width() / 2, tft.height() / 2, 4);
+  tft.setTextDatum(TL_DATUM);
+  Serial.printf("[CYD] fleet role -> %u, restarting\n", (unsigned)role);
+  delay(400);
+  ESP.restart();
+}
+
+static void activateFleetLeave(int sel) {
+  if (sel == 1) { logFleetEvent("leave"); fleetRebootInto(fleet::ROLE_OFF, "Leaving fleet..."); return; }
+  if (g_flvFromSettings) { g_screen = SCR_SETTINGS; drawSettings(); }   // Cancel: back to where it came from
+  else                   { g_screen = SCR_FLEET; drawFleet(); }
+}
+static void activateFleetEnter(int sel) {
+  if (sel == 1) { fleetRebootInto(fleet::ROLE_CLIENT, "Joining fleet..."); return; }
+  g_screen = SCR_SETTINGS; drawSettings();          // Cancel
+}
+
+static void showScan();            // defined with the scanner actions above
+static void openMenuCat(Category); // defined with the HOME drill-down above
+
+// Act on the highlighted FLEET item: 0 Live scan / 1 Show key / 2 Settings / 3 Leave fleet / 4+ a threat tile.
+static void activateFleet() {
+  if (g_fleetSel == 0)      { g_scrollOffset = 0; resetFollow(); g_viewFrozen = false; g_frozenCount = 0; showScan(); }
+  else if (g_fleetSel == 1) { g_pkToFleet = true; g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey(); }
+  else if (g_fleetSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
+  else if (g_fleetSel == 3) { g_flvSel = 0; g_flvFromSettings = false; g_screen = SCR_FLEETLEAVE; drawFleetLeave(); }
+  else {
+    int ci = g_fleetSel - FL_BTN_N;
+    if (ci >= 0 && ci < g_menuCatN) openMenuCat((Category)g_menuCat[ci]);
+  }
 }
 
 // Phone-initiated Wi-Fi bulk-download mode: SoftAP + web server + on-screen QR.
 static void runDownload() {
+  if (fleet::isClient()) return;   // the SoftAP download is unavailable on a fleet-client CYD (Wi-Fi is the fleet's, no phone)
   static int lastJoined = -1;
   if (!webshare::active()) { webshare::start(); lastJoined = -1; }
   int joined = webshare::clientConnected() ? 1 : 0;
@@ -2788,6 +3003,9 @@ static void redrawScreen() {
     case SCR_SCANCONFIRM:  drawScanConfirm();  break;
     case SCR_SCANFILTER:   drawScanFilter();   break;
     case SCR_MENUCAT:      drawMenuCat();      break;
+    case SCR_FLEET:        drawFleet();        break;
+    case SCR_FLEETLEAVE:   drawFleetLeave();   break;
+    case SCR_FLEETENTER:   drawFleetEnter();   break;
     case SCR_MENU:
     default:               drawMenu();         break;
   }
@@ -2927,7 +3145,8 @@ uint8_t hostboard::brightness()     { return g_brightness; }
 int     hostboard::ledBrightness()  { return -1; }     // on/off RGB only (no PWM)
 void    hostboard::setLedBrightness(int) {}
 bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
-bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN; }
+bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN && !fleet::isClient(); }  // a fleet client logs to the bg stream even on the scan screen
+bool    hostboard::fleetLeaderCapable() { return false; }  // the CYD (no PSRAM, 58 KB heap) is a fleet CLIENT only
 const char* hostboard::boardTag() { return "CYD"; }
 bool    hostboard::pipelineAllowed() { return !screenIsDrill() && !screenIsExplore(); }
 
@@ -2948,21 +3167,38 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("[CYD] boot: scanner + phone link + SD");
+  fleet::loadRole();   // fltrole/fltch + boot-loop guard
+  fleet::setEventSink([](const char* op, const fleet::EventInfo& x) { logFleetEvent(op, nullptr, &x); });   // join / lost / release ... -> the SD log
+  const bool fleetClient = fleet::isClient();
+  if (fleetClient) {   // MUST precede anything that touches BT: frees ~43 KB so Wi-Fi + ESP-NOW fit (docs §1.2)
+    esp_err_t e = esp_bt_mem_release(ESP_BT_MODE_BTDM);
+    Serial.printf("[CYD] fleet client: BT memory release -> %d (phone link OFF)\n", (int)e);
+  }
   hostboard::begin(); // initCommon() + battery monitor, seeded so the status bar shows a level immediately
   loadBrightness();
   loadSrcMask();
   loadBgScan();
+  if (fleetClient) g_bgScan = true;  // scanning is why a client exists: forced on, logged to the bg stream (not saved)
   g_scanActive = g_bgScan;  // background scan resumes at boot (first cycle runs right away)
   applyBrightness();
   drawSplash();                      // show the logo while the slow init below runs
   uint32_t splashStart = millis();
   initSD();
+  if (fleet::fellBack()) logFleetEvent("fallback", "client");   // the boot-loop guard cleared fltrole this boot
   sigdb::begin();  // load /signatures.csv (seeds it if absent) or fall back
   whitelist::begin();  // load /whitelist.csv (seeds a commented header if absent)
   g_touch.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN);
   g_touchOk = g_touch.loadCal();
-  phone::begin(scannerName());  // CFLO-CYD-<word>, unique per unit (see scannerName)
-  g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering
+  if (fleetClient) {
+    phone::loadTz();                // local time still works with no phone (NimBLE never starts)
+    bool up = fleet::beginClient(); // random-MAC STA + ESP-NOW on the fleet channel
+    devkey::begin();                // after Wi-Fi is up so esp_fill_random has radio entropy; phone::begin() isn't called
+    logFleetEvent(up ? "start" : "start_failed");
+    Serial.printf("[CYD] fleet client %s, free heap %u\n", up ? "up" : "FAILED", (unsigned)ESP.getFreeHeap());
+  } else {
+    phone::begin(scannerName());    // CFLO-CYD-<word>, unique per unit (see scannerName)
+  }
+  g_haveOwnMac = phone::ownMac(g_ownMac);  // for self-detection filtering (false on a fleet client: no BLE advert of our own)
   g_linkOk = pingC5();  // check the C5 link so the menu dot is correct before any scan
   if (g_linkOk) g_lastLinkOkMs = millis();  // seed link stickiness for the first scan
   Serial.printf("[CYD] ready (link=%s, touch=%s, bright=%d%%)\n",
@@ -2972,6 +3208,7 @@ void setup() {
 }
 
 void loop() {
+  fleet::service();  // drain fleet RX (<= 8 frames/pass); no-op when fleet is off
   tickScanLed();  // alternating LED patterns (Axon red/blue, alert blink)
   // Phone commands are honored from any screen. The board-agnostic dispatch (BLE transfers, whitelist,
   // session/time-sync rename, ...) lives in host_common; below are the CYD's UI reactions to it.
@@ -3054,6 +3291,14 @@ void loop() {
     if (g_screen == SCR_SCAN && g_scanActive && millis() - g_lastCycleMs >= SCAN_CYCLE_MS) {
       g_lastCycleMs = millis();
       core::runScanCycle();   // renders via updateScan()
+    } else if (g_screen == SCR_FLEET) {
+      static uint32_t lastLockedFleet = 0;   // same idea as HOME below: repaint the live bands while locked
+      if (millis() - lastLockedFleet > 2000) {
+        lastLockedFleet = millis();
+        drawStatusBar();
+        drawFleetInfo();
+        drawMenuThreats();
+      }
     } else if (g_screen == SCR_MENU) {
       // HOME's live readout is normally repainted by the SCR_MENU idle branch, which the early
       // return above skips while locked — so the tiles froze on screen even though the headless
@@ -3110,7 +3355,7 @@ void loop() {
           // LINK_STICKY_MS grace so a single missed reply can't false-drop the link.
           if (!(g_bgScan && g_scanActive)) {
             if (pingC5()) g_lastLinkOkMs = millis();
-            g_linkOk = (millis() - g_lastLinkOkMs < LINK_STICKY_MS);
+            g_linkOk = c5LinkAgeMs() < LINK_STICKY_MS;
           }
           drawStatusBar();  // just the top bar — no full-screen flicker
           drawMenuThreats();  // live bg-scan tier counts (own band only)
@@ -3135,9 +3380,9 @@ void loop() {
       bool nk = pkButtonTapped();   // both edge-trackers run every pass
       bool bk = topBarTapped();
       if (nk || bk || ev != BTN_NONE) g_pkLastMs = millis();
-      if (millis() - g_pkLastMs > PK_IDLE_MS) { g_screen = SCR_SETTINGS; drawSettings(); return; }   // don't leave the key on screen
+      if (millis() - g_pkLastMs > PK_IDLE_MS) { leavePhoneKey(); return; }   // don't leave the key on screen
       if (devkey::gen() != g_pkGen) { drawPhoneKey(); return; }   // re-keyed over serial while open
-      if (bk || (ev == BTN_LONG && g_pkSel == 1)) { g_screen = SCR_SETTINGS; drawSettings(); return; }
+      if (bk || (ev == BTN_LONG && g_pkSel == 1)) { leavePhoneKey(); return; }
       if (nk || (ev == BTN_LONG && g_pkSel == 0)) { g_rkSel = 0; g_screen = SCR_REKEYCONFIRM; drawRekeyConfirm(); return; }
       if (ev == BTN_SHORT) { g_pkSel ^= 1; drawPhoneKey(); }   // BOOT tap: NEW KEY... <-> BACK
       delay(20);
@@ -3149,6 +3394,45 @@ void loop() {
       if (t >= 0)               { g_rkSel = t; activateRekeyConfirm(t); return; }
       if      (ev == BTN_SHORT) { g_rkSel = (g_rkSel + 1) % REKEY_N; drawRekeyConfirm(); }
       else if (ev == BTN_LONG)  { activateRekeyConfirm(g_rkSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_FLEET: {
+      int bt = fleetButtonTapped();   // both edge-trackers run every pass
+      int ct = menuChipTapped();
+      if (bt >= 0) { g_fleetSel = bt; activateFleet(); return; }
+      if (ct >= 0) { g_fleetSel = FL_BTN_N + ct; activateFleet(); return; }
+      int navN = FL_BTN_N + g_menuCatN;   // BOOT walks the 4 buttons, then the threat tiles
+      if      (ev == BTN_SHORT) { g_fleetSel = (g_fleetSel + 1) % navN; drawFleet(); }
+      else if (ev == BTN_LONG)  { activateFleet(); }
+      else {
+        static uint32_t lastFleet = 0;
+        if (millis() - lastFleet > 2000) {   // idle: refresh the live bands only (no full-screen flicker)
+          lastFleet = millis();
+          drawStatusBar();
+          drawFleetInfo();
+          drawMenuThreats();
+        }
+      }
+      delay(20);
+      return;
+    }
+
+    case SCR_FLEETLEAVE: {
+      int t = tappedRow(FLEETCONF_N);
+      if (t >= 0)               { g_flvSel = t; activateFleetLeave(t); return; }
+      if      (ev == BTN_SHORT) { g_flvSel = (g_flvSel + 1) % FLEETCONF_N; drawFleetLeave(); }
+      else if (ev == BTN_LONG)  { activateFleetLeave(g_flvSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_FLEETENTER: {
+      int t = tappedRow(FLEETCONF_N);
+      if (t >= 0)               { g_fleSel = t; activateFleetEnter(t); return; }
+      if      (ev == BTN_SHORT) { g_fleSel = (g_fleSel + 1) % FLEETCONF_N; drawFleetEnter(); }
+      else if (ev == BTN_LONG)  { activateFleetEnter(g_fleSel); }
       delay(20);
       return;
     }
@@ -3385,6 +3669,7 @@ void loop() {
       // Single pass per loop iteration (timestamp-paced scan cycle) so touch/BOOT stay responsive.
       // Pending downloads and phone start/stop are handled at the top of loop().
       int bb = bodyButtonTapped(4);  // START/STOP | PAUSE/RESUME | FILTER | NEW SESSION
+      if (bb == 0 && fleet::isClient()) { delay(20); return; }   // a fleet client's scan is always on
       if (bb == 0) {
         g_scanActive = !g_scanActive;
         if (g_scanActive) g_lastCycleMs = 0;  // first cycle runs right away

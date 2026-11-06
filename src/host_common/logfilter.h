@@ -17,6 +17,7 @@ static constexpr size_t LINE_CAP = 600;  // longest usable line (log lines are <
 struct Cutoff {
   uint8_t  mode;      // 0 = keep every line; 1/2 = time window
   bool     haveTime;  // the phone has synced wall-clock time (epoch cutoff is valid)
+  bool     epochOnly; // fleet file (members' lines, foreign ms): window by epoch only, drop epoch-less rows
   uint32_t epoch;     // keep lines with epoch >= this (local epoch)
   uint32_t ms;        // keep lines with ms >= this (pre-sync / epoch==0 fallback)
 };
@@ -49,6 +50,10 @@ inline bool keep(const char* line, const Cutoff& c) {
   if (line[0] == '{') {
     epoch = fieldU32(line, "\"epoch\":");
     ms    = fieldU32(line, "\"ms\":");
+    if (c.epochOnly) {   // fleet file: never compare the foreign ms. A forwarded meta (provenance, no epoch) is kept.
+      if (epoch == 0) return strstr(line, "\"evt\":\"meta\"") && strstr(line, "\"ofile\":");
+      return !c.haveTime || epoch >= c.epoch;
+    }
   } else if (line[0] >= '0' && line[0] <= '9') {
     char* e = nullptr;
     epoch = (uint32_t)strtoul(line, &e, 10);
@@ -102,6 +107,9 @@ class LineReader {
 // clock as its anchor. Rows that still can't be dated (an old file that never saw a clock) are
 // dropped, except in a live file when no clock is known at all (then the ms-since-boot cutoff applies).
 // Per-file meta + timesync lines are dropped; the caller writes one fresh meta line first.
+// A leader's fleet-*.jsonl holds MEMBERS' lines ("scanner"/"ofile"/"orow" inserted after the brace): their ms is a
+// foreign boot clock and the file's own timesync anchor says nothing about them, so no row there is backfilled or
+// ms-windowed -- only lines that already carry an epoch are exported.
 //
 // Output is file by file (oldest file first), not interleaved by time: readers sort if they need to.
 // Usage: MultiExport mx(mode, minutes, nowEpoch, nowMs, bootPaths, nBoot); mx.begin();
@@ -143,15 +151,17 @@ class MultiExport {
         int sl = nm.lastIndexOf('/');
         snprintf(en.path, sizeof(en.path), "/logs/%s", (sl >= 0 ? nm.substring(sl + 1) : nm).c_str());
         en.live = isLive(en.path);
+        en.fleet = !strncmp(en.path, "/logs/fleet-", 12);   // forwarded member lines: foreign ms, own epochs only
         if (!nowEpoch_ && !en.live) ok = false;  // no clock: only this boot's files can be windowed
       }
       if (ok) {
         uint32_t head = 0;
         bool headZero = false;
         ends(e, head, headZero, en.tail);
-        if (!en.live && (en.tail == 0 || en.tail < cutEpoch_)) ok = false;  // undatable, or wholly older
-        else if (headZero) en.hasAnc = findAnchor(e, en.ancEpoch, en.ancMs);
-        if (ok && en.live && !en.hasAnc && nowEpoch_) { en.hasAnc = true; en.ancEpoch = nowEpoch_; en.ancMs = nowMs_; }
+        // (a fleet file holds members' lines with non-monotonic epochs: never pruned by its tail, filtered per row)
+        if (!en.live && !en.fleet && (en.tail == 0 || en.tail < cutEpoch_)) ok = false;  // undatable, or wholly older
+        else if (headZero && !en.fleet) en.hasAnc = findAnchor(e, en.ancEpoch, en.ancMs);
+        if (ok && en.live && !en.fleet && !en.hasAnc && nowEpoch_) { en.hasAnc = true; en.ancEpoch = nowEpoch_; en.ancMs = nowMs_; }
         if (ok && en.tail == 0) en.tail = 0xFFFFFFFFUL;  // undated (this boot, no clock): sorts last
       }
       e.close();
@@ -171,9 +181,12 @@ class MultiExport {
 
   // First and last non-zero epoch found in a file's head / tail block (0 = none there). Cheap (two
   // 1 KB reads); used by the session list so the phone can group a scan's files by time.
-  static void fileSpan(File& f, uint32_t& first, uint32_t& last) {
+  // idOut (optional, 9 bytes) = line 1's "file_id" from the same head read ("" = none), so the session list needs no second read.
+  static void fileSpan(File& f, uint32_t& first, uint32_t& last, char* idOut = nullptr) {
+    if (idOut) idOut[0] = 0;
+    if (strstr(f.name(), "fleet-")) { fleetSpan(f, first, last, idOut); return; }
     bool hz;
-    ends(f, first, hz, last);
+    ends(f, first, hz, last, idOut);
     if (hz) {  // head row is pre-sync: take the first dated line in the head block instead
       first = 0;
       char* b = (char*)malloc(1025);
@@ -206,6 +219,12 @@ class MultiExport {
       bool go = true;
       while (go && rd.next(line, len)) {
         if (line[0] != '{') continue;
+        // A fleet file's forwarded member meta (it carries "ofile") is that origin's provenance (name/fw): keep it.
+        if (en.fleet && strstr(line, "\"evt\":\"meta\"") && strstr(line, "\"ofile\":")) {
+          total += len;
+          go = emit(line, len);
+          continue;
+        }
         if (strstr(line, "\"evt\":\"meta\"") || strstr(line, "\"evt\":\"timesync\"")) continue;
         uint32_t ep = fieldU32(line, "\"epoch\":");
         uint32_t ms = fieldU32(line, "\"ms\":");
@@ -225,8 +244,8 @@ class MultiExport {
           }
         }
         bool keepIt;
-        if (ep > 0) keepIt = nowEpoch_ ? ep >= cutEpoch_ : (en.live && ms >= cutMs_);
-        else        keepIt = en.live && !nowEpoch_ && ms >= cutMs_;  // undated: only this boot, no clock
+        if (ep > 0) keepIt = en.fleet ? (!nowEpoch_ || ep >= cutEpoch_) : nowEpoch_ ? ep >= cutEpoch_ : (en.live && ms >= cutMs_);
+        else        keepIt = en.live && !en.fleet && !nowEpoch_ && ms >= cutMs_;  // undated: only this boot, no clock
         if (!keepIt) continue;
         total += slen;
         go = emit(src, slen);
@@ -238,7 +257,7 @@ class MultiExport {
   }
 
  private:
-  struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; bool hasAnc, live; };
+  struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; bool hasAnc, live, fleet; };
 
   bool isLive(const char* p) const {
     for (int i = 0; i < nBoot_; i++) if (boot_[i] && boot_[i][0] && !strcmp(p, boot_[i])) return true;
@@ -251,9 +270,63 @@ class MultiExport {
     v = (uint32_t)strtoul(p + 8, &e, 10);
     return e && e != p + 8 && *e == ',';
   }
+  // A fleet file's epochs are not monotonic (several members' clocks interleave): span = min/max over every epoch in its
+  // first and last 1 KB (0/0 = none there). Coarse, but never inverted, and cheap like the other files' span.
+ public:
+  // Line 1 file_id out of a NUL-terminated head buffer (only the first line is searched). false = none.
+  static bool fileIdOfHead(char* b, char out[9]) {
+    out[0] = 0;
+    char* nl = strchr(b, '\n');
+    char keep = 0;
+    if (nl) { keep = *nl; *nl = 0; }                 // line 1 only (restored below)
+    const char* p = strstr(b, "\"file_id\":\"");
+    bool ok = false;
+    if (p) {
+      p += 11;
+      ok = true;
+      for (int i = 0; i < 8 && ok; i++) { char c = p[i]; ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); if (ok) out[i] = c; }
+      if (ok && p[8] != '"') ok = false;
+      out[ok ? 8 : 0] = 0;
+    }
+    if (nl) *nl = keep;
+    return ok;
+  }
+ private:
+  static void fleetSpan(File& f, uint32_t& first, uint32_t& last, char* idOut = nullptr) {
+    static constexpr size_t BLK = 1024;
+    first = last = 0;
+    char* b = (char*)malloc(BLK + 1);
+    if (!b) return;
+    const size_t sz = f.size();
+    for (int pass = 0; pass < 2; pass++) {
+      if (pass == 1 && sz <= BLK) break;                     // the head block was the whole file
+      f.seek(pass ? sz - BLK : 0);
+      const int r = f.read((uint8_t*)b, BLK);
+      if (r <= 0) continue;
+      b[r] = 0;
+      if (pass == 0 && idOut) fileIdOfHead(b, idOut);
+      // The head block can start with a rebooted member's CARRIED tail (older rows, forwarded first): trim the span start
+      // to the newest cluster in the head (within 10 min of its newest epoch), so the file is dated by its own session.
+      uint32_t hmax = 0;
+      if (pass == 0)
+        for (const char* p = strstr(b, "\"epoch\":"); p; p = strstr(p + 8, "\"epoch\":")) {
+          uint32_t v;
+          if (epochAfter(p, v) && v > hmax) hmax = v;
+        }
+      for (const char* p = strstr(b, "\"epoch\":"); p; p = strstr(p + 8, "\"epoch\":")) {
+        uint32_t v;
+        if (!epochAfter(p, v) || !v) continue;
+        if (v > last) last = v;
+        if (pass == 0 && v + 600 < hmax) continue;           // an older carried row at the head
+        if (!first || v < first) first = v;
+      }
+    }
+    free(b);
+    f.seek(0);
+  }
   // headZero = the first dated-or-not data line has epoch 0 (pre-sync rows -> needs the anchor);
   // tail = the last non-zero epoch in the file's final block (any line, incl. the timesync anchor).
-  static void ends(File& f, uint32_t& head, bool& headZero, uint32_t& tail) {
+  static void ends(File& f, uint32_t& head, bool& headZero, uint32_t& tail, char* idOut = nullptr) {
     static constexpr size_t BLK = 1024;
     char* b = (char*)malloc(BLK + 1);
     head = tail = 0; headZero = false;
@@ -263,6 +336,7 @@ class MultiExport {
     int r = f.read((uint8_t*)b, BLK);
     if (r > 0) {
       b[r] = 0;
+      if (idOut) fileIdOfHead(b, idOut);
       const char* p = strstr(b, "\"epoch\":");
       if (p && epochAfter(p, head)) headZero = head == 0;
       else head = 0;

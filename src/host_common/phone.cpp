@@ -5,6 +5,7 @@
 #include <esp_random.h>
 #include <math.h>
 #include "devkey.h"
+#include "fleet.h"
 
 namespace {
 
@@ -55,6 +56,7 @@ uint32_t g_epochBase  = 0;   // epoch secs at g_baseMillis
 uint32_t g_baseMillis = 0;
 bool     g_haveTime   = false;
 int      g_tzOffMin   = 0;   // UTC-local offset (min); loaded from NVS at begin(), updated on sync
+bool     g_tzKnown    = false;   // the offset came from a phone (now or a saved one), or a leader that knew it
 // The phone fix is written by the NimBLE task and read from loop() on the other core: g_gpsMux keeps
 // lat / lon / stamp together (see gpsFix()).
 portMUX_TYPE g_gpsMux = portMUX_INITIALIZER_UNLOCKED;
@@ -96,6 +98,9 @@ volatile uint8_t g_prefVal = 0;  // (t << 4) | g, one byte so the NimBLE task ca
 // (an FS= payload) before its next write, so one slot of each is enough; loop() does all the SD work.
 volatile bool g_fsReq = false;
 char     g_fsCmd[208] = {0};
+// Fleet: "M:<op>[:args]" (fleet::handlePhoneCmd). The web app waits for each FLT= reply, so one slot is enough.
+volatile bool g_fltReq = false;
+char     g_fltCmd[160] = {0};
 volatile bool g_upReq = false;
 uint8_t  g_upBuf[phone::UPLOAD_CHUNK_MAX];
 size_t   g_upLen      = 0;
@@ -232,6 +237,7 @@ class ServerCB : public NimBLEServerCallbacks {
       // Nothing queued by this peer may stream to the NEXT one: drop pending transfer requests.
       g_logReq = g_fileReq = g_expReq = g_listReq = g_wlList = false;
       g_fsReq = false; g_upReq = false; g_upOverrun = false;
+      g_fltReq = false;
     }
     Serial.println("[phone] disconnected");
     NimBLEDevice::getAdvertising()->start();  // keep discoverable
@@ -340,6 +346,7 @@ class WriteCB : public NimBLECharacteristicCallbacks {
         g_epochBase = (uint32_t)(utc - offMin * 60);
         g_baseMillis = millis();
         g_haveTime = true;
+        if (n >= 2) g_tzKnown = true;
         if (n >= 2 && (int)offMin != g_tzOffMin) {   // remember the tz so a phone-less GPS boot reads local
           g_tzOffMin = (int)offMin;
           Preferences p;
@@ -415,6 +422,13 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_fsCmd[sizeof(g_fsCmd) - 1] = 0;
           g_fsReq = true;
           Serial.printf("[phone] cmd file op %.40s\n", g_fsCmd);
+        }
+      } else if (c0 == 'M') {                        // "M:<op>[:args]" fleet command (fleet::handlePhoneCmd)
+        if (val.size() > 2 && val.size() < sizeof(g_fltCmd) && !g_fltReq) {
+          memcpy(g_fltCmd, val.c_str(), val.size());
+          g_fltCmd[val.size()] = 0;
+          g_fltReq = true;
+          Serial.printf("[phone] cmd fleet %.3s\n", g_fltCmd);   // args may carry wrapped key material: not logged
         }
       } else if (c0 == 'U') {                        // "U<seq byte><raw bytes>" one upload chunk (binary-safe: uses size())
         if (val.size() >= 2) {
@@ -493,9 +507,23 @@ StatusCB g_statusCB;
 
 namespace phone {
 
+void loadTz() {
+  Preferences p;                         // restore the last known tz (for phone-less GPS local time)
+  if (p.begin("cydscan", true)) { g_tzKnown = p.isKey("tzoff"); g_tzOffMin = p.getInt("tzoff", 0); p.end(); }
+}
+
+// A fleet client learns the tz from its leader's Sync (it has no phone of its own). NVS is written only on change.
+void setTzOffsetMin(int offMin) {
+  if (offMin < -840 || offMin > 840) return;
+  g_tzKnown = true;
+  if (offMin == g_tzOffMin) return;
+  g_tzOffMin = offMin;
+  Preferences p;
+  if (p.begin("cydscan", false)) { p.putInt("tzoff", offMin); p.end(); }
+}
+
 void begin(const char* devName) {
-  { Preferences p;                       // restore the last known tz (for phone-less GPS local time)
-    if (p.begin("cydscan", true)) { g_tzOffMin = p.getInt("tzoff", 0); p.end(); } }
+  loadTz();
   NimBLEDevice::init(devName);
   devkey::begin();                       // phone-link key (NVS), after init so the RNG is radio-fed
   NimBLEServer* server = NimBLEDevice::createServer();
@@ -583,6 +611,7 @@ void service() {
 uint32_t authEpoch() { return g_authEpoch; }
 bool transferAlive(uint32_t epoch) {
   service();   // 30 s auth timeout / kicks keep running during a long transfer
+  fleet::service();   // a long BLE transfer blocks loop(): keep draining fleet frames (docs/fleet-mode.md §3.4)
   return g_authHandle != NO_CONN && g_authEpoch == epoch;
 }
 
@@ -597,6 +626,7 @@ bool rekeyAndKick() {
 bool     hasTime()          { return g_haveTime; }
 uint32_t epochNow()         { return g_haveTime ? g_epochBase + (millis() - g_baseMillis) / 1000 : 0; }
 int      tzOffsetMin()      { return g_tzOffMin; }
+bool     tzKnown()          { return g_tzKnown; }
 // A phone fix is LIVE only while the phone is connected and wrote one within PHONE_GPS_STALE_MS: a
 // pocketed (screen-off) Android Chrome page stops watchPosition, so without this its last fix would pin
 // every later row. The webapp sends a fix every ~5 s, so 90 s won't flap on a live phone.
@@ -687,6 +717,15 @@ bool brightnessRequested(int* outPct) {
   if (!g_briReq) return false;
   g_briReq = false;
   *outPct = g_briVal;
+  return true;
+}
+
+bool fleetRequested(char* out, size_t cap) {
+  if (!g_fltReq) return false;
+  strncpy(out, g_fltCmd, cap - 1);
+  out[cap - 1] = 0;
+  memset(g_fltCmd, 0, sizeof(g_fltCmd));   // an M:a carries a wrapped fleet key: don't keep it in a static
+  g_fltReq = false;   // after the copy: the NimBLE task only refills the slot once this clears
   return true;
 }
 

@@ -3,6 +3,7 @@
 #include "host_link.h"
 #include "host_core.h"
 #include "phone.h"
+#include "fleet.h"
 
 HardwareSerial LinkSerial(1);  // UART1 (pins are supplied by the board via hostlink::begin)
 FrameParser    parser;
@@ -58,6 +59,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
   ScanConfig cfg{};
   cfg.sources  = g_srcMask;
   cfg.dwell_ms = 0;
+  cfg.plan     = fleet::currentPlan();   // v12: this unit's fleet scan role (all-zero = legacy full time-slice)
   sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
   uint32_t t0 = millis();
   uint32_t lastByte = millis();
@@ -74,7 +76,11 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
           memcpy(&nd, parser.payload(), sizeof(Detection));
           bool isPhone = havePeer && nd.source == (uint8_t)Source::BleScan &&
                          memcmp(nd.mac, peer, 6) == 0;
-          if (!isSelfDet(nd) && !isPhone) g_detCount++;  // drop our own + the paired phone
+          nd.name[sizeof(nd.name) - 1] = 0;
+          if (!isSelfDet(nd) && !isPhone) {  // drop our own + the paired phone; bit 0 = our C5
+            clearFleetRssi(g_detCount); g_detFleetFlags[g_detCount] = 0;
+            g_detVia[g_detCount++] = 1;
+          }
         }
       } else if (t == (uint8_t)Reply::RemoteId && parser.length() >= sizeof(RemoteId)) {
         // Non-terminating (like Detection): rides inside the Status(1)..Status(0) burst.
@@ -87,6 +93,9 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
           else slot = 0;  // full: overwrite index 0 (store is rebuilt every poll, so rarely hit)
         }
         memcpy(&g_rids[slot], r, sizeof(RemoteId));
+        g_rids[slot].uasId[sizeof(g_rids[slot].uasId) - 1] = 0;            // (REV-005) always terminated
+        g_rids[slot].operatorId[sizeof(g_rids[slot].operatorId) - 1] = 0;
+        g_ridVia[slot] = 1;
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;

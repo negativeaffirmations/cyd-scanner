@@ -359,8 +359,9 @@ back (5 GHz included). Things that matter, learned the hard way:
   last line can't misdate a file; a short send pass is newline-padded to the SIZE= header), per-file meta/timesync lines dropped and ONE fresh meta
   line written first, files oldest-first (cap 64, newest kept). Mode 0 = since this boot (epoch ≥
   now − uptime). With no clock at all only this boot's live files are exported (ms cutoff).
-  The **session list** (`Q` → `SESS=`) lines are `path\tsize\tflag\tfirstEpoch\tlastEpoch` (the
-  file's dated span, 0 = unknown, `MultiExport::fileSpan`) so the phone can group parts into scans.
+  The **session list** (`Q` → `SESS=`) lines are `path\tsize\tflag\tfirstEpoch\tlastEpoch\tfileId` (the
+  file's dated span, 0 = unknown, `MultiExport::fileSpan`) so the phone can group parts into scans; **`fileId`**
+  (fw 0.26.0) = line 1's meta `file_id` (8 hex, `readFileId()`), empty for older files; older web apps ignore it.
   Filtering lives in `src/host_common/logfilter.h`.
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
@@ -462,7 +463,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
     current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
-    any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · `"D:<path>"` delete a session file (restricted to
+    any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · **`"F:<path>@<offset>:<file_id>:<crc>"`** tail
+    download (fw 0.26.0, `transferTail`; `<crc>` = 8 lowercase hex CRC-32 (IEEE) of the up-to-64 bytes before `<offset>`,
+    `00000000` at offset 0, so a file replaced under the same line 1 is refused): the device checks line 1's `file_id` and
+    the prefix CRC and streams only bytes `[offset,size)` behind a `TAIL=<n>@<offset>` header (n may be 0), or refuses with
+    `TAILERR=path|id|off` (unsafe/missing path / different or missing file_id or CRC / offset past the end); a request that
+    does not parse (the old 3-field form) gets `SIZE=0`; the phone then fetches the whole file; no padding on a short send · `"D:<path>"` delete a session file (restricted to
     `/logs/`; refuses the live session) · **`"Z<seq>:<op>:<arg>"` + `"U<seq byte><bytes>"`** = the **SD file
     explorer** (fw 0.18.0, `src/host_common/host_files.*`; op `l` list, paged ~4 KB / `m` mkdir / `r` rename
     `from\tto` / `d` delete file or empty folder / `u` upload `<size>:<path>` / `a` abort; each answered with ONE
@@ -476,7 +482,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove · **`"P:<t><g>"`** time / GPS source preference (fw 0.15.0; each digit 0 prefer phone /
     1 prefer device / 2 device only; NVS `cydui/tpref`,`gpref`; web Settings "Time & location sources")
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl]`; the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden). Keys:
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl;apsta]` (**`apsta`** = phones joined to the download SoftAP, drives the web Wi-Fi stepper); the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden). Keys:
     `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,led,pos,pfa,sid,fw,dbgen`
     (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device. Device GPS = a live
     onboard fix; device clock (0.15.0) = the onboard GPS is supplying time right now OR the RTC holds a valid
@@ -605,8 +611,44 @@ back (5 GHz included). Things that matter, learned the hard way:
       are fetched one at a time (`ble/transfer.js` `bleFetch`, a promise over the LOGDATA stream) and
       joined by `parse.js` `joinLogParts` (per-part timesync backfill; each distinct meta line kept in part order, since parts can span a reflash and readers take the last) into ONE file;
       Upload sends ONE `/api/v1/uploads` body per scan; Delete queues `D:` per file. The Explore picker
-      lists the same groups.
-    - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager.
+      lists the same groups. **Phone-side log cache (webapp 2026-11-01):** every log file fetched over BLE is kept in
+      IndexedDB (`data/logcache.js`, store `cflo.logcache`; Blobs; key = STATUS `sid` + the file's `file_id` from line 1,
+      else sid + path; 200 MB cap, LRU eviction, quota errors -> no cache). `ble/logfetch.js` `fetchLog()` is the one
+      path for Download/Map/Upload/Explore of listed scans and of the current session (`F:/logs/<STATUS sess>.jsonl`
+      instead of `L`): a saved copy at least as big as the device's listed size (equal size when no file_id) costs
+      no transfer; the whole file always goes to uploads. Session rows show `saved` / `+N KB new` / `partly saved`;
+      Data has "Clear saved logs (size)" (`features/cacheui.js`). Filtered (`T:`) exports are never cached.
+      **Tail fetch (fw >= 0.26.0, STATUS `fw`):** a saved prefix of a file that grew is topped up with `F:<path>@<size>:<file_id>`
+      (only the new bytes cross BLE; verified to be exactly `n` bytes and that the merged file keeps its `file_id`, then
+      appended to the cached Blob and re-saved); any refusal/mismatch/failed request falls back to the full `F:<path>`.
+      **Safety (review fixes):** one request in flight (`ble/xfer.js` `reqBusy()`, `state.dl.waiting`; every requester checks it
+      and a superseded/timed-out request REJECTS); a connection generation (`connGen`, bumped on connect/disconnect) is
+      captured by `fetchLog`/`fetchGroups` and re-checked before each request and before caching, `onDisconnect` rejects the
+      pending request, ignores a late event from a previous unit, and Switch scanner / chooser Add refuse while a transfer runs;
+      a full fetch is cached only as a `file` reply whose `file_id` matches the list's; the current session's path comes from
+      this connection's STATUS `sess` (else plain `L`); uploads trim a torn last row. The current session has no listed size, so it always asks for
+      the tail (`TAIL=0@N` = unchanged, a one-packet round trip).
+      Rule for stale-module safety: new exports live in NEW files (`logfetch.js`, `logcache.js`, `cacheui.js`);
+      old modules only gain internals.
+    - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager, Scanners (Switch scanner…).
+  **Switch scanner (webapp 2026-11-01; no firmware involved):** `ble/devices.js` remembers every `BluetoothDevice` picked
+  this page session (+ `navigator.bluetooth.getDevices()` when Chrome has it; unit names kept in localStorage
+  `cflo.unitNames`); `features/switcher.js` owns the app-bar swap button (`#switchBtn`, beside the Bluetooth icon), the
+  `#switchDlg` dialog and the Settings → Scanners button (always reachable; also how a second scanner is added via
+  the chooser, `connect()`). Presence = `device.watchAdvertisements()` on every remembered scanner except the connected
+  one, only while the page is visible and `state.xferBusy` is 0 / no BLE transfer runs; "in range" for 10 s after the
+  last advertisement. The app-bar button is enabled only when another remembered scanner is in range; without
+  `watchAdvertisements` it stays enabled and Switch tries `gatt.connect()` with an 8 s timeout ("not found"). The
+  dialog shows the browser/Chromium version and whether presence / getDevices exist, with a suggested flags hint
+  (`chrome://flags` or `vivaldi://flags`: Experimental Web Platform features `#enable-experimental-web-platform-features`,
+  Use the new permissions backend for Web Bluetooth `#enable-web-bluetooth-new-permissions-backend` — suggestion only,
+  names vary by version). `connection.js` `switchTo(device, timeoutMs)` = clean disconnect (waits for `onDisconnect`'s
+  resets) -> `connectDevice()` (normal AUTH flow with the per-sid key); `connect()` (the chooser) now keeps the current
+  unit connected until another is actually picked. `onDisconnect` also clears `scannerId/Fw/DbGen` (the AUTH read sets
+  `scannerId` early). When a DIFFERENT device id connects, `unitreset.js` `runUnitReset()` runs the hooks that
+  status/detections/sessions/explore/map/whitelist/fleet/files register with `onUnitReset()` (readouts, DETS buffers,
+  Remote-ID, session list, Explore rows, a device-sourced Map — a local file loaded with `plotCsvText(...,true)` stays —
+  whitelist view, fleet members, file-explorer state). New webapp state/exports go in NEW files (the stale-module rule).
   Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
   follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS
   `deauth`/`evil`) + behavioral-flag badges on rows. On connect it takes a **Screen Wake Lock**
@@ -641,11 +683,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   then switches to `http://192.168.4.1`. The SoftAP **WPA2 password is random per device, generated
   once and stored in NVS** (`"cydscan"`/`"appsk"`), shown only on the device/QR — it is **not**
   derived from the MAC/BSSID (the SEC-M1 fix; the old MAC-derived PSK was recomputable by anyone in
-  RF range). That page is a **browsable index of ALL `/logs/` sessions** (name + size), each with a
+  RF range). That page is a **browsable index of `/logs/`**: a big "Download current log" button, then the **40 newest files, newest first** (by FS write time; older ones via the time-range links), each with a
   `/dl?f=<name>` link plus a **24 h** `/dlf?...` filtered link — so bulk Wi-Fi download can grab any
   past session (the reason for Wi-Fi: BLE is slow for MB-size drive logs). `/scanlog.jsonl` still
   streams the current session (`/scanlog.csv` kept as an alias).
-  Pauses scanning while active.
+  Pauses scanning while active. The web app walks the user through it with a **4-step dialog** (`features/wififlow.js`,
+  `#wifiDlg`): start the AP → join it (Copy password / Open Wi-Fi settings; auto-advances on STATUS `apsta`) → open the
+  page (a big button, new tab) → stop. Required steps are big buttons, never links in small text (owner UX rule).
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is
@@ -710,6 +754,81 @@ It's git-ignored and holds the machine-local bridge path, so nothing committed h
 location. **While building the remote-server integration, keep HANDOFF #11 and the bridge updated each
 work session** (what landed / what's next) so a fresh session can resume mid-build if one runs out of
 context or usage. (The API contract is owner-approved at DRAFT v0; build is deferred — see HANDOFF #11.)
+
+## Fleet mode (P1-P5 built + bench-passed: transport, auth, time/position, coverage split, merge; fw 0.20.0, link v12)
+
+Cooperating scanners over **ESP-NOW on the host radios** (one fixed channel, default 1). Design + phases +
+owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides earlier sections). **P1 = transport +
+boot modes only** (no pairing/crypto, no scan plan, no link-protocol change): NVS `fltrole` (0 off / 1 client /
+2 leader, minis only), `fltch`, `fltboot` (3 crash boots -> role cleared, `evt:fleet op:fallback`); a **CYD fleet
+client** boots with `esp_bt_mem_release` BEFORE anything touches BT, never calls `phone::begin()` (no phone link;
+SoftAP download disabled), forces scanning on / logs to the bg stream, and shows `SCR_FLEET` as its root (Settings
+-> "Fleet client..." enters, "Leave fleet" exits; both reboot). Minis keep NimBLE in either role. Code:
+`src/host_common/fleet*.{h,cpp}`; serial `fleet` / `fleet leave|client|leader on|off|ch <n>|remac` (+ `fleet rate 1|12`, `fleet pad 250|1300|0`, `fleet trace on|off` = per-ping tx/rx lines with the actual RF channel, `fleet crash` = boot-guard test panic, in debug builds). `-DFLEET_DEBUG`
+(envs `cyd_fleetdbg`, `xiao_s3_rgb_fleetdbg`) adds the cleartext ping/pong bench frames. Normal-mode static footprint is
+tiny; every fleet buffer is heap-allocated by `beginClient()/beginLeader()`.
+**P2 = enrollment + auth (docs §17 "as built"):** the leader stores members in NVS `fltmem` (sid, kg, name and the
+member's FLEET key `FK = HMAC(devkey,"CFLO-FLT-KEY-1|"+sid)[0..16)`, never its phone key), probes while one is
+un-joined, matches Hello tags off-air (no sid/name/fixed MAC in any cleartext frame), and runs Join/JoinAck into an
+ESP-NOW-encrypted session (LMK = SK) whose frames ALSO carry an 8-byte HMAC(SK) tag + a 32-wide seq window. Sync /
+MStat heartbeats (lost after 10 s / 15 s); the client searches its saved channel then 1/6/11 and rejoins from a fresh
+MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` add — FK wrapped under the LEADER's key by
+`webapp/js/ble/fleetcrypto.js` —, `r` remove, `x` release, `c` channel, `L1/L0`, `j` become client); STATUS part 2
+`flt=<role>,<joined>/<enrolled>,<ch>`; web **Settings → Fleet** card (`features/fleet.js`). Code: `fleet_leader.cpp`,
+`fleet_client.cpp`, `fleet_internal.h`. Debug-only bench enrollment: `fleet fk` / `fleet add` / `fleet m <cmd>`.
+**P3 (docs §18):** the leader's Sync carries UTC + tz + the ONE fleet position (its phone by default, else its GPS,
+else a member's live GPS) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
+client stamps the fleet time/position ahead of its own (not under device-only), its tz follows the leader, and
+`isSelfDet()` drops the fleet's own radios. `devpos` lines + fleet meta keys wait for the P6 scan-analyzer contract.
+**P4 (docs §19):** link **v12** — `ScanConfig.plan` (`ScanPlan`, 18 B) rides every StartScan (all-zero = legacy); the C5
+gates each phase on it and rebuilds its hop lists/timing. The leader assigns roles (N=2: client WIFI + leader BLE;
+N=3: WIFI24 + WIFI5 + BLE) with 10 s join hysteresis and a 30 s loss grace, re-sends Plans every 10 s, and a client
+without a leader runs FULL. `M:p:0|3` = auto / everyone full. **Until P5 each unit sees only its share.** All hosts +
+C5s must run the same link version (flash together).
+**P5 (docs §20):** clients forward changed rows (sealed DetBatch/RidBatch, ≤ 6 frames/cycle) and the leader merges
+them into `g_dets` after `requestScan()` with a **`g_detVia` "seen by" mask** (bit 0 = own C5, bit k = member slot k;
+`DevGroup.via`). A row the leader also heard keeps ITS OWN values (members' RSSI/flags go to display-only
+`g_detFleetRssi/Flags`). Display/tiles/counts/DETS are fleet-wide; the **SD log, follow engine, uniq and event lines use
+own rows only** (no log-schema change). DETS **v9** appends `via`; the web shows "seen by" chips. **v10** (P6 item 5) appends each unit's own RSSI
+(`<via bit>:<rssi>` comma list, fleet rows only; `g_detFleetRssi` is per member slot), and live-POST sends one row
+per unit (member rows tagged `"scanner":<sid>` + `pos_src:"fleet"`; own rows untagged; v9 fleet rows post own-only). S3 envs build with
+`-DHOST_MAX_DET=192`; the CYD keeps 96.
+**P6 logging (fw 0.24.0, contract agreed with scan-analyzer 2026-11-01; docs §21):** fleet proto **v2** (Sync +
+`fleetId[8]` random per leader boot + `fixSlot`; all host units flash together). Optional log keys: `meta` +
+`fleet_role` / `fleet_id` / `fleet_leader`; `"evt":"fleet"` + `fleet_id`/`fleet_leader` (in a session), `peer`,
+`peer_name`, `slot`, `n` (units), `plan` (plan/start; `ap24+ap5+prom24+prom5+154+ble` or `full`); every line with
+lat/lon + **`pos_src`** `phone|gps|fleet` (the fix's origin, held included); **`"evt":"devpos"`**
+`{…,"scanner","dlat","dlon","sats","used"}` every 30 s / 25 m from a fleet unit with a live own GPS fix. STATUS part 2
+`fid`/`fld` → the web live-POST meta.
+**P6 item 6 (fw 0.25.0, fleet proto v3; docs §22):** store-and-forward. Every `meta` line (fg/bg/fleet) now ends with
+`"file_id":"<8 hex>"` (`LogStream.fileId`, random per file, made in `ensureLogFile`, survives the sync rename). A joined
+**client** forwards this boot's log files to the leader (`pumpLog()` in `fleet_client.cpp`, called from `tick()`): it reads its
+own SD files at per-file acked byte offsets (`LogPos`, one per file: live fg/bg + rotated ones from the `g_bootFiles` ring, so
+fg/bg switches and New Session resume instead of re-sending; no RAM queue) and sends complete lines in sealed `Msg::LogRows`
+frames (`LogRowsHdr` 22 B: fileId[4], firstRow, byteOff, flags bit0 = re-sent anchor, nLines; stop-and-wait, resend after
+600 ms backing off to 5 s, ~8 KB/s; unforwardable lines skipped + counted; disabled on a v1 link). Each file's meta and first
+timesync line are recorded as acked and re-sent on every (re)join. The **leader** (`onLogRows`) validates, appends each line
+to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` on sync, **no leader timesync anchor**; third `LogStream`
+`g_fleetLog`, protected, capped, listed, in `thisBootFiles`) with `"scanner","ofile","orow"` inserted after the `{`, and answers
+`Msg::LogAck`; per member `{file, nextRow}` for its last 4 origin files dedups resends and re-sent anchors. Its meta carries
+`"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`). Fleet files
+are epoch-only in exports (no ms windowing / backfill / tail pruning; forwarded member meta kept). Web: `parse.js` keys
+timesync anchors by `ofile` and `joinLogParts` passes `ofile` lines through untouched; the Data page lists `fleet-` files as a
+"Fleet" scan kind; ticking a leader's own scan there auto-includes its time-overlapping Fleet group (tag "+ Fleet", Fleet row
+"included"): Download saves it as a SECOND file, Upload POSTs it as its OWN body, Map plots both (`features/sessions.js`;
+Delete never auto-includes). A fleet group is included only when its END falls inside the scan span ±5 min (an undated scan never
+auto-includes); one {connection generation, scanner id} guard covers the whole multi-file action; the upload stops on a 401/403
+and ends with one summary toast. Serial `fleet` shows the fleet file + lines stored per member (leader) and file/row/ack/backlog (client).
+**fw 0.27.0 carry-over:** the client persists the acked positions of its most recent not-fully-forwarded files (≤ 3; pending carried
+tails first, then this boot's files with unacked data) in NVS `cydscan`/`fltcarry` (`CarryRec`: boot number, path, file_id,
+ackOff/ackRow, meta/timesync/last-fleet-evt anchor offsets; written at once when the file set or a path changes or the leader is
+lost, else ≤ every 3 min; ONLY the immediately following boot accepts it and re-stamps it, and any role change / leave / release /
+fallback deletes it), and after the next boot joins it verifies each (`logFwdFind` = line-1 `file_id`, path first then a bounded `/logs` scan for a sync-renamed copy; gone / fully acked ->
+dropped) and drains the remainder BEFORE this boot's files, re-sending meta, timesync and the file's LAST `"evt":"fleet"` line
+carrying a `fleet_id` as anchors first (the fleet-line anchor also rides every ordinary rejoin). No protocol change (fleet proto
+stays v3: the leader's per-member 4-file table takes the old `file_id`).
+A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
+a member's role at runtime (§20.1).
 
 ## Subagents (`.claude/agents/`)
 

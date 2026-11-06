@@ -8,8 +8,10 @@
 #include "phone.h"
 #include "webshare.h"
 #include "whitelist.h"
+#include "fleet.h"
 
 void pushStatus() {
+  if (!phone::authed()) return;   // setStatus() only reaches an authenticated phone: skip the build (heap churn on fleet clients)
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   char sb[32]; sessBase(activeStream(), sb, sizeof(sb));  // sess= tracks the stream "current" downloads
@@ -20,6 +22,10 @@ void pushStatus() {
   // are read together (dl + apssid/appsk/apurl) stay in the same part.
   //   part 1: live counts / state (~215 B)   part 2: dl + gav/tav/tpref/gpref + identity + pos/pfa (+ AP creds) (<= ~200 B)
   char s[300];
+  // Fleet P5: the alert counts are the worst any unit sees (a member's deauth flood raises the leader's banner too);
+  // each unit still LOGS only what it observed itself (updateEvents uses the local values).
+  uint16_t fDeauth = 0; uint8_t fEvil = 0, fRid = 0;
+  fleet::alertMax(&fDeauth, &fEvil, &fRid);
   snprintf(s, sizeof(s),
            "link=%d;w24=%d;w5=%d;ble=%d;prb=%d;z=%d;uniq=%d;time=%d;gps=%d;"
            "susp=%d;lk=%d;conf=%d;db=%d;scan=%d;bri=%d;src=%d;wl=%d;muted=%d;fol=%d;sess=%s;bg=%d;deauth=%d;evil=%d;rid=%d;lock=%d;bat=%d;gpssrc=%d;sats=%d;tsrc=%d",
@@ -28,7 +34,7 @@ void pushStatus() {
            susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, (int)hostboard::brightness(), (int)g_srcMask,
            whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
-           (int)g_deauthRecent, (int)g_evilCount, (int)g_ridCount, g_touchLocked ? 1 : 0,
+           (int)max(g_deauthRecent, fDeauth), (int)max(g_evilCount, fEvil), (int)max(g_ridCount, fRid), g_touchLocked ? 1 : 0,
            hostboard::batteryPercent(), posSource(), (int)g_onbSats, timeSource());
   // gav/tav = per-source availability (bit0 phone, bit1 device) for the web status dots. In part 2:
   // part 1's worst case already sits near the notify limit.
@@ -52,8 +58,22 @@ void pushStatus() {
       n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=;pfa=-1");
   }
   if (webshare::active() && n2 > 0 && n2 < (int)sizeof(s2))  // download AP up: the phone draws the join QR from these
-    snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s",
-             webshare::ssid(), webshare::apPass(), webshare::url());
+    n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s;apsta=%d",   // apsta: phones joined (web stepper)
+                   webshare::ssid(), webshare::apPass(), webshare::url(), webshare::stations());
+  // Fleet LAST: if part 2 ever overflows the ~252 B notify, flt= is what gets cut, never the AP credentials.
+  if (n2 > 0 && n2 < (int)sizeof(s2)) {   // role, joined/enrolled, channel, can-lead (web Fleet card)
+    char ff[24]; fleet::statusField(ff, sizeof(ff));
+    n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";flt=%s", ff);
+  }
+  // fid / fld (P6 item 1) = this fleet session's id + leader sid, for the web app's live-POST meta. Only while in a
+  // session, and only WHOLE (a cut id would mis-group): skipped if it would pass the notify limit (download AP up,
+  // when live-POST is paused anyway).
+  char id[17], leader[13];
+  if (n2 > 0 && n2 < (int)sizeof(s2) && fleet::fleetIdent(id, leader)) {
+    char fl[48];
+    int w = snprintf(fl, sizeof(fl), ";fid=%s;fld=%s", id, leader);
+    if (w > 0 && n2 + w <= 249) { memcpy(s2 + n2, fl, w + 1); n2 += w; }
+  }
   static bool warned = false;
   if (!warned && (strlen(s) > 240 || strlen(s2) > 240)) {
     warned = true;
@@ -156,7 +176,32 @@ void pushDetections() {
       for (; l && l[k] && k + 1 < sizeof(sig); k++) sig[k] = ((uint8_t)l[k] < 0x20 || l[k] == 0x7F) ? ' ' : l[k];
       sig[k] = 0;
     }
-    snprintf(row + len, sizeof(row) - len, "\t%s\t%s\t%s", cid, uuid, sig);
+    len += snprintf(row + len, sizeof(row) - len, "\t%s\t%s\t%s", cid, uuid, sig);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v9 trailing (fleet P5): "seen by" mask, decimal. bit 0 = this scanner, bit k = fleet member slot k.
+    len += snprintf(row + len, sizeof(row) - len, "\t%u", (unsigned)g.via);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    // v10 trailing (fleet P6 item 5): each unit's OWN strongest RSSI, "<bit>:<rssi>" comma-joined (bit as in via),
+    // so live-POST can send one row per unit. Empty unless a member heard it (then bestRssi may be a member's).
+    char per[64] = "";
+    if (g.via & ~1u) {
+      int8_t best[1 + DET_MEMBER_SLOTS];
+      memset(best, 0x80, sizeof(best));
+      for (int i = 0; i < g_detCount; i++) {
+        if (memcmp(g_dets[i].mac, g.mac, 6) != 0) continue;
+        if ((g_detVia[i] & 1) && g_dets[i].rssi > best[0]) best[0] = g_dets[i].rssi;
+        for (int s = 0; s < DET_MEMBER_SLOTS; s++)
+          if (g_detFleetRssi[i][s] > best[1 + s]) best[1 + s] = g_detFleetRssi[i][s];
+      }
+      int pn = 0;
+      for (int b = 0; b <= DET_MEMBER_SLOTS; b++) {
+        if (!(g.via & (1u << b)) || best[b] == -128) continue;
+        int w = snprintf(per + pn, sizeof(per) - pn, "%s%d:%d", pn ? "," : "", b, best[b]);
+        if (w < 0 || w >= (int)sizeof(per) - pn) break;
+        pn += w;
+      }
+    }
+    snprintf(row + len, sizeof(row) - len, "\t%s", per);
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }

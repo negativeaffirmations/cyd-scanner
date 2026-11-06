@@ -18,6 +18,8 @@ namespace phone {
 constexpr size_t UPLOAD_CHUNK_MAX = 500;
 
 void begin(const char* devName);
+// Restore the persisted tz offset (begin() calls it). A fleet-client CYD boot calls it alone: NimBLE never starts there.
+void loadTz();
 
 // Push a status line to the app (throttle in the caller). Format is
 // "key=val;key=val;..." parsed by the web app.
@@ -62,6 +64,8 @@ bool     peerMac(uint8_t out[6]);
 // Time sync
 bool     hasTime();
 uint32_t epochNow();  // current LOCAL epoch seconds, or 0 if never synced
+void     setTzOffsetMin(int offMin);   // fleet client: the leader's tz (Sync); NVS written only on change
+bool     tzKnown();                    // the tz offset is real (phone-synced, saved, or from a leader that knew it)
 int      tzOffsetMin();  // last phone tz offset (UTC-local minutes, JS getTimezoneOffset); persisted
                          // in NVS so a GPS-only (phone-less) boot can still show local time. 0 until set.
 
@@ -105,6 +109,8 @@ bool exportRequested(int* mode, int* minutes, char* path, size_t cap);
 // True once if the app set a brightness ("B:<0-100>"); fills the percent value.
 bool brightnessRequested(int* outPct);
 
+// Fleet (fleet::handlePhoneCmd). True once per "M:<op>[:args]" write; fills `out` with the whole command.
+bool fleetRequested(char* out, size_t cap);
 // File explorer (host_files.cpp). True once per "Z<seq>:<op>:<arg>" write; fills `out` with "<seq>:<op>:<arg>".
 bool fsRequested(char* out, size_t cap);
 // True once per "U<seq byte><bytes>" upload chunk; copies the raw bytes (binary-safe), their length and the tag.

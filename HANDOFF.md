@@ -1,4 +1,385 @@
-# Handoff — 2026-10-29 (branch: `main`; it is the only branch / the trunk)
+# Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `7f86e00` = trunk + webapp)
+
+## RESUME HERE — 2026-11-01 (night): fw 0.27.0 + Fleet-file bundling LIVE; carry-over server-verified
+- **Live on all 3 hosts (flashed), pushed; webapp on `main` `a65d317` (footer `fleet-bundle m`).** Commits on `fleet-mode`:
+  `dd0eb63` webapp (a ticked leader scan auto-includes its time-matching `fleet-` group: saved as a SECOND file, uploaded as
+  its OWN POST, mapped together; Delete never auto-includes), `edc3d30` fw 0.27.0 (a rebooted member forwards the previous
+  boot's unsent tail first: NVS `cydscan/fltcarry` v2 + boot counter `fltbootn`; anchors re-sent = meta, timesync, last
+  `fleet` line with a fleet_id — scan-analyzer's request), `a02e5ca` review fixes (REV-001..010: carry only from the
+  immediately previous boot + cleared on any role change/leave/fallback; backlog survives back-to-back reboots; one
+  connection-generation/scanner guard per Data action; fleetSpan trims carried head rows + webapp requires the fleet end
+  inside the scan span ±300 s; upload summary toast, stop on auth; NVS writes ≤ every 3 min + on lost/file change;
+  logFwdFind only for undated names, cap 150; no NVS write during a transfer). No fleet/link protocol change.
+- **Verified:** builds (5 host envs), flash, fleet rejoined (roles split, forwarding into `/logs/fleet-20261101-234130.jsonl`).
+  As at every flash, members' previous-boot files were re-forwarded during the flash window (leader flashed first).
+- **Carry-over VERIFIED on the server (scan-analyzer, bridge):** a joined upload of 3 fleet files split into 17 sessions (per
+  origin boot file × fleet segment, own anchors, 0 duplicate rows); mini#1's previous-boot `a76a5cd2` tail (7 rows) was
+  carried over after its reflash and stayed in its fleet segment via the re-sent fleet line.
+- **Earlier note, now superseded for (a):** (a) carry-over on hardware — needs a REAL backlog: take a member out of the leader's reach (or power the
+  leader off) for a few minutes, power-cycle the member, then bring the leader back; the member's `fleet` console should show
+  `carry-over … loaded 1` and forward the old file first. (An RTS-toggle over USB did NOT reset the S3, and a caught-up member
+  correctly carries nothing.) (b) Data page bundling — VERIFIED by the owner in the browser ("+ Fleet" tag, upload worked).
+  scan-analyzer will check the earlier-boot `ofile` session once the fleet file is uploaded.
+- 0.26.0 (log cache / tail fetch / switch scanner) is PHONE-VERIFIED (see the next entry).
+
+## RESUME HERE — 2026-11-01 (evening): P6 items 1-4 DONE + field-verified; transfer fix 0.24.1 FLASHED + VERIFIED
+- **0.26.0 LIVE (2026-11-01 ~22:40):** the log cache / tail fetch / switch-scanner commits + review fixes `6118839` are
+  FLASHED on all 3 hosts, pushed, and the webapp deployed (`main` `7f86e00`, footer `log-cache+switch i`). Owner granted
+  no-ask flash/deploy for the rest of this work. Fleet rejoined on 0.26.0, forwarding into a new fleet file. Server VERIFIED grown-file
+  re-upload (leader bg file twice: 2nd stored only the 55 new rows, 0 dups). PHONE-VERIFIED by the owner: tail fetch ("Fetched only the new N
+  bytes" → phone CRC == firmware CRC), cache reuse, the Switch-scanner dialog (presence + getDevices work once the browser's
+  experimental Web Bluetooth flags are on; the owner's browser details live in private memory, NOT in the repo). After the reflash the leader showed each member with TWO
+  file ids: EXPLAINED, not a bug — the leader was flashed first, so for ~1-2 min the members (still on their old boot)
+  forwarded their old live files to the new leader; then each rebooted into a new file.
+  Review-fix summary: single-flight transfers + connection generation (a switch mid-fetch can no longer mix scanners'
+  data), pending request rejected on disconnect, tail form now carries a prefix CRC (`F:<path>@<off>:<file_id>:<crc32>`),
+  SESS= file_id comes from fileSpan's head read, cache tags only trust matching file_ids, uploads trim a torn last row.
+- **NEWER (late 2026-11-01, 4 local commits on `fleet-mode`, NOTHING flashed / pushed / deployed): log cache + tail fetch +
+  switch scanner.** (1) webapp phone-side IndexedDB log cache (`data/logcache.js`, `ble/logfetch.js`, `features/cacheui.js`;
+  200 MB LRU; saved/+N KB tags + Clear on the Data page). (2) **fw 0.26.0**: SESS= 6th field `file_id`, CMD
+  `F:<path>@<offset>:<file_id>` -> `TAIL=<n>@<off>` / `TAILERR=path|id|off` (no link/fleet change; flash units one at a time;
+  an older unit just never gets the tail form because the phone gates on STATUS `fw` >= 0.26.0). (3) webapp Switch scanner
+  (`ble/devices.js`, `features/switcher.js`, `unitreset.js`, `connection.js` `switchTo`). Webapp tokens
+  (`?v=20261101i`, footer `log-cache+switch i`); `connection.js` + `fleet.js` imports in main.js carry the same token.
+  To ship: flash 0.26.0 (all 5 host envs build), push, deploy Pages (~10 min cache), then test on the phone: Data -> Session
+  logs -> Refresh, Download one scan twice (2nd is instant, row says `saved`), let a live scan grow it (`+N KB new`), Download
+  again (log line "Fetched only the new N bytes"); Settings -> Scanners -> Switch scanner... between two units.
+- **fw 0.24.0 (P6 items 1-4) flashed on all 3 hosts** (mini #2 `xiao_s3_rgb` COM10 = leader, mini #1 `xiao_s3` COM16,
+  CYD `cyd` COM13). `fleet-mode` `f3e7798` (fw) + `90a559e` (webapp) pushed; webapp on `main` `0bd3fe9` (footer
+  `fleet-p6 e`). **Field test VERIFIED by scan-analyzer (server `b036384`, schema v11):** fleet_id `57289e09c2931f8c`
+  matched on all 3 units; meta fleet keys, `evt:fleet` peer/peer_name/slot/n/plan, `pos_src` (gps/phone/fleet only)
+  and 26 `devpos` (from the leader -- mini #2 had a live onboard fix, 3 sats) all as agreed; no rejects. Only errors:
+  2 live batches cut mid-send (ClientDisconnect, nothing stored). Details in the bridge's two newest entries.
+- **CYD as fleet client has NO phone link by design** (BT memory released). To pull its SD log: CYD Settings → Leave
+  fleet (or Release from the leader's web Fleet card), download, then Settings → Fleet client... (owner did this).
+- **Plan flips on mini #1 (share ↔ FULL, no `lost`):** NOT the phone connection. Correction to what scan-analyzer was
+  told: BLE file streams ALREADY run `fleet::service()` per chunk (`phone::transferAlive`). Real causes found: (1) a
+  transfer on the LEADER pauses its C5 poll → `ownC5Up` false after 8 s → `assignRoles()` drops everyone to FULL;
+  (2) export counting passes + the session-list dir scan never serviced the fleet. Exact timeline not confirmed --
+  if flips persist after the fix, ask scan-analyzer for the ordered leader + mini#1 `fleet` lines (epoch/op/plan/n).
+- **Fix `1cbbee6` (fw 0.24.1), pushed + flashed on all 3 hosts (fleet rejoined, split roles OK). **VERIFIED:** a 2 MB+ BLE download on the leader (plus small ones on each unit) left planGen at 2 -- no role change:** leader holds its own-C5 verdict while
+  `hostTransferRecent(LINK_STICKY_MS)`; `xferKeepAlive()` (throttled phone+fleet service) in counting passes + session
+  list; `XferScope` around transferLog/Filtered/File + sendSessionList defers fleet event lines (≤4, heap on first
+  use) until the transfer ends so an export's SIZE= count stays exact. All 5 host envs build. Fleet proto/link
+  unchanged → can flash the leader alone. **Next:** flash (needs owner OK), re-test a phone download on the leader
+  and on a client while the fleet runs: roles should stay split. No reviewer pass yet.
+- **Mini #2 key ROTATED (gen 2)** at the owner's request; new pairing QR written to the git-ignored
+  `qr-codes/CFLO-MINI-BEMOPU-pairing-qr.svg` by a script that never printed the key/link (deleted after). The phone must
+  re-pair mini #2 from that QR. Fleet unaffected (members' fleet keys derive from THEIR keys).
+- **Reviewer pass on `1cbbee6` DONE (no P1; 2 P2 + 5 P3, all fixed) → `6b98412` fw 0.24.2, all 5 host envs build,
+  FLASHED on all 3 + pushed (fleet rejoined):** `c5LinkAgeMs()` (host_core) excludes transfer time (replaces the leader's held verdict + the scan
+  cycle's checks); exports / session list bound to the requesting phone's authEpoch; `radio_fail` never deferred;
+  deferral buffer 8, freed after use; log-cap sweep + `D:*` wipe scoped + serviced. Flash all 3 hosts with the owner's OK,
+  then repeat the 2 MB leader-download test (planGen must not move).
+- **P6 item 6 (P5b store-and-forward): owner SIGNED OFF; design = docs/fleet-mode.md §22 (`577c123`).** Owner chose:
+  a member forwards its WHOLE current file from line 1. scan-analyzer server READY on `343a5d4` (schema v12; content dedup,
+  `orow` informational; wants each origin's meta + timesync re-sent when forwarding starts — in the spec). **Built `866f40e`
+  (fw 0.25.0, fleet proto v3); reviewer found 2 P1 (fg/bg toggle re-sends whole files; webapp parse.js strips/mixes
+  members' timesync anchors) + 5 P2 + P3s → ALL FIXED in `c246e70`. **FLASHED on all 3 + pushed; webapp on `main` `7d8ea2a` (footer `fleet-p6 g`). Live:
+  leader writes `/logs/fleet-…jsonl`, both members forwarding, 0 bad frames.** Next: owner's hardware test with
+  scan-analyzer (download/upload leader file + fleet- file + member files); extra checks in the fixer's list (fg/bg
+  switch, backoff during a leader transfer, `T:2:60:/logs/fleet-…` export epoch-only).** If this session died: check
+  `git log` for its commits, then build all envs, run reviewer, flash with owner OK, ping scan-analyzer, bench-test.
+- Open: server-side fleet grouping UI is scan-analyzer's.
+
+## RESUME HERE — 2026-11-01 (afternoon): P6 agreed; item 5 (fleet live-POST) DONE end to end
+- **P6 contract agreed** (bridge 10:05 proposal, 10:20 owner-approved reply, then Q&A). Decisions: `pos_src` =
+  phone|gps|fleet (no `held`); `fleet_id` also on `fleet` evt lines (at least join/plan) + optional `peer_name` on
+  member_join; item 6 (P5b store-and-forward) DEFERRED; `ms` = the unit's own millis() in files (P3 changes only
+  epoch/lat/lon), live-POST `ms` = phone wall clock (owner OK'd for member rows too).
+- **Item 5 DONE:** fw 0.23.0 = DETS v10 (per-unit RSSI; `g_detFleetRssi[MAX_DET][6]`) `4a4e19b`; webapp one row per
+  unit (`remote.js` `unitsOf()`, member rows `scanner` + `pos_src:"fleet"`) `ba7a64d` → `main` `9e83bb3`, footer
+  `fleet-p6 d`. Mini #2 (leader) flashed 0.23.0; CYD + mini #1 stay 0.22.0 (link unchanged). scan-analyzer server
+  `6242c19` (schema v11) is live. **Field test PASSED:** 3 server sessions (leader + `@<member sid>` each), per-unit RSSI,
+  pos_src=fleet. The leader's own 2.4/5G rows are real (the BLE role keeps the AP scan). Per-unit `src` not needed.
+- **Next: items 1/2/4 (firmware, small):** meta `fleet_id`/`fleet_role`/`fleet_leader`; `fleet` evt fields incl.
+  `fleet_id` + `peer_name`; `pos_src`. ALSO put fleet id/role/leader in STATUS so the webapp's live-batch meta carries
+  them (scan-analyzer groups live sessions by `fleet_id`). Then item 3 (`devpos`).
+- **Security note:** a boot check sent serial `key` to mini #2 and printed its phone key into a session transcript.
+  The owner was told; rotation (`rekey`) is the owner's call — not done yet.
+
+## RESUME HERE — 2026-11-01 (morning): fleet P1-P5 DONE + deferred P4 items; nothing pushed or deployed
+The overnight timer didn't fire (the session was de-authenticated); the owner ran it in the morning.
+**Fleet mode P1-P5 are built, reviewed (reviewer agent each phase, + security for P2), fixed and bench-passed.**
+`fleet-mode` @ `4e62fbe`. Design + as-built notes: docs/fleet-mode.md §17-§20 (+ .1 review notes).
+
+**What landed this session (P5 + extras):**
+- `2d23619` **P5:** client forwarding (DetBatch/RidBatch), the leader's PSRAM remote table + `mergeRemote()`, the
+  `g_detVia` "seen by" mask, `DevGroup.via`, the fleet-only cycle, STATUS alert maxima, DETS **v9** `via`, and the web
+  "seen by" chips. `HOST_MAX_DET=192` on the S3 envs.
+- `85b0271` No coverage split while the leader's own C5 is down (found on the bench).
+- `77b65bf` P5 review fixes. The big one: **the leader's own log rows stay its own measurements** (members' RSSI/flags
+  are display-only). Also: RX pool 48, a 768-row remote table, the forwarder no longer starves rows, terminated RID
+  strings, a 2 s fleet-only cadence.
+- `8fead0f` docs §20. `4e62fbe` **single-band roles restrict the C5's band** (AP scan 12.4 s → 3.0 s on 2.4 only) +
+  the `M:o` per-member role override.
+
+**Bench results (mini #2 leader + CYD client; all PASS):**
+- **Merge:** the leader (BLE role) shows the client's probes, e.g. 82 rows = 10 own + 14 member-only + 58 both.
+- **Ageing:** client off → its rows age out (~20-30 s).
+- **Traffic:** ~0.75 DetBatch frames/cycle, `rx drop 0`.
+- **Fleet-only view:** the leader's C5 parked in its bootloader (`esptool --after no-reset`) → a fleet-only view, roles
+  drop to FULL within ~8 s; restored → the split returns in 2 s.
+- **Heap:** mini internal ~88 KB free (min ~84 KB); CYD client ~78 KB (min ~73 KB).
+- **Builds:** all 8 envs pass. Static RAM: cyd 114,648 B; xiao_s3 129,028 B (+25 KB from the 192-row table); c5 80,156 B.
+
+**Board state (updated after the morning run):**
+- mini #2 + the CYD are on the **release** envs (`xiao_s3_rgb`, `cyd`) at **fw 0.22.0** (`b5b99d9`, `build release`).
+  The debug-only serial commands (`fleet m/fk/add/crash/trace`) are gone: use the `*_fleetdbg` envs for bench work.
+- Both C5s run the latest `c5` / `xiao_c5`.
+- **Mini #1 FLASHED (2026-11-01):** release `xiao_s3` (S3 COM16, `10:B4:1D:E7:ED:A0`) + `xiao_c5` (COM23,
+  `10:BD:A3:CF:02:DC`), fw 0.22.0, link v12. Its S3↔C5 link is up, role off. To join: `fleet client` on its serial (or
+  the web Fleet card "Make this scanner a fleet client"), then on mini #2 → Fleet card → Add member (the phone needs
+  mini #1's key). Mini #2 was unplugged at the time.
+- The webapp Home fleet cue is deployed (`efe7c9b`, `fleet-cue c`).
+- **3-UNIT FLEET RUNNING (2026-11-01):**
+  - mini #1 is a client (enrolled from the owner's phone) — layout leader ble, CYD wifi24, mini #1 wifi5.
+  - Merge from two clients, rx drop 0.
+  - mini #2 re-flashed with the member-name fix (`3ad60ce`, release `xiao_s3_rgb`).
+  - **`fleet-mode` is PUSHED** to GitHub (no PR, not merged to `main`).
+  - Next: **P6** — draft the scan-analyzer contract proposal via REMOTE.md (log keys: meta `fleet_id` / `fleet_role` /
+    `fleet_leader`, row `scanner` / `ofile` / `orow` for P5b, `devpos`, the `fleet` evt fields, `pos_via`, live-POST
+    member rows) and build after it is agreed.
+  - **2026-11-01: P6 proposal SENT** (bridge entry 2026-11-01 10:05, DRAFT). Items: 1 meta fleet keys, 2 `fleet` evt,
+    3 `devpos`, 4 `pos_via` (or `pos_src`), 5 live-POST of member rows with a per-row `scanner`, 6 P5b `scanner` /
+    `ofile` / `orow`. scan-analyzer checks with the owner first. WAIT for its answers (questions a-d) before building.
+- The CYD is joined to mini #2 (channel 1, CYD = wifi role, leader = ble).
+- The CYD's time preference is "prefer device", so its clock shows GPS (src 2) rather than fleet (4) while its own GPS
+  is fresh. That is correct for that setting.
+- Ports: mini S3 COM10, mini C5 COM9, CYD COM13, CYD C5 COM18.
+- **Mini #1 is untouched (still link v11).**
+
+**Ready, waiting on the owner:**
+1. ~~Webapp deploy~~ **DONE** (`main` `7f81c50`, footer `fleet-p5 b`). ~~Release flash~~ **DONE** (mini #2 + the CYD at
+   fw 0.22.0).
+2. **Owner review** of the running fleet and the web "seen by" chips.
+3. If OK, the owner's plan:
+   - **push `fleet-mode`** (nothing fleet-related is on GitHub yet);
+   - **flash mini #1**: both halves, `xiao_s3` + `xiao_c5`, link v12; enroll it from the Fleet card;
+   - start **P6** (the scan-analyzer contract via REMOTE.md).
+
+**Open items / next steps:**
+- **P6 (needs the scan-analyzer contract via REMOTE.md):** the `fleet` evt extra fields, meta `fleet_id` / `fleet_role` /
+  `fleet_leader`, `devpos`, `pos_via`, live-POST of member rows, and P5b LogRows store-and-forward (`scanner` / `ofile`
+  / `orow`). None of these are built: they change the log schema.
+- **Untested:** 2+ clients (only one client on the bench) — bring mini #1 in (flash both halves) to test N=3 roles,
+  WIFI24/WIFI5 on real members, and multi-member delivery. Also the sniffer check (P1 step 9 / P2).
+- **Web:** no `M:o` / plan-mode / layout editor controls yet (§16.1); serial `fleet m o:…` / `fleet m p:…` meanwhile.
+- **Accepted / minor:** see docs §20 "Accepted / open"; a group's `rep` can be a member row.
+
+
+## Earlier — 2026-11-01: fleet P3 (time + position) BUILT; P2 done + owner-tested from the phone
+- **P3:** docs/fleet-mode.md §18. Bench: the CYD client takes the fleet clock (src 4) + the leader's tz, and its bg log
+  renamed 0.4 s after join. **Position PASSED** with the phone on the leader (CYD `pos src 4 live`, 2 self MACs; the
+  owner confirmed `Pos: fleet`). Self-MAC drops: by inspection only. P3 review fixed (`fbd786e`, docs §18.1). Next: P4 (link v12 scan
+  plan; all boards flash).
+- The webapp `status.js` change (source 4 icons) is committed on `fleet-mode` only — deploy with the next webapp push.
+
+## Earlier — 2026-10-31 (late): fleet P2 (enrollment + auth) BUILT, REVIEWED (reviewer + security, all fixed) + bench-PASSED; owner tested the Fleet card from the phone
+- **P1:** done (see below). Its sniffer check (step 9) moves to P2's sniffer check.
+- **P2:** built and bench-passed — details, deviations and results in **docs/fleet-mode.md §17**.
+  - Both boards run the `*_fleetdbg` builds: mini #2 = leader (channel 1) with the CYD enrolled + joined; the CYD is a
+    fleet client.
+  - The web Settings → Fleet card + `fleetcrypto.js` are written. The crypto was verified against the firmware in
+    Node; the card has NOT been tried on a phone. Webapp tokens are bumped to `20261031d` (`#uiver` `fleet-p2 d`) but
+    NOT deployed.
+- **Next:**
+  1. ~~Review + security fixes~~ DONE (docs §17.1). Committed on `fleet-mode` (local, not pushed).
+  2. Deploy the webapp (owner's go-ahead), then the owner tests the Fleet card from the phone (add a member from Scanner keys, remove/release, channel), then deploy
+     the webapp.
+  3. Sniffer check (spare S3).
+  4. P3 (time/position push). P4 must re-send member slots after a removal (§17.1).
+
+## Earlier — 2026-10-31: fleet mode P1 built + reviewed + bench-tested
+**What fleet mode is:** 2+ of the owner's scanners cooperate over ESP-NOW and split RF coverage. Design + every owner
+decision: **[docs/fleet-mode.md](docs/fleet-mode.md)**. §16 (2026-10-31) overrides earlier sections; all §15 questions
+are answered. Key decisions:
+- **Roles:** the CYD is only ever a fleet **client**. It reboots into that mode, never starts NimBLE (no phone link), and
+  releases its BT memory. A **mini is the leader**: it holds the phone link and enrolls clients. Up to 6 clients (one
+  encrypted ESP-NOW slot spare).
+- **Coverage split:** the role layout is user-editable. When a member drops out past the grace period the leader
+  reassigns its coverage, and restores the saved layout when it rejoins.
+- **Logging:** the leader logs everything. Clients forward their log rows verbatim (acked and resumable) and keep their
+  own SD copy as a backup. `fleet_id` plus per-row `scanner`/`ofile`/`orow` let scan-analyzer spot duplicate or partial
+  client uploads.
+- **Position:** one fleet position, phone by default. The user may pick the leader's GPS or a member's GPS instead. Each
+  unit's own fix is logged as `evt:"devpos"` with `used` 0/1.
+
+**Why the CYD can't lead (measured 2026-10-30 on the CYD, throwaway probes):**
+- Normal boot leaves ~58.7 KB free heap. Wi-Fi STA costs ~51 KB, so with NimBLE up the CYD **OOM-aborted**.
+- Fleet-client boot (no NimBLE + `esp_bt_mem_release`) ran Wi-Fi + ESP-NOW at **~114 KB free**. A real dual-mode build
+  should land around 95–105 KB.
+
+**P1 bench results (2026-10-31, CYD = `cyd_fleetdbg` on COM14, mini #2 = `xiao_s3_rgb_fleetdbg` on COM10):**
+- **Step 1 leader:** up on ch 1, MAC set **direct**, 12 Mbps accepted, pool 16x1480 in PSRAM, txpwr 8 dBm. Fleet cost
+  44.8 KB internal heap (166.4 → 121.6 KB).
+- **Step 2 client:** `BT memory release -> 0`, MAC set direct, pool 8x256 on heap, txpwr 6.25 dBm. Heap **139.8 KB before
+  the fleet, 84.3 KB after (fleet cost 55.5 KB)**. The probe's 114 KB doesn't carry over: the real boot has SD/sigdb/whitelist
+  allocated before `beginClient()` (the fg dedup-table skip is already included).
+- **Step 3 soak, 30 min — stable, but fails the ≥95 KB heap target:**
+  - **CYD:** heap 83.7 KB steady with no drift, min 75.2 KB, largest block 73.7 KB. No resets, and the C5 link was up for all
+    896 cycles.
+  - **Mini:** internal heap 121.6 KB (min 116.6 KB), PSRAM flat at 8.3 MB. 908 TX ok, 0 fail.
+  - **Delivery:** about 97–98% at ~-31 dBm (250 B 446/~454, 1300 B 439/~454). 16 gaps spread evenly (~1 per 2 min). All
+    885 pongs ok, 0 RX drop.
+- **Step 4 rate/pad:** at 1 Mbps over 3 min, 45/45 (250 B) and 44/45 (1300 B) — the same as 12 Mbps at bench range, so
+  only a range test will separate them. Pad default (0) already alternates 250/1300, which the soak covered. Restored 12M.
+- **Step 5 remac:** CYD `fleet remac` took 9.2 ms (direct set, ESP-NOW up). The **~15 s gap** seen before pings
+  resumed was the unread-console artifact (see "Traffic stall"). **The leader never expires old peer MACs** (stale rows kept counting up; cleared only by a leader reboot) — fix in a later
+  phase (peer timeout). Reboots: the CYD rejoined instantly with a new boot MAC; the mini rebooted (via reflash) back
+  into leader and the CYD followed its new MAC automatically. Boot-time randomization holds; no fallback needed.
+- **BUG found + fixed:** `fleet::setRole()` saved NVS but not `g_role`, so after `fleet leader on` the live leader
+  reported `role off` (`fleet leave` would have said "not in a fleet"). Now `setRole()` updates `g_role`, and the `leader on`
+  handler reads the old role first so its "was a client → restart" check still works. Both boards reflashed.
+- **Step 7 `fleet leave` (serial):** OK — rebooted to normal, phone BLE advertising again. **Not yet tested:** the touch / BOOT
+  "Leave fleet" UI path — **PASSED (owner, 2026-10-31)**.
+- **Step 8 crash fallback:** OK using a new **`fleet crash`** serial command (`abort()`, `FLEET_DEBUG` builds only): 3
+  consecutive panics → `boot-loop guard: 3 boots, last reset reason 4 -> leaving the fleet`, normal boot, `role off`.
+  The SD `evt:"fleet","op":"fallback"` line isn't checked yet (read the card / download the bg log).
+- **Step 6 mini under load (phone authed on the mini, fleet on ch 6) — PASS:**
+  - Idle with the phone: ~95%. A BLE download of 168.8 KB: ~100%, leader heap min 116 KB.
+  - SoftAP up ~6.5 min incl. a 170 KB Wi-Fi download: 95%, leader heap min 113 KB (the AP cost ~3 KB internal).
+  - **After `AP down` the fleet stayed on ch 6** (retune fix proven), 16/17.
+  - `fleet ch 6` itself seemed to cause a **~25 s outage** before pings resumed (like the ~15 s after remac). **RESOLVED,
+    not a fleet bug** — see "Traffic stall" below.
+- **Traffic stall — RESOLVED (2026-10-31).** A scripted run (`fleet trace on`: per-ping tx/rx lines with the actual RF
+  channel; both consoles read on one clock) showed **no stall**:
+  - remac: the next ping arrived 150 ms later. Same-channel retunes: no loss.
+  - A real channel change loses pings only while the two boards are on different channels.
+  - **Cause:** the earlier stalls happened only while the **mini's USB-CDC console was plugged in but unread**. HWCDC
+    retries each `Serial` write 20 × 100 ms, so the chatty mini loop() crawled and pings went out every ~12–17 s.
+  - **Fix:** `src/xiao_s3/main.cpp` sets `Serial.setTxBufferSize(4096)` before `begin` and `setTxTimeoutMs(0)` after. With
+    the console closed, pings now arrive every ~2 s (age ≤ 1 s).
+  - This also affects a mini powered from a laptop USB port without a terminal open (scanning + phone link too, not just
+    the fleet).
+  - **TODO, next C5 flash:** the C5 (USB-CDC console) has the same default; apply the same two lines.
+- **CYD heap regression found + fixed:** the `strftime` date on the Wi-Fi index cost the CYD **~4 KB** (+1 KB static, ~3 KB
+  heap; fleet-client heap 84 → 80 KB). A/B confirmed; now `gmtime_r` + `snprintf` + a month table. Back to 139,836 B before
+  fleet start / ~84.2 KB after; `cyd` static 114,016 B.
+- **Owner UX feedback (web app, not fleet):** the SoftAP join QR is drawn in the web app on the same phone that has to
+  scan it. Proposed: Copy-password + "Open Wi-Fi settings" (Android `intent:` link, with a fallback) + the existing log-index
+  link, with the QR folded under "for another device". Chrome's "can't download securely" warning is the plain-HTTP AP, and
+  it is expected (a self-signed HTTPS cert would be worse). Add a note on the card.
+  - **Built + deployed** as `main` `0345a44` (webapp `20261031a`): Copy password, Open Wi-Fi settings, folded QR.
+  - **Owner test feedback (2026-10-31), still to fix:**
+    1. The card was very slow to appear and looked like a failure. The mini only shows it once STATUS carries the AP
+       creds; STATUS pushes every 1 s in download mode, so the delay is entering download mode / bringing up the AP. Show a
+       "Starting device Wi-Fi…" state the moment the toggle is tapped.
+    2. **The log index link must be a large button, not a link in small copy.** Required steps never go in `.sub` text
+       (owner UX rule). The whole join → open → download flow needs a guided stepper.
+    3. **This run the log index didn't load:** no `[webshare] GET` reached the mini (AP up, heap 113 KB) — phone-side
+       routing, cause TBD.
+  - **Stepper BUILT + deployed** as `main` `2ead774` (webapp `20261031b`, `features/wififlow.js`, `#wifiDlg`). It opens
+    instantly with a counting spinner, then steps 2→3 on return from Wi-Fi settings, 3→4 on return from the download tab.
+    Legacy shims for cached phones: hidden `#apCard` stub, no-op `renderApCard()`, `toggleWifi()` — remove in a later deploy.
+  - **"Index won't load" was the phone, not the mini:** no request arrived for a long while, then `GET /` was served
+    instantly. Android routes over mobile data after "Connected without internet" until it settles. Step 3 now says so.
+  - Cancel button added (`main` `c9a9acb`, webapp `20261031c`).
+  - **Firmware side DONE (uncommitted on `fleet-mode`; mini #2 runs it in `xiao_s3_rgb_fleetdbg`; ships with the next
+    release):**
+    - STATUS part 2 **`apsta`** = SoftAP stations (`webshare::stations()`), sent with `apssid`/`appsk`/`apurl`.
+    - The **index page is newest-first**: a big "Download current log" button, then the 40 newest `/logs/` files by FS write time
+      (bounded heap insertion sort, freed per request), with a "N older logs not listed" line.
+    - **AP station join/leave/IP-assigned console trace** (timestamped, no MACs), plus index build time.
+    - Cost: `cyd` static RAM +1,008 B (114,032 → 115,040), flash +16 KB, likely `gmtime_r`/`strftime` for the date column. Weigh
+      this against the CYD's tight DRAM before release; dropping the date would recover it.
+  - **Owner verdict 2026-10-31: RESOLVED.** Page load felt quick, the newest-first list and current-log button were seen,
+    and "phone joined ✓" auto-advanced. "As streamlined as it can be without a standalone app."
+- **Still open:** step 9 (sniffer), step 10 (normal-mode CYD heap during a SoftAP download).
+  **Both boards are on fleet ch 6** (CYD client, mini leader); set `fleet ch 1` on both to restore the default.
+- **Heap decision (owner, 2026-10-31):** accept ~84 KB steady / 75 KB min for P1; 95 KB was a margin estimate, not a limit.
+  **Before P5b** (LogRows store-and-forward), set a hard floor (e.g. min ≥ 50 KB plus a heap-check load-shed) and size the
+  queue from the measured headroom.
+
+**P1 state (branch `fleet-mode`, nothing committed; flashed to the CYD + mini #2 for bench testing 2026-10-31):**
+- **New code:** `src/host_common/fleet_proto.h` (wire structs), `fleet.h` (facade), `fleet_link.cpp` (roles/NVS, boot-loop
+  fallback, random-MAC STA + ESP-NOW, RX pool/queues, FLEET_DEBUG ping/pong + stats).
+- **CYD** (`src/cyd/main.cpp`): fleet-client boot path, screens `SCR_FLEET` / `SCR_FLEETLEAVE` / `SCR_FLEETENTER`,
+  Settings → "Fleet client…" (shows "Leave fleet…" in fleet mode), fleet glyph in the status bar, forced bg scanning,
+  SoftAP download disabled.
+- **Mini** (`src/xiao_s3/main.cpp`): leader or client starts after `phone::begin()`.
+- **Shared code:**
+  - `webshare` uses AP_STA on the fleet channel, retunes on `stop()` and allows 1 station while the fleet is up.
+  - Serial `fleet` commands (below).
+  - `logFleetEvent()`.
+  - `phone::loadTz()` split out of `phone::begin()`.
+  - `pushStatus()` returns early when no phone is authed.
+  - **FW 0.20.0**.
+- **`platformio.ini`:** only two bench envs added, `cyd_fleetdbg` and `xiao_s3_rgb_fleetdbg` (`-DFLEET_DEBUG`).
+  Normal envs send no fleet frames in P1.
+- **Builds (2026-10-31, all OK):**
+
+  | Env | RAM (B) | Flash (B) |
+  |---|---|---|
+  | `cyd` | 114,016 | 1,489,961 (+144 RAM, +19 KB flash vs 0.19.0) |
+  | `cyd_fleetdbg` | 114,032 | 1,494,377 |
+  | `xiao_s3` | 103,332 | 1,331,238 |
+  | `xiao_s3_rgb` | 103,476 | 1,341,525 |
+  | `xiao_s3_rgb_fleetdbg` | 103,484 | 1,345,445 |
+
+- **Reviewed:** no critical findings. All 6 code-fix items rated important plus all minor items fixed, notably:
+  - the SoftAP stop stranding the fleet on ch 1;
+  - `fleet leader on` killing a live AP;
+  - a partial-alloc retry panic;
+  - `fleet ch` not retuning;
+  - the unused 9.6 KB fg dedup table on a client is now skipped;
+  - `Sync.selfMacs` resized to 9 (`Sync` = 91 B);
+  - the boot guard now counts consecutive crash boots only.
+- **Encrypted-peer limit:** confirmed **7** at runtime (sdkconfig `CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM`; the header's
+  `ESP_NOW_MAX_ENCRYPT_PEER_NUM 6` is only a constant).
+
+**Serial console (USB):** `fleet` (status) · `fleet client` (saves role + reboots) · `fleet leave` (reboots to normal) ·
+`fleet leader on|off` (minis only) · `fleet ch <1-13>` · `fleet remac` (re-randomize the STA MAC, prints the time taken).
+Debug builds only: `fleet rate 1|12` · `fleet pad 250|1300|0`.
+
+### P1 bench test checklist (owner, next session)
+**Flash** with `PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$HOME/.platformio/penv/Scripts/pio.exe" run -e <env> -t upload
+--upload-port <COM>`, and read serial with pyserial (memory: serial-capture-windows-pyserial).
+- **Mini #2:** env `xiao_s3_rgb_fleetdbg`. Its S3 and C5 both enumerate as `303A:1001`, so pick the S3 by MAC
+  `10:b4:1d:eb:96:04` (`esptool chip_id`). Last seen on COM10, but ports move on replug.
+- **CYD:** env `cyd_fleetdbg`, CH340 `1A86:7523` (was COM14). The first upload attempt often fails with "Wrong boot
+  mode"; just retry.
+
+**Steps:**
+1. **Mini as leader:** type `fleet leader on`. Expect `[FLT] leader up: ch 1 mac … (set direct|via stop/start)
+   maxPayload … txpwr 8.00 dBm rate 12M pool …(psram|internal)`, then heap lines and 5 s ping stats.
+   - Note which MAC-set path was used ("direct" vs "via stop/start") and whether the 12 Mbps rate was accepted (a
+     one-time warning prints if not).
+2. **CYD as client:** type `fleet client`, or use Settings → Fleet client… → confirm. Expect `BT memory release -> 0`
+   and `fleet client up, free heap N`.
+   - The screen shows FLEET CLIENT. Once a ping is heard it changes from "Searching… ch 1" to "Leader xx:xx -NN dBm",
+     and the glyph turns green.
+3. **Memory soak:** 30 min with scanning running.
+   - **CYD free heap ≥ 95 KB steady**, min-free and largest block logged.
+   - C5 link dot stays green, no aborts.
+   - Mini internal + PSRAM headroom logged.
+4. **Delivery:** compare the pong ratio at `fleet rate 1` vs `12` and `fleet pad 250` vs `1300`.
+5. **MAC re-randomize:** run `fleet remac` on the CYD and read "re-randomized in X ms". Then reboot each side in turn and
+   confirm pings resume.
+   - If a rejoin after a reboot fails, fall back to boot-only randomization (owner-approved).
+6. **Mini under load:** with the phone connected, measure delivery while idle, during DETS pushes, and during a BLE log
+   download. Also start a SoftAP download while the fleet is up.
+   - The fleet must stay on its channel after the AP stops. Try `fleet ch 6` first to prove the retune fix.
+7. **Leaving fleet mode:** test "Leave fleet" on the CYD (Cancel is the default; works from touch and BOOT; respects the
+   touch lock) and `fleet leave`. The CYD must reboot to normal mode with the phone link back.
+8. **Crash fallback:** force 3 consecutive crash boots and check that `evt:"fleet","op":"fallback"` is logged and the
+   unit boots normally.
+9. **Optional (sniffer):** each frame's addr2 must not equal `scannerIdHex()` or the base MAC.
+10. **Existing-risk measurement:** free heap on a **normal-mode CYD during a Wi-Fi (SoftAP) log download** with NimBLE up.
+    AP mode likely costs the same ~51 KB as STA, so this existing feature may be near OOM. If it is, gate it behind a
+    heap check or `NimBLEDevice::deinit()` it first (separate fix).
+
+**After P1 passes:**
+- Commit P1 on `fleet-mode`. Commit message on request; don't push until the owner says.
+- Then **P2**: enrollment + auth, meaning the `M:` CMDs, Probe/Hello/Join/JoinAck, LMK peers, the seq window, release
+  and unjoin, and the web `fleet.js` + `fleetcrypto.js`.
+- Later phases: P3 time/position push · P4 link **v12** ScanPlan (flash ALL boards together) · P5 forwarding/merge +
+  DETS v9 · **P5b** LogRows store-and-forward · P6 scan-analyzer contracts via REMOTE.md (`fleet`/`devpos` evts, meta
+  `fleet_id`/`fleet_role`/`fleet_leader`, row `scanner`/`ofile`/`orow`).
+
+**Side note, existing and NOT fleet-related:** about every 30 s the CYD's 2.4 GHz and 5 GHz counts dip to 0 and recover
+over a few polls. This is the C5's 30 s TTL expiring Wi-Fi entries before the next AP scan refreshes them. It is
+cosmetic on the live list and DETS; the log is unaffected. Worth its own look.
 
 ## Latest — 2026-10-29 (eve): fw 0.19.0 = DETS v8 + richer live-POST rows (scan-analyzer "Live-POST v-next", owner-approved)
 DETS rows append `cid` (4-hex) / `uuid` (4-hex short or 32-hex) / `sig` (`host_status.cpp` `pushDetections`); the web app
@@ -139,13 +520,13 @@ The mini #2 RGB LED was glaring at night, so its overall brightness is now a web
 - `FW_VERSION` 0.17.0; CLAUDE.md CMD list + STATUS keys updated. Builds: cyd, xiao_s3, xiao_s3_rgb all green.
 - **Device state:** mini #2's S3 (`10:b4:1d:eb:96:04`, COM10 this session) runs `cac0de7` `xiao_s3_rgb`, boot-verified
   (link up, scanning). **Owner confirmed the slider works.** CYD NOT reflashed (its change is only `led=-1` + stubs).
-- Still untracked: `hardware/diagrams/mini-build_led_wiring_diagram.svg` (says 68 Ω for blue; 100 Ω fitted) — ask before
-  committing.
+- The untracked `hardware/diagrams/mini-build_led_wiring_diagram.svg` was **deleted** (owner, 2026-10-31): the LED stays
+  as built; `hardware/PINOUT.md` §6 is the reference (100 Ω blue fitted).
 
 ## Earlier — 2026-10-27: MINI #2 built + `[env:xiao_s3_rgb]` RGB status LED (DONE; committed + pushed `4fddba0`)
 The owner built a **second mini** ("mini #2", NOT the unit used on the 10-24 drives): new perfboard/case
 footprint, **2000 mAh** cell, **power LED removed** (redundant), and a **5 mm RGB status LED** on the S3. Wiring diagram:
-`hardware/diagrams/mini-build_led_wiring_diagram.svg` (untracked, owner's Cirkit export; it says 68 Ω for blue but **100 Ω is
+the owner's Cirkit export (deleted 2026-10-31; it said 68 Ω for blue but **100 Ω is
 fitted**).
 
 **Hardware (mini #2):** S3 `10:b4:1d:eb:96:04` (BLE `CFLO-MINI-BEMOPU`), C5 `10:bd:a3:cf:a3:c8`. The USB serial number = the

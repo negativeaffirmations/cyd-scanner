@@ -5,7 +5,9 @@
 #include <SD.h>
 #include <Preferences.h>
 #include <esp_random.h>
+#include <new>
 #include "phone.h"
+#include "fleet.h"
 #include "logfilter.h"
 #include "host_log.h"  // g_fg/g_bg (live files), sessionMetaLine()
 
@@ -17,42 +19,103 @@ char       g_ssid[24]  = {0};
 char       g_pw[20]    = {0};  // WPA2 PSK (random, NVS-persisted); 16 chars + NUL
 const char* kUrl       = "http://192.168.4.1";
 char       g_logPath[48] = "/scanlog.jsonl";  // current session log (set by setLogPath)
+wifi_event_id_t g_evId = 0;   // AP station join/leave/IP logger, registered while the AP is up
+
+// Console trace of the phone joining the AP, timestamped so a slow page load can be split into
+// "the phone hadn't joined / got no IP yet" vs "the request never arrived" vs "the server was slow".
+// Runs in the Wi-Fi event task. No MACs printed (it's the owner's phone, but keep logs identifier-free).
+void onApEvent(arduino_event_id_t ev, arduino_event_info_t info) {
+  switch (ev) {
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      Serial.printf("[webshare] %lu ms: station joined (aid %u)\n", millis(), (unsigned)info.wifi_ap_staconnected.aid); break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      Serial.printf("[webshare] %lu ms: station left (aid %u, reason %u)\n", millis(),
+                    (unsigned)info.wifi_ap_stadisconnected.aid, (unsigned)info.wifi_ap_stadisconnected.reason); break;
+    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+      Serial.printf("[webshare] %lu ms: station got IP %s\n", millis(),
+                    IPAddress(info.wifi_ap_staipassigned.ip.addr).toString().c_str()); break;
+    default: break;
+  }
+}
 
 const char* logBasename() {
   const char* s = strrchr(g_logPath, '/');
   return s ? s + 1 : g_logPath;
 }
 
-// Index page: list every /logs/ session with size + a download link, so the phone can
-// grab any past session over Wi-Fi (not just the current one). Current session marked.
+// Index page: the current log as a big button, then the newest INDEX_MAX /logs/ files, newest first (by
+// FS write time, then name), each with size + a 24 h filtered link. A card holds hundreds of logs, so only
+// the newest are kept (a bounded insertion sort on the heap, freed after the request; the CYD in normal mode
+// has little heap left while the AP is up); older ones are reachable through the time-range links.
+constexpr int INDEX_MAX = 40;
+struct IndexEntry { char name[48]; uint32_t size; time_t t; };
+
+bool newerThan(const IndexEntry& a, const IndexEntry& b) {
+  return a.t != b.t ? a.t > b.t : strcmp(a.name, b.name) > 0;
+}
+
 void handleRoot() {
-  Serial.println("[webshare] GET / (session index)");
-  String h = "<!doctype html><html><head><meta name=viewport "
-             "content='width=device-width,initial-scale=1'><title>COINTEL-FLO</title>"
-             "<style>body{font-family:sans-serif;margin:1.2em;background:#111;color:#eee}"
-             "h2{margin:.2em 0}ul{padding-left:1.1em;line-height:1.9}a{color:#6cf}"
-             "small{color:#8b949e}</style></head><body>"
-             "<h2>COINTEL-FLO &mdash; session logs</h2><ul>";
-  int n = 0;
+  const uint32_t t0 = millis();
+  Serial.printf("[webshare] %lu ms: GET / (session index)\n", (unsigned long)t0);
+  IndexEntry* ents = new (std::nothrow) IndexEntry[INDEX_MAX];
+  int kept = 0, total = 0;
+  uint32_t curSize = 0;
+  bool curFound = false;
   File dir = SD.open("/logs");
   if (dir) {
     for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
       if (e.isDirectory()) continue;
-      String nm = e.name(); int sl = nm.lastIndexOf('/');
-      String base = sl >= 0 ? nm.substring(sl + 1) : nm;
-      String cur = (String("/logs/") + base == String(g_logPath)) ? " <small>(current)</small>" : "";
-      h += "<li><a href='/dl?f=" + base + "'>" + base + "</a> <small>" +
-           String(e.size() / 1024.0, 1) + " KB</small>" + cur +
-           " <small><a href='/dlf?f=" + base + "&mode=1'>24h</a></small></li>";
-      n++;
+      const char* nm = e.name(); const char* sl = strrchr(nm, '/');
+      const char* base = sl ? sl + 1 : nm;
+      if (strlen(base) >= sizeof(IndexEntry::name)) continue;
+      total++;
+      if (!strcmp(base, logBasename())) { curFound = true; curSize = e.size(); }
+      if (!ents) continue;
+      IndexEntry x;
+      strcpy(x.name, base); x.size = e.size(); x.t = e.getLastWrite();
+      int i;
+      if (kept < INDEX_MAX) i = kept++;
+      else if (newerThan(x, ents[INDEX_MAX - 1])) i = INDEX_MAX - 1;
+      else continue;
+      while (i > 0 && newerThan(x, ents[i - 1])) { ents[i] = ents[i - 1]; i--; }   // keep newest-first order
+      ents[i] = x;
     }
     dir.close();
   }
-  if (!n) h += "<li><small>no sessions yet</small></li>";
-  h += "</ul><h3>All sessions, by time range</h3><ul>"
+  String h = "<!doctype html><html><head><meta name=viewport "
+             "content='width=device-width,initial-scale=1'><title>COINTEL-FLO</title>"
+             "<style>body{font-family:sans-serif;margin:1.2em;background:#111;color:#eee}"
+             "h2{margin:.2em 0}ul{padding-left:1.1em;line-height:1.9}a{color:#6cf}"
+             "small{color:#8b949e}a.b{display:block;margin:.8em 0 1.2em;padding:.9em;border-radius:10px;"
+             "background:#a0a;color:#fff;text-align:center;text-decoration:none;font-size:1.1em}"
+             "</style></head><body><h2>COINTEL-FLO &mdash; logs</h2>";
+  if (curFound)
+    h += String("<a class=b href='/dl?f=") + logBasename() + "'>Download current log<br><small style='color:#fdf'>" +
+         logBasename() + " &middot; " + String(curSize / 1024.0, 1) + " KB</small></a>";
+  h += "<h3>Newest first</h3><ul>";
+  for (int i = 0; i < kept; i++) {
+    const IndexEntry& x = ents[i];
+    char when[24] = "";
+    if (x.t > 1600000000) {   // snprintf, NOT strftime: strftime cost the CYD ~4 KB heap + static (A/B 2026-10-31)
+      static const char kMon[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+      struct tm tmv; gmtime_r(&x.t, &tmv);
+      snprintf(when, sizeof(when), " &middot; %s %02d %02d:%02d", kMon[tmv.tm_mon % 12], tmv.tm_mday, tmv.tm_hour, tmv.tm_min);
+    }
+    h += String("<li><a href='/dl?f=") + x.name + "'>" + x.name + "</a> <small>" + String(x.size / 1024.0, 1) +
+         " KB" + when + (strcmp(x.name, logBasename()) ? "" : " (current)") +
+         "</small> <small><a href='/dlf?f=" + x.name + "&mode=1'>24h</a></small></li>";
+  }
+  if (!total) h += "<li><small>no logs yet</small></li>";
+  if (total > kept)
+    h += String("<li><small>") + (total - kept) + " older log" + (total - kept == 1 ? "" : "s") +
+         " not listed &mdash; use the time ranges below.</small></li>";
+  delete[] ents;
+  h += "</ul><h3>All logs, by time range</h3><ul>"
        "<li><a href='/dlf?f=all&mode=1'>Past 24 hours (all logs)</a></li>"
        "<li><a href='/dlf?f=all&mode=0'>Since boot (all logs)</a></li></ul></body></html>";
   g_server.send(200, "text/html", h);
+  Serial.printf("[webshare] index: %d files (%d listed), %u B, sent in %lu ms\n", total, kept, (unsigned)h.length(),
+                millis() - t0);
 }
 
 // Serve any /logs/ file by name (?f=<basename>), validated (no path traversal).
@@ -141,6 +204,7 @@ void handleDlf() {
   File file = SD.open(path, "r");
   if (!file) { g_server.send(500, "text/plain", "open failed"); return; }
   logfilter::Cutoff c = logfilter::make(mode, arg, epochLocal(), millis());
+  c.epochOnly = path.startsWith("/logs/fleet-");   // a fleet file: members' lines, window by epoch only
   String base = path.substring(path.lastIndexOf('/') + 1);
   if ((mode == 1 || mode == 2) && base.endsWith(".jsonl")) {  // name a range by its contents' span
     uint32_t lo = 0xFFFFFFFFUL, hi = 0;
@@ -209,8 +273,11 @@ void start() {
   loadOrCreatePsk();  // g_pw = stored random PSK (SEC-M1)
 
   WiFi.persistent(false);          // don't thrash NVS on every AP start
-  WiFi.mode(WIFI_AP);
-  bool ok = WiFi.softAP(g_ssid, g_pw);
+  // With a fleet up the STA (ESP-NOW) must stay alive and the AP must sit on the fleet channel (one radio).
+  const bool flt = fleet::active();
+  WiFi.mode(flt ? WIFI_AP_STA : WIFI_AP);
+  // Fleet: one client at most (SoftAP + ESP-NOW share the hardware key slots, matters from P2).
+  bool ok = WiFi.softAP(g_ssid, g_pw, flt ? fleet::channel() : 1, 0, flt ? 1 : 4);
   IPAddress ip = WiFi.softAPIP();
   g_server.on("/", handleRoot);
   g_server.on("/dl", handleDl);
@@ -222,6 +289,7 @@ void start() {
     g_server.send(404, "text/plain", "not found");
   });
   g_server.begin();
+  if (!g_evId) g_evId = WiFi.onEvent(onApEvent);
   g_active = true;
   Serial.printf("[webshare] softAP=%s SSID=%s ip=%s heap=%u serving=%s exists=%d\n",  // PSK deliberately not logged
                 ok ? "OK" : "FAIL", g_ssid, ip.toString().c_str(),
@@ -231,8 +299,10 @@ void start() {
 void stop() {
   if (!g_active) return;
   g_server.stop();
+  if (g_evId) { WiFi.removeEvent(g_evId); g_evId = 0; }
   WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_OFF);
+  WiFi.mode(fleet::active() ? WIFI_STA : WIFI_OFF);   // never tear down the fleet's STA
+  fleet::retune();   // softAPdisconnect wrote AP channel 1 and retuned the radio: put the fleet back on its channel
   g_active = false;
   Serial.println("[webshare] AP down");
 }
@@ -243,6 +313,7 @@ void        setLogPath(const char* path) {
 }
 bool        active()   { return g_active; }
 bool        clientConnected() { return g_active && WiFi.softAPgetStationNum() > 0; }
+int         stations() { return g_active ? WiFi.softAPgetStationNum() : 0; }
 void        handle()   { if (g_active) g_server.handleClient(); }
 const char* ssid()     { return g_ssid; }
 const char* password() { return g_pw; }

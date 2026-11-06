@@ -11,6 +11,45 @@
 #include "sigdb.h"
 #include "webshare.h"
 #include "whitelist.h"
+#include "fleet.h"
+
+namespace {
+// One fleet reply = "FLT=<n>:<seq>" then <n> bytes in <=180 B notifies (same framing as FS=). The seq echoes the
+// request's tag so the web app can drop a reply that arrives after it gave up on that request.
+void sendFlt(const char* body, unsigned seq) {
+  char hdr[24];
+  const size_t len = strlen(body);
+  int hn = snprintf(hdr, sizeof(hdr), "FLT=%u:%u", (unsigned)len, seq);
+  phone::logNotify((const uint8_t*)hdr, hn);
+  for (size_t off = 0; off < len; off += 180) {
+    delay(15);
+    phone::logNotify((const uint8_t*)body + off, len - off > 180 ? 180 : len - off);
+  }
+}
+
+// "M<seq>:<op>[:args]" from the authed phone (fleet::handlePhoneCmd; seq 1-255, "M:" = no tag). Member add/remove
+// are audited like other phone-made config changes; a role change replies first, then reboots.
+void serviceFleetCmd() {
+  char cmd[160];
+  if (!phone::fleetRequested(cmd, sizeof(cmd))) return;
+  unsigned seq = 0;
+  const char* p = cmd + 1;
+  while (*p >= '0' && *p <= '9' && seq < 1000) seq = seq * 10 + (unsigned)(*p++ - '0');
+  if (*p == ':') p++;
+  char out[768];
+  fleet::CmdAction act = fleet::handlePhoneCmd(p, out, sizeof(out));
+  sendFlt(out, seq);
+  memset(cmd, 0, sizeof(cmd));   // an M:a carries a wrapped fleet key: don't leave it on the stack
+  if (!strncmp(out, "OK\tadded\t", 9))   logPhoneCfg("fleetadd", out + 9);
+  if (!strncmp(out, "OK\tremoved\t", 11)) logPhoneCfg("fleetrm", out + 11);
+  if (act == fleet::CMD_RESTART) {
+    Serial.printf("[fleet] %s -- restarting\n", out + 3);
+    Serial.flush();
+    delay(400);   // let the FLT= reply reach the phone
+    ESP.restart();
+  }
+}
+}  // namespace
 
 void core::servicePhoneCommands(PhoneCmdFlags& f) {
   hostserial::service();  // USB-serial `help` / `key` / `rekey` (non-blocking line reader)
@@ -29,6 +68,7 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
   if (phone::wlReloadRequested()) { whitelist::reload(); pushStatus(); }
   if (phone::wlListRequested())   sendWhitelist();
   files::service();               // web file explorer: Z: ops + upload chunks
+  serviceFleetCmd();              // web Fleet card: M: ops (enrollment carries wrapped key material; never logged)
   { char ln[96]; if (phone::wlAddRequested(ln, sizeof(ln))) {  // "A:<rule>": SD write in the loop, not mid-scan
       bool ok = true;
       for (const char* c = ln; *c; c++) if ((unsigned char)*c < 0x20) { ok = false; break; }  // one line only

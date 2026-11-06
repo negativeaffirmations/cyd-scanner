@@ -10,7 +10,12 @@
 
 using namespace link_protocol;
 
-constexpr int MAX_DET = 96;
+// Detections held per poll. Fleet P5: a LEADER merges members' rows into this table, so the S3 envs build with
+// -DHOST_MAX_DET=192 (static, ~+27 KB internal SRAM); the CYD (a client only, tight DRAM) keeps 96.
+#ifndef HOST_MAX_DET
+#define HOST_MAX_DET 96
+#endif
+constexpr int MAX_DET = HOST_MAX_DET;
 
 // --- "Following me" detector (Phase 5, device-only). Tunables; these become NVS-settable in a
 // later increment. A device is FOLLOWING when it keeps showing up (persistence) while the
@@ -44,9 +49,21 @@ constexpr int MAX_DET = 96;
 extern Detection          g_dets[MAX_DET];
 extern sigdb::ScoreResult g_score[MAX_DET];  // aligned with g_dets
 extern int                g_detCount;
+// Fleet "seen by" mask per row (docs/fleet-mode.md §9.2): bit 0 = this unit's own C5, bit k = member slot k.
+// A non-fleet unit only ever has bit 0. Logging and the follow engine use only rows with bit 0.
+extern uint8_t            g_detVia[MAX_DET];
+// What fleet members reported for a row: each member's own RSSI (per member slot, index = slot - 1 = via bit - 1)
+// and their OR'd detector flags. Kept beside g_dets (never merged into it) so the unit's own log rows -- RSSI + its
+// position, the triangulation input -- stay its own measurements; the display (group strength, flags / category)
+// and DETS v10's per-unit RSSI list (live-POST provenance, docs/fleet-mode.md P6 item 5) use them. -128 / 0 = none.
+constexpr int DET_MEMBER_SLOTS = 6;   // = fleet_proto::FLEET_MAX_MEMBERS (static_assert in fleet_leader.cpp)
+extern int8_t             g_detFleetRssi[MAX_DET][DET_MEMBER_SLOTS];
+extern uint16_t           g_detFleetFlags[MAX_DET];
+void clearFleetRssi(int i);           // all member slots of row i -> -128
 constexpr int MAX_RID = 8;
 extern RemoteId           g_rids[MAX_RID];
 extern int                g_ridStoreCount;
+extern uint8_t            g_ridVia[MAX_RID];   // same as g_detVia, for the Remote-ID store
 // "Unknown" sentinels in RemoteId fields (match the C5 decoder's values; tested by VALUE, not `have`).
 constexpr int32_t  RID_LL_UNK  = 0;      // lat/lon 0 = unknown
 constexpr int16_t  RID_ALT_UNK = -1000;  // height / geodetic altitude -1000 = unknown
@@ -121,23 +138,25 @@ extern uint32_t g_gpsEpochAtMs;  // millis() when it was latched
 // One consistent view of the scanner's position. Callers needing more than one field (lat + lon +
 // fix_age) take ONE snapshot instead of calling the single-field accessors below in sequence.
 struct PosFix {
-  uint8_t  src;      // 0 none / 1 phone / 2 onboard / 3 held (last known, not live)
-  bool     live;     // src 1 or 2
+  uint8_t  src;      // 0 none / 1 phone / 2 onboard / 3 held (last known, not live) / 4 fleet (docs/fleet-mode.md §7)
+  uint8_t  from;     // where lat/lon came from, held included: 1 phone / 2 onboard GPS / 4 fleet (log `pos_src`)
+  bool     live;     // src 1, 2 or 4
   bool     aged;     // held, or the fix in use is > 10 s old: log lines carry fix_age
   bool     phoneOk;  // phone fix available (STATUS gav bit0)
   bool     onbOk;    // live onboard fix available (gav bit1)
+  bool     fleetOk;  // live fleet fix available (gav bit2): client = the leader's fleet position, leader = a member's GPS
   float    lat, lon; // valid when src != 0
   uint32_t ageMs;    // ms since the fix in use was current (0 with no fix)
 };
 PosFix   posSnapshot();
 bool     posLive();              // a live source is in use (phone providing fixes, or live onboard)
 bool     posHasFix();            // any position: live, or the held last-known fix
-int      posSource();            // 0 none / 1 phone / 2 onboard / 3 held (last known, not live)
+int      posSource();            // 0 none / 1 phone / 2 onboard / 3 held (last known, not live) / 4 fleet
 uint32_t posFixAgeS();           // seconds since the fix in use was current (0 with no fix)
-uint8_t  posAvailMask();         // available position sources: bit0 phone, bit1 onboard (STATUS gav)
-uint8_t  timeAvailMask();        // available clock sources: bit0 phone, bit1 device GPS/RTC (STATUS tav)
+uint8_t  posAvailMask();         // available position sources: bit0 phone, bit1 onboard, bit2 fleet (STATUS gav)
+uint8_t  timeAvailMask();        // available clock sources: bit0 phone, bit1 device GPS/RTC, bit2 fleet (STATUS tav)
 bool     timeHasSync();
-int      timeSource();           // 0 none / 1 phone / 2 GPS / 3 RTC
+int      timeSource();           // 0 none / 1 phone / 2 GPS / 3 RTC / 4 fleet (the leader's clock)
 uint32_t epochLocal();
 extern uint32_t g_rtcEpochUtc;   // DS3231 UTC latch (0 = none); set by the board at boot
 extern uint32_t g_rtcAtMs;
@@ -162,6 +181,7 @@ struct DevGroup {
   char     tag[12];   // combined distinct source tag, e.g. "2.4+PRB"
   char     srcs[48];  // "tag:rssi,tag:rssi" list for the phone stream
   uint16_t flags;     // union of the notable C5 detector flags (FLAGS_NOTABLE) across members
+  uint8_t  via;       // fleet "seen by" mask, OR across members (bit 0 = this unit)
   uint8_t  srcMask;   // union of srcType bits (2.4/5G/BLE/PRB/154) across members; computed at
                       // build time so the live-view/snapshot filter never depends on the transient
                       // g_dets table (which requestScan() zeroes, and an aborted scan leaves empty)
@@ -190,6 +210,12 @@ static constexpr uint32_t SCAN_CYCLE_DOWN_MS = 5000; // headless bg-scan poll sp
                                                      // (each poll costs ~800ms of no-reply wait; back off so menus stay snappy)
 static constexpr uint32_t LINK_STICKY_MS = 8000;   // treat the link as up this long after the last reply
 extern uint32_t g_lastLinkOkMs;      // millis() of the last successful scan exchange / ping
+// A blocking phone transfer (log download/export, session list, log-cap sweep) pauses loop() and so the C5 poll.
+// hostXferBegin/End bracket one (host_log.cpp XferScope, nestable); c5LinkAgeMs() = ms since the last C5 reply NOT
+// counting that paused time (UINT32_MAX = never) -- use it, not millis() - g_lastLinkOkMs, to judge "C5 down".
+void     hostXferBegin();
+void     hostXferEnd();
+uint32_t c5LinkAgeMs();
 
 // --- Following-me engine ---
 struct FollowState {
