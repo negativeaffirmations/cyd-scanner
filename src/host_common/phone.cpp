@@ -1,11 +1,15 @@
 // phone.cpp — see phone.h.
 #include "phone.h"
 #include <NimBLEDevice.h>
+#include "nimble/nimble/host/src/ble_hs_conn_priv.h"   // bhc_cb: NimBLE offers no way to read a connection's handler
 #include <Preferences.h>
 #include <esp_random.h>
 #include <math.h>
 #include "devkey.h"
 #include "fleet.h"
+
+extern "C" void ble_hs_lock(void);     // host-internal: declared in ble_hs_priv.h, which doesn't build as C++
+extern "C" void ble_hs_unlock(void);
 
 namespace {
 
@@ -36,7 +40,7 @@ constexpr uint32_t LOCK_BASE_MS     = 60000;     // first lockout; doubles per f
 constexpr uint32_t LOCK_MAX_MS      = 960000;    // 16 min cap
 volatile uint16_t g_connHandle = NO_CONN;        // the tracked central (one at a time)
 volatile uint16_t g_authHandle = NO_CONN;        // == g_connHandle once it proved the key
-uint32_t g_connMs     = 0;
+volatile uint32_t g_connMs = 0;                  // written by the NimBLE task, read by service() on the loop task
 int      g_connFails  = 0;
 char     g_nonce[33]  = {0};                     // 16 B hex; only while the connection is still locked
 char     g_dp[65]     = {0};                     // device proof (HMAC), shown once authed
@@ -52,6 +56,18 @@ int      g_kickN = 0;
 portMUX_TYPE g_kickMux = portMUX_INITIALIZER_UNLOCKED;
 volatile uint32_t g_authEpoch  = 0;              // bumped on every auth success and tracked disconnect (phone::authEpoch)
 volatile bool     g_authDone   = false;          // authJustCompleted()
+// --- Link encryption (Phase B/C, docs/ble-auth.md). Compiled out at PHONE_BLE_SEC 0. ---
+constexpr int      kSec = PHONE_BLE_SEC;
+constexpr uint32_t SEC_START_DELAY_MS = 250;     // let the app's post-HMAC AUTH read finish before the security request
+constexpr uint32_t ENC_TIMEOUT_MS     = 35000;   // sec=2: the SM's own 30 s procedure timeout, plus the grace below
+constexpr uint32_t ENC_FAIL_GRACE_MS  = 3000;    // sec=2: time for the app to read pf=1 before the kick
+constexpr uint8_t  ENC_MIN_KEY_BYTES  = 16;      // a link negotiated down to a short key (KNOB) does not count
+volatile bool     g_linkEnc  = false;            // the tracked connection is encrypted at full key size
+volatile bool     g_encFail  = false;            // the last pairing / encryption attempt on it failed
+volatile bool     g_secStart = false;            // service() owes this link a security request
+uint32_t g_authMs    = 0;                        // millis() of the HMAC success (also re-armed by the sec=2 kick)
+ble_gap_event_fn* g_gapCb = nullptr;             // NimBLEServer's own handler, wrapped by guardedGapEvent
+uint32_t g_encFailMs = 0;
 uint32_t g_epochBase  = 0;   // epoch secs at g_baseMillis
 uint32_t g_baseMillis = 0;
 bool     g_haveTime   = false;
@@ -152,10 +168,12 @@ void newNonce() {
   esp_fill_random(r, sizeof(r));
   hexOf(r, sizeof(r), g_nonce);
 }
-// HMAC(label|sid|n|cn) -> out. All ASCII, lowercase hex; distinct labels stop a reflected proof being reused.
-bool authMac(const char* label, const char* cnHex, uint8_t out[32]) {
+// HMAC(label|sid|n|cn[|sec]) -> out. All ASCII, lowercase hex; distinct labels stop a reflected proof being
+// reused. sec >= 0 binds the security level into the proof, so a relay can't report a lower one to the app.
+bool authMac(const char* label, const char* cnHex, uint8_t out[32], int sec = -1) {
   char msg[96];
   int n = snprintf(msg, sizeof(msg), "%s|%s|%s|%s", label, devkey::sid(), g_nonce, cnHex);
+  if (sec >= 0 && n > 0 && n < (int)sizeof(msg)) n += snprintf(msg + n, sizeof(msg) - n, "|%d", sec);
   if (n <= 0 || n >= (int)sizeof(msg)) { memset(out, 0, 32); return false; }
   return devkey::hmac((const uint8_t*)msg, (size_t)n, out);
 }
@@ -179,8 +197,47 @@ void recordFail() {
     Serial.printf("[phone] auth lockout %lu s\n", (unsigned long)(g_lockMs / 1000));
   }
 }
+// THE gate: the handle that may send and receive data. HMAC proven, and at sec=2 also encrypted.
+// (g_authHandle alone means "proved the key"; the AUTH state machine and the auth timeout use that.)
+// g_linkEnc is read FIRST: the void in onAuthenticationComplete clears g_authHandle before it sets g_linkEnc, so
+// seeing the flag set guarantees the handle read after it is no longer a proof made in the clear.
+uint16_t gateHandle() {
+  if (kSec >= 2 && !g_linkEnc) return NO_CONN;
+  return g_authHandle;
+}
 bool isAuthed(const NimBLEConnInfo& ci) {
-  return g_authHandle != NO_CONN && ci.getConnHandle() == g_authHandle;
+  uint16_t h = gateHandle();
+  return h != NO_CONN && ci.getConnHandle() == h;
+}
+// Bonding is OFF except between an HMAC success and the end of that link's pairing: any central can start
+// pairing, so with it always on a stranger could fill the bond store and evict the owner's phone. Pairing
+// without it still encrypts, it just stores nothing. Called on the NimBLE host task only, which is also the
+// task the SM reads this from. A pairing latches the flag when it starts (ble_sm.c), so clearing it in
+// onAuthenticationComplete can't lose the keys.
+void setBonding(bool on) {
+  if (kSec >= 1) NimBLEDevice::setSecurityAuth(on, /*mitm=*/false, /*sc=*/true);
+}
+void resetLinkSec() {
+  g_linkEnc = false;
+  g_encFail = false;
+  g_secStart = false;
+}
+// NimBLEServer answers a repeat pairing by deleting the existing bond, and the SM asks before any HMAC, so a
+// central replaying the owner's address could wipe the bond. Only a link that proved the key may do that.
+int guardedGapEvent(struct ble_gap_event* e, void* arg) {
+  if (e->type == BLE_GAP_EVENT_REPEAT_PAIRING && e->repeat_pairing.conn_handle != g_authHandle)
+    return BLE_GAP_REPEAT_PAIRING_IGNORE;
+  return g_gapCb(e, arg);
+}
+void guardConnection(uint16_t h) {
+  if (kSec < 1) return;
+  ble_hs_lock();
+  struct ble_hs_conn* conn = ble_hs_conn_find(h);
+  if (conn && conn->bhc_cb != guardedGapEvent) {
+    g_gapCb = conn->bhc_cb;
+    conn->bhc_cb = guardedGapEvent;
+  }
+  ble_hs_unlock();
 }
 
 // AUTH read value for connection `h` (docs/ble-auth.md "Read value"): rebuilt on every read so the nonce,
@@ -201,8 +258,9 @@ size_t buildAuthValue(uint16_t h, char* b, size_t cap) {
        devkey::fwVersion(), PHONE_BLE_SEC, (unsigned long)devkey::gen(), st);
   if (st == 0 && h == g_connHandle && g_nonce[0]) appf(b, cap, n, ";n=%s", g_nonce);
   if (st == 0 && h == g_connHandle && g_connFails) appf(b, cap, n, ";f=%d", g_connFails);
+  if (kSec >= 1 && st == 0 && h == g_connHandle) appf(b, cap, n, ";enc=%d", g_linkEnc ? 1 : 0);
   if (st == 2) appf(b, cap, n, ";wait=%lu", (unsigned long)lockRemainingS());
-  if (st == 1) appf(b, cap, n, ";dp=%s;enc=0", g_dp);
+  if (st == 1) appf(b, cap, n, ";dp=%s;enc=%d%s", g_dp, g_linkEnc ? 1 : 0, g_encFail ? ";pf=1" : "");
   return n < cap ? n : 0;
 }
 
@@ -210,6 +268,7 @@ class ServerCB : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*, NimBLEConnInfo& ci) override {
     std::string mac = ci.getAddress().toString();  // connected phone's BLE address
     Serial.printf("[phone] connected (peer %s)\n", mac.c_str());
+    guardConnection(ci.getConnHandle());
     if (g_connHandle != NO_CONN) {  // a second central while one is tracked: the first keeps the slot, drop the newcomer
       queueKick(ci.getConnHandle());
       return;
@@ -220,6 +279,8 @@ class ServerCB : public NimBLEServerCallbacks {
     g_connFails  = 0;
     g_dp[0]      = 0;
     g_connMs     = millis();
+    resetLinkSec();
+    setBonding(false);
     newNonce();
     g_connHandle = ci.getConnHandle();   // last: marks the slot taken once the state above is in place
   }
@@ -231,6 +292,8 @@ class ServerCB : public NimBLEServerCallbacks {
       g_nonce[0]   = 0;
       g_dp[0]      = 0;
       g_connFails  = 0;
+      resetLinkSec();
+      setBonding(false);
       g_download   = false;  // drop download mode if the phone leaves
       g_havePeer   = false;  // stop filtering the (now gone) phone
       g_authEpoch  = g_authEpoch + 1;   // in-flight transfers to this peer must stop
@@ -241,6 +304,39 @@ class ServerCB : public NimBLEServerCallbacks {
     }
     Serial.println("[phone] disconnected");
     NimBLEDevice::getAdvertising()->start();  // keep discoverable
+  }
+  // Fires for a fresh pairing, a bonded phone's re-encryption, and a failure of either. A returning phone may
+  // encrypt before it proves the key: that only sets g_linkEnc, the HMAC is still required.
+  void onAuthenticationComplete(NimBLEConnInfo& ci) override {
+    if (kSec < 1 || ci.getConnHandle() != g_connHandle) return;
+    bool ok = ci.isEncrypted() && ci.getSecKeySize() >= ENC_MIN_KEY_BYTES;
+    setBonding(false);
+    g_secStart = false;
+    if (ok) {
+      // sec=2: a proof made in the clear doesn't count. Whoever just paired may have hijacked the link after
+      // it, so the phone proves the key again over the encrypted link. g_authHandle clears BEFORE g_linkEnc
+      // sets, or gateHandle() would open for that instant.
+      if (kSec >= 2 && g_authHandle != NO_CONN && !g_linkEnc) {
+        g_connMs     = millis();   // before the handle clears: service() must not time this out on the old stamp
+        g_authHandle = NO_CONN;
+        g_authEpoch  = g_authEpoch + 1;
+        g_dp[0]      = 0;
+        g_connFails  = 0;
+        newNonce();
+      }
+      g_linkEnc = true;
+      g_encFail = false;
+    } else {
+      g_linkEnc = false;
+      g_encFailMs = millis();
+      g_encFail = true;
+    }
+    Serial.printf("[phone] link security: enc=%d key=%u bonded=%d\n", ci.isEncrypted() ? 1 : 0,
+                  (unsigned)ci.getSecKeySize(), ci.isBonded() ? 1 : 0);
+#ifdef PHONE_DEBUG_STACK
+    Serial.printf("[phone] NimBLE host task stack high-water after pairing: %u words free\n",
+                  (unsigned)uxTaskGetStackHighWaterMark(nullptr));   // LESC's P-256 runs on this task
+#endif
   }
 };
 
@@ -282,7 +378,8 @@ class AuthCB : public NimBLECharacteristicCallbacks {
       }
       ok = devkey::ctEqual(want, mac, sizeof(want));
       if (ok) {
-        if (!authMac("CFLO-DEV-1", cnHex, want)) {   // device proof: lets the app check THIS unit before it sends position
+        // Device proof: lets the app check THIS unit, and its security level, before it sends position.
+        if (!(kSec >= 1 ? authMac("CFLO-DEV-2", cnHex, want, kSec) : authMac("CFLO-DEV-1", cnHex, want))) {
           Serial.println("[phone] auth: HMAC failed");
           newNonce(); setAuthValue(c, h);
           return;
@@ -301,8 +398,13 @@ class AuthCB : public NimBLECharacteristicCallbacks {
       g_nonce[0] = 0;                        // single use
       g_connFails = 0;
       g_failN = 0; g_failHead = 0; g_lockMs = 0; g_lockActive = false;
+      g_authMs = millis();
+      g_encFail = false;                     // a pre-auth failure (e.g. a stale phone bond) gets a fresh try below
+      bool wantEnc = kSec >= 1 && !g_linkEnc;
+      if (wantEnc) setBonding(true);
       g_authHandle = h;
-      g_authDone = true;                     // loop() pushes STATUS
+      g_secStart = wantEnc;                  // after g_authHandle: service() drops a request with no handle
+      if (kSec < 2 || g_linkEnc) g_authDone = true;   // loop() pushes STATUS (sec=2: once the gate is open)
       setAuthValue(c, h);
       Serial.println("[phone] authenticated");
 #ifdef PHONE_DEBUG_STACK
@@ -526,6 +628,11 @@ void begin(const char* devName) {
   loadTz();
   NimBLEDevice::init(devName);
   devkey::begin();                       // phone-link key (NVS), after init so the RNG is radio-fed
+  if (kSec >= 1) {                       // just-works: the HMAC authenticates, this layer only encrypts
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+    setBonding(false);
+    ble_hs_cfg.sm_sc_only = 1;           // refuse legacy pairing: its just-works key falls to a passive sniffer
+  }
   NimBLEServer* server = NimBLEDevice::createServer();
   g_server = server;
   server->setCallbacks(&g_serverCB);
@@ -581,7 +688,7 @@ bool peerMac(uint8_t out[6]) {
 }
 
 void setStatus(const String& s) {
-  uint16_t h = g_authHandle;   // snapshot: NONE would make NimBLE broadcast to every peer
+  uint16_t h = gateHandle();   // snapshot: NONE would make NimBLE broadcast to every peer
   if (!g_status || h == NO_CONN || !s.length()) return;
   // Send THIS value explicitly. A bare notify() only schedules one (ble_gatts_chr_updated) and the stack
   // reads the attribute when it transmits -- so pushStatus()'s two back-to-back parts collapsed into
@@ -591,8 +698,8 @@ void setStatus(const String& s) {
 }
 
 bool     connected()        { return g_connected; }
-bool     authed()           { return g_authHandle != NO_CONN; }
-bool     linkEncrypted()    { return false; }   // Phase A: no link encryption yet (docs/ble-auth.md Phase B/C)
+bool     authed()           { return gateHandle() != NO_CONN; }
+bool     linkEncrypted()    { return g_authHandle != NO_CONN && g_linkEnc; }
 bool     authJustCompleted(){ bool r = g_authDone; g_authDone = false; return r; }
 
 void service() {
@@ -606,13 +713,46 @@ void service() {
     g_connMs = millis();   // re-armed: a slow disconnect isn't re-issued every loop
     if (g_server) g_server->disconnect(g_connHandle);
   }
+  if (kSec >= 1 && g_secStart) {
+    uint16_t h = g_authHandle;
+    if (h == NO_CONN || g_linkEnc) g_secStart = false;
+    else if (millis() - g_authMs >= SEC_START_DELAY_MS) {
+      g_secStart = false;
+      int rc = 0;
+      if (!NimBLEDevice::startSecurity(h, &rc)) {
+        Serial.printf("[phone] security request failed rc=%d\n", rc);
+        g_encFailMs = millis();
+        g_encFail = true;
+      }
+    }
+  }
+  // sec=2: a link that proved the key but won't encrypt gets no data, so don't let it hold the only slot.
+  if (kSec >= 2 && g_authHandle != NO_CONN && !g_linkEnc) {
+    bool fail = g_encFail;                // before millis(): a stamp written after `now` would wrap the age
+    uint32_t now = millis();
+    bool failed = fail && now - g_encFailMs > ENC_FAIL_GRACE_MS;
+    if (failed || now - g_authMs > ENC_TIMEOUT_MS) {
+      Serial.println(failed ? "[phone] pairing failed -> disconnect" : "[phone] encryption timeout -> disconnect");
+      g_authMs = g_encFailMs = now;   // re-armed: a slow disconnect isn't re-issued every loop
+      if (g_server) g_server->disconnect(g_authHandle);
+    }
+  }
 }
 
 uint32_t authEpoch() { return g_authEpoch; }
 bool transferAlive(uint32_t epoch) {
   service();   // 30 s auth timeout / kicks keep running during a long transfer
   fleet::service();   // a long BLE transfer blocks loop(): keep draining fleet frames (docs/fleet-mode.md §3.4)
-  return g_authHandle != NO_CONN && g_authEpoch == epoch;
+  return gateHandle() != NO_CONN && g_authEpoch == epoch;
+}
+
+int bondCount() { return g_server ? NimBLEDevice::getNumBonds() : -1; }   // no server = a CYD fleet client (no NimBLE)
+
+bool clearBonds() {
+  if (!g_server) return false;
+  bool ok = NimBLEDevice::deleteAllBonds();
+  if (g_connHandle != NO_CONN) g_server->disconnect(g_connHandle);   // the link's own bond is gone with the rest
+  return ok;
 }
 
 bool rekeyAndKick() {
@@ -775,13 +915,13 @@ bool lockRequested(bool* outLock) {
 // Explicit-buffer notify to the authenticated connection only (no attribute write, no broadcast to a
 // stray central that merely subscribed).
 void logNotify(const uint8_t* data, size_t len) {
-  uint16_t h = g_authHandle;   // snapshot (NONE would broadcast)
+  uint16_t h = gateHandle();   // snapshot (NONE would broadcast)
   if (!g_logData || h == NO_CONN || !len) return;
   g_logData->notify(data, len, h);
 }
 
 void detsNotify(const String& line) {
-  uint16_t h = g_authHandle;
+  uint16_t h = gateHandle();
   if (!g_dets || h == NO_CONN || !line.length()) return;
   g_dets->notify((const uint8_t*)line.c_str(), line.length(), h);
 }

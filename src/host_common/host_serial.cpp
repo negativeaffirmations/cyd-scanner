@@ -18,11 +18,14 @@ char     g_line[48];
 size_t   g_len = 0;
 bool     g_overflow = false;     // line too long: discard it up to the newline
 uint32_t g_rekeyArmedAt = 0;     // millis() of `rekey` (0 = not armed)
+uint32_t g_bondsArmedAt = 0;     // millis() of `bonds clear` (0 = not armed)
 
 void help() {
   Serial.println("[cmd] help               this list");
   Serial.println("[cmd] key                show name, sid, key generation, key and the pairing link");
   Serial.println("[cmd] rekey              rotate the phone key (then `rekey confirm` within 15 s)");
+  Serial.println("[cmd] bonds              phone-link security level, stored bonds, link state");
+  Serial.println("[cmd] bonds clear        forget all paired phones (then `bonds confirm` within 15 s)");
   Serial.println("[cmd] fleet              fleet status; also: fleet leave | client | leader on|off | ch <1-13> | remac");
 }
 
@@ -114,6 +117,27 @@ void handle(char* cmd) {
     Serial.printf("[key] gen  %lu\n", (unsigned long)devkey::gen());
     Serial.printf("[key] key  %s\n", devkey::keyHex());
     Serial.printf("[key] link %s\n", devkey::pairUrl());
+    return;
+  }
+  if (!strcmp(cmd, "bonds")) {
+    Serial.printf("[bonds] sec %d, stored %d, link %s\n", PHONE_BLE_SEC, phone::bondCount(),
+                  !phone::connected() ? "none" : phone::linkEncrypted() ? "encrypted" : "not encrypted");
+    return;
+  }
+  if (!strcmp(cmd, "bonds clear")) {
+    g_bondsArmedAt = millis() | 1;   // |1: never 0
+    Serial.println("[bonds] every paired phone must then forget this scanner in Android Bluetooth settings.");
+    Serial.println("[bonds] type `bonds confirm` within 15 s to proceed.");
+    return;
+  }
+  if (!strcmp(cmd, "bonds confirm")) {
+    if (!g_bondsArmedAt || millis() - g_bondsArmedAt > REKEY_CONFIRM_MS) {
+      g_bondsArmedAt = 0;
+      Serial.println("[bonds] not armed -- type `bonds clear` first");
+      return;
+    }
+    g_bondsArmedAt = 0;
+    Serial.println(phone::clearBonds() ? "[bonds] cleared" : "[bonds] clear FAILED");
     return;
   }
   if (!strcmp(cmd, "rekey")) {

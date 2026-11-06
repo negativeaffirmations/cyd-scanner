@@ -210,8 +210,14 @@ export function paintConn(){
     if(!badge) p.insertAdjacentHTML("beforeend", '<span class="secbadge material-symbols-outlined">warning</span>');
   } else {
     if(badge) badge.remove();
-    if(linkSec === "auth" && p.classList.contains("up")) p.title = "connected — authenticated";
+    if(linkSec === "auth" && p.classList.contains("up")) p.title = "connected — authenticated" + encNote();
   }
+}
+
+// The link's encryption state as a suffix ("" on firmware that doesn't do link encryption).
+function encNote(){
+  if(!linkInfo || !linkInfo.level) return "";
+  return linkInfo.enc ? ", encrypted" : ", NOT encrypted";
 }
 
 // ---------------------------------------------------------------- AUTH value parse
@@ -251,7 +257,7 @@ export async function authenticate(authChar, device){
   return { status:"error", msg:"auth failed" };
 }
 
-async function exchange(c, prev, setAttempt){
+async function exchange(c, prev, setAttempt, again){
   let info = await readAuth(c);
   if(!HEX12.test(info.sid || "")){ const e = new Error("bad AUTH value (no sid)"); e.auth = true; throw e; }
   const sid = info.sid, devKg = kgNum(info.kg);
@@ -278,13 +284,17 @@ async function exchange(c, prev, setAttempt){
   info = await readAuth(c);
   if(info.st === "1") return finish(info, a, sid, devKg);
   if(info.st === "2") return { status:"locked", info, wait: +info.wait || 0 };
+  // sec=2: the link encrypted right after our proof, which voids it (a rejection always carries f=).
+  if(!again && info.enc === "1" && !info.f) return exchange(c, null, setAttempt, true);
   const rekeyed = rec.kg != null && devKg != null && rec.kg !== devKg;
   return { status:"rejected", info, rekeyed, fails: +info.f || 0 };
 }
 
 async function finish(info, a, sid, devKg){
   if(!HEX64.test(info.dp || "")) return { status:"spoof", info, msg:"no device proof" };
-  const ok = await crypto.subtle.verify("HMAC", a.key, fromHex(info.dp), te.encode("CFLO-DEV-1|" + sid + "|" + a.n + "|" + a.cn));
+  // From sec=1 the proof covers the level, so a relay that reports a lower one fails here.
+  const sec = parseInt(info.sec, 10) || 0, base = sid + "|" + a.n + "|" + a.cn;
+  const ok = await crypto.subtle.verify("HMAC", a.key, fromHex(info.dp), te.encode(sec >= 1 ? "CFLO-DEV-2|" + base + "|" + sec : "CFLO-DEV-1|" + base));
   if(!ok) return { status:"spoof", info, msg:"device proof did not verify" };
   // Refresh the metadata (name / generation / last-used) — the CryptoKey itself is re-stored as-is.
   try{
@@ -390,7 +400,7 @@ export async function renderKeysUI(){
   const st = $("keyLinkState");
   if(st){
     let t, cls = "";
-    if(linkSec === "auth"){ t = "Connected — authenticated" + (linkInfo && linkInfo.name ? " to " + linkInfo.name : "") + (linkInfo && linkInfo.kg != null ? " (key gen " + linkInfo.kg + ")" : "") + "."; cls = "ok"; }
+    if(linkSec === "auth"){ t = "Connected — authenticated" + (linkInfo && linkInfo.name ? " to " + linkInfo.name : "") + (linkInfo && linkInfo.kg != null ? " (key gen " + linkInfo.kg + ")" : "") + encNote() + "."; cls = linkInfo && linkInfo.level && !linkInfo.enc ? "warn" : "ok"; }
     else if(linkSec === "legacy"){ t = "Connected — UNSECURED firmware: this scanner has no phone-link authentication. Update its firmware."; cls = "warn"; }
     else t = lastFail || "Not connected.";
     st.textContent = t; st.className = "sub keystate " + cls;

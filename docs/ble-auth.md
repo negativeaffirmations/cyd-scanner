@@ -19,10 +19,11 @@ proven per connection by HMAC-SHA256 challenge-response. BLE encryption is layer
 | Phase | Content | Ships |
 |---|---|---|
 | **A** | key + HMAC challenge-response, firmware gate on every characteristic, rekey (CYD menu + serial), web app auth + key store, `phonecfg` audit log line | with fw 0.18.0 |
-| **B** | LESC just-works bonding requested by the device only AFTER HMAC success (`PHONE_BLE_SEC=1`, opportunistic) | after hardware test T10 |
-| **C** | `PHONE_BLE_SEC=2`: gate = authed AND encrypted; AP creds only over an encrypted link | after B is proven |
+| **B** | LESC just-works bonding requested by the device only AFTER HMAC success (`PHONE_BLE_SEC=1`, opportunistic) | code built (fw 0.28.0); default stays 0 until hardware test T10 |
+| **C** | `PHONE_BLE_SEC=2`: gate = authed AND encrypted; AP creds only over an encrypted link | code built (fw 0.28.0); after B is proven |
 
-Per-command MACs are not planned: B/C's AES-CCM link MIC defeats post-auth injection.
+Per-command MACs are not planned: at sec=2 the AES-CCM link MIC defeats post-auth injection, unless an active MITM sat
+in the first pairing (just-works can't detect one). An unencrypted sec=1 link has no such protection.
 
 ## Owner decisions (2026-10-29)
 1. Ship Phase A first; B/C follow.
@@ -46,14 +47,16 @@ Read value (ASCII):
 v=1;sid=<12hex>;name=<…>;fw=<x.y.z>;sec=<0|1|2>;kg=<gen>;st=<0|1|2>[;n=<32hex>][;f=<fails>][;wait=<s>][;dp=<64hex>][;enc=<0|1>]
 ```
 `st` 0 = locked (nonce `n` pending), 1 = authenticated on this connection, 2 = rate-limited (`wait` s).
-`n` only while `st=0`; `dp` only at `st=1`; `enc` link encrypted (always 0 in Phase A).
+`n` only while `st=0`; `dp` only at `st=1`; `enc` link encrypted (always 0 at `sec=0`; from `sec=1` also sent at `st=0`);
+`pf=1` at `st=1` when the last pairing or encryption attempt on this link failed. `enc` and `pf` are not covered by `dp`.
 
 Write: `H:<cn 32hex>:<mac 64hex>` — exactly 99 bytes, hex case-insensitive. `cn` = 16-byte client nonce.
 
 MAC inputs (ASCII, lowercase hex, distinct labels prevent reflection):
 - phone: `mac = HMAC-SHA256(key, "CFLO-AUTH-1|" + sid + "|" + n + "|" + cn)`
 - device: `dp  = HMAC-SHA256(key, "CFLO-DEV-1|"  + sid + "|" + n + "|" + cn)` — the app verifies `dp` before
-  sending TIME/GPS (a look-alike device can't harvest the owner's position).
+  sending TIME/GPS (a look-alike device can't harvest the owner's position). From `sec=1` the label is `CFLO-DEV-2` and
+  `"|" + sec` is appended, so a relay can't report a lower level: the real device's proof won't verify against it.
 
 ### Device state machine (`phone.cpp`)
 - `onConnect`: store conn handle, `authHandle = NONE`, `connMs`, `connFails = 0`, fresh nonce (`esp_fill_random`
@@ -117,10 +120,75 @@ Whenever the phone changes device config or card files, one NDJSON line on the a
 3. Render sticker QRs **offline only** (the URL is the secret). Label with unit name + key gen. Put inside the
    case / battery door. Never commit keys or sticker images.
 
+## Phase B/C as built (fw 0.28.0; NOT yet hardware-tested)
+`PHONE_BLE_SEC` is a build flag, default 0, which compiles this out. Bench envs: `xiao_s3_rgb_sec1`, `xiao_s3_rgb_sec2`,
+`cyd_sec2`.
+
+Flow: HMAC as in Phase A, then the device sends a security request from `phone::service()` 250 ms later. A new phone
+gets Android's pairing prompt; a bonded phone re-encrypts silently, possibly before the HMAC. The web app
+(`js/ble/linkenc.js`) polls AUTH for `enc=1` before anything else uses GATT: quietly for 2.5 s, then with a dialog,
+for up to 33 s, adding a "forget the scanner" hint after 10 s.
+
+**sec=2 re-proof:** a proof made in the clear stops counting the moment the link encrypts. The device drops back to
+`st=0` with a fresh nonce and `enc=1`, and the app runs the HMAC again. So the gate only ever opens for a proof made
+over the encrypted link, and a central that hijacks the cleartext link during the pairing wait gets an encrypted link
+it can't authenticate on. A bonded phone that encrypted first proves once.
+
+| | sec=1 | sec=2 |
+|---|---|---|
+| Gate (`phone::authed()`, `gateHandle()`) | HMAC | HMAC made over an encrypted link with a 16-byte key |
+| Pairing refused or failed | carries on unencrypted | kicked 3 s after the failure (time to read `pf=1`) |
+| No answer | carries on unencrypted | kicked after 35 s (the SM's own timeout is 30 s) |
+| AP credentials in STATUS | sent | only over the encrypted link, because every notify is gated |
+
+AUTH read gains `enc=<0|1>` and `pf=1` (the last attempt on this link failed) at `st=1`. `sec=` now reports the level.
+
+Choices the code depends on:
+- **Bonding is off except from HMAC success to the end of that pairing.** Any central can start pairing, so a stranger
+  could otherwise fill the bond store and evict the owner's phone. A pairing without it still encrypts but stores
+  nothing. NimBLE latches the flag when a pairing starts, and `ble_hs_cfg` is only touched on the host task.
+- **Secure Connections only** (`sm_sc_only`). NimBLE compiles legacy pairing in, and a legacy just-works key falls to
+  a passive sniffer.
+- **Repeat pairing needs the key.** NimBLEServer deletes the existing bond on a repeat pairing, and the SM asks before
+  any HMAC, so a central replaying the owner's address could wipe it. `guardedGapEvent` wraps each connection's handler
+  and answers IGNORE unless that link proved the key. It reaches into `ble_hs_conn_priv.h`, so a NimBLE upgrade may
+  need it revisited.
+- **Rekey does not delete bonds.** A bond proves nothing without the HMAC key, so an old phone stays locked out, and
+  deleting it would strand the phone's half (below). Rekey won't remove a bond a MITM obtained, though: after a
+  suspected compromise run `bonds clear` too.
+- **`MYNEWT_VAL_BLE_STORE_MAX_CCCDS=12`.** 3 bonds x 3 subscriptions; at the default 8 a third bond evicts the oldest.
+  (`CONFIG_BT_NIMBLE_MAX_CCCDS` does nothing on the S3: the core's sdkconfig.h overrides it.)
+
+Stale pairing: when the device has lost a bond the phone still holds (`bonds clear`, `erase_flash`), Android's
+encryption attempt fails and the web app can't fix that. The owner must forget the scanner in Android Bluetooth
+settings; the dialog's 10 s hint and the sec=2 failure message say so. A missing LTK may produce no `pf=1` at all
+(`ble_sm.c` sends a negative reply without an encryption event), in which case sec=2 ends in the timeout. The reverse
+case (phone forgot, device kept it) heals itself after the HMAC, through the guarded repeat pairing.
+Serial: `bonds`, `bonds clear` then `bonds confirm` within 15 s.
+
+Checks for T10, none of them done:
+- Android's prompt appears for a peripheral security request while Chrome holds the link, and AUTH polling during
+  pairing doesn't break it.
+- A bonded phone's rotating address resolves on reconnect, so the LTK is found.
+- The NimBLE host task's stack (4096 on the CYD, 5120 on the S3) survives LESC's P-256: `PHONE_DEBUG_STACK` prints the
+  high-water after pairing. Raising it costs heap, which the CYD is short of.
+- What a stale phone bond actually looks like: whether `pf=1` arrives, and whether Android reconnects cleanly.
+- The sec=2 re-proof: the second HMAC succeeds on the encrypted link with no error shown.
+- A bonded phone's first STATUS: its restored subscription raises no `onSubscribe`, so it waits for the next periodic push.
+- Whether AUTH reads hang during pairing. An abandoned read stays pending, so a sec=1 Skip could then fail with "GATT
+  operation already in progress" in `startNotifications`.
+- A bonded phone keeps its GATT cache, so a later firmware that changes characteristics may need Bluetooth off/on.
+- Heap on the CYD with a bond in use, and the fleet's ESP-NOW alongside it on a mini.
+
+Rollout: deploy the web app first (it does nothing at sec=0; an older web app also fails a sec>=1 unit's `dp`), flash one
+unit at sec=1, then sec=2, then change the default.
+
 ## Known limitations (accepted for Phase A; from the 2026-10-29 review + security passes)
-- **Cleartext link.** A passive BLE sniffer following the owner's session sees STATUS (incl. the SoftAP PSK while
-  Wi-Fi download is up), GPS, DETS and log contents; an active link-layer injector could issue commands after auth.
-  Closed by Phase B/C encryption; prioritise Phase C for the AP credentials.
+- **Cleartext link (until sec=2 ships).** A passive BLE sniffer following the owner's session sees STATUS (incl. the
+  SoftAP PSK while Wi-Fi download is up), GPS, DETS and log contents; an active link-layer injector could issue commands
+  after auth. sec=2 closes the passive case. sec=1 does not fully: a blocked pairing carries on in the clear, and the
+  re-proof above only runs at sec=2. Just-works has no MITM protection at either level, so an active attacker present at
+  the first pairing can still sit in the link.
 - **Relay.** The HMAC isn't bound to the BLE connection: an impostor the owner picks in the Chrome chooser can relay
   the real scanner's nonce to the phone and the phone's `H:` back, gaining an authed session on the real scanner.
   LESC just-works (Phase B) does not stop this; only MITM-protected pairing (passkey on the CYD; the minis have no

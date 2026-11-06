@@ -1,4 +1,15 @@
-# Handoff — 2026-11-01 (work branch: `fleet-mode`; `main` @ `7f86e00` = trunk + webapp)
+# Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
+
+## RESUME HERE — 2026-11-06: BLE Phase B/C built on `ble-enc`, NOT committed, flashed or deployed
+- **Merged:** `fleet-mode` -> `main` (`4c37e43`, pushed). Tree identical to `fleet-mode`, so Pages content did not change.
+- **Built (fw 0.28.0, uncommitted in the working tree on `ble-enc`):** `PHONE_BLE_SEC` 1/2 in `phone.cpp`, web `js/ble/linkenc.js`,
+  serial `bonds`. Default stays 0. Design + as-built + T10 checks: docs/ble-auth.md "Phase B/C as built". Web tokens `?v=20261106a`,
+  footer `ble-enc a`. Bench envs `xiao_s3_rgb_sec1`, `xiao_s3_rgb_sec2`, `cyd_sec2`.
+- **Reviewed:** reviewer (REV-001..009) + security (SEC-1..5) ran, then a second reviewer pass on the fixes; all fixed except two T10
+  checks (a bonded phone's first STATUS waits for the next push; a hung AUTH read vs sec=1 Skip). Biggest fix: at sec=2 a proof
+  made in the clear is voided when the link encrypts, and `gateHandle()` reads `g_linkEnc` first for that to hold across cores.
+- **Not done:** no hardware test at all (T10), which needs the owner's phone for the pairing prompt. Rollout: deploy the web app
+  first (merge to `main`), flash mini #2 with `xiao_s3_rgb_sec1`, then `_sec2`, then change the default.
 
 ## RESUME HERE — 2026-11-01 (night): fw 0.27.0 + Fleet-file bundling LIVE; carry-over server-verified
 - **Live on all 3 hosts (flashed), pushed; webapp on `main` `a65d317` (footer `fleet-bundle m`).** Commits on `fleet-mode`:
