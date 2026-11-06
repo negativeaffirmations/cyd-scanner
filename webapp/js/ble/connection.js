@@ -16,6 +16,7 @@ import { renderStatusInfo } from '../features/statusinfo.js';
 import { acquireWake, releaseWake } from '../wakelock.js';
 import { rememberDevice } from './devices.js';
 import { runUnitReset } from '../unitreset.js';
+import { ensureEncrypted, pairingRefusal } from './linkenc.js';
 import { AUTH_UUID, authenticate, setLinkSecurity, clearLinkSecurity, openAuthDlg, legacyRefusal, legacyStatusRefusal, primeLegacyGuard, showRefusal, mayShareLocation } from './auth.js';
 
 // Re-entrancy guard (REV-018): one connect/reconnect at a time (double taps, Save & reconnect while
@@ -116,15 +117,28 @@ async function connectDevice(timeoutMs){
     catch(e){ if(e.name !== "NotFoundError") throw e; }
     let sec = "legacy", secInfo = null;
     if(authChar){
-      const r = await authenticate(authChar, state.device);
-      if(r.status !== "ok"){
+      let r = await authenticate(authChar, state.device);
+      const authFailed = r => {
         log("Auth: "+r.status+(r.msg ? " — "+r.msg : "")+". Disconnecting.");
         try{ state.device.gatt.disconnect(); }catch(_){}
         setConn("disconnected");
         openAuthDlg(r);
-        return;
+      };
+      if(r.status !== "ok"){ authFailed(r); return; }
+      const lk = await ensureEncrypted(authChar, r.info, state.device);
+      if(!lk.ok){
+        log("Pairing: "+lk.why+". Disconnecting.");
+        if(lk.why === "gone") return false;   // a plain drop: onDisconnect already cleaned up
+        try{ state.device.gatt.disconnect(); }catch(_){}
+        setConn("disconnected"); clearLinkSecurity();
+        showRefusal(pairingRefusal(r.info.name, lk.why));
+        return false;
       }
-      sec = "auth"; secInfo = { name:r.info.name || "", kg:r.info.kg, sid:r.info.sid };
+      if(lk.reauth){
+        r = await authenticate(authChar, state.device);
+        if(r.status !== "ok"){ authFailed(r); return; }
+      }
+      sec = "auth"; secInfo = { name:r.info.name || "", kg:r.info.kg, sid:r.info.sid, enc:lk.enc, level:lk.sec };
       state.scannerId = (r.info.sid || "").toLowerCase();   // known from the AUTH read, before STATUS: keys the log cache from the first request
       log("Authenticated to "+(r.info.name || r.info.sid)+".");
     }
