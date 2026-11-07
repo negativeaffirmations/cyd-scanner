@@ -842,6 +842,9 @@ void printStatus() {
   Serial.printf("[FLT] role %s  channel %u  active %s  mac %s  maxPayload %u\n", roleName(g_role), g_ch,
                 g_active ? "yes" : "no", g_active ? ms : "-", g_maxPayload);
   Serial.printf("[FLT] self filter: %u fixed radios known, %lu rows dropped\n", (unsigned)knownRadioCount(), (unsigned long)g_selfDrops);
+  { uint8_t ap[6]; ownApMac(ap);
+    Serial.printf("[FLT] own radios: c5 %02X:%02X:%02X:%02X:%02X:%02X  ap %02X:%02X:%02X:%02X:%02X:%02X\n", g_c5Mac[0], g_c5Mac[1], g_c5Mac[2], g_c5Mac[3],
+                  g_c5Mac[4], g_c5Mac[5], ap[0], ap[1], ap[2], ap[3], ap[4], ap[5]); }
   Serial.printf("[FLT] tx ok %lu fail %lu  rx %lu drop %lu  rate %s  boot-guard %s  build %s\n",
                 (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxFrames, (unsigned long)g_rxDrop,
                 g_rate12 ? "12M" : "1M", g_bootCounted ? "counting" : "idle",
