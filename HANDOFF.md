@@ -1,6 +1,11 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06: BLE Phase B/C built on `ble-enc`, NOT committed, flashed or deployed
+## RESUME HERE — 2026-11-06: BLE Phase B/C on `ble-enc` (`88798b6`); level 1 PASSED on mini #2; level 2 test next
+- **T10 so far (mini #2 S3 only, its C5 unplugged, phone in hand):** sec=1 first pairing OK (`enc=1 key=16 bonded=1`, app says encrypted), reconnect
+  silent and encrypted before the HMAC. Owner saw the Android prompt TWICE on first connect, but the scanner logged ONE pairing. Stack low
+  point 1724 of 5120 on the S3 (after a bond restore), so a 4096 stack on the CYD may be tight: test before moving the CYD off 0.
+  Web deployed to `main` with the app-bar tightening (footer `ble-enc b`). Deploy via a temp `git worktree`, NOT by switching branches:
+  a `platformio.ini` change makes the IDE clean `.pio/build` and hold `platforms.lock`.
 - **Merged:** `fleet-mode` -> `main` (`4c37e43`, pushed). Tree identical to `fleet-mode`, so Pages content did not change.
 - **Built (fw 0.28.0, uncommitted in the working tree on `ble-enc`):** `PHONE_BLE_SEC` 1/2 in `phone.cpp`, web `js/ble/linkenc.js`,
   serial `bonds`. Default stays 0. Design + as-built + T10 checks: docs/ble-auth.md "Phase B/C as built". Web tokens `?v=20261106a`,
