@@ -576,9 +576,33 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all) {
 //   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N[,"ssid":..,"macs":".."]}
 // For "eviltwin" we also name the suspect SSID + its BSSIDs (comma-joined, up to EVIL_MAX_BSSID),
 // pulled from the live detections that currently carry FLAG_WIFI_EVILTWIN, so the map/log identifies
-// the culprit APs instead of a bare count. (The "deauth" event has no per-AP address — the C5 only
-// counts frames.) No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
+// the culprit APs instead of a bare count. "deauth" names its sender (appendDeauth). No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
 // Per-device "rid" and "follow" event lines have their own writers below (logRidEvents / logFollowEvents).
+// Who sent the burst (link v13): the busiest sender in full, the rest as "mac:frames". `count` stays the 1 s peak;
+// `total` is every frame in the burst. Sender addresses are as received and can be forged.
+static void appendDeauth(char* ln, int& n, const link_protocol::DeauthInfo& di) {
+  lnAppend(ln, n, ",\"total\":%u,\"bcast\":%u", (unsigned)di.total, (unsigned)di.bcast);
+  int top = -1;
+  for (int i = 0; i < di.n; i++) if (top < 0 || di.senders[i].count > di.senders[top].count) top = i;
+  if (top < 0) return;
+  const link_protocol::DeauthSender& s = di.senders[top];
+  auto mac = [&](const char* key, const uint8_t* m) {
+    lnAppend(ln, n, ",\"%s\":\"%02X:%02X:%02X:%02X:%02X:%02X\"", key, m[0], m[1], m[2], m[3], m[4], m[5]);
+  };
+  mac("from", s.src); mac("to", s.dst); mac("bssid", s.bssid);
+  lnAppend(ln, n, ",\"from_n\":%u,\"ch\":%u,\"reason\":%u,\"kind\":\"%s\",\"rssi\":%d", (unsigned)s.count, (unsigned)s.channel,
+           (unsigned)s.reason, s.subtype == 10 ? "disassoc" : "deauth", (int)s.rssi);
+  int emitted = 0;
+  for (int i = 0; i < di.n; i++) {
+    if (i == top) continue;
+    const uint8_t* m = di.senders[i].src;
+    lnAppend(ln, n, "%s%02X:%02X:%02X:%02X:%02X:%02X:%u", emitted ? "," : ",\"others\":\"", m[0], m[1], m[2], m[3], m[4], m[5],
+             (unsigned)di.senders[i].count);
+    emitted++;
+  }
+  if (emitted) lnAppend(ln, n, "\"");
+}
+
 void logEvent(const char* evt, int count) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
@@ -607,6 +631,7 @@ void logEvent(const char* evt, int count) {
     if (emitted) lnAppend(ln, n, "\"");
     if (ssid[0]) lnAppend(ln, n, ",\"ssid\":\"%s\"", ssid);
   }
+  if (!strcmp(evt, "deauth") && g_deauthInfo.total) appendDeauth(ln, n, g_deauthInfo);
   lnAppend(ln, n, "}\n");
   if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
   f.close();

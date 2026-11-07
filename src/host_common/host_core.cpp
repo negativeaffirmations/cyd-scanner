@@ -10,6 +10,7 @@
 #include "host_status.h"
 #include "host_board.h"
 #include "host_ui.h"
+#include <esp_mac.h>
 #include "phone.h"
 #include "fleet.h"
 #include "webshare.h"
@@ -204,6 +205,10 @@ void computeScores() {
 // stays visible across the ~2 s poll cadence. Receive-side only: these are counts of frames the C5
 // OBSERVED, nothing is transmitted. ---
 uint16_t g_deauthRecent = 0;
+link_protocol::DeauthInfo g_deauthInfo{};
+uint8_t g_c5Mac[6] = {0};
+bool    g_haveC5Mac = false;
+uint32_t g_selfDrops = 0;
 uint8_t  g_evilCount = 0, g_ridCount = 0;
 
 // Unified position: a LIVE phone fix is PREFERRED, a live onboard NEO-6M fix (Status, v9) is the
@@ -719,9 +724,20 @@ void countTiers(int& susp, int& lk, int& conf) {
 uint8_t g_ownMac[6]   = {0};
 bool    g_haveOwnMac  = false;
 
+// Read once from eFuse, so it's known with the AP down: the C5 keeps listing an AP for its 30 s TTL after it stops.
+void ownApMac(uint8_t out[6]) {
+  static uint8_t ap[6]; static bool have = false;
+  if (!have) have = esp_read_mac(ap, ESP_MAC_WIFI_SOFTAP) == ESP_OK;
+  memcpy(out, ap, 6);
+}
+
 bool isSelfDet(const Detection& d) {
-  if (g_haveOwnMac && d.source == (uint8_t)Source::BleScan && memcmp(d.mac, g_ownMac, 6) == 0) return true;
-  return fleet::isFleetSelf(d.mac);   // the fleet's own radios (leader BLE / its phone / its AP / members' BLE)
+  bool self = g_haveOwnMac && d.source == (uint8_t)Source::BleScan && memcmp(d.mac, g_ownMac, 6) == 0;
+  if (!self && g_haveC5Mac && d.source == (uint8_t)Source::WifiProbe) self = memcmp(d.mac, g_c5Mac, 6) == 0;   // a member reporting our C5
+  if (!self && d.source == (uint8_t)Source::WifiScan) { uint8_t ap[6]; ownApMac(ap); self = memcmp(d.mac, ap, 6) == 0; }
+  if (!self) self = fleet::isFleetSelf(d.mac, d.source);   // the rest of the fleet, and the phones
+  if (self) g_selfDrops++;
+  return self;
 }
 
 // Bag-safe touch lock (also settable from the web app via CMD "K1"/"K0"); declared here so pushStatus

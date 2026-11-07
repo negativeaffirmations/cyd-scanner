@@ -76,8 +76,8 @@ struct ClientSt {
   uint32_t fltFixAgeRx, fltFixAtMs;    // the fix's age when the Sync arrived + that millis()
   bool     haveTime, havePos;
   bool     fltPosLive;                 // the leader marked its fix live (Sync flags bit2)
-  uint8_t  selfMacs[9][6];
-  uint8_t  nSelf;
+  uint8_t  selfMacs[FLEET_SELF_MAX][6];
+  uint8_t  nSelf, nRadio;
   // P4: the scan role the leader assigned (reset to FULL whenever the session ends)
   link_protocol::ScanPlan plan;
   uint8_t  planRole, planGen;
@@ -248,6 +248,9 @@ void sendMStat() {
   m->gpsFix = ownFix ? 1 : 0;
   if (ownFix) { m->lat = (int32_t)lroundf(g_onbLat * 1e7f); m->lon = (int32_t)lroundf(g_onbLon * 1e7f); }
   phone::peerMac(m->phoneMac);                                     // a mini client's own phone: the fleet must not log it
+  phone::ownMac(m->bleMac);                                        // its fixed radios (zeros for a CYD client's BLE)
+  if (g_haveC5Mac) memcpy(m->c5Mac, g_c5Mac, 6);
+  ownApMac(m->apMac);
   sendSealed(C->leaderMac, buf, sizeof(MStat), Msg::MStat, C->sess, C->txSeq, C->sk);
   C->lastMStatMs = millis();
 }
@@ -346,8 +349,10 @@ void onSync(const Rx& f) {
     C->fltFixAgeRx = s.fixAgeMs; C->fltFixAtMs = now; C->havePos = true;
   }
   C->fltPosLive = (s.flags & 0x06) == 0x06;
-  C->nSelf = s.nSelf <= 9 ? s.nSelf : 9;
+  C->nSelf = s.nSelf <= FLEET_SELF_MAX ? s.nSelf : FLEET_SELF_MAX;
   memcpy(C->selfMacs, s.selfMacs, sizeof(C->selfMacs));
+  C->nRadio = s.nRadio <= C->nSelf ? s.nRadio : C->nSelf;
+  fleet::knownRadiosSet(&s.selfMacs[0][0], C->nRadio);
   if (C->st == C_JOINING) {
     C->st = C_JOINED;
     const uint8_t here = C->hop[C->hopIdx];
@@ -936,7 +941,7 @@ bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
 }
 bool isSelf(const uint8_t mac[6]) {
   if (!C) return false;
-  for (int i = 0; i < C->nSelf; i++) if (!memcmp(C->selfMacs[i], mac, 6)) return true;
+  for (int i = C->nRadio; i < C->nSelf; i++) if (!memcmp(C->selfMacs[i], mac, 6)) return true;   // phones
   return false;
 }
 void dropSession(const char* why) { if (C && C->st != C_SEARCH) toSearch(why, true); }

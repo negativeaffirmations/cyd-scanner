@@ -76,8 +76,15 @@ bool timeFresh();                              // client: a Sync with a valid ti
 // Position + its age NOW (false = never had one). `live`: client = the LEADER marked it live in a Sync that is still
 // current (one fleet position: the client follows the leader's own judgement); leader = the member fix is < 10 s old.
 bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live);
-// MACs of the fleet's own radios (leader BLE advert, its phone, its SoftAP, members' BLE): never logged as detections.
-bool isFleetSelf(const uint8_t mac[6]);
+// The fleet's own radios: never logged as detections. Each MAC only matches its own kind of row (`source` is a
+// link_protocol::Source), so a device copying a unit's Wi-Fi MAC over BLE isn't hidden. Every unit's fixed radios are
+// remembered in NVS, so a unit that is booting or hasn't joined yet is still filtered.
+bool isFleetSelf(const uint8_t mac[6], uint8_t source);
+void knownSlotSet(uint8_t unit, const uint8_t* ble, const uint8_t* c5, const uint8_t* ap);   // leader; unit 0 = itself, k+1 = member k. Zeros keep the old value
+void knownSlotRemove(uint8_t unit);                               // leader: that member left; later units shift down with it
+void knownRadiosSet(const uint8_t* macs, uint8_t n);              // client: the leader's FLEET_RADIOS replace ours
+const uint8_t* knownRadios();                                     // FLEET_RADIOS x 6 bytes
+uint8_t knownRadioCount();                                        // slots in use
 
 // --- P4: coverage split (link v12 ScanPlan, docs §8). The plan this unit's C5 should run, sent on every StartScan:
 // all-zero (legacy full time-slice) unless the fleet assigned this unit a role. Role ids = fleet_proto PlanRole.

@@ -1,6 +1,11 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
+## RESUME HERE — 2026-11-06 (late): fw 0.30.0 on branch `deauth-detail`, NOT flashed; deployed units still run 0.29.0
+- **Built, unflashed:** link v13 + fleet proto v4, so ALL SIX boards flash together (3 hosts + 3 C5s; C5s need their USB plugged in). `deauth` lines name the
+  sender (optional keys, proposed to scan-analyzer on the bridge); units filter each other's C5s (docs/fleet-mode.md §23).
+- The web parser + Map popup change is safe on 0.29.0 units (optional fields), but stays on the branch until the flash.
+
+## Earlier — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
 - **Board state:** release builds, mini #2 `xiao_s3_rgb` (COM10, leader, its C5 is wired in, only its USB is out), mini #1 `xiao_s3` (COM16), CYD `cyd` (COM13, client).
   Fleet rejoined: roles ble / wifi24 / wifi5, 0 bad frames, bonds kept across the flash. C5s not reflashed (no link change).
 - **T10:** passed on all 3, including a BLE export from the leader with the fleet running (docs/ble-auth.md).

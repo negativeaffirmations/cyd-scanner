@@ -113,6 +113,14 @@ export function renderMap(){
       html:`<div class="evpin" style="background:${st.col}">${st.ch}</div>`})});
     let html="<b>"+esc(st.name)+"</b><br>"+(e.evt==="follow" ? "score "+e.score : "count "+e.count)+"<br>"+
       (e.epoch>0?fmtEpoch(e.epoch):"+"+Math.round(e.ms/1000)+"s")+"<br>"+e.lat.toFixed(5)+", "+e.lon.toFixed(5);
+    if(e.evt==="deauth" && e.from){   // addresses are as received: these frames can be forged
+      const why={1:"unspecified",2:"auth expired",3:"station leaving",4:"inactivity",6:"not authenticated",7:"not associated",8:"station left"}[e.reason];
+      html+="<br><b>From:</b> "+esc(e.from)+" ("+e.fromN+" of "+e.total+" frames, "+e.rssi+" dBm)"+
+        "<br><b>To:</b> "+(e.to==="FF:FF:FF:FF:FF:FF" ? "every client" : esc(e.to))+
+        "<br><b>AP:</b> "+esc(e.bssid)+" · ch "+e.ch+
+        "<br><b>"+esc(e.kind||"deauth")+":</b> reason "+e.reason+(why?" ("+why+")":"");
+      if(e.others) html+="<br><b>Others:</b> "+esc(e.others);
+    }
     const hasMacs = e.evt==="eviltwin" && e.macs && e.macs.length;
     if(e.evt==="eviltwin"){   // name the suspect SSID + its BSSIDs; each BSSID opens the device detail
       if(e.ssid) html+="<br><b>SSID:</b> "+esc(e.ssid);

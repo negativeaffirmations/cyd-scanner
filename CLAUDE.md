@@ -240,7 +240,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   is now complete (increments 1–4).** Plan: [docs/remoteid-decode.md](docs/remoteid-decode.md).
   It also **counts deauth/disassoc frames it OBSERVES** (never sends any) into a sliding window with
   a ~10 s sticky peak, and reports aggregate counts in `Status`: `deauth_recent`, `evil_count`,
-  `rid_count`. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
+  `rid_count`. **Link v13 (fw 0.30.0):** it also keeps who sent them (up to 4 senders, reset after ~10 s of quiet)
+  and streams that as `Reply::Deauth` (`DeauthInfo`) while a burst is live; `Status.wifiMac` carries its own STA MAC. `Detection.flags` is 16-bit as of v6. The active BLE scan also captures up to
   `SVC16_MAX` extra 16-bit service UUIDs per device in `Detection.svc16[]` (protocol v7), so the
   CYD can match a signature UUID even when it isn't the first advertised. (Signature matching still
   runs on the CYD.)
@@ -286,11 +287,12 @@ back (5 GHz included). Things that matter, learned the hard way:
   with `data` only) = the AP that client talks to, from `Detection.bssid[]` (`FLAG_WIFI_DATA_CLIENT`/
   `_UPLINK`, bits 8/9; not notable: no tier floor, but carried in DETS `flags` + live-POST). Schema
   agreed with scan-analyzer 2026-10-23. Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
-  rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N}`
+  rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N[,"total":…,"bcast":…,"from":"…","to":"…","bssid":"…","from_n":…,"ch":…,"reason":…,"kind":"deauth|disassoc","rssi":…,"others":"mac:frames,…"]}`
+  (`count` = 1 s peak; the optional keys, fw 0.30.0, describe the burst: `from` the busiest sender, `from_n` its frames, `total` all frames; addresses are as received and can be forged)
   and `{…,"evt":"eviltwin","count":N[,"ssid":"…","macs":"aa:bb:…,cc:dd:…"]}` (eviltwin also names the
   suspect SSID + its BSSIDs — up to 8, comma-joined — from the live detections carrying
   `FLAG_WIFI_EVILTWIN`, so the web Map's event-pin popup lists them and each BSSID opens that device's
-  detail; deauth has no per-AP address, the C5 only counts frames). **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
+  detail; deauth names its sender from fw 0.30.0, see above). **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
   ~once/30 s per emitter MAC, Remote-ID increment 3):
   `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"rid","mac":"…","uas":"…","dlat":…,"dlon":…,"h":…,"alt":…,"spd":…,"hdg":…,"olat":…,"olon":…,"oid":"…"}`
   — `lat`/`lon` = the scanner's own position fix (phone GPS preferred, onboard C5 NEO-6M as fallback);
@@ -777,6 +779,8 @@ MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` 
 `webapp/js/ble/fleetcrypto.js` —, `r` remove, `x` release, `c` channel, `L1/L0`, `j` become client); STATUS part 2
 `flt=<role>,<joined>/<enrolled>,<ch>`; web **Settings → Fleet** card (`features/fleet.js`). Code: `fleet_leader.cpp`,
 `fleet_client.cpp`, `fleet_internal.h`. Debug-only bench enrollment: `fleet fk` / `fleet add` / `fleet m <cmd>`.
+**Self filter (fw 0.30.0, fleet proto v4, docs §23):** every unit's BLE advert, C5 Wi-Fi and AP MAC sit in fixed per-unit slots, shared in Sync and kept
+in NVS `fltself`, so units filter each other while booting or un-joined too; each MAC only matches its own kind of row; a role change to off clears them.
 **P3 (docs §18):** the leader's Sync carries UTC + tz + the ONE fleet position (its phone by default, else its GPS,
 else a member's live GPS) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
 client stamps the fleet time/position ahead of its own (not under device-only), its tz follows the leader, and

@@ -21,6 +21,9 @@
 
 namespace promisc {
 
+// Copy the current deauth/disassoc burst. False (out.total = 0) when there hasn't been one recently.
+bool deauthSnapshot(link_protocol::DeauthInfo& out);
+
 // Sink called (from the Wi-Fi task context) once per captured frame. Keep it
 // fast; main.cpp routes it into the shared, mutex-guarded detection table.
 using DetCb = void (*)(const link_protocol::Detection& d);

@@ -205,7 +205,7 @@ void sendProbe() {
 
 bool macSet(const uint8_t* m) { for (int k = 0; k < 6; k++) if (m[k]) return true; return false; }
 void addSelf(Sync* s, const uint8_t* m) {
-  if (s->nSelf >= 9 || !macSet(m)) return;
+  if (s->nSelf >= FLEET_SELF_MAX || !macSet(m)) return;
   for (int k = 0; k < s->nSelf; k++) if (!memcmp(s->selfMacs[k], m, 6)) return;
   memcpy(s->selfMacs[s->nSelf++], m, 6);
 }
@@ -233,12 +233,14 @@ void sendSync(int i) {
     s->flags |= 0x02 | (f.live ? 0x04 : 0);
     if (f.from == 4 && f.live && L->fixUsed >= 0) s->fixSlot = (uint8_t)(L->fixUsed + 1);   // a member's GPS is the fleet position
   }
-  uint8_t m[6];
-  if (phone::ownMac(m))  addSelf(s, m);                            // this leader's BLE advert
+  uint8_t m[6], ble[6] = {0}, ap[6];
+  phone::ownMac(ble); ownApMac(ap);
+  fleet::knownSlotSet(0, ble, g_haveC5Mac ? g_c5Mac : nullptr, ap);   // this leader's own radios
+  memcpy(s->selfMacs, fleet::knownRadios(), FLEET_RADIOS * 6);       // every unit's, joined or not; clients keep these in NVS
+  s->nSelf = s->nRadio = FLEET_RADIOS;
   if (phone::peerMac(m)) addSelf(s, m);                            // the phone connected to it
-  if (webshare::active()) { WiFi.softAPmacAddress(m); addSelf(s, m); }   // its download AP
   for (int k = 0; k < L->st.n; k++)
-    if (L->rt[k].state == M_JOINED) { addSelf(s, L->rt[k].bleMac); addSelf(s, L->rt[k].phoneMac); }
+    if (L->rt[k].state == M_JOINED) addSelf(s, L->rt[k].phoneMac);
   memcpy(s->leaderSid, L->sid, 6);
   strncpy(s->leaderName, devkey::unitName(), sizeof(s->leaderName) - 1);
   memcpy(s->fleetId, L->fleetId, sizeof(s->fleetId));
@@ -381,6 +383,7 @@ void onMStat(const Rx& f) {
   r.lastRxMs = millis(); r.rssi = f.rssi;
   r.heapKB = m.heapKB; r.txFailPm = m.txFailPm;
   memcpy(r.phoneMac, m.phoneMac, 6);
+  fleet::knownSlotSet((uint8_t)(i + 1), m.bleMac, m.c5Mac, m.apMac);
   r.srcMask = m.srcMask;
   r.deauth = m.deauth; r.evil = m.evil; r.rid = m.rid; r.statAtMs = r.lastRxMs;
   if (m.planGen != L->planGen && r.planSentGen == L->planGen && millis() - r.lastPlanMs > 1000)
@@ -691,6 +694,7 @@ bool removeAt(int i) {
   memset(&next.m[next.n], 0, sizeof(MemberRec));
   bool ok = saveStore(next, L->addCtr);
   if (ok) {
+    fleet::knownSlotRemove((uint8_t)(i + 1));
     endSession(i, M_ENROLLED);
     if (L->remote) remoteForget(i);
     // Slots shift down: each shifted member learns its new slot from its next Plan (sent at once: planSentGen stale).
@@ -922,10 +926,8 @@ bool isSelf(const uint8_t mac[6]) {
   for (int i = 0; i < L->st.n; i++) {
     const MemberRt& r = L->rt[i];
     if (r.state != M_JOINED) continue;
-    if (macSet(r.bleMac) && !memcmp(r.bleMac, mac, 6)) return true;
-    if (macSet(r.phoneMac) && !memcmp(r.phoneMac, mac, 6)) return true;
+    if (macSet(r.phoneMac) && !memcmp(r.phoneMac, mac, 6)) return true;   // (fixed radios: fleet::isFleetSelf)
   }
-  if (webshare::active()) { uint8_t ap[6]; WiFi.softAPmacAddress(ap); if (!memcmp(ap, mac, 6)) return true; }   // own AP
   return false;
 }
 

@@ -119,6 +119,11 @@ void computeScores();
 #define EVENT_HOLD_MS     6000UL    // keep an alert up this long after the last trigger
 #define EVENT_LOG_GAP_MS  30000UL   // log at most one event line per type per this interval
 extern uint16_t g_deauthRecent;
+extern link_protocol::DeauthInfo g_deauthInfo;   // this poll's deauth burst detail (v13); total 0 = none
+extern uint8_t g_c5Mac[6];                       // this unit's C5 Wi-Fi MAC (Status.wifiMac, v13)
+extern bool    g_haveC5Mac;
+extern uint32_t g_selfDrops;                     // rows dropped as our own radios (a spoofer would show up here)
+void ownApMac(uint8_t out[6]);                   // this unit's download-AP BSSID, whether or not the AP is up
 extern uint8_t  g_evilCount, g_ridCount;
 extern uint16_t g_deauthShown;   // values captured when the alert was last raised (banner text)
 extern uint8_t  g_evilShown;

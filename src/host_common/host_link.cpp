@@ -51,6 +51,7 @@ bool pingC5(uint32_t timeoutMs) {
 // desync the next poll. This does NOT touch g_linkOk -- the caller owns link state (sticky).
 bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
   g_detCount = 0;
+  g_deauthInfo.total = 0;
   g_ridStoreCount = 0;
   bool sawStart = false, done = false, anyByte = false;
   uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
@@ -96,9 +97,15 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
         g_rids[slot].uasId[sizeof(g_rids[slot].uasId) - 1] = 0;            // (REV-005) always terminated
         g_rids[slot].operatorId[sizeof(g_rids[slot].operatorId) - 1] = 0;
         g_ridVia[slot] = 1;
+      } else if (t == (uint8_t)Reply::Deauth && parser.length() >= sizeof(DeauthInfo)) {
+        memcpy(&g_deauthInfo, parser.payload(), sizeof(DeauthInfo));
+        if (g_deauthInfo.n > DEAUTH_SENDERS_MAX) g_deauthInfo.n = DEAUTH_SENDERS_MAX;
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;
+        if (st->wifiMac[0] | st->wifiMac[1] | st->wifiMac[2] | st->wifiMac[3] | st->wifiMac[4] | st->wifiMac[5]) {
+          memcpy(g_c5Mac, st->wifiMac, 6); g_haveC5Mac = true;
+        }
         g_onbValid = (st->gpsFix != 0) && (st->gpsLat != 0 || st->gpsLon != 0);  // v9 onboard GPS
         g_onbSats  = st->gpsSats;  // sats-in-use, even pre-fix (useful for "is the module seeing sky?")
         if (g_onbValid) { g_onbLat = st->gpsLat / 1e7; g_onbLon = st->gpsLon / 1e7; g_onbAtMs = millis(); }  // divide in double, then store

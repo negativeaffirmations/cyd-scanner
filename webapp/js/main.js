@@ -1,7 +1,7 @@
 // Entry point: wires every DOM event listener to its handler. Loaded as <script type="module">,
 // which is deferred, so the DOM is ready by the time this runs.
 import { $, log } from './util/dom.js';
-import { connect, reconnect, switchTo } from './ble/connection.js?v=20261106b';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
+import { connect, reconnect, switchTo } from './ble/connection.js?v=20261106c';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
 import { handleDevKeyHash, addPasted, forgetKey, renderKeysUI, askConfirm, answerConfirm, mayShareLocation } from './ble/auth.js';
 import { toggleScan, newSession, reloadDb, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
 import { downloadLog, downloadFilteredAll, downloadFilteredWifi } from './ble/download.js';

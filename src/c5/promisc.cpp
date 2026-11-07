@@ -30,12 +30,49 @@ constexpr uint32_t DEAUTH_STICKY_MS = 10000;
 volatile uint16_t  g_dSticky  = 0;  // peak 1 s deauth+disassoc count seen recently
 volatile uint32_t  g_dStickyT = 0;  // millis() when g_dSticky was captured
 
+// Who sent them: written from rxCb (Wi-Fi task), read from the main loop's burst, hence the lock.
+portMUX_TYPE g_dInfoMux = portMUX_INITIALIZER_UNLOCKED;
+link_protocol::DeauthInfo g_dInfo{};
+uint32_t g_dInfoLastMs = 0, g_dInfoStartMs = 0;
+constexpr uint32_t DEAUTH_BURST_MAX_MS = 60000;   // a steady trickle can't stretch one table over hours
+
 // Sum the deauth/disassoc buckets covering the last DEAUTH_WIN_MS (the live ~1 s rate).
 static uint16_t deauth1s(uint32_t now) {
   uint32_t sum = 0;
   for (int i = 0; i < DEAUTH_BUCKETS; i++)
     if (now - g_dStamp[i] <= DEAUTH_WIN_MS && g_dCnt[i]) sum += g_dCnt[i];
   return sum > 65535 ? 65535 : (uint16_t)sum;
+}
+
+// A full table gives up its quietest sender, so a flood that starts after stray frames takes a slot and keeps it.
+static void recordDeauth(const uint8_t* f, int len, uint8_t sub, uint8_t ch, int8_t rssi, uint32_t now) {
+  static const uint8_t kBcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  const bool prot = f[1] & 0x40;       // 802.11w: the body is encrypted, so bytes 24-25 aren't a reason code
+  const uint16_t reason = len >= 26 && !prot ? (uint16_t)(f[24] | (f[25] << 8)) : 0;
+  const bool bcast = memcmp(f + 4, kBcast, 6) == 0;
+  portENTER_CRITICAL(&g_dInfoMux);
+  if (now - g_dInfoLastMs > DEAUTH_STICKY_MS || now - g_dInfoStartMs > DEAUTH_BURST_MAX_MS) {   // a new burst
+    memset(&g_dInfo, 0, sizeof(g_dInfo));
+    g_dInfoStartMs = now;
+  }
+  g_dInfoLastMs = now;
+  if (g_dInfo.total < 65535) g_dInfo.total++;
+  if (bcast && g_dInfo.bcast < 65535) g_dInfo.bcast++;
+  link_protocol::DeauthSender* s = nullptr;
+  for (int i = 0; i < g_dInfo.n && !s; i++) if (!memcmp(g_dInfo.senders[i].src, f + 10, 6)) s = &g_dInfo.senders[i];
+  if (!s && g_dInfo.n < link_protocol::DEAUTH_SENDERS_MAX) { s = &g_dInfo.senders[g_dInfo.n++]; memset(s, 0, sizeof(*s)); s->rssi = -127; }
+  if (!s) {
+    s = &g_dInfo.senders[0];
+    for (int i = 1; i < g_dInfo.n; i++) if (g_dInfo.senders[i].count < s->count) s = &g_dInfo.senders[i];
+    memset(s, 0, sizeof(*s)); s->rssi = -127;
+  }
+  if (s) {
+    memcpy(s->src, f + 10, 6); memcpy(s->dst, f + 4, 6); memcpy(s->bssid, f + 16, 6);
+    if (s->count < 65535) s->count++;
+    s->reason = reason; s->channel = ch; s->subtype = sub;
+    if (rssi > s->rssi) s->rssi = rssi;
+  }
+  portEXIT_CRITICAL(&g_dInfoMux);
 }
 
 inline uint32_t fnv1a(uint32_t h, uint8_t b) { return (h ^ b) * 16777619u; }
@@ -145,8 +182,9 @@ void rxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
   if ((fc & 0x0C) != 0) return;  // frame type != management
   uint8_t sub = fc >> 4;         // management subtype
 
-  if (sub == 10 || sub == 12) {         // deauth / disassoc: count only (observed, never sent)
+  if (sub == 10 || sub == 12) {         // deauth / disassoc: observed, never sent
     uint32_t now = millis();
+    recordDeauth(f, len, sub, pkt->rx_ctrl.channel, (int8_t)pkt->rx_ctrl.rssi, now);
     int b = (now / DEAUTH_BUCKET_MS) % DEAUTH_BUCKETS;
     uint32_t stamp = now - (now % DEAUTH_BUCKET_MS);
     if (g_dStamp[b] != stamp) { g_dStamp[b] = stamp; g_dCnt[b] = 0; }  // bucket rolled over
@@ -228,6 +266,14 @@ void rxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
 namespace promisc {
 
 void begin(DetCb cb, ApCb apCb) { g_cb = cb; g_apCb = apCb; }
+
+bool deauthSnapshot(link_protocol::DeauthInfo& out) {
+  portENTER_CRITICAL(&g_dInfoMux);
+  const bool live = g_dInfo.total && millis() - g_dInfoLastMs <= DEAUTH_STICKY_MS;
+  if (live) out = g_dInfo; else memset(&out, 0, sizeof(out));
+  portEXIT_CRITICAL(&g_dInfoMux);
+  return live;
+}
 
 uint16_t deauthRecent() {
   uint32_t now = millis();

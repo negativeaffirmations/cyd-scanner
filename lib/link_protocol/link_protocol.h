@@ -22,7 +22,7 @@ namespace link_protocol {
 // --- Link parameters --------------------------------------------------------
 static constexpr uint32_t LINK_BAUD        = 115200;  // UART baud, both sides
 static constexpr uint8_t  FRAME_START      = 0xAA;    // frame delimiter
-static constexpr uint8_t  PROTOCOL_VERSION = 12;      // v12: ScanConfig carries a ScanPlan (fleet coverage split). v11: Detection.bssid[6] + FLAG_WIFI_DATA_CLIENT/_UPLINK
+static constexpr uint8_t  PROTOCOL_VERSION = 13;      // v13: Status.wifiMac + Reply::Deauth. v12: ScanConfig carries a ScanPlan (fleet coverage split). v11: Detection.bssid[6] + FLAG_WIFI_DATA_CLIENT/_UPLINK
                                                       // v10: Status gains gpsEpoch (UTC secs from NEO-6M RMC) so the CYD can keep time with no phone
                                                       // v9: Status gains onboard C5 GPS fix (NEO-6M) - gpsLat/gpsLon (deg*1e7) + alt/sats/fix; phone GPS preferred, onboard is fallback
                                                           // (v8: Reply::RemoteId frame + RemoteId struct - decoded Remote-ID (ASTM F3411)
@@ -50,6 +50,7 @@ enum class Reply : uint8_t {
   Heartbeat = 0x82,  // payload = Heartbeat (link connection monitor)
   Detection = 0x90,  // payload = Detection (one per detected device)
   RemoteId  = 0x91,  // payload = RemoteId (ASTM F3411 Remote-ID broadcast, keyed to a Detection by MAC)
+  Deauth    = 0x92,  // payload = DeauthInfo (who sent the observed deauth/disassoc frames; only while there are any)
   Status    = 0xA0,  // payload = Status
   Error     = 0xEF,  // payload = 1 byte error code
 };
@@ -181,6 +182,28 @@ struct Status {
   uint8_t  gpsFix;        // 0 = no fix, 1 = 2D, 2 = 3D
   uint32_t gpsEpoch;      // v10: UTC epoch seconds from the NEO-6M RMC date+time (0 = unknown). The
                           // CYD uses it as a fallback wall-clock when no phone has synced the time.
+  uint8_t  wifiMac[6];    // v13: the C5's own Wi-Fi station MAC. Its active scan's probe requests carry this address,
+                          // so the fleet must know it to drop a sibling's C5 from the results.
+};
+
+// v13: what the C5 saw of the deauth/disassoc frames in the current burst (the table resets after ~10 s of quiet).
+// Addresses are as received: 802.11 management frames aren't authenticated, so `src` can be forged.
+static constexpr uint8_t DEAUTH_SENDERS_MAX = 4;
+struct DeauthSender {
+  uint8_t  src[6];        // addr2, the transmitter
+  uint8_t  dst[6];        // addr1 of its latest frame (FF:FF:FF:FF:FF:FF = every client)
+  uint8_t  bssid[6];      // addr3 of its latest frame
+  uint16_t count;         // frames from this sender in the burst
+  uint16_t reason;        // 802.11 reason code of its latest frame (0 = frame too short to carry one)
+  uint8_t  channel;
+  uint8_t  subtype;       // 10 disassoc, 12 deauth
+  int8_t   rssi;          // strongest
+};
+struct DeauthInfo {
+  uint16_t total;         // frames in the burst, including senders that didn't fit the table
+  uint16_t bcast;         // of those, sent to the broadcast address
+  uint8_t  n;             // senders[] in use
+  DeauthSender senders[DEAUTH_SENDERS_MAX];
 };
 
 // Fixed header prepended to every frame's payload on the wire.
@@ -195,7 +218,8 @@ struct FrameHeader {
 
 static_assert(sizeof(Detection) == 81, "Detection wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(RemoteId)  == 75, "RemoteId wire size changed - bump PROTOCOL_VERSION");
-static_assert(sizeof(Status)    == 28, "Status wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(Status)    == 34, "Status wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(DeauthSender) == 25 && sizeof(DeauthInfo) == 105, "DeauthInfo wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(ScanPlan) == 18 && sizeof(ScanConfig) == 21, "ScanConfig wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.
