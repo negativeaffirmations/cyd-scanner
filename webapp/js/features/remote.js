@@ -296,7 +296,11 @@ export async function uploadCurrentSession(){
   toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
   try{
     const cur = await fetchCurrent(fname, { trim:true });   // through the phone-side cache (whole file, no torn last row); null = plain "L"
-    if(cur){ await uploadSessionText(cur.text, fname); return; }
+    if(cur){
+      const r=await uploadSessionText(cur.text, fname);
+      if(r===true && state.fleetRole==="leader" && state.uploadCurrentFleet) await state.uploadCurrentFleet(fname);   // (features/sessions.js)
+      return;
+    }
     if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); setUploadBusy(false); return; }
     state.dl = { mode:null, expect:0, got:0, chunks:[], name:fname, sink:"upload", waiting:true, lastRx:Date.now() };
     await state.chars.cmd.writeValue(enc.encode("L"));
