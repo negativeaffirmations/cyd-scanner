@@ -166,7 +166,7 @@ settings; the dialog's 10 s hint and the sec=2 failure message say so. A missing
 case (phone forgot, device kept it) heals itself after the HMAC, through the guarded repeat pairing.
 Serial: `bonds`, `bonds clear` then `bonds confirm` within 15 s.
 
-T10 results (2026-11-06, mini #2 S3 with its C5 unplugged, one Android phone):
+T10 results (2026-11-06, one Android phone; mini #2 first, then the CYD and mini #1):
 - PASS, sec=1 and sec=2: first pairing (`enc=1 key=16 bonded=1`), silent reconnect (the phone encrypts before the HMAC), bond
   kept across a reflash, address resolves on reconnect.
 - PASS, sec=2: fresh pairing re-proof (HMAC, encrypt, HMAC, then time sync); phone-forgot case heals through the guarded
@@ -174,12 +174,14 @@ T10 results (2026-11-06, mini #2 S3 with its C5 unplugged, one Android phone):
 - Stale phone bond after `bonds clear`: the first connect paired again with `bonded=0` (encrypted, nothing stored; the BOND
   bit must have been missing from the phone's side, as the device had bonding on). The next connect got no prompt and ended on
   the SM's 30 s timeout. Forget + pair recovered it. `pf=1` came with the link already dropping, so the app reports "gone".
-- Stack low point 1724 of 5120 on the S3, printed as "words" but believed to be bytes. Not yet measured on the CYD (4096).
+- PASS, sec=2: CYD (`cyd_sec2`) and mini #1 first pairing with re-proof, then silent reconnect. No crashes.
+- Stack low point (printed as "words", believed to be bytes): 1724 free of 5120 on mini #2, 880 free of 4096 on the CYD. The
+  deepest reading on both is a bonded reconnect, not the pairing.
 - Android's prompt shows with the app's "Pair with…" dialog visible behind it.
 
 - PASS, sec=2 (owner-reported): Wi-Fi download flow and BLE log download.
 
-Not tested yet: the CYD, mini #1, the fleet alongside a bonded link.
+Not tested yet: the fleet alongside a bonded link.
 
 Checks written before T10, kept for the ones not covered above:
 - Android's prompt appears for a peripheral security request while Chrome holds the link, and AUTH polling during
