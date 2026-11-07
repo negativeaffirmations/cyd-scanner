@@ -22,6 +22,7 @@
 #include "host_board.h"
 #include "webshare.h"
 #include "host_core.h"   // g_srcMask (planString)
+#include "host_log.h"    // logXferActive
 
 using namespace fleet_proto;
 
@@ -42,7 +43,7 @@ const uint8_t kPmk[16] = { 'C','F','L','O','-','F','L','T','-','P','M','K','-','
 constexpr uint32_t STABLE_MS     = 60000;   // uptime after which the crash counter is cleared
 constexpr uint8_t  CRASH_BOOTS   = 3;
 constexpr int      DRAIN_MAX     = 8;       // RX frames handled per service() pass
-constexpr size_t   CLIENT_SLOT   = 256;     // client RX slot (header + data); leader->client frames are <= 119 B (Sync + tag)
+constexpr size_t   CLIENT_SLOT   = 256;     // client RX slot (header + data); leader->client frames are <= 243 B (Sync + tag)
 constexpr int      CLIENT_SLOTS  = 8;
 constexpr int      LEADER_SLOTS  = 48;      // PSRAM: several members' DetBatch bursts land while loop() runs a cycle
 constexpr int      FALLBACK_SLOTS = 8;      // leader pool when PSRAM is unavailable
@@ -537,6 +538,56 @@ uint32_t eventCount() { return g_events; }
 
 namespace fleet {
 
+namespace {
+uint8_t  g_known[FLEET_RADIOS][6];
+bool     g_knownDirty = false;
+uint32_t g_knownDirtyMs = 0;
+void knownChanged() { g_knownDirty = true; g_knownDirtyMs = millis(); }
+void knownFlush() {
+  if (!g_knownDirty || millis() - g_knownDirtyMs < 5000 || logXferActive()) return;   // a rejoin changes it a few times at once
+  g_knownDirtyMs = millis();             // a failed write retries in 5 s
+  Preferences p;
+  if (!p.begin("cydscan", false)) return;
+  if (p.putBytes("fltself", g_known, sizeof(g_known)) == sizeof(g_known)) g_knownDirty = false;
+  p.end();
+}
+bool macIsSet(const uint8_t* m) { for (int k = 0; k < 6; k++) if (m[k]) return true; return false; }
+void slotPut(int i, const uint8_t* m) {
+  if (!m || !macIsSet(m) || !memcmp(g_known[i], m, 6)) return;
+  memcpy(g_known[i], m, 6);
+  knownChanged();
+}
+}  // namespace
+
+// Slots are overwritten, never appended: a unit can only ever occupy its own three.
+void knownSlotSet(uint8_t unit, const uint8_t* ble, const uint8_t* c5, const uint8_t* ap) {
+  if (unit > FLEET_MAX_MEMBERS) return;
+  slotPut(unit * 3, ble); slotPut(unit * 3 + 1, c5); slotPut(unit * 3 + 2, ap);
+}
+void knownSlotRemove(uint8_t unit) {
+  if (unit > FLEET_MAX_MEMBERS) return;
+  const int at = unit * 3;
+  memmove(g_known[at], g_known[at + 3 < FLEET_RADIOS ? at + 3 : at], (size_t)(FLEET_RADIOS - at - 3) * 6);
+  memset(g_known[FLEET_RADIOS - 3], 0, 3 * 6);
+  knownChanged();
+}
+void knownRadiosSet(const uint8_t* macs, uint8_t n) {
+  if (n != FLEET_RADIOS || !memcmp(g_known, macs, sizeof(g_known))) return;
+  memcpy(g_known, macs, sizeof(g_known));
+  knownChanged();
+}
+// Leader start: anything above its enrolled members is left over, e.g. a removal that a reboot beat to NVS.
+void knownTrim(uint8_t members) {
+  for (int i = 3 * (members + 1); i < FLEET_RADIOS; i++)
+    if (macIsSet(g_known[i])) { memset(g_known[i], 0, 6); knownChanged(); }
+}
+const uint8_t* knownRadios() { return &g_known[0][0]; }
+uint8_t knownRadioCount() {
+  uint8_t c = 0;
+  for (int i = 0; i < FLEET_RADIOS; i++) if (macIsSet(g_known[i])) c++;
+  return c;
+}
+
 void loadRole() {
   Preferences p;
   if (!p.begin("cydscan", false)) { g_role = ROLE_OFF; return; }
@@ -570,6 +621,8 @@ void loadRole() {
       g_bootCounted = n != 0;
     }
   }
+  if (g_role == ROLE_OFF) p.remove("fltself");
+  else if (p.getBytesLength("fltself") == sizeof(g_known)) p.getBytes("fltself", g_known, sizeof(g_known));
   p.end();
 }
 
@@ -584,6 +637,7 @@ bool setRole(uint8_t r) {
   Preferences p;
   if (!p.begin("cydscan", false)) return false;
   if (r != g_role) p.remove("fltcarry");   // leave / release / role change: drop the carried log tail (fleet_client.cpp)
+  if (r != g_role) { p.remove("fltself"); memset(g_known, 0, sizeof(g_known)); g_knownDirty = false; }   // another fleet, or none: the old one's radios are ordinary devices
   bool ok = p.putUChar("fltrole", r) == sizeof(uint8_t);
   p.putUChar("fltboot", 0);
   p.end();
@@ -608,6 +662,7 @@ bool beginLeader() { return begin(true); }
 bool active()      { return g_active; }
 
 void service() {
+  knownFlush();
   if (g_bootCounted && millis() > STABLE_MS) {   // stable for 60 s: the last boots were not a crash loop
     g_bootCounted = false;
     Preferences p;
@@ -756,8 +811,13 @@ void fwdStats(FwdStats& s) {
   if (g_leader) detail::leader::fwdStats(s); else detail::client::fwdStats(s);
 }
 
-bool isFleetSelf(const uint8_t mac[6]) {
-  if (!g_active) return false;
+bool isFleetSelf(const uint8_t mac[6], uint8_t source) {
+  using link_protocol::Source;
+  const int kind = source == (uint8_t)Source::BleScan ? 0 : source == (uint8_t)Source::WifiProbe ? 1 :
+                   source == (uint8_t)Source::WifiScan ? 2 : -1;
+  if (kind < 0 || !macIsSet(mac)) return false;
+  for (int i = kind; i < FLEET_RADIOS; i += 3) if (!memcmp(g_known[i], mac, 6)) return true;   // also before the fleet is up
+  if (!g_active || kind != 0) return false;                       // phones are BLE
   return g_leader ? detail::leader::isSelf(mac) : detail::client::isSelf(mac);
 }
 
@@ -781,6 +841,10 @@ void printStatus() {
   char ms[18]; macStr(g_mac, ms);
   Serial.printf("[FLT] role %s  channel %u  active %s  mac %s  maxPayload %u\n", roleName(g_role), g_ch,
                 g_active ? "yes" : "no", g_active ? ms : "-", g_maxPayload);
+  Serial.printf("[FLT] self filter: %u fixed radios known, %lu rows dropped\n", (unsigned)knownRadioCount(), (unsigned long)g_selfDrops);
+  { uint8_t ap[6]; ownApMac(ap);
+    Serial.printf("[FLT] own radios: c5 %02X:%02X:%02X:%02X:%02X:%02X  ap %02X:%02X:%02X:%02X:%02X:%02X\n", g_c5Mac[0], g_c5Mac[1], g_c5Mac[2], g_c5Mac[3],
+                  g_c5Mac[4], g_c5Mac[5], ap[0], ap[1], ap[2], ap[3], ap[4], ap[5]); }
   Serial.printf("[FLT] tx ok %lu fail %lu  rx %lu drop %lu  rate %s  boot-guard %s  build %s\n",
                 (unsigned long)g_txOk, (unsigned long)g_txFail, (unsigned long)g_rxFrames, (unsigned long)g_rxDrop,
                 g_rate12 ? "12M" : "1M", g_bootCounted ? "counting" : "idle",

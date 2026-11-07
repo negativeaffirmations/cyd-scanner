@@ -1,6 +1,16 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
+## RESUME HERE — 2026-11-06 (late): fw 0.30.0 LIVE on all 6 boards, merged to `main`
+- **Flashed:** `c5` (COM18), `cyd` (COM13), `xiao_c5` (COM9 + COM23), `xiao_s3_rgb` (COM10), `xiao_s3` (COM16). Link v13 + fleet proto v4. All 3 hosts rejoined; 8 fixed radios
+  shared. A rejoin after flashing can take 2-5 min (9 s dwell per channel vs slow 15 s probes), which isn't a fault.
+- scan-analyzer told directly + on the bridge; drive data in the bridge folder `drive-20261106/`.
+- **Verified on hardware:** link up, CYD rejoined, 5 radios shared, rows being dropped, saved list survives a CYD reset (5 known while still searching), AP address from
+  eFuse matches the log (`ownApMac`). **Not verified:** a real deauth burst (needs one to happen; never generate one), self rows gone from a real log, phone reconnect on 0.30.0.
+- **Fleet field test 2026-11-06 on 0.29.0 passed:** 20:57-21:57, no losses, flips or reboots; 13-minute drive, member GPS within 17 m (median) of the stamped position,
+  fleet position failover worked. Logs in `scanlogs/` are the "before" for self rows.
+- scan-analyzer has the proposed `deauth` keys on the bridge; no reply yet.
+
+## Earlier — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
 - **Board state:** release builds, mini #2 `xiao_s3_rgb` (COM10, leader, its C5 is wired in, only its USB is out), mini #1 `xiao_s3` (COM16), CYD `cyd` (COM13, client).
   Fleet rejoined: roles ble / wifi24 / wifi5, 0 bad frames, bonds kept across the flash. C5s not reflashed (no link change).
 - **T10:** passed on all 3, including a BLE export from the leader with the fleet running (docs/ble-auth.md).

@@ -604,6 +604,7 @@ static void sendStatus(uint8_t scanning, uint16_t total) {
   st.gpsLat = gf.lat; st.gpsLon = gf.lon; st.gpsAltM = gf.altM;
   st.gpsSats = gf.sats; st.gpsFix = gf.fix;
   st.gpsEpoch = gf.epochUtc;       // v10: UTC time from RMC (0 = unknown)
+  esp_wifi_get_mac(WIFI_IF_STA, st.wifiMac);   // v13: the address our active scan's probe requests carry
   sendFrame((uint8_t)Reply::Status, &st, sizeof(st));
 }
 
@@ -633,6 +634,8 @@ static void streamTable() {
     sendFrame((uint8_t)Reply::RemoteId, &ridBuf[i], sizeof(ridBuf[i]));
     delay(2);
   }
+  link_protocol::DeauthInfo di;
+  if (promisc::deauthSnapshot(di)) { sendFrame((uint8_t)Reply::Deauth, &di, sizeof(di)); delay(2); }
   sendStatus(0, cnt);
   Serial.printf("[C5] streamed %d detections\n", cnt);
   while (LinkSerial.available()) LinkSerial.read();  // drop stale commands

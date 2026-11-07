@@ -118,6 +118,12 @@ export function parseScanEvents(text){
       ev.ssid=o.ssid==null?"":String(o.ssid);
       ev.macs=o.macs==null?[]:String(o.macs).split(",").filter(Boolean);
     }
+    if(ev.evt==="deauth" && o.from){   // who sent the burst (fw 0.30.0); absent on older logs
+      const s=v=>v==null?"":String(v);
+      ev.from=s(o.from); ev.to=s(o.to); ev.bssid=s(o.bssid); ev.others=s(o.others); ev.kind=s(o.kind);
+      ev.total=parseInt(o.total,10)||0; ev.fromN=parseInt(o.from_n,10)||0; ev.ch=parseInt(o.ch,10)||0;
+      ev.reason=parseInt(o.reason,10)||0; ev.bcast=parseInt(o.bcast,10)||0; ev.rssi=parseInt(o.rssi,10)||0;
+    }
     if(ev.evt==="rid"){   // Remote-ID decode: absolute drone/operator fix + telemetry (absent -> NaN / "")
       const f=v=>v==null?NaN:parseFloat(v), n=v=>v==null?NaN:parseInt(v,10), s=v=>v==null?"":String(v);
       Object.assign(ev,{dlat:f(o.dlat), dlon:f(o.dlon), olat:f(o.olat), olon:f(o.olon),

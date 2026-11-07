@@ -1171,3 +1171,26 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   new fleet file, and a client continues from its acked offsets (earlier rows live in the previous leader file); carry-over keeps at most
   3 files (a unit that reboots many times without ever joining drops the oldest tails -- they stay on its own card), and a
   sync-renamed file beyond the 150-entry /logs scan window is given up on.
+
+## 23. Fleet self filter (fw 0.30.0, fleet proto v4, link v13)
+
+Field finding (2026-11-06): a C5's active Wi-Fi scan sends probe requests from its own station MAC, and no host knew that
+address, so each unit logged the others' C5s as `PRB` rows, at about -15 dBm, while joined. Units were also filtered only
+while `M_JOINED`, so a boot burst leaked in.
+
+- `Status.wifiMac` (link v13) gives each host its C5's MAC. `isSelfDet()` also drops that, and the unit's own download AP
+  (`ownApMac()`, from eFuse, because the C5 keeps listing an AP for its 30 s TTL after it stops).
+- Each unit owns three **slots**, [BLE advert, C5 Wi-Fi, download AP], leader first then members in slot order, 21 in all.
+  Slots are overwritten, never appended, so a compromised member can't fill the list or pile up hidden MACs, and old
+  entries can't build up. `MStat` carries a member's three every 2 s.
+- **A MAC only matches its own kind of row:** BLE slots against BLE rows, C5 against `PRB`, AP against AP rows. A device
+  copying a unit's Wi-Fi MAC over BLE stays visible. `fleet` on the console prints `rows dropped`, the only sign of a
+  same-kind spoof.
+- `Sync.selfMacs` holds the 21 slots (`nRadio`) then up to 7 phones. Clients replace their slots with the leader's.
+- The slots live in NVS `cydscan`/`fltself`, loaded at boot, so `isFleetSelf()` works before the fleet is up. Writes are
+  debounced 5 s and held back during a transfer.
+- Removing a member deletes only its slots; later members shift down with it. Any role change clears them all, and a leader
+  trims them to its enrolled members at start.
+
+Limits: the first boot after flashing has nothing stored until a join. A device that copies a unit's MAC on the same radio
+type is hidden. A phone's rotating address still only filters as the connection address. C5 BLE scanning doesn't advertise, so it has no address to filter.
