@@ -120,7 +120,7 @@ Whenever the phone changes device config or card files, one NDJSON line on the a
 3. Render sticker QRs **offline only** (the URL is the secret). Label with unit name + key gen. Put inside the
    case / battery door. Never commit keys or sticker images.
 
-## Phase B/C as built (fw 0.28.0; NOT yet hardware-tested)
+## Phase B/C as built (fw 0.28.0; bench-tested on mini #2 only, see T10 results)
 `PHONE_BLE_SEC` is a build flag, default 0, which compiles this out. Bench envs: `xiao_s3_rgb_sec1`, `xiao_s3_rgb_sec2`,
 `cyd_sec2`.
 
@@ -166,7 +166,20 @@ settings; the dialog's 10 s hint and the sec=2 failure message say so. A missing
 case (phone forgot, device kept it) heals itself after the HMAC, through the guarded repeat pairing.
 Serial: `bonds`, `bonds clear` then `bonds confirm` within 15 s.
 
-Checks for T10, none of them done:
+T10 results (2026-11-06, mini #2 S3 with its C5 unplugged, one Android phone):
+- PASS, sec=1 and sec=2: first pairing (`enc=1 key=16 bonded=1`), silent reconnect (the phone encrypts before the HMAC), bond
+  kept across a reflash, address resolves on reconnect.
+- PASS, sec=2: fresh pairing re-proof (HMAC, encrypt, HMAC, then time sync); phone-forgot case heals through the guarded
+  repeat pairing; declining the prompt gives `enc=0` and a kick about 4 s later, and the next attempt pairs.
+- Stale phone bond after `bonds clear`: the first connect paired again with `bonded=0` (encrypted, nothing stored; the BOND
+  bit must have been missing from the phone's side, as the device had bonding on). The next connect got no prompt and ended on
+  the SM's 30 s timeout. Forget + pair recovered it. `pf=1` came with the link already dropping, so the app reports "gone".
+- Stack low point 1724 of 5120 on the S3, printed as "words" but believed to be bytes. Not yet measured on the CYD (4096).
+- Android's prompt shows with the app's "Pair with…" dialog visible behind it.
+
+Not tested yet: large transfers and Wi-Fi download at sec=2, the CYD, mini #1, the fleet alongside a bonded link.
+
+Checks written before T10, kept for the ones not covered above:
 - Android's prompt appears for a peripheral security request while Chrome holds the link, and AUTH polling during
   pairing doesn't break it.
 - A bonded phone's rotating address resolves on reconnect, so the LTK is found.

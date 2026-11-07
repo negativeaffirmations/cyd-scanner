@@ -1,6 +1,6 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06: BLE Phase B/C on `ble-enc` (`88798b6`); level 1 PASSED on mini #2; level 2 test next
+## RESUME HERE — 2026-11-06: BLE Phase B/C on `ble-enc`; levels 1 + 2 PASSED on mini #2 (results: docs/ble-auth.md T10); mini #2 is on the `xiao_s3_rgb_sec2` bench build, its C5 unplugged
 - **T10 so far (mini #2 S3 only, its C5 unplugged, phone in hand):** sec=1 first pairing OK (`enc=1 key=16 bonded=1`, app says encrypted), reconnect
   silent and encrypted before the HMAC. Owner saw the Android prompt TWICE on first connect, but the scanner logged ONE pairing. Stack low
   point 1724 of 5120 on the S3 (after a bond restore), so a 4096 stack on the CYD may be tight: test before moving the CYD off 0.
