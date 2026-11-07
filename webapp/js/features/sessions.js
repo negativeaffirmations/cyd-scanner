@@ -271,15 +271,21 @@ async function saveSplit(gs, cmdFor, tag, empty){
   if(!saved) toast(empty, {err:true});
   else if(fleet.length && own.length) toast("Saved the scan + its Fleet file as separate downloads.");
 }
-// "Download / Upload current session" on a leader: also handle the Fleet files the Session-logs list would auto-include,
-// by the same fleetOf() rule. State hooks, not exports: a stale cached copy of either module then just skips this,
-// where a missing export would stop the whole page loading.
+// "Download / Upload current session" on a leader: also handle the Fleet file(s) of that session. Matched against the
+// current FILE's span, not its scan group: a group can span a whole day of boots, which would drag in every older fleet
+// file. Overlap only, so the previous boot's fleet file (which ends before this file starts) stays out.
+// State hooks, not exports: a stale cached copy of either module then just skips this, where a missing export would
+// stop the whole page loading.
 async function currentFleet(sess){
   toast("Looking for this session's Fleet file…", {work:true, sticky:true});
   await bleFetch("Q", "sessions");   // download.js refreshes `groups` before this resolves
   const base=sess.replace(/\.jsonl$/, "");
-  const cur=groups.find(g=>g.kind!=="fleet" && g.parts.some(p=>p.base.replace(/\.jsonl$/, "")===base));
-  return cur ? fleetOf(cur) : [];
+  const part=groups.flatMap(g=>g.kind==="fleet" ? [] : g.parts).find(p=>p.base.replace(/\.jsonl$/, "")===base);
+  if(!part) return [];
+  return groups.filter(f=>f.kind==="fleet").map(f=>{
+    const parts=f.parts.filter(p=>p.end>part.start && p.start<=part.end+FLEET_SLACK_S);
+    return parts.length ? {...f, parts, start:parts[0].start, end:parts[parts.length-1].end} : null;
+  }).filter(Boolean);
 }
 state.uploadCurrentFleet = sess => runBusy("Fleet upload", async ()=>{
   if(state.fleetRole!=="leader") return;
