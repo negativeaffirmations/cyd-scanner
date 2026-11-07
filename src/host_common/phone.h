@@ -27,16 +27,21 @@ void setStatus(const String& s);
 
 // Link security level advertised in the AUTH characteristic's sec= (docs/ble-auth.md): 0 = HMAC auth only
 // (Phase A), 1 = + opportunistic bonding after auth (Phase B), 2 = authed AND encrypted (Phase C).
-// Only 0 is implemented; B/C are not built yet.
+// Default 2 since hardware test T10 passed. The *_sec1 / *_sec2 envs are bench builds with the stack readout.
 #ifndef PHONE_BLE_SEC
-#define PHONE_BLE_SEC 0
+#define PHONE_BLE_SEC 2
 #endif
 
 bool     connected();   // a central is on the GATT link (UI: grey BLE icon until it authenticates)
-// The connected central proved the device key (HMAC challenge-response) -- THE gate for everything that
-// sends data to / takes data from "the phone": transfers, DETS, STATUS, phone GPS freshness.
+// The connected central proved the device key (HMAC challenge-response), and at PHONE_BLE_SEC 2 the link is
+// encrypted too -- THE gate for everything that sends data to / takes data from "the phone": transfers,
+// DETS, STATUS, phone GPS freshness.
 bool     authed();
-bool     linkEncrypted();       // the authed link is AES-encrypted (always false in Phase A)
+bool     linkEncrypted();       // the key-proven link is AES-encrypted at full key size (never at PHONE_BLE_SEC 0)
+int      bondCount();           // stored phone bonds; -1 when NimBLE isn't running
+// Delete every stored bond and drop the current central. A phone that kept its half must forget this scanner
+// in Android Bluetooth settings before it can pair again. Rekey deliberately does NOT do this (docs/ble-auth.md).
+bool     clearBonds();
 bool     authJustCompleted();   // true once per successful authentication (consumed on read)
 // Loop-context housekeeping: the 30 s auth timeout and kicks queued by the NimBLE callbacks (which must
 // never disconnect from inside a callback). Called from core::servicePhoneCommands.
