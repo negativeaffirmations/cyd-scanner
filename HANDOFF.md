@@ -1,6 +1,29 @@
-# Handoff — 2026-11-06 (trunk: `main`; the fleet-mode, ble-enc and deauth-detail branches are all merged)
+# Handoff — 2026-11-07 (trunk: `main`; `hardening` is local, not merged or pushed)
 
-## RESUME HERE — 2026-11-06 (night): everything live and merged; only a real deauth burst is still unconfirmed
+## RESUME HERE — 2026-11-07: hardening pass + fleet role controls built on `hardening`; web part not deployed
+**State.** Mini #2 `xiao_s3_rgb` fw **0.31.0** (COM10, leader) with C5 `xiao_c5` (COM9); CYD host still 0.30.1 (COM13, no change needed) with C5 `c5` (COM18).
+Both of those C5s have the console fix. **Mini #1 (S3 + C5) wasn't attached: still 0.30.1 and the old C5 build.** Link and fleet proto are unchanged, so all of this interoperates.
+
+**Done:**
+- C5 USB console can't block the scan loop (`ca332c8`).
+- **Fleet on-air check PASSED** (`tools/fleet-sniff`, docs/fleet-mode.md §17.2): only Probe/Hello/Join are cleartext, no ID, name or fixed MAC in them, fresh values across 3 joins.
+- Role overrides saved (NVS `fltlay`), listed in `M:l`, and "everyone full" beats them. Bench-passed on mini #2 through a reboot, on the debug build before the review fixes.
+- Fleet card: coverage selector, role picker per member, "Nobody is assigned X" warning. Reviewer: no P1; REV-001..007 fixed (`eacd923`). The real `fleet.js` passes in Node with a fake BLE link. **Never run on a phone.**
+
+**Next:**
+1. Owner OK, then merge `hardening` to `main` through a temp worktree (that deploys the web app; footer `fleet-roles a`), and try the Fleet card on the phone.
+2. Flash mini #1 when attached: `xiao_s3` + `xiao_c5`.
+3. Owner decision: a unit's C5 sends active-scan probes from its fixed MAC, so the fleet's random MACs don't hide the unit. Randomizing it would break scan-analyzer's exact-address `EXCLUDED_MACS`, so it needs coordinating.
+4. Still open from below: the 2-body Upload check, first real `deauth` line, mini #2 `role off` cause. Also the CYD heap during a normal-mode SoftAP download (needs the phone) and a frame replay test (needs a transmitter).
+5. Legacy Wi-Fi shims (`#apCard`, `wifiap.js`) kept: a phone holding a stale `status.js` still imports `wifiap.js`, so remove the `status.js` call one deploy before the file.
+
+**Bench side effects (2026-11-07 ~12:00-13:00):** the CYD's C5 was the sniffer for about 20 min, so the CYD logged no scan rows in that window. The CYD was reset 3 times (short bg files) and mini #2 rebooted several times; its log has test `plan` lines from role changes.
+
+**Rules learned:**
+- Never name a script `con.py` on Windows: CON is the console device, so python hangs at a `>>>` prompt.
+- `pio run -t nobuild -t upload` breaks esptool here. Use plain `-t upload`.
+
+## Earlier — 2026-11-06 (night): everything live and merged; only a real deauth burst is still unconfirmed
 **State.** All 6 boards current, nothing in flight. Hosts fw **0.30.1** (mini #2 `xiao_s3_rgb` leader, mini #1 `xiao_s3`, CYD `cyd` client); 3 C5s (`c5`, `xiao_c5` x2) on link **v13**,
 fleet proto **v4**. Roles ble / wifi24 / wifi5, 8 fixed radios shared. Webapp on `main`, footer `current-fleet j`. BLE link encryption level 2 is the default; the phone is paired with all 3.
 
