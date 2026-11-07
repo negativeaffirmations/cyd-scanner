@@ -1,9 +1,13 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06 (late): fw 0.30.0 on branch `deauth-detail`, NOT flashed; deployed units still run 0.29.0
-- **Built, unflashed:** link v13 + fleet proto v4, so ALL SIX boards flash together (3 hosts + 3 C5s; C5s need their USB plugged in). `deauth` lines name the
-  sender (optional keys, proposed to scan-analyzer on the bridge); units filter each other's C5s (docs/fleet-mode.md §23).
-- The web parser + Map popup change is safe on 0.29.0 units (optional fields), but stays on the branch until the flash.
+## RESUME HERE — 2026-11-06 (late): fw 0.30.0 on the CYD + mini #2 (branch `deauth-detail`, local); MINI #1 STILL ON 0.29.0 and can't join until flashed
+- **Flashed:** `c5` (COM18), `cyd` (COM13), `xiao_c5` (COM9), `xiao_s3_rgb` (COM10). Link v13 + fleet proto v4. **Left:** mini #1's `xiao_c5` + `xiao_s3`, then
+  merge `deauth-detail` to `main` (via a temp worktree; that also deploys the web Map popup).
+- **Verified on hardware:** link up, CYD rejoined, 5 radios shared, rows being dropped, saved list survives a CYD reset (5 known while still searching), AP address from
+  eFuse matches the log (`ownApMac`). **Not verified:** a real deauth burst (needs one to happen; never generate one), self rows gone from a real log, phone reconnect on 0.30.0.
+- **Fleet field test 2026-11-06 on 0.29.0 passed:** 20:57-21:57, no losses, flips or reboots; 13-minute drive, member GPS within 17 m (median) of the stamped position,
+  fleet position failover worked. Logs in `scanlogs/` are the "before" for self rows.
+- scan-analyzer has the proposed `deauth` keys on the bridge; no reply yet.
 
 ## Earlier — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
 - **Board state:** release builds, mini #2 `xiao_s3_rgb` (COM10, leader, its C5 is wired in, only its USB is out), mini #1 `xiao_s3` (COM16), CYD `cyd` (COM13, client).
