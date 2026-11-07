@@ -1,14 +1,11 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06: BLE Phase B/C on `ble-enc`; levels 1 + 2 PASSED on all 3 hosts (results: docs/ble-auth.md T10); all 3 on sec2 bench builds; fleet NOT re-checked
-- **Board state:** mini #2 `xiao_s3_rgb_sec2` (COM10), mini #1 `xiao_s3` built with `PLATFORMIO_BUILD_FLAGS="-DPHONE_BLE_SEC=2 -DPHONE_DEBUG_STACK=1"` (COM16),
-  CYD `cyd_sec2` (COM13), out of the fleet (serial `fleet leave`; rejoin with `fleet client`). Mini #2 found at `role off` on 2026-11-06, cause unknown:
-  flashing doesn't touch NVS, so it was a leave or the 3-crash boot guard, at some time before the check. Mini #1 is `searching`.
-- **T10 first pass (mini #2, phone in hand):** sec=1 first pairing OK (`enc=1 key=16 bonded=1`, app says encrypted), reconnect
-  silent and encrypted before the HMAC. Owner saw the Android prompt TWICE on first connect, but the scanner logged ONE pairing. Stack low
-  point 1724 of 5120 on the S3 (after a bond restore), so a 4096 stack on the CYD may be tight: test before moving the CYD off 0.
-  Web deployed to `main` with the app-bar tightening (footer `ble-enc b`). Deploy via a temp `git worktree`, NOT by switching branches:
-  a `platformio.ini` change makes the IDE clean `.pio/build` and hold `platforms.lock`.
+## RESUME HERE — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
+- **Board state:** release builds, mini #2 `xiao_s3_rgb` (COM10, leader, its C5 is wired in, only its USB is out), mini #1 `xiao_s3` (COM16), CYD `cyd` (COM13, client).
+  Fleet rejoined: roles ble / wifi24 / wifi5, 0 bad frames, bonds kept across the flash. C5s not reflashed (no link change).
+- **T10:** passed on all 3 (docs/ble-auth.md). Only open check: a phone on the leader during a BLE download with the fleet running (roles must not flip).
+- **Owner saw `role off` on mini #2:** their own web-app action, since set back. Not a crash.
+- **Older notes below in this entry are the history of the same day.** Deploy webapp/merges via a temp `git worktree`, NOT by switching branches.
 - **Merged:** `fleet-mode` -> `main` (`4c37e43`, pushed). Tree identical to `fleet-mode`, so Pages content did not change.
 - **Built (fw 0.28.0, uncommitted in the working tree on `ble-enc`):** `PHONE_BLE_SEC` 1/2 in `phone.cpp`, web `js/ble/linkenc.js`,
   serial `bonds`. Default stays 0. Design + as-built + T10 checks: docs/ble-auth.md "Phase B/C as built". Web tokens `?v=20261106a`,
