@@ -545,10 +545,10 @@ uint32_t g_knownDirtyMs = 0;
 void knownChanged() { g_knownDirty = true; g_knownDirtyMs = millis(); }
 void knownFlush() {
   if (!g_knownDirty || millis() - g_knownDirtyMs < 5000 || logXferActive()) return;   // a rejoin changes it a few times at once
-  g_knownDirty = false;
+  g_knownDirtyMs = millis();             // a failed write retries in 5 s
   Preferences p;
   if (!p.begin("cydscan", false)) return;
-  p.putBytes("fltself", g_known, sizeof(g_known));
+  if (p.putBytes("fltself", g_known, sizeof(g_known)) == sizeof(g_known)) g_knownDirty = false;
   p.end();
 }
 bool macIsSet(const uint8_t* m) { for (int k = 0; k < 6; k++) if (m[k]) return true; return false; }
@@ -575,6 +575,11 @@ void knownRadiosSet(const uint8_t* macs, uint8_t n) {
   if (n != FLEET_RADIOS || !memcmp(g_known, macs, sizeof(g_known))) return;
   memcpy(g_known, macs, sizeof(g_known));
   knownChanged();
+}
+// Leader start: anything above its enrolled members is left over, e.g. a removal that a reboot beat to NVS.
+void knownTrim(uint8_t members) {
+  for (int i = 3 * (members + 1); i < FLEET_RADIOS; i++)
+    if (macIsSet(g_known[i])) { memset(g_known[i], 0, 6); knownChanged(); }
 }
 const uint8_t* knownRadios() { return &g_known[0][0]; }
 uint8_t knownRadioCount() {
@@ -632,7 +637,7 @@ bool setRole(uint8_t r) {
   Preferences p;
   if (!p.begin("cydscan", false)) return false;
   if (r != g_role) p.remove("fltcarry");   // leave / release / role change: drop the carried log tail (fleet_client.cpp)
-  if (r == ROLE_OFF) { p.remove("fltself"); memset(g_known, 0, sizeof(g_known)); g_knownDirty = false; }   // no fleet: its radios are ordinary devices again
+  if (r != g_role) { p.remove("fltself"); memset(g_known, 0, sizeof(g_known)); g_knownDirty = false; }   // another fleet, or none: the old one's radios are ordinary devices
   bool ok = p.putUChar("fltrole", r) == sizeof(uint8_t);
   p.putUChar("fltboot", 0);
   p.end();

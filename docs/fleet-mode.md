@@ -1189,7 +1189,8 @@ while `M_JOINED`, so a boot burst leaked in.
 - `Sync.selfMacs` holds the 21 slots (`nRadio`) then up to 7 phones. Clients replace their slots with the leader's.
 - The slots live in NVS `cydscan`/`fltself`, loaded at boot, so `isFleetSelf()` works before the fleet is up. Writes are
   debounced 5 s and held back during a transfer.
-- Removing a member deletes only its slots; later members shift down with it. A role change to off clears them all.
+- Removing a member deletes only its slots; later members shift down with it. Any role change clears them all, and a leader
+  trims them to its enrolled members at start.
 
 Limits: the first boot after flashing has nothing stored until a join. A device that copies a unit's MAC on the same radio
 type is hidden. A phone's rotating address still only filters as the connection address. C5 BLE scanning doesn't advertise, so it has no address to filter.

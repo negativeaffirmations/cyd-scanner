@@ -731,6 +731,7 @@ namespace fleet { namespace detail { namespace leader {
 
 void begin() {
   if (!loadStore()) { Serial.println("[FLT] leader: out of memory"); return; }
+  fleet::knownTrim(L->st.n);
   for (int i = 0; i < FLEET_MAX_MEMBERS; i++) { memset(&L->rt[i], 0, sizeof(MemberRt)); }
   static const uint8_t kZero[8] = {0};
   while (!memcmp(L->fleetId, kZero, sizeof(L->fleetId))) esp_fill_random(L->fleetId, sizeof(L->fleetId));

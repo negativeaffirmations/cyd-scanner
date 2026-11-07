@@ -81,6 +81,7 @@ bool posFix(float* lat, float* lon, uint32_t* ageMs, bool* live);
 // remembered in NVS, so a unit that is booting or hasn't joined yet is still filtered.
 bool isFleetSelf(const uint8_t mac[6], uint8_t source);
 void knownSlotSet(uint8_t unit, const uint8_t* ble, const uint8_t* c5, const uint8_t* ap);   // leader; unit 0 = itself, k+1 = member k. Zeros keep the old value
+void knownTrim(uint8_t members);                                  // leader start: drop slots above its enrolled members
 void knownSlotRemove(uint8_t unit);                               // leader: that member left; later units shift down with it
 void knownRadiosSet(const uint8_t* macs, uint8_t n);              // client: the leader's FLEET_RADIOS replace ours
 const uint8_t* knownRadios();                                     // FLEET_RADIOS x 6 bytes
