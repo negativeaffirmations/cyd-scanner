@@ -1,14 +1,28 @@
-# Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
+# Handoff — 2026-11-06 (trunk: `main`; the fleet-mode, ble-enc and deauth-detail branches are all merged)
 
-## RESUME HERE — 2026-11-06 (late): fw 0.30.1 hosts + link v13 C5s LIVE, merged to `main`; `deauth` keys approved by scan-analyzer (`others` = array of {mac,frames})
-- **Flashed:** `c5` (COM18), `cyd` (COM13), `xiao_c5` (COM9 + COM23), `xiao_s3_rgb` (COM10), `xiao_s3` (COM16). Link v13 + fleet proto v4. All 3 hosts rejoined; 8 fixed radios
-  shared. A rejoin after flashing can take 2-5 min (9 s dwell per channel vs slow 15 s probes), which isn't a fault.
-- scan-analyzer told directly + on the bridge; drive data in the bridge folder `drive-20261106/`.
-- **Verified on hardware:** link up, CYD rejoined, 5 radios shared, rows being dropped, saved list survives a CYD reset (5 known while still searching), AP address from
-  eFuse matches the log (`ownApMac`). **Not verified:** a real deauth burst (needs one to happen; never generate one), self rows gone from a real log, phone reconnect on 0.30.0.
-- **Fleet field test 2026-11-06 on 0.29.0 passed:** 20:57-21:57, no losses, flips or reboots; 13-minute drive, member GPS within 17 m (median) of the stamped position,
-  fleet position failover worked. Logs in `scanlogs/` are the "before" for self rows.
-- scan-analyzer has the proposed `deauth` keys on the bridge; no reply yet.
+## RESUME HERE — 2026-11-06 (night): everything live and merged; only a real deauth burst is still unconfirmed
+**State.** All 6 boards current, nothing in flight. Hosts fw **0.30.1** (mini #2 `xiao_s3_rgb` leader, mini #1 `xiao_s3`, CYD `cyd` client); 3 C5s (`c5`, `xiao_c5` x2) on link **v13**,
+fleet proto **v4**. Roles ble / wifi24 / wifi5, 8 fixed radios shared. Webapp on `main`, footer `current-fleet j`. BLE link encryption level 2 is the default; the phone is paired with all 3.
+
+**Done this session (details: docs/ble-auth.md, docs/fleet-mode.md §23):**
+- BLE Phase B/C (fw 0.28-0.29): T10 passed on all 3, including a re-proof over the encrypted link, decline, stale bond, and a BLE export with the fleet running.
+- Fleet self filter: 1411 rows from all 3 units on 0.30.1 with no own addresses (scan-analyzer checked). Own rows on 0.30.0 at 22:16-22:26 were mini #1 not yet a member.
+- `deauth` lines name the sender; `others` is an array of {mac, frames}. Keys approved by scan-analyzer's owner and in its contract.
+- Web: Scanner controls no longer vanish after a disconnect; Download / Upload current session also take that session's Fleet file (matched to the current FILE, not its group);
+  Upload + live toggle moved to the Data page.
+- Fleet field test on 0.29.0 passed: 20:57-21:57 stable, 13-minute drive, stamped position 17 m median / 66 m max from members' GPS. The 66 m is the fix's ~6 s hold-then-step at speed.
+
+**Open:**
+- First real `deauth` line on 0.30.x: never generate one (project scope). scan-analyzer will check it when it lands.
+- The new-file-only fleet match (`034519d`) hasn't been run on a phone; the next Upload should post exactly 2 bodies.
+- Mini #2 `role off`: cause unknown. No `leave` / `fallback` line from 18:05 on, so it predates that; the owner set it back at 20:05. An older log would show it.
+
+**Rules learned:**
+- **A new or reflashed unit with a new radio address: tell scan-analyzer.** Its `EXCLUDED_MACS` is an exact-address list.
+- **Upload "Failed to fetch"** = no response. The scan-analyzer server only lives inside its Claude session or a manual `backend\run.ps1`, with no service wrapper. Check `/healthz`, and any phone VPN displacing Tailscale.
+- Deploy and merge through a temp `git worktree`. Switching branches changes `platformio.ini`, so the IDE cleans `.pio/build` and holds `platforms.lock`.
+- A webapp change is unproven for 10 min after deploy: unversioned modules stay cached, and `state.*Fleet` hooks skip silently on a stale copy.
+- A rejoin after flashing can take 2-5 min (9 s dwell per channel vs 15 s probes). C5s flash only on a link change.
 
 ## Earlier — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
 - **Board state:** release builds, mini #2 `xiao_s3_rgb` (COM10, leader, its C5 is wired in, only its USB is out), mini #1 `xiao_s3` (COM16), CYD `cyd` (COM13, client).

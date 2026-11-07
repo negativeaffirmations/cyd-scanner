@@ -1,7 +1,7 @@
 # BLE phone-link authentication (SEC-H3) — design
 
-Status: **Phase A built + reviewed; on all three hosts (fw 0.18.0, 2026-10-29), hardware testing in progress** — T2 and
-T3 (CYD) passed; see HANDOFF "Latest" for what remains. Phase A unblocked the fw 0.18.0 SD-card file explorer.
+Status: **Phases A, B and C built and hardware-tested (T10) on all three hosts; level 2 is the default from fw 0.29.0.** See
+"Phase B/C as built".
 
 ## Problem
 The host's (CYD / XIAO-S3 mini) phone GATT service has no pairing or auth. Any central in range that connects
