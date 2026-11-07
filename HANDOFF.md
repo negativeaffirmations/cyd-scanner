@@ -1,4 +1,19 @@
-# Handoff — 2026-11-07 (trunk: `main`; `hardening` is local, not merged or pushed)
+# Handoff — 2026-11-07 (trunk: `main`; `hardening` merged and pushed)
+
+## RESUME HERE — 2026-11-07 (latest): fw 0.32.0 on all hosts, `hardening` merged, web app deployed
+**State.** All 3 hosts fw **0.32.0** and all 3 C5s random-address builds. Mini #2 `xiao_s3_rgb` leader, CYD `cyd` and mini #1 `xiao_s3` joined; roles wifi24 / wifi5 / ble. Self filter dropping rows.
+**Private host BLE address (owner's call, docs/ble-auth.md "Private advert address"):** RPA, new each boot, kept until the next. Owner's phone test on mini #1 passed. Both minis' older bonds migrated (`bonds` shows `stored 1, records 1`). Wi-Fi probes stay on (owner's call): passive AP scan is declined.
+**Review:** REV-001..004, 006, 007 fixed in `cf25458`; those fixes had no second review. Not tested: `bonds clear` on this build, recovery from a NimBLE host reset, and a phone on the CYD in normal mode. **The CYD's phone path is unchanged by the bond migration but its advert is new.**
+**Open:**
+1. **Tracking still possible:** the advert keeps the unit name (fixed, a hash of the eFuse MAC) and the service UUID, and any central can read `sid` from AUTH before authenticating. Owner decision; dropping the name costs the chooser its way to tell units apart. Tell scan-analyzer first: its proposed filter matches on those fields.
+2. **scan-analyzer:** name-or-UUID exclusion is its owner's call and isn't built. It asked whether anyone else runs this firmware; owner to answer. `lastseen` lines carry neither field.
+3. C5 after a NimBLE host reset (REV-008): may fall back to a hardware static address until the next boot.
+4. Try the Fleet card on the phone (never tried on a phone), plus the 2-body Upload check.
+5. Older items below still stand, except the two owner decisions, now settled.
+**Rules learned:**
+- NimBLE's timers overflow 32 bits above 4294 s, so a long `ble_hs_set_rpa_timeout` silently fires early.
+- Turning host privacy on needs peer records for existing bonds; check `bonds` shows `records` equal to `stored`.
+- On Windows, active BLE scans replay old addresses; use passive mode to judge when an address stopped.
 
 ## RESUME HERE — 2026-11-07: hardening pass + fleet role controls built on `hardening`; web part not deployed
 **State.** Mini #2 `xiao_s3_rgb` fw **0.31.0** (COM10, leader) with C5 `xiao_c5` (COM9); CYD `cyd` fw 0.31.0 (COM13) with C5 `c5` (COM18).
