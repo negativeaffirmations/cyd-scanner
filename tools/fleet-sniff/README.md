@@ -8,7 +8,7 @@ It is its own PlatformIO project, kept out of the scanner build.
 
 ## Receive-only
 
-The firmware never transmits. It starts the Wi-Fi STA only so promiscuous mode works, and never scans or connects.
+The `fleetsniff` firmware never transmits. It starts the Wi-Fi STA only so promiscuous mode works, and never scans or connects.
 
 It keeps action frames (ESP-NOW is a vendor action frame) and frames from MACs you list at runtime. Everything else,
 including other people's beacons and probes, is dropped in the RX callback. `analyze.py` then ignores any action frame
@@ -42,6 +42,18 @@ python tools/fleet-sniff/analyze.py capture.txt identities.json
 ```
 
 The format of `identities.json` is in the header of `analyze.py`. List each unit's name, base MAC and radios.
+
+## Checking a BLE scanner's address
+
+A `SCAN_REQ` can't be seen from Wi-Fi. Env `scanreq` makes the C5 a scannable beacon that prints every scanner asking
+it for a scan response, as `S <ms> <address> <0 public | 1 random>`:
+
+```bash
+pio run -d tools/fleet-sniff -e scanreq -t upload --upload-port COMxx
+```
+
+It transmits that advert and the scan responses, and nothing else. Nearby phones can show up too; the unit under test
+is the busiest address, and it should change when that C5 reboots.
 
 ## What a PASS does and doesn't cover
 

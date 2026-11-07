@@ -1,8 +1,9 @@
 # Handoff — 2026-11-07 (trunk: `main`; `hardening` is local, not merged or pushed)
 
 ## RESUME HERE — 2026-11-07: hardening pass + fleet role controls built on `hardening`; web part not deployed
-**State.** Mini #2 `xiao_s3_rgb` fw **0.31.0** (COM10, leader) with C5 `xiao_c5` (COM9); CYD host still 0.30.1 (COM13, no change needed) with C5 `c5` (COM18).
-Both of those C5s have the console fix. **Mini #1 (S3 + C5) wasn't attached: still 0.30.1 and the old C5 build.** Link and fleet proto are unchanged, so all of this interoperates.
+**State.** Mini #2 `xiao_s3_rgb` fw **0.31.0** (COM10, leader) with C5 `xiao_c5` (COM9); CYD `cyd` fw 0.31.0 (COM13) with C5 `c5` (COM18).
+Both of those C5s have the console fix and random addresses. **Mini #1 (S3 + C5) wasn't attached: still 0.30.1 and the old C5 build.** Link and fleet proto are unchanged, so all of this interoperates.
+**Random C5 addresses (owner's call, docs/fleet-mode.md §17.3):** new Wi-Fi MAC and BLE scan address each boot, measured on air with a control. The probe's contents are unchanged, so it can still read as "a C5-class scanner". A passive AP scan would remove Wi-Fi probes altogether: owner decision, not built. scan-analyzer keeps its old C5 entries and needs no change; `c5_mac` on `meta` not added (its recommendation).
 
 **Done:**
 - C5 USB console can't block the scan loop (`ca332c8`).
@@ -13,7 +14,7 @@ Both of those C5s have the console fix. **Mini #1 (S3 + C5) wasn't attached: sti
 **Next:**
 1. Owner OK, then merge `hardening` to `main` through a temp worktree (that deploys the web app; footer `fleet-roles a`), and try the Fleet card on the phone.
 2. Flash mini #1 when attached: `xiao_s3` + `xiao_c5`.
-3. Owner decision: a unit's C5 sends active-scan probes from its fixed MAC, so the fleet's random MACs don't hide the unit. Randomizing it would break scan-analyzer's exact-address `EXCLUDED_MACS`, so it needs coordinating.
+3. Owner decisions: passive Wi-Fi AP scan (above), and whether the hosts' fixed BLE advert should change too (it is a bigger tracking handle than the C5 was, but phones and bonds rely on it).
 4. Still open from below: the 2-body Upload check, first real `deauth` line, mini #2 `role off` cause. Also the CYD heap during a normal-mode SoftAP download (needs the phone) and a frame replay test (needs a transmitter).
 5. Legacy Wi-Fi shims (`#apCard`, `wifiap.js`) kept: a phone holding a stale `status.js` still imports `wifiap.js`, so remove the `status.js` call one deploy before the file.
 

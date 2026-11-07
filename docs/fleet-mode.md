@@ -821,9 +821,23 @@ sniffer). 1,120 fleet frames: 1,049 protected, 71 cleartext. **PASS.**
 - **Fresh values:** 63 of 63 Probe `nl` distinct. Hello `tag`/`nc` and Join `proof`: 3 distinct over 3 joins. The one
   repeat of each was an 802.11 retry (same bytes, retry bit set).
 - **Negative controls** failed as they should (a fleet MAC listed as fixed; a forged clear Sync; a name in a Hello).
-- **Not fleet traffic, but a limit on what this proves:** a unit's C5 still sends active-scan probe requests from its
-  fixed MAC (24 from mini #2's C5 on this channel in the capture). The fleet link hides nothing about a unit that its
-  own scanning gives away.
+- **Not fleet traffic, but a limit on what this proves:** the capture showed a unit's C5 sending active-scan probe
+  requests from its fixed MAC (24 from mini #2's C5 on this channel). Fixed since, see §17.3.
+
+### 17.3 Random C5 addresses (2026-11-07)
+Each C5 draws a new locally-administered Wi-Fi MAC and a random static BLE address at every boot (`src/c5/main.cpp`).
+Not rotated mid-run: units learn the address through Status, and a change would let rows of the old address, alive for
+the C5 table's 30 s TTL, past their self filters.
+- **Measured on air:** Wi-Fi probes came only from the random MAC (7 in 90 s, 0 from the fixed one). BLE `SCAN_REQ`,
+  read with `tools/fleet-sniff` env `scanreq`: a random address that changed across a reboot. Control with randomization
+  off: `public`, the C5's fixed address, 110 requests in 40 s.
+- **What it doesn't hide:** the probe's contents are unchanged, byte for byte. scan-analyzer found the same IE hashes
+  on all 3 C5s and on none of its 415 `local` PRB addresses, so a random address carrying them may still stand out
+  (one area's sample). A watcher could treat that as "a C5-class scanner", though not tell one unit from another by it.
+- **Hosts are out of scope here:** a host's BLE advert (the phone link) and its download AP keep their fixed addresses.
+- **Self filter:** units in a fleet still filter each other, because the address is shared at runtime. A few seconds
+  after a C5 boots, or between units outside a fleet, a unit can log another's probe as a `PRB` row from a random
+  address. scan-analyzer accepts that: it classifies as `local`, so it never becomes a long-lived device.
 
 ### 17.1 Review + security pass (2026-10-31) — fixes applied, all re-bench-tested
 - **HMAC fail-open (both reports, high):** every `Hmac::finish()` is now checked (`[[nodiscard]]`). On a crypto error

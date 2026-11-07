@@ -839,6 +839,8 @@ A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.
 a member's role (§20.1). From fw 0.31.0 overrides are saved (NVS `fltlay`, by sid), `M:l` lists them as the last member
 column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage selector + per-member role picker
 (`features/fleet.js`, pure logic in `features/fleetplan.js`). **On-air check:** `tools/fleet-sniff` (docs §17.2).
+**Random C5 addresses (2026-11-07, docs §17.3):** each C5 boot draws a new Wi-Fi MAC and BLE scan address, so never treat a
+C5 address as stable; `Status.wifiMac` is the current one. Host BLE adverts and the download AP stay fixed.
 
 ## Subagents (`.claude/agents/`)
 
