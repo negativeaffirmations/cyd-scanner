@@ -177,7 +177,9 @@ T10 results (2026-11-06, mini #2 S3 with its C5 unplugged, one Android phone):
 - Stack low point 1724 of 5120 on the S3, printed as "words" but believed to be bytes. Not yet measured on the CYD (4096).
 - Android's prompt shows with the app's "Pair with…" dialog visible behind it.
 
-Not tested yet: large transfers and Wi-Fi download at sec=2, the CYD, mini #1, the fleet alongside a bonded link.
+- PASS, sec=2 (owner-reported): Wi-Fi download flow and BLE log download.
+
+Not tested yet: the CYD, mini #1, the fleet alongside a bonded link.
 
 Checks written before T10, kept for the ones not covered above:
 - Android's prompt appears for a peripheral security request while Chrome holds the link, and AUTH polling during
