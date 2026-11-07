@@ -271,17 +271,32 @@ async function saveSplit(gs, cmdFor, tag, empty){
   if(!saved) toast(empty, {err:true});
   else if(fleet.length && own.length) toast("Saved the scan + its Fleet file as separate downloads.");
 }
-// "Download current session" on a leader: also save the Fleet files the Session-logs list would auto-include, by the
-// same fleetOf() rule. A state hook, not an export: a stale cached copy of either module then just skips this,
+// "Download / Upload current session" on a leader: also handle the Fleet files the Session-logs list would auto-include,
+// by the same fleetOf() rule. State hooks, not exports: a stale cached copy of either module then just skips this,
 // where a missing export would stop the whole page loading.
-state.saveCurrentFleet = sess => runBusy("Fleet download", async ()=>{
-  if(state.fleetRole!=="leader") return;
-  const ctx=actionCtx();
+async function currentFleet(sess){
   toast("Looking for this session's Fleet file…", {work:true, sticky:true});
   await bleFetch("Q", "sessions");   // download.js refreshes `groups` before this resolves
   const base=sess.replace(/\.jsonl$/, "");
   const cur=groups.find(g=>g.kind!=="fleet" && g.parts.some(p=>p.base.replace(/\.jsonl$/, "")===base));
-  const fleet=cur ? fleetOf(cur) : [];
+  return cur ? fleetOf(cur) : [];
+}
+state.uploadCurrentFleet = sess => runBusy("Fleet upload", async ()=>{
+  if(state.fleetRole!=="leader") return;
+  const ctx=actionCtx(), fleet=await currentFleet(sess);
+  if(!fleet.length){ toast("Uploaded the scan. It has no Fleet file."); return; }
+  let bad=false;
+  for(const f of fleet){   // its OWN body, as on the Session-logs list
+    const [text]=await fetchGroups([f], null, {trim:true, ctx});
+    const r=await uploadSessionText(text, groupFileName([f]));
+    if(r!==true) bad=true;
+    if(r==="auth") break;   // a revoked key fails every body: stop
+  }
+  toast(bad ? "Uploaded the scan, but its Fleet file failed." : "Uploaded the scan + its Fleet file.", {err:bad});
+});
+state.saveCurrentFleet = sess => runBusy("Fleet download", async ()=>{
+  if(state.fleetRole!=="leader") return;
+  const ctx=actionCtx(), fleet=await currentFleet(sess);
   if(!fleet.length){ toast("Saved the scan. It has no Fleet file."); return; }
   for(const f of fleet){
     const text=joinLogParts(await fetchGroups([f], null, {ctx}));

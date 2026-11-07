@@ -819,7 +819,7 @@ to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` on sync, **no lead
 `"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`). Fleet files
 are epoch-only in exports (no ms windowing / backfill / tail pruning; forwarded member meta kept). Web: `parse.js` keys
 timesync anchors by `ofile` and `joinLogParts` passes `ofile` lines through untouched; the Data page lists `fleet-` files as a
-"Fleet" scan kind; "Download current session" on a leader also saves that session's Fleet file (`state.saveCurrentFleet`, same `fleetOf()` rule); ticking a leader's own scan there auto-includes its time-overlapping Fleet group (tag "+ Fleet", Fleet row
+"Fleet" scan kind; "Download / Upload current session" on a leader also handle that session's Fleet file (`state.saveCurrentFleet` / `uploadCurrentFleet`, same `fleetOf()` rule); ticking a leader's own scan there auto-includes its time-overlapping Fleet group (tag "+ Fleet", Fleet row
 "included"): Download saves it as a SECOND file, Upload POSTs it as its OWN body, Map plots both (`features/sessions.js`;
 Delete never auto-includes). A fleet group is included only when its END falls inside the scan span ±5 min (an undated scan never
 auto-includes); one {connection generation, scanner id} guard covers the whole multi-file action; the upload stops on a 401/403
