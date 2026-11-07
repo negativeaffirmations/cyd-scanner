@@ -50,6 +50,22 @@ v=1;sid=<12hex>;name=<…>;fw=<x.y.z>;sec=<0|1|2>;kg=<gen>;st=<0|1|2>[;n=<32hex>
 `n` only while `st=0`; `dp` only at `st=1`; `enc` link encrypted (always 0 at `sec=0`; from `sec=1` also sent at `st=0`);
 `pf=1` at `st=1` when the last pairing or encryption attempt on this link failed. `enc` and `pf` are not covered by `dp`.
 
+**v2 (fw 0.33.0, owner's decision 2026-11-07): the read no longer names the unit.**
+```
+v=2;fw=<x.y.z>;sec=<0|1|2>;st=<0|1|2>[;sid=…;name=…;kg=…][;n=<32hex>;kt=<16hex>][;f=…][;wait=…][;dp=…][;enc=…]
+```
+- `sid`, `name` and `kg` are never in it, and `fw` / `sec` only at `st=1`. The value stays in the attribute, and a Read
+  Blob at an offset returns it without calling `onRead`, so it's reset on every connect and disconnect too.
+- `kt` = the first 8 bytes of `HMAC-SHA256(key, "CFLO-KID-1|" + n)`, sent with `n`. The app signs that with each stored
+  key and uses the one that matches; the rest of the exchange is unchanged, with that record's `sid`. A fresh nonce gives
+  a fresh tag, so strangers can't link two connections to one unit.
+- No key fits: the app says so and asks for the key QR. A bare pasted key needs the sid now, so it only works as
+  `sid key` or the key link.
+- The web app accepts v1 and v2, so it deploys before the firmware. An app older than this can't log in to v2 firmware.
+- The advert and the GAP Device Name are `CFLO` on every unit; the unit's own name reaches the phone in STATUS.
+- Pairing keys: NimBLE distributed its IRK and public identity address to any central that paired, before the HMAC.
+  `setBonding()` now sets key distribution to ENC|ID only while bonding is on, i.e. after the key was proven.
+
 Write: `H:<cn 32hex>:<mac 64hex>` — exactly 99 bytes, hex case-insensitive. `cn` = 16-byte client nonce.
 
 MAC inputs (ASCII, lowercase hex, distinct labels prevent reflection):
@@ -175,7 +191,7 @@ address, through NimBLE's host-based privacy (`useRpa()` in `phone.cpp`). S3 hos
 - **Why not a random static address like the C5:** a phone bonds to the address it knows, so every boot would need a new
   pairing. An RPA resolves with the unit's IRK, which NimBLE keeps in NVS and sends when pairing, along with the public
   address as the identity.
-- **What it doesn't hide:** the advert still carries the 128-bit service UUID, and the scan response the unit name, so
+- **What it doesn't hide (until fw 0.33.0 made the name generic and the AUTH read anonymous, above):** the advert still carries the 128-bit service UUID, and the scan response the unit name, so
   anyone reading those can still follow a unit. A joined or searching unit advertises the same way.
 - **Measured (mini #1, PC Bluetooth radio):** 3 boots gave 3 RPAs. A 60 s rotation bench build changed address on time,
   the advert came back and the old address stopped. Not tested: recovery from a host reset (no way to trigger one).
@@ -230,8 +246,9 @@ unit at sec=1, then sec=2, then change the default.
 - **Relay.** The HMAC isn't bound to the BLE connection: an impostor the owner picks in the Chrome chooser can relay
   the real scanner's nonce to the phone and the phone's `H:` back, gaining an authed session on the real scanner.
   LESC just-works (Phase B) does not stop this; only MITM-protected pairing (passkey on the CYD; the minis have no
-  display) or a channel binding visible to the web app would. Mitigation: the web app warns when the device name
-  doesn't match the stored key's name.
+  display) or a channel binding visible to the web app would. No mitigation in the app: the name check this line used
+  to promise was never built, and every unit shares one advert name from fw 0.33.0. A replayed `n`/`kt` from a real
+  unit works for a relay exactly as a replayed `sid` did.
 - **Slot squatting / lockout DoS.** A scripted central can hold the single connection 30 s at a time, and 6 bad
   tries from anyone lock out the owner too (up to 16 min). No data exposure; scanning/logging continue. Fix =
   deferred owner pre-emption (decision 9).

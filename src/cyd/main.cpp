@@ -1202,7 +1202,8 @@ static void drawPhoneKey() {
   tft.setTextDatum(TC_DATUM);
   bool saved = devkey::persisted();   // false: the NVS write failed and this key vanishes at reboot
   tft.setTextColor(saved ? TFT_CYAN : TFT_RED, TFT_BLACK);
-  if (saved) snprintf(b, sizeof(b), "%s  gen %lu", scannerName(), (unsigned long)devkey::gen());
+  // The id, not the name: a typed key needs it, since the phone link no longer says which unit it is.
+  if (saved) snprintf(b, sizeof(b), "id %s  gen %lu", scannerIdHex(), (unsigned long)devkey::gen());
   else       snprintf(b, sizeof(b), "gen %lu  NOT SAVED!", (unsigned long)devkey::gen());
   tft.drawString(b, W / 2, y, 2);
   const char* k = devkey::keyHex();   // 32 hex -> two lines of four 4-char groups

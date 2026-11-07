@@ -17,7 +17,7 @@ import { $, log, esc, toast } from '../util/dom.js';
 export const AUTH_UUID = "9a1e0007-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
 const te = new TextEncoder(), td = new TextDecoder();
-const HEX12 = /^[0-9a-f]{12}$/, HEX32 = /^[0-9a-f]{32}$/, HEX64 = /^[0-9a-f]{64}$/;
+const HEX12 = /^[0-9a-f]{12}$/, HEX16 = /^[0-9a-f]{16}$/, HEX32 = /^[0-9a-f]{32}$/, HEX64 = /^[0-9a-f]{64}$/;
 
 // ---------------------------------------------------------------- hex helpers
 function toHex(buf){ return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, "0")).join(""); }
@@ -49,6 +49,17 @@ async function tx(mode, fn){
   });
 }
 async function getRec(sid){ return tx("readonly", s => s.get(sid)); }
+// AUTH v2 (fw 0.33.0) doesn't name the scanner before authentication. It sends a key tag instead:
+// HMAC(key, "CFLO-KID-1|" + n), first 8 bytes. The stored key that gives the same tag is this scanner's.
+async function findByTag(n, kt){
+  const all = await tx("readonly", s => s.getAll()).catch(() => []);
+  for(const r of all || []){
+    if(!r || !r.key) continue;
+    const t = toHex(await crypto.subtle.sign("HMAC", r.key, te.encode("CFLO-KID-1|" + n))).slice(0, 16);
+    if(t === kt) return r;
+  }
+  return null;
+}
 async function putRec(rec){ return tx("readwrite", s => s.put(rec)); }
 
 // All stored keys' metadata (never the CryptoKey itself), newest first.
@@ -71,6 +82,9 @@ export async function storeKey(sid, keyHex, kg, name, confirmReplace){
   let key;
   try{ key = await crypto.subtle.importKey("raw", raw, { name:"HMAC", hash:"SHA-256" }, false, ["sign", "verify"]); }
   finally{ raw.fill(0); }
+  // v2 finds a scanner by its key, so the same key under two ids would pick one of them at random.
+  const all = await tx("readonly", s => s.getAll()).catch(() => []);
+  for(const r of all || []) if(r && r.key && r.sid !== sid && await sameKey(r.key, key)) return "elsewhere";
   const old = await getRec(sid).catch(() => null);
   let result = "stored";
   if(old && old.key){
@@ -125,6 +139,7 @@ function notice(title, msg){ return askConfirm({ title, msg, ok:"OK", cancel:nul
 // impostor or a stale Android GATT cache; otherwise ask once per device name before sending it our
 // TIME / GPS. REV-016: a STATUS read of exactly "auth=0" is new firmware seen through a stale cache.
 const LEGACY_OK = "cflo.legacyOk.";   // + device name -> "1" send / "0" don't
+const GENERIC_NAME = "CFLO";            // every unit's advert from fw 0.33.0, which always has AUTH
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
 
@@ -143,7 +158,7 @@ export async function legacyRefusal(deviceName, statusText){
         "service list. Toggle Bluetooth off/on, or forget the device in Android Bluetooth settings, then reconnect." };
   const kv = kvParse(t);
   const held = await keyHeldFor(deviceName, kv.sid);
-  if(held || fwAtLeast(kv.fw, 0, 18)) return legacyImpostor(deviceName, held, kv.fw);
+  if(held || fwAtLeast(kv.fw, 0, 18) || deviceName === GENERIC_NAME) return legacyImpostor(deviceName, held, kv.fw || "0.33.0");
   return null;
 }
 function legacyImpostor(name, held, fw){
@@ -163,7 +178,7 @@ export function legacyStatusRefusal(deviceName, statusText){
   if(linkSec !== "legacy") return null;
   const kv = kvParse(statusText);
   const held = (kv.sid && heldSids.has(kv.sid)) || (kv.name && heldNames.has(kv.name));
-  if(held || fwAtLeast(kv.fw, 0, 18)) return legacyImpostor(deviceName, held ? { sid:kv.sid, name:kv.name } : null, kv.fw);
+  if(held || fwAtLeast(kv.fw, 0, 18) || deviceName === GENERIC_NAME) return legacyImpostor(deviceName, held ? { sid:kv.sid, name:kv.name } : null, kv.fw || "0.33.0");
   return null;
 }
 export function showRefusal(r){ lastFail = r.msg; renderKeysUI(); return notice(r.title, r.msg); }
@@ -172,7 +187,7 @@ export function showRefusal(r){ lastFail = r.msg; renderKeysUI(); return notice(
 // ask (ask=true forces a prompt even after a remembered "no", e.g. the user tapped Sync).
 export async function mayShareLocation(deviceName, ask){
   if(linkSec === "auth") return true;
-  if(linkSec !== "legacy") return false;
+  if(linkSec !== "legacy" || deviceName === GENERIC_NAME) return false;
   const k = LEGACY_OK + (deviceName || "?"), saved = lsGet(k);
   if(saved === "1") return true;
   if(saved === "0" && !ask) return false;
@@ -228,6 +243,7 @@ export function parseAuth(text){
   if(o.sid) o.sid = o.sid.toLowerCase();
   if(o.n) o.n = o.n.toLowerCase();
   if(o.dp) o.dp = o.dp.toLowerCase();
+  if(o.kt) o.kt = o.kt.toLowerCase();
   return o;
 }
 async function readAuth(c){ const v = await c.readValue(); return parseAuth(td.decode(v)); }
@@ -259,24 +275,32 @@ export async function authenticate(authChar, device){
 
 async function exchange(c, prev, setAttempt, again){
   let info = await readAuth(c);
-  if(!HEX12.test(info.sid || "")){ const e = new Error("bad AUTH value (no sid)"); e.auth = true; throw e; }
-  const sid = info.sid, devKg = kgNum(info.kg);
-  pending = { sid, name: info.name || "", kg: devKg };
+  // v1 names the scanner (sid) up front; v2 doesn't, and the key tag identifies it below.
+  const v1 = info.v !== "2";
+  if(v1 && !HEX12.test(info.sid || "")){ const e = new Error("bad AUTH value (no sid)"); e.auth = true; throw e; }
+  const devKg = kgNum(info.kg);
+  pending = { sid: v1 ? info.sid : "", name: info.name || "", kg: devKg };
 
   // A retry after a transport error can find st=1 from our earlier write: verify its dp against that attempt.
   if(info.st === "1"){
-    if(prev && info.dp) return finish(info, prev, sid, devKg);
+    if(prev && info.dp) return finish(info, prev, prev.sid, devKg);
     return { status:"error", info, msg:"scanner reports authenticated without our proof" };
   }
   if(info.st === "2") return { status:"locked", info, wait: +info.wait || 0 };
   if(info.st !== "0" || !HEX32.test(info.n || "")) return { status:"error", info, msg:"unexpected AUTH state" };
 
-  const rec = await getRec(sid).catch(() => null);
+  let rec;
+  if(v1) rec = await getRec(info.sid).catch(() => null);
+  else{
+    if(!HEX16.test(info.kt || "")){ const e = new Error("bad AUTH value (no key tag)"); e.auth = true; throw e; }
+    rec = await findByTag(info.n, info.kt);
+  }
   if(!rec || !rec.key) return { status:"nokey", info };
+  const sid = rec.sid;
 
   const n = info.n, cn = randHex(16);
   const mac = toHex(await crypto.subtle.sign("HMAC", rec.key, te.encode("CFLO-AUTH-1|" + sid + "|" + n + "|" + cn)));
-  const a = { n, cn, key:rec.key, rec };
+  const a = { n, cn, key:rec.key, rec, sid };
   setAttempt(a);
   const msg = te.encode("H:" + cn + ":" + mac);
   if(c.writeValueWithResponse) await c.writeValueWithResponse(msg); else await c.writeValue(msg);
@@ -292,6 +316,11 @@ async function exchange(c, prev, setAttempt, again){
 
 async function finish(info, a, sid, devKg){
   if(!HEX64.test(info.dp || "")) return { status:"spoof", info, msg:"no device proof" };
+  // v2 never names the scanner: fill in what the stored key knows. Callers read these.
+  if(info.sid && info.sid !== sid) return { status:"spoof", info, msg:"scanner id doesn't match its key" };
+  if(!info.sid) info.sid = sid;
+  if(!info.name && a.rec && a.rec.name) info.name = a.rec.name;
+  if(info.kg == null && a.rec && a.rec.kg != null) info.kg = String(a.rec.kg);
   // From sec=1 the proof covers the level, so a relay that reports a lower one fails here.
   const sec = parseInt(info.sec, 10) || 0, base = sid + "|" + a.n + "|" + a.cn;
   const ok = await crypto.subtle.verify("HMAC", a.key, fromHex(info.dp), te.encode(sec >= 1 ? "CFLO-DEV-2|" + base + "|" + sec : "CFLO-DEV-1|" + base));
@@ -357,7 +386,7 @@ export function parsePasted(text){
   }
   const key = toks.join("").replace(/[-:.]/g, "");
   if(HEX32.test(key)){
-    if(!pending) return { error:"a bare key needs a scanner — connect to it first, or paste the full key link / \"sid key\"" };
+    if(!pending || !pending.sid) return { error:"a bare key needs the scanner's id — scan its key QR, or paste the full key link / \"sid key\"" };
     return { sid:pending.sid, keyHex:key, kg:pending.kg };
   }
   return { error:"not a scanner key (expected the key link, \"sid key\", or the 32-digit key)" };
@@ -377,6 +406,7 @@ export async function saveParsed(r){
       ok:"Replace key", cancel:"Keep the old key", danger:true, kind:"replace" }));
     r.keyHex = "";   // drop the raw hex from the caller's object
     if(!res) throw new Error("invalid key");
+    if(res === "elsewhere"){ log("Scanner key NOT saved: this browser holds it for another scanner id."); toast("That key is already stored for another scanner id. Check the id you pasted.", { err:true }); return false; }
     if(res === "cancelled"){ log("Scanner key NOT replaced (" + r.sid + ") — kept the stored key."); toast("Kept the stored key."); return false; }
     log("Scanner key " + (res === "same" ? "already stored" : "saved") + " for " + (name || r.sid) + (r.kg != null ? " (gen " + r.kg + ")" : "") + ".");
     toast("Scanner key " + (res === "same" ? "already stored" : "saved") + " for " + (name || r.sid) + ".");
@@ -421,7 +451,9 @@ export function openAuthDlg(r){
   const who = info.name || info.sid || "This scanner";
   let msg;
   switch(r && r.status){
-    case "nokey":    msg = who + " needs a phone key — this browser doesn't have one for it yet."; break;
+    case "nokey":    msg = info.v === "2"
+                       ? "None of the keys in this browser fits this scanner. It may be new or re-keyed: scan its key QR (CYD Settings -> Phone key, or the key link from a mini's console)."
+                       : who + " needs a phone key — this browser doesn't have one for it yet."; break;
     case "rejected": msg = r.rekeyed ? who + " was re-keyed (key generation " + info.kg + ") — the stored key is old. Add the new key."
                                      : who + " rejected the stored key. It may have been re-keyed; add the current key."; break;
     case "locked":   msg = who + " is refusing logins for " + (r.wait || "a few") + " s after too many failed attempts. Wait, then reconnect."; break;
