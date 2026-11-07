@@ -120,7 +120,8 @@ export function parseScanEvents(text){
     }
     if(ev.evt==="deauth" && o.from){   // who sent the burst (fw 0.30.0); absent on older logs
       const s=v=>v==null?"":String(v);
-      ev.from=s(o.from); ev.to=s(o.to); ev.bssid=s(o.bssid); ev.others=s(o.others); ev.kind=s(o.kind);
+      ev.from=s(o.from); ev.to=s(o.to); ev.bssid=s(o.bssid); ev.kind=s(o.kind);
+      ev.others=Array.isArray(o.others) ? o.others.map(x=>s(x&&x.mac)+" ("+(parseInt(x&&x.frames,10)||0)+")").join(", ") : s(o.others);   // fw 0.30.0 wrote a string
       ev.total=parseInt(o.total,10)||0; ev.fromN=parseInt(o.from_n,10)||0; ev.ch=parseInt(o.ch,10)||0;
       ev.reason=parseInt(o.reason,10)||0; ev.bcast=parseInt(o.bcast,10)||0; ev.rssi=parseInt(o.rssi,10)||0;
     }

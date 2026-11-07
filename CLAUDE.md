@@ -287,7 +287,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   with `data` only) = the AP that client talks to, from `Detection.bssid[]` (`FLAG_WIFI_DATA_CLIENT`/
   `_UPLINK`, bits 8/9; not notable: no tier floor, but carried in DETS `flags` + live-POST). Schema
   agreed with scan-analyzer 2026-10-23. Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
-  rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N[,"total":…,"bcast":…,"from":"…","to":"…","bssid":"…","from_n":…,"ch":…,"reason":…,"kind":"deauth|disassoc","rssi":…,"others":"mac:frames,…"]}`
+  rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N[,"total":…,"bcast":…,"from":"…","to":"…","bssid":"…","from_n":…,"ch":…,"reason":…,"kind":"deauth|disassoc","rssi":…,"others":[{"mac":"…","frames":N},…]]}`
   (`count` = 1 s peak; the optional keys, fw 0.30.0, describe the burst: `from` the busiest sender, `from_n` its frames, `total` all frames; addresses are as received and can be forged)
   and `{…,"evt":"eviltwin","count":N[,"ssid":"…","macs":"aa:bb:…,cc:dd:…"]}` (eviltwin also names the
   suspect SSID + its BSSIDs — up to 8, comma-joined — from the live detections carrying
