@@ -5,19 +5,20 @@ $nav-h: 60px;
 
 // Full-bleed top app bar (title + connection pill) shown on every page.
 .appbar {
-  display:flex; align-items:center; justify-content:space-between; gap:.6em;
+  display:flex; align-items:center; justify-content:space-between; gap:.4em;
   margin:-16px -16px 14px;            // bleed over the body's 16px padding to the screen edges
-  padding:12px 16px;
+  padding:12px 10px;
   background:$color-surface; border-bottom:1px solid $color-border;
 }
-.appbar-title { font-size:1.15rem; font-weight:600; display:flex; flex-direction:column; line-height:1.15; }
+.appbar-title { flex:none; font-size:1.15rem; font-weight:600; display:flex; flex-direction:column; line-height:1.15; }
 // COINTEL-FLO wordmark: Oswald ExtraLight + wide tracking, matching the scan-analyzer admin page.
 // Title only (body text keeps the system font). The negative right margin cancels the tracking
 // after the last letter so the title doesn't push the status icons.
-.wordmark { font-family:"Oswald", sans-serif; font-weight:200; letter-spacing:.1em; margin-right:-.1em; font-size:1.2rem; line-height:1.1; }
+.wordmark { font-family:"Oswald", sans-serif; font-weight:200; letter-spacing:.1em; margin-right:-.1em; font-size:1.2rem; line-height:1.1; white-space:nowrap; }
 
 // Right-side status cluster in the app bar: time/GPS/DB icons + the Bluetooth connection icon.
-.appbar-status { display:flex; align-items:center; gap:9px; }
+@media (max-width:339px) { .wordmark { font-size:1.05rem; } }   // every icon showing just overruns a 320 px screen
+.appbar-status { display:flex; align-items:center; gap:3px; }
 .conn { display:inline-flex; align-items:center; background:none; padding:0; border:0; }
 .conn .material-symbols-outlined { font-size:20px; background:none; }
 .conn.up   .material-symbols-outlined { color:$color-text; }        // connected = white

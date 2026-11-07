@@ -858,14 +858,15 @@ a.btnlink {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6em;
+  gap: 0.4em;
   margin: -16px -16px 14px;
-  padding: 12px 16px;
+  padding: 12px 10px;
   background: #161b22;
   border-bottom: 1px solid #30363d;
 }
 
 .appbar-title {
+  flex: none;
   font-size: 1.15rem;
   font-weight: 600;
   display: flex;
@@ -880,12 +881,18 @@ a.btnlink {
   margin-right: -0.1em;
   font-size: 1.2rem;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
+@media (max-width: 339px) {
+  .wordmark {
+    font-size: 1.05rem;
+  }
+}
 .appbar-status {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 3px;
 }
 
 .conn {
