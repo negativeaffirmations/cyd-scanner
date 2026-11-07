@@ -694,7 +694,12 @@ static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
 }
 
 void setup() {
+  // USB-CDC console must never block the scan loop: with USB plugged in but nobody reading, HWCDC retries each
+  // write up to 20 x 100 ms (see src/xiao_s3/main.cpp). A 4 KB ring holds a normal burst while a terminal IS
+  // reading; timeout 0 drops output instead of waiting when nobody is.
+  Serial.setTxBufferSize(4096);
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);
   // Link UART up FIRST, before the radios: its TX then idles high from the moment the app starts, so a
   // C5 that browns out during Wi-Fi/BLE RF bring-up shows on the host's RX line as a reboot loop
   // (driven-high / floating), not as a silently dead wire. Commands that arrive during init just wait
