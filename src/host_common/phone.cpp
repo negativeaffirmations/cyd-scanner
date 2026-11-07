@@ -192,6 +192,17 @@ bool authMac(const char* label, const char* cnHex, uint8_t out[32], int sec = -1
   if (n <= 0 || n >= (int)sizeof(msg)) { memset(out, 0, 32); return false; }
   return devkey::hmac((const uint8_t*)msg, (size_t)n, out);
 }
+// Key tag for the AUTH read: HMAC(key, "CFLO-KID-1|" + n), first 8 bytes as hex. The app tries its stored keys
+// against it to learn which scanner this is, because the read no longer names it. A fresh nonce gives a fresh tag, so
+// strangers can't link two connections to one unit.
+bool keyTag(char out[17]) {
+  char msg[48];
+  int n = snprintf(msg, sizeof(msg), "CFLO-KID-1|%s", g_nonce);
+  uint8_t t[32];
+  if (n <= 0 || n >= (int)sizeof(msg) || !devkey::hmac((const uint8_t*)msg, (size_t)n, t)) return false;
+  hexOf(t, 8, out);
+  return true;
+}
 uint32_t lockRemainingS() {
   if (!g_lockActive) return 0;
   int32_t rem = (int32_t)(g_lockUntil - millis());
@@ -229,8 +240,14 @@ bool isAuthed(const NimBLEConnInfo& ci) {
 // without it still encrypts, it just stores nothing. Called on the NimBLE host task only, which is also the
 // task the SM reads this from. A pairing latches the flag when it starts (ble_sm.c), so clearing it in
 // onAuthenticationComplete can't lose the keys.
+// The keys are gated the same way: NimBLE hands its IRK and public identity address to any central that asks during
+// pairing, bonded or not, and those would let a stranger follow the unit past its private address.
 void setBonding(bool on) {
-  if (kSec >= 1) NimBLEDevice::setSecurityAuth(on, /*mitm=*/false, /*sc=*/true);
+  if (kSec < 1) return;
+  NimBLEDevice::setSecurityAuth(on, /*mitm=*/false, /*sc=*/true);
+  const uint8_t dist = on ? (BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID) : 0;
+  NimBLEDevice::setSecurityInitKey(dist);
+  NimBLEDevice::setSecurityRespKey(dist);
 }
 void resetLinkSec() {
   g_linkEnc = false;
@@ -269,9 +286,13 @@ void appf(char* b, size_t cap, size_t& n, const char* fmt, ...) {
 size_t buildAuthValue(uint16_t h, char* b, size_t cap) {
   int st = (h != NO_CONN && h == g_authHandle) ? 1 : (lockRemainingS() > 0 ? 2 : 0);
   size_t n = 0;
-  appf(b, cap, n, "v=1;sid=%s;name=%s;fw=%s;sec=%d;kg=%lu;st=%d", devkey::sid(), devkey::unitName(),
-       devkey::fwVersion(), PHONE_BLE_SEC, (unsigned long)devkey::gen(), st);
-  if (st == 0 && h == g_connHandle && g_nonce[0]) appf(b, cap, n, ";n=%s", g_nonce);
+  // v=2 never names the unit: the app knows it from the key that fits, and STATUS carries the rest after auth. The
+  // value also stays in the attribute, where a Read Blob (offset > 0) returns it without calling onRead, so nothing
+  // that identifies the unit may go in it. fw / sec only after auth, so they can't tell the owner's units apart.
+  appf(b, cap, n, "v=2;st=%d", st);
+  if (st == 1) appf(b, cap, n, ";fw=%s;sec=%d", devkey::fwVersion(), PHONE_BLE_SEC);
+  char kt[17];
+  if (st == 0 && h == g_connHandle && g_nonce[0] && keyTag(kt)) appf(b, cap, n, ";n=%s;kt=%s", g_nonce, kt);
   if (st == 0 && h == g_connHandle && g_connFails) appf(b, cap, n, ";f=%d", g_connFails);
   if (kSec >= 1 && st == 0 && h == g_connHandle) appf(b, cap, n, ";enc=%d", g_linkEnc ? 1 : 0);
   if (st == 2) appf(b, cap, n, ";wait=%lu", (unsigned long)lockRemainingS());
@@ -279,11 +300,15 @@ size_t buildAuthValue(uint16_t h, char* b, size_t cap) {
   return n < cap ? n : 0;
 }
 
+const char AUTH_INIT[] = "v=2;st=0";
+void resetAuthValue() { if (g_auth) g_auth->setValue((const uint8_t*)AUTH_INIT, sizeof(AUTH_INIT) - 1); }
+
 class ServerCB : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*, NimBLEConnInfo& ci) override {
     std::string mac = ci.getAddress().toString();  // connected phone's BLE address
     Serial.printf("[phone] connected (peer %s)\n", mac.c_str());
     guardConnection(ci.getConnHandle());
+    resetAuthValue();                    // a Read Blob would return the previous connection's value
     if (g_connHandle != NO_CONN) {  // a second central while one is tracked: the first keeps the slot, drop the newcomer
       queueKick(ci.getConnHandle());
       return;
@@ -318,7 +343,10 @@ class ServerCB : public NimBLEServerCallbacks {
       g_fltReq = false;
     }
     Serial.println("[phone] disconnected");
-    NimBLEDevice::getAdvertising()->start();  // keep discoverable
+    if (g_connHandle == NO_CONN) {       // a kicked second central leaves the owner's link (and its pairing window) alone
+      resetAuthValue();
+      NimBLEDevice::getAdvertising()->start();  // keep discoverable
+    }
   }
   // Fires for a fresh pairing, a bonded phone's re-encryption, and a failure of either. A returning phone may
   // encrypt before it proves the key: that only sets g_linkEnc, the HMAC is still required.
@@ -687,9 +715,13 @@ bool readOwnMac(uint8_t out[6]) {
   return true;
 }
 
+// Every unit advertises the same name, so the advert doesn't say which unit this is (the service UUID still says what
+// it is). The unit's own name reaches the phone in STATUS, after authentication.
+const char* ADV_NAME = "CFLO";
+
 void begin(const char* devName) {
   loadTz();
-  NimBLEDevice::init(devName);
+  NimBLEDevice::init(ADV_NAME);           // also the GAP Device Name, readable by any central
   devkey::begin();                       // phone-link key (NVS), after init so the RNG is radio-fed
   if (kSec >= 1) {                       // just-works: the HMAC authenticates, this layer only encrypts
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
@@ -715,23 +747,24 @@ void begin(const char* devName) {
   // The attribute never carries live data: STATUS only goes out by notify to the authenticated connection.
   g_status->setValue("auth=0");
   g_status->setCallbacks(&g_statusCB);
-  { static const char kInit[] = "v=1;st=0"; g_auth->setValue((const uint8_t*)kInit, sizeof(kInit) - 1); }
+  resetAuthValue();
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(SVC_UUID);       // service UUID in the adv packet (filterable)
-  adv->setName(devName);
+  adv->setName(ADV_NAME);
   // The 128-bit service UUID fills the adv packet, so put the name in an explicit
-  // scan response so Chrome shows the unit name (CFLO-<board>-<word>) instead of "Unknown device".
+  // scan response so Chrome shows "CFLO" instead of "Unknown device".
   NimBLEAdvertisementData scanResp;
-  scanResp.setName(devName);
+  scanResp.setName(ADV_NAME);
   adv->setScanResponseData(scanResp);
   adv->enableScanResponse(true);
   adv->start();
 
   // Cache our own BLE address so the scanner can drop its own advertisement.
   g_haveOwnMac = readOwnMac(g_ownMac);
-  Serial.printf("[phone] BLE advertising as '%s' (own MAC %s)\n", devName, NimBLEDevice::getAddress().toString().c_str());
+  Serial.printf("[phone] BLE advertising as '%s' for %s (own MAC %s)\n", ADV_NAME, devName,
+                NimBLEDevice::getAddress().toString().c_str());
 }
 
 bool ownMac(uint8_t out[6]) {

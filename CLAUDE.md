@@ -458,7 +458,7 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 ### Phone link + web app (Web Bluetooth) — working
 
-- **CYD BLE GATT peripheral** (`src/cyd/phone.*`, NimBLE) advertises as `COINTEL-FLO`,
+- **CYD BLE GATT peripheral** (`src/cyd/phone.*`, NimBLE) advertises as `CFLO` (the same on every unit from fw 0.33.0),
   service `9a1e0000-…` with characteristics (the web app filters by **service UUID**, not name, so the
   advert name is cosmetic):
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
@@ -537,7 +537,8 @@ back (5 GHz included). Things that matter, learned the hard way:
     `PROTOCOL_VERSION`.)
   - `…0007` AUTH (read/write, **Phase A of SEC-H3, fw 0.18.0; design `docs/ble-auth.md`**) — per-connection HMAC
     challenge-response with a per-device random 128-bit key (NVS `cydscan`/`blekey` + `blekeygen`; `src/host_common/devkey.*`).
-    Read = `v=1;sid=<12hex>;name=;fw=;sec=<PHONE_BLE_SEC, 0>;kg=<gen>;st=<0|1|2>[;n=<32hex>][;f=<fails>][;wait=<s>][;dp=<64hex>][;enc=0]`
+    Read (v2, fw 0.33.0) = `v=2;fw=;sec=;st=<0|1|2>[;sid=;name=;kg=][;n=<32hex>;kt=<16hex>][;f=][;wait=][;dp=<64hex>][;enc=]`: `sid/name/kg`
+    only at st=1 on an encrypted link; before that the app finds its key by the tag `kt` = HMAC(key,"CFLO-KID-1|"+n)[0..8) (v1 still accepted)
     (`st` 0 locked + nonce `n`, 1 authenticated (+`dp`), 2 rate-limited (`wait`)); write `H:<cn 32hex>:<mac 64hex>`
     (exactly 99 B) with `mac = HMAC-SHA256(key, "CFLO-AUTH-1|sid|n|cn")` and the device proof
     `dp = HMAC-SHA256(key, "CFLO-DEV-1|sid|n|cn")` (lowercase hex; the app checks `dp` before sending TIME/GPS). Limits: 30 s
@@ -842,7 +843,8 @@ column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage
 **Random C5 addresses (2026-11-07, docs §17.3):** each C5 boot draws a new Wi-Fi MAC and BLE scan address, so never treat a
 C5 address as stable; `Status.wifiMac` is the current one. The download AP stays fixed.
 **Private host BLE address (fw 0.32.0, docs/ble-auth.md):** a host advertises from an RPA, new each boot, so `phone::ownMac()` is
-a runtime value too; the identity (public address) and bonds are unchanged. The advert's service UUID and unit name stay fixed.
+a runtime value too; the identity (public address) and bonds are unchanged. The advert's service UUID stays fixed; from fw 0.33.0
+its name is `CFLO` on every unit and pairing hands out the IRK / identity address only after the key was proven.
 So the NVS `fltself` BLE and C5 slots no longer help across a boot: units only filter those once the new address has been shared.
 
 ## Subagents (`.claude/agents/`)
