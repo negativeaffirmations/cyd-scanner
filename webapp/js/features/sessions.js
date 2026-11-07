@@ -271,6 +271,26 @@ async function saveSplit(gs, cmdFor, tag, empty){
   if(!saved) toast(empty, {err:true});
   else if(fleet.length && own.length) toast("Saved the scan + its Fleet file as separate downloads.");
 }
+// "Download current session" on a leader: also save the Fleet files the Session-logs list would auto-include, by the
+// same fleetOf() rule. A state hook, not an export: a stale cached copy of either module then just skips this,
+// where a missing export would stop the whole page loading.
+state.saveCurrentFleet = sess => runBusy("Fleet download", async ()=>{
+  if(state.fleetRole!=="leader") return;
+  const ctx=actionCtx();
+  toast("Looking for this session's Fleet file…", {work:true, sticky:true});
+  await bleFetch("Q", "sessions");   // download.js refreshes `groups` before this resolves
+  const base=sess.replace(/\.jsonl$/, "");
+  const cur=groups.find(g=>g.kind!=="fleet" && g.parts.some(p=>p.base.replace(/\.jsonl$/, "")===base));
+  const fleet=cur ? fleetOf(cur) : [];
+  if(!fleet.length){ toast("Saved the scan. It has no Fleet file."); return; }
+  for(const f of fleet){
+    const text=joinLogParts(await fetchGroups([f], null, {ctx}));
+    if(!text) continue;
+    await pause(400);
+    saveBlob(new Blob([text], {type:"application/octet-stream"}), groupFileName([f]));
+  }
+  toast("Saved the scan + its Fleet file as separate downloads.");
+});
 export function downloadSession(){
   const gs=needSel(); if(!gs) return;
   runBusy("Download", ()=>saveSplit(gs, null, undefined, "Nothing to download — those sessions are empty."));

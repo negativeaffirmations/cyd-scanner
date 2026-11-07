@@ -127,7 +127,9 @@ export async function downloadLog(){
     const cur = await fetchCurrent(fname);   // through the phone-side cache; null = use the plain "L" command
     if(cur){
       if(!cur.blob || !cur.blob.size){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
-      saveBlob(cur.blob, fname); return;
+      saveBlob(cur.blob, fname);
+      if(state.fleetRole==="leader" && state.saveCurrentFleet) await state.saveCurrentFleet(fname);   // (features/sessions.js)
+      return;
     }
     if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
     state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save",waiting:true,lastRx:Date.now()};
