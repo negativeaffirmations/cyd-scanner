@@ -3,8 +3,9 @@
 ## RESUME HERE — 2026-11-06: fw 0.29.0 LIVE on all 3 hosts: BLE link encryption on by default (level 2); merged to `main`
 - **Board state:** release builds, mini #2 `xiao_s3_rgb` (COM10, leader, its C5 is wired in, only its USB is out), mini #1 `xiao_s3` (COM16), CYD `cyd` (COM13, client).
   Fleet rejoined: roles ble / wifi24 / wifi5, 0 bad frames, bonds kept across the flash. C5s not reflashed (no link change).
-- **T10:** passed on all 3 (docs/ble-auth.md). Only open check: a phone on the leader during a BLE download with the fleet running (roles must not flip).
-- **Owner saw `role off` on mini #2:** their own web-app action, since set back. Not a crash.
+- **T10:** passed on all 3, including a BLE export from the leader with the fleet running (docs/ble-auth.md).
+- **Mini #2 `role off`, cause still unknown:** its log (2026-11-06 18:05 on) has no `leave` / `fallback` line, and no leader `start` at the 18:06, 18:10 or 19:12 boots,
+  so the role was already off at its first boot that day. The owner set it back at 20:05 with no reboot. No crash in that window. Any older log would show the real line.
 - **Older notes below in this entry are the history of the same day.** Deploy webapp/merges via a temp `git worktree`, NOT by switching branches.
 - **Merged:** `fleet-mode` -> `main` (`4c37e43`, pushed). Tree identical to `fleet-mode`, so Pages content did not change.
 - **Built (fw 0.28.0, uncommitted in the working tree on `ble-enc`):** `PHONE_BLE_SEC` 1/2 in `phone.cpp`, web `js/ble/linkenc.js`,

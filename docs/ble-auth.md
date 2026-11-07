@@ -181,7 +181,7 @@ T10 results (2026-11-06, one Android phone; mini #2 first, then the CYD and mini
 
 - PASS, sec=2 (owner-reported): Wi-Fi download flow and BLE log download.
 
-Not tested yet: the fleet alongside a bonded link.
+- PASS, sec=2: a 24 h BLE export from the leader with the fleet running; the plan counter did not move.
 
 Checks written before T10, kept for the ones not covered above:
 - Android's prompt appears for a peripheral security request while Chrome holds the link, and AUTH polling during
