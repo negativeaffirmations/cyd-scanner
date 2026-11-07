@@ -836,7 +836,9 @@ dropped) and drains the remainder BEFORE this boot's files, re-sending meta, tim
 carrying a `fleet_id` as anchors first (the fleet-line anchor also rides every ordinary rejoin). No protocol change (fleet proto
 stays v3: the leader's per-member 4-file table takes the old `file_id`).
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
-a member's role at runtime (§20.1).
+a member's role (§20.1). From fw 0.31.0 overrides are saved (NVS `fltlay`, by sid), `M:l` lists them as the last member
+column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage selector + per-member role picker
+(`features/fleet.js`, pure logic in `features/fleetplan.js`). **On-air check:** `tools/fleet-sniff` (docs §17.2).
 
 ## Subagents (`.claude/agents/`)
 

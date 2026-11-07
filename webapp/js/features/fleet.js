@@ -112,6 +112,7 @@ function roleSelect(m){
 // Who is assigned what right now: the leader plus its joined members. Warns when a band has nobody.
 function renderPlan(){
   const sel = $("fltPlanSel"), box = $("fltCov");
+  if (!sel || !box) return;                       // a cached older index.html without the coverage elements
   sel.value = String(planMode);
   const joined = members.filter(m => m.state === 2);
   box.hidden = !joined.length;
@@ -204,7 +205,8 @@ export async function fleetChannel(){
 const applied = () => new Promise(r => setTimeout(r, APPLY_MS));
 export async function fleetPlanMode(){
   const v = $("fltPlanSel").value;
-  await run("p:" + v, v === String(PLAN_ALL_FULL) ? "Every unit scans everything" : "Coverage split across the fleet");
+  const t = await run("p:" + v, v === String(PLAN_ALL_FULL) ? "Every unit scans everything" : "Coverage split across the fleet");
+  if (t === null) { renderPlan(); return; }       // back to what the scanner really has
   await applied();
   refreshMembers();                              // also puts the selector back if the command failed
 }
@@ -213,7 +215,9 @@ export async function onMemberChange(ev){
   if (!sel) return;
   pickAt = 0;
   const { sid, name } = sel.dataset, label = sel.options[sel.selectedIndex].text;
-  await run(`o:${sid}:${sel.value}`, `${name}: ${label}`);
+  const t = await run(`o:${sid}:${sel.value}`, `${name}: ${label}`);
+  if (t === null) { renderMembers(); return; }    // back to what the scanner really has
+  if (t.includes("(not saved)")) toast(`${name}: ${label}, but the scanner couldn't save it. It resets on restart.`);
   await applied();
   refreshMembers();
 }
@@ -246,7 +250,10 @@ onUnitReset(() => { members = []; state.fleetMembers = []; lastFlt = ""; lastPol
 
 // Called once from main.js: watch STATUS flt= and poll the member list while it matters.
 export function initFleet(){
-  $("fltMembers").addEventListener("focusin", ev => { if (ev.target.matches("select[data-sid]")) pickAt = Date.now(); });
+  const hold = ev => { if (ev.target.matches("select[data-sid]")) pickAt = Date.now(); };
+  $("fltMembers").addEventListener("focusin", hold);
+  $("fltMembers").addEventListener("pointerdown", hold);   // reopening after a cancel: the select already has focus
+  $("fltMembers").addEventListener("focusout", () => { pickAt = 0; });
   setInterval(() => {
     const f = state.status.flt || "";
     if (f !== lastFlt || !state.connected) { lastFlt = f; renderFleet(); }

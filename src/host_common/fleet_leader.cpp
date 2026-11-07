@@ -72,7 +72,7 @@ struct MemberRt {
   uint8_t  planSentGen;                // last plan generation sent to it
   uint32_t lastPlanMs;
   uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
-  uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (runtime only, not saved)
+  uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (saved in NVS fltlay)
   uint16_t deauth; uint8_t evil, rid;  // its latest alert counts (MStat), for the fleet-wide maxima
   uint32_t statAtMs;
   // P6 item 6 store-and-forward: the member's last LF_RECS origin files and, per file, the next origin row not stored
@@ -710,6 +710,7 @@ void cmdAdd(char* args, char* out, size_t cap) {
   L->st = next;
   memset(&next, 0, sizeof(next));
   L->addCtr++;
+  if (i < 0) saveLayout();                                       // a new member starts on auto, whatever an old blob says
   restartProbing();
   Serial.printf("[FLT] member %d added: %s (%s kg %lu)\n", slot + 1, L->st.m[slot].name, sidc, (unsigned long)L->st.m[slot].kg);
   leaderEvent("member_add", slot);

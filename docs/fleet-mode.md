@@ -940,7 +940,7 @@ sniffer). 1,120 fleet frames: 1,049 protected, 71 cleartext. **PASS.**
 - **Consequence until P5:** each unit's own table / log / phone view covers only its share. The leader's phone view
   lacks the client's Wi-Fi-only finds (they are on the client's SD). Use `M:p:3` (everyone FULL) to field-test
   without P5.
-- **Deferred:** the web layout editor + saved layout (`fltlay`, §16.1), the `M:o` per-member override, a user-set
+- **Deferred (the `M:o` override, its web picker and `fltlay` are built since: §20.1):** the web layout editor + saved layout (`fltlay`, §16.1), the `M:o` per-member override, a user-set
   grace (`fltgrace`), the 4+-member channel split, and the 5 GHz-caps preference (every C5 has 5 GHz).
   FW_VERSION stays 0.20.0 on the bench builds; bump to 0.21.0 at the release flash.
 
@@ -1031,8 +1031,11 @@ sniffer). 1,120 fleet frames: 1,049 protected, 71 cleartext. **PASS.**
   - Bench (CYD forced via `M:o`): AP scan **12.4 s dual-band → 3.0 s 2.4-only → 9.5 s 5-only**.
   - Running AP counts unchanged: 2.4 GHz 10.3 → 10.0, 5 GHz 16.8 → 18.0.
   - A WIFI24 member's cycle drops from ~24 s to ~9.5 s.
-- **`M:o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>`:** a per-member role override (runtime only, not saved; it applies
-  once the member counts). There is no web control yet; serial `fleet m o:…` or a future layout editor (§16.1).
+- **`M:o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>`:** a per-member role override; it applies once the member counts.
+  From fw 0.31.0 it is saved (NVS `fltlay`, keyed by sid), `M:l` reports it as the last member column, and
+  "everyone full" (`M:p:3`) beats it without clearing it. The web Fleet card has a role picker per member, a coverage
+  selector and a warning when no unit is assigned a band. Still not built from §16.1: custom phases and channel masks,
+  presets, and the user-set grace period.
 - **3-unit bench (2026-11-01, release fw 0.22.0: mini #2 leader + CYD + mini #1):**
   - Layout `leader ble, CYD wifi24, mini #1 wifi5`; the ramp works (a new member runs `full` until it has been stable
     10 s).

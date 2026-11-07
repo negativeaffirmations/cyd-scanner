@@ -126,7 +126,7 @@ $("fltLeaveBtn").onclick     = fleetLeave;
 $("fltClientBtn").onclick    = fleetMakeClient;
 $("fltMembers").addEventListener("click", onMemberClick);
 $("fltMembers").addEventListener("change", onMemberChange);
-$("fltPlanSel").addEventListener("change", fleetPlanMode);
+$("fltPlanSel")?.addEventListener("change", fleetPlanMode);
 initFleet();
 initCacheUI();   // Data page: saved-log cache readout + Clear button
 initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + Settings card (features/switcher.js)
