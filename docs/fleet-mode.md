@@ -809,9 +809,21 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - Remove → the client searches; release → the CYD reboots normal with its phone link.
   - The real `fleetcrypto.js` (run in Node) built an `M:a` the leader accepted, and the CYD then joined with its
     on-device FK (web ≡ firmware). A tampered name → `bad tag`; a replayed `M:a` → `replayed`.
-- **Not yet done:** web-app enrollment from the phone (card built, untested on a phone); the sniffer check that no
-  sid/name/real MAC goes out in the clear (P1 step 9 + P2); a replay of captured session frames (spare-S3
-  harness).
+- **Not yet done:** a replay of captured session frames (needs a transmitter). The sniffer check is done: §17.2.
+
+### 17.2 On-air check (2026-11-07, fw 0.30.1, `tools/fleet-sniff`)
+Receive-only capture on channel 1, about 9 minutes, mini #2 leading and the CYD rejoining 3 times (the CYD's C5 was the
+sniffer). 1,120 fleet frames: 1,049 protected, 71 cleartext. **PASS.**
+- **Cleartext is only Probe (63), Hello (4) and Join (4).** JoinAck, which carries the name and BLE MAC, was never clear.
+- **No sid, name or radio MAC** in any cleartext frame, in either byte order, raw or as text. Protected frames were
+  searched in their first 128 bytes only.
+- **No fleet frame used a fixed MAC.** The CYD drew a new MAC at each boot.
+- **Fresh values:** 63 of 63 Probe `nl` distinct. Hello `tag`/`nc` and Join `proof`: 3 distinct over 3 joins. The one
+  repeat of each was an 802.11 retry (same bytes, retry bit set).
+- **Negative controls** failed as they should (a fleet MAC listed as fixed; a forged clear Sync; a name in a Hello).
+- **Not fleet traffic, but a limit on what this proves:** a unit's C5 still sends active-scan probe requests from its
+  fixed MAC (24 from mini #2's C5 on this channel in the capture). The fleet link hides nothing about a unit that its
+  own scanning gives away.
 
 ### 17.1 Review + security pass (2026-10-31) — fixes applied, all re-bench-tested
 - **HMAC fail-open (both reports, high):** every `Hmac::finish()` is now checked (`[[nodiscard]]`). On a crypto error
@@ -1008,7 +1020,7 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - A group's `rep` (display + the follow line's `src`) can be a member row.
   - `needsSend` doesn't track bssid / channel / svc16 changes (they arrive with the 10 s refresh).
   - A failed send isn't retried before the next refresh.
-  - Multi-member (N ≥ 2 clients) delivery is untested: only one client is on the bench.
+  - Multi-member delivery: tested since, the 3-unit fleet has run from 2026-11-01 (merge from two clients, rx drop 0).
 
 ### 20.1 Deferred P4 items done (2026-11-01)
 - **Band-restricted AP scan** (§19.1 REV-007): the C5 sets `esp_wifi_set_band_mode()` from the plan at each AP-scan
