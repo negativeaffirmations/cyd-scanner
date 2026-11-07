@@ -19,8 +19,8 @@ proven per connection by HMAC-SHA256 challenge-response. BLE encryption is layer
 | Phase | Content | Ships |
 |---|---|---|
 | **A** | key + HMAC challenge-response, firmware gate on every characteristic, rekey (CYD menu + serial), web app auth + key store, `phonecfg` audit log line | with fw 0.18.0 |
-| **B** | LESC just-works bonding requested by the device only AFTER HMAC success (`PHONE_BLE_SEC=1`, opportunistic) | code built (fw 0.28.0); default stays 0 until hardware test T10 |
-| **C** | `PHONE_BLE_SEC=2`: gate = authed AND encrypted; AP creds only over an encrypted link | code built (fw 0.28.0); after B is proven |
+| **B** | LESC just-works bonding requested by the device only AFTER HMAC success (`PHONE_BLE_SEC=1`, opportunistic) | built (fw 0.28.0), passed hardware test T10 |
+| **C** | `PHONE_BLE_SEC=2`: gate = authed AND encrypted; AP creds only over an encrypted link | built (fw 0.28.0), the default from fw 0.29.0 |
 
 Per-command MACs are not planned: at sec=2 the AES-CCM link MIC defeats post-auth injection, unless an active MITM sat
 in the first pairing (just-works can't detect one). An unencrypted sec=1 link has no such protection.
@@ -120,8 +120,8 @@ Whenever the phone changes device config or card files, one NDJSON line on the a
 3. Render sticker QRs **offline only** (the URL is the secret). Label with unit name + key gen. Put inside the
    case / battery door. Never commit keys or sticker images.
 
-## Phase B/C as built (fw 0.28.0; bench-tested on mini #2 only, see T10 results)
-`PHONE_BLE_SEC` is a build flag, default 0, which compiles this out. Bench envs: `xiao_s3_rgb_sec1`, `xiao_s3_rgb_sec2`,
+## Phase B/C as built (fw 0.28.0; default level 2 from fw 0.29.0, see T10 results)
+`PHONE_BLE_SEC` is a build flag, default 2; 0 compiles this out. Bench envs: `xiao_s3_rgb_sec1`, `xiao_s3_rgb_sec2`,
 `cyd_sec2`.
 
 Flow: HMAC as in Phase A, then the device sends a security request from `phone::service()` 250 ms later. A new phone

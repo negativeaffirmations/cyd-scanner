@@ -27,9 +27,9 @@ void setStatus(const String& s);
 
 // Link security level advertised in the AUTH characteristic's sec= (docs/ble-auth.md): 0 = HMAC auth only
 // (Phase A), 1 = + opportunistic bonding after auth (Phase B), 2 = authed AND encrypted (Phase C).
-// Stays 0 until hardware test T10 passes; the *_sec1 / *_sec2 envs build the other levels for the bench.
+// Default 2 since hardware test T10 passed. The *_sec1 / *_sec2 envs are bench builds with the stack readout.
 #ifndef PHONE_BLE_SEC
-#define PHONE_BLE_SEC 0
+#define PHONE_BLE_SEC 2
 #endif
 
 bool     connected();   // a central is on the GATT link (UI: grey BLE icon until it authenticates)

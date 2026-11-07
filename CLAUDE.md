@@ -544,7 +544,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     connection handle (explicit-buffer notify); `phone::authed()` (not `connected()`, which stays for UI) gates the
     transfers, DETS push and phone-GPS freshness; disconnect clears queued transfer requests; kicks/timeouts run from
     `phone::service()` in loop, never in a callback. A STATUS push follows auth and the authed STATUS subscribe. Phase B/C
-    (LESC bonding after HMAC, `PHONE_BLE_SEC` 1/2) are BUILT in fw 0.28.0 but the default stays 0 until hardware test T10
+    (LESC bonding after HMAC, `PHONE_BLE_SEC` 1/2) are BUILT (fw 0.28.0) and passed hardware test T10; the default is 2 from fw 0.29.0: a phone pairs once per scanner, then the gate needs an HMAC made over the encrypted link
     (design + as-built: `docs/ble-auth.md`; bench envs `xiao_s3_rgb_sec1/_sec2`, `cyd_sec2`; web `js/ble/linkenc.js`; serial `bonds`). **Key delivery/rekey:** CYD Settings →
     **Phone key** (`SCR_PHONEKEY`: QR of `devkey::pairUrl()` = web app `#devkey=<32hex>&sid=<12hex>&kg=<gen>`, name +
     `gen N`, key as 4×4 hex text, NEW KEY… → `SCR_REKEYCONFIRM` → `phone::rekeyAndKick()`); screenless minis use the USB
