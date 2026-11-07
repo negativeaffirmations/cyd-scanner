@@ -578,7 +578,7 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all) {
 // pulled from the live detections that currently carry FLAG_WIFI_EVILTWIN, so the map/log identifies
 // the culprit APs instead of a bare count. "deauth" names its sender (appendDeauth). No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
 // Per-device "rid" and "follow" event lines have their own writers below (logRidEvents / logFollowEvents).
-// Who sent the burst (link v13): the busiest sender in full, the rest as "mac:frames". `count` stays the 1 s peak;
+// Who sent the burst (link v13): the busiest sender in full, the rest in `others`. `count` stays the 1 s peak;
 // `total` is every frame in the burst. Sender addresses are as received and can be forged.
 static void appendDeauth(char* ln, int& n, const link_protocol::DeauthInfo& di) {
   lnAppend(ln, n, ",\"total\":%u,\"bcast\":%u", (unsigned)di.total, (unsigned)di.bcast);
@@ -596,11 +596,11 @@ static void appendDeauth(char* ln, int& n, const link_protocol::DeauthInfo& di) 
   for (int i = 0; i < di.n; i++) {
     if (i == top) continue;
     const uint8_t* m = di.senders[i].src;
-    lnAppend(ln, n, "%s%02X:%02X:%02X:%02X:%02X:%02X:%u", emitted ? "," : ",\"others\":\"", m[0], m[1], m[2], m[3], m[4], m[5],
+    lnAppend(ln, n, "%s{\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"frames\":%u}", emitted ? "," : ",\"others\":[", m[0], m[1], m[2], m[3], m[4], m[5],
              (unsigned)di.senders[i].count);
     emitted++;
   }
-  if (emitted) lnAppend(ln, n, "\"");
+  if (emitted) lnAppend(ln, n, "]");
 }
 
 void logEvent(const char* evt, int count) {

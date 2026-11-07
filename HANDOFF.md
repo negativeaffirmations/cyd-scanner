@@ -1,6 +1,6 @@
 # Handoff — 2026-11-06 (`fleet-mode` merged to `main` @ `4c37e43`; BLE encryption work on `ble-enc`)
 
-## RESUME HERE — 2026-11-06 (late): fw 0.30.0 LIVE on all 6 boards, merged to `main`
+## RESUME HERE — 2026-11-06 (late): fw 0.30.1 hosts + link v13 C5s LIVE, merged to `main`; `deauth` keys approved by scan-analyzer (`others` = array of {mac,frames})
 - **Flashed:** `c5` (COM18), `cyd` (COM13), `xiao_c5` (COM9 + COM23), `xiao_s3_rgb` (COM10), `xiao_s3` (COM16). Link v13 + fleet proto v4. All 3 hosts rejoined; 8 fixed radios
   shared. A rejoin after flashing can take 2-5 min (9 s dwell per channel vs slow 15 s probes), which isn't a fault.
 - scan-analyzer told directly + on the bridge; drive data in the bridge folder `drive-20261106/`.
