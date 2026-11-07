@@ -834,7 +834,8 @@ the C5 table's 30 s TTL, past their self filters.
 - **What it doesn't hide:** the probe's contents are unchanged, byte for byte. scan-analyzer found the same IE hashes
   on all 3 C5s and on none of its 415 `local` PRB addresses, so a random address carrying them may still stand out
   (one area's sample). A watcher could treat that as "a C5-class scanner", though not tell one unit from another by it.
-- **Hosts are out of scope here:** a host's BLE advert (the phone link) and its download AP keep their fixed addresses.
+- **Hosts:** a host's download AP keeps its fixed address. Its BLE advert moved to a private address in fw 0.32.0, see
+  [ble-auth.md](ble-auth.md) "Private advert address".
 - **Self filter:** units in a fleet still filter each other, because the address is shared at runtime. A few seconds
   after a C5 boots, or between units outside a fleet, a unit can log another's probe as a `PRB` row from a random
   address. scan-analyzer accepts that: it classifies as `local`, so it never becomes a long-lived device.

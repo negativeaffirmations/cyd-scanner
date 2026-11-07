@@ -120,7 +120,7 @@ void handle(char* cmd) {
     return;
   }
   if (!strcmp(cmd, "bonds")) {
-    Serial.printf("[bonds] sec %d, stored %d, link %s\n", PHONE_BLE_SEC, phone::bondCount(),
+    Serial.printf("[bonds] sec %d, stored %d, records %d, link %s\n", PHONE_BLE_SEC, phone::bondCount(), phone::bondRecords(),
                   !phone::connected() ? "none" : phone::linkEncrypted() ? "encrypted" : "not encrypted");
     return;
   }

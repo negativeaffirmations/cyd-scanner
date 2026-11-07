@@ -39,6 +39,7 @@ bool     connected();   // a central is on the GATT link (UI: grey BLE icon unti
 bool     authed();
 bool     linkEncrypted();       // the key-proven link is AES-encrypted at full key size (never at PHONE_BLE_SEC 0)
 int      bondCount();           // stored phone bonds; -1 when NimBLE isn't running
+int      bondRecords();         // peer records host privacy resolves phones with; a bond with an IRK needs one
 // Delete every stored bond and drop the current central. A phone that kept its half must forget this scanner
 // in Android Bluetooth settings before it can pair again. Rekey deliberately does NOT do this (docs/ble-auth.md).
 bool     clearBonds();
@@ -57,8 +58,9 @@ bool     rekeyAndKick();
 uint32_t authEpoch();
 bool     transferAlive(uint32_t epoch);
 
-// This device's own BLE MAC (as the C5 would report it, MSB-first). Lets the CYD
-// filter out its own advertisement from the scan results. Returns false if unknown.
+// The BLE address this device advertises from now (as the C5 would report it, MSB-first): a private address that
+// changes at every boot, so read it rather than keep it. Lets the host filter out its own advertisement from the scan
+// results. Returns false if unknown.
 bool     ownMac(uint8_t out[6]);
 
 // The connected phone's BLE address (from the GATT link), MSB-first. Best-effort

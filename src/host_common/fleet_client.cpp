@@ -248,7 +248,7 @@ void sendMStat() {
   m->gpsFix = ownFix ? 1 : 0;
   if (ownFix) { m->lat = (int32_t)lroundf(g_onbLat * 1e7f); m->lon = (int32_t)lroundf(g_onbLon * 1e7f); }
   phone::peerMac(m->phoneMac);                                     // a mini client's own phone: the fleet must not log it
-  phone::ownMac(m->bleMac);                                        // its fixed radios (zeros for a CYD client's BLE)
+  phone::ownMac(m->bleMac);                                        // its advert's address this boot (zeros for a CYD client's BLE)
   if (g_haveC5Mac) memcpy(m->c5Mac, g_c5Mac, 6);
   ownApMac(m->apMac);
   sendSealed(C->leaderMac, buf, sizeof(MStat), Msg::MStat, C->sess, C->txSeq, C->sk);

@@ -2,6 +2,8 @@
 #include "phone.h"
 #include <NimBLEDevice.h>
 #include "nimble/nimble/host/src/ble_hs_conn_priv.h"   // bhc_cb: NimBLE offers no way to read a connection's handler
+#include "nimble/nimble/host/include/host/ble_hs_pvcy.h"  // ble_hs_set_rpa_timeout
+#include "nimble/nimble/host/src/ble_hs_resolv_priv.h"   // peer records, see migrateBonds()
 #include <Preferences.h>
 #include <esp_random.h>
 #include <math.h>
@@ -124,6 +126,19 @@ uint8_t  g_upSeq      = 0;          // the chunk's request tag, echoed in its re
 volatile bool g_upOverrun = false;  // a chunk arrived before loop() took the previous one
 uint8_t  g_upOverrunSeq = 0;
 bool     g_upSkip = false;          // loop-side: drop the already-queued chunk after an overrun abort
+// A new resolvable private address at every boot, kept until the next one; see useRpa(). The stack would rotate it, and
+// a change mid-run lets rows of the old address, alive for the C5 table's 30 s TTL, past the self filters, so service()
+// keeps re-arming the timer before it fires. Its timer overflows 32 bits above 4294 s, so a long timeout can't do this.
+#ifndef PHONE_RPA_ROTATE_S
+#define PHONE_RPA_ROTATE_S 4200
+#endif
+#ifndef PHONE_RPA_REARM_S
+#define PHONE_RPA_REARM_S 3600
+#endif
+constexpr uint32_t ADV_CHECK_MS = 5000;
+uint32_t g_advCheckMs = 0;
+uint32_t g_rpaArmMs   = 0;
+bool     g_rpaOn      = false;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -624,6 +639,54 @@ void setTzOffsetMin(int offMin) {
   if (p.begin("cydscan", false)) { p.putInt("tzoff", offMin); p.end(); }
 }
 
+// Hides the fixed public address from anyone listening. A bonded phone holds this unit's IRK, so it still recognises
+// the unit; pairing sends the public address as the identity, inside the encrypted link. The IRK lives in NimBLE's NVS
+// store. If privacy won't start, stay on the public address: a working phone link matters more.
+void useRpa() {
+  ble_hs_set_rpa_timeout(PHONE_RPA_ROTATE_S);
+  g_rpaArmMs = millis();
+  g_rpaOn = NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RPA_PUBLIC_DEFAULT);
+  if (g_rpaOn) return;
+  Serial.println("[phone] private address failed, using the public one");
+  NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC);
+}
+
+// Host privacy finds a phone's rotating address through peer records. S3 builds before fw 0.32.0 ran without it and
+// never wrote any, so their bonds would stop resolving: the LTK lookup fails and repairing the bond fails too. Build the
+// missing records from the stored bonds, the way ble_sm.c does at pairing. Runs before advertising starts.
+int migrateBond(int, union ble_store_value* val, void* added) {
+  const ble_store_value_sec& sec = val->sec;
+  uint8_t id[6];
+  memcpy(id, sec.peer_addr.val, 6);
+  if (!sec.irk_present || ble_rpa_find_peer_dev_rec(id)) return 0;
+  if (ble_rpa_get_num_peer_dev_records() > MYNEWT_VAL(BLE_STORE_MAX_BONDS)) return 0;
+  ble_rpa_resolv_add_peer_rec(id);
+  ble_hs_dev_records* rec = ble_rpa_find_peer_dev_rec(id);
+  if (!rec) return 0;
+  for (int i = 0; i < 16; i++) rec->peer_sec.irk[i] = sec.irk[15 - i];
+  rec->peer_sec.irk_present = 1;
+  rec->peer_sec.peer_addr = sec.peer_addr;
+  (*(int*)added)++;
+  return 0;
+}
+void migrateBonds() {
+  int added = 0;
+  ble_store_iterate(BLE_STORE_OBJ_TYPE_PEER_SEC, migrateBond, &added);
+  if (!added) return;
+  ble_store_persist_peer_records();
+  Serial.printf("[phone] migrated %d bond(s) for private addresses\n", added);
+}
+
+// Reads the address now in use (the C5 reports the same MSB-first text form).
+bool readOwnMac(uint8_t out[6]) {
+  std::string mac = NimBLEDevice::getAddress().toString();
+  unsigned b[6];
+  if (sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6) return false;
+  if (!(b[0] | b[1] | b[2] | b[3] | b[4] | b[5])) return false;   // none during a host reset
+  for (int i = 0; i < 6; i++) out[i] = (uint8_t)b[i];
+  return true;
+}
+
 void begin(const char* devName) {
   loadTz();
   NimBLEDevice::init(devName);
@@ -633,6 +696,8 @@ void begin(const char* devName) {
     setBonding(false);
     ble_hs_cfg.sm_sc_only = 1;           // refuse legacy pairing: its just-works key falls to a passive sniffer
   }
+  migrateBonds();
+  useRpa();
   NimBLEServer* server = NimBLEDevice::createServer();
   g_server = server;
   server->setCallbacks(&g_serverCB);
@@ -664,15 +729,9 @@ void begin(const char* devName) {
   adv->enableScanResponse(true);
   adv->start();
 
-  // Cache our own BLE MAC (same MSB-first text form the C5 parses) so the scanner
-  // can drop its own advertisement. Runtime value -> works on any CYD unit.
-  std::string mac = NimBLEDevice::getAddress().toString();
-  unsigned b[6];
-  if (sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
-    for (int i = 0; i < 6; i++) g_ownMac[i] = (uint8_t)b[i];
-    g_haveOwnMac = true;
-  }
-  Serial.printf("[phone] BLE advertising as '%s' (own MAC %s)\n", devName, mac.c_str());
+  // Cache our own BLE address so the scanner can drop its own advertisement.
+  g_haveOwnMac = readOwnMac(g_ownMac);
+  Serial.printf("[phone] BLE advertising as '%s' (own MAC %s)\n", devName, NimBLEDevice::getAddress().toString().c_str());
 }
 
 bool ownMac(uint8_t out[6]) {
@@ -707,6 +766,28 @@ void service() {
   // it touches nothing a transfer is using, so a nested call is harmless.
   uint16_t kh;
   while (popKick(&kh)) if (g_server) g_server->disconnect(kh);
+  if (g_server && millis() - g_advCheckMs >= ADV_CHECK_MS) {
+    g_advCheckMs = millis();
+    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+    const bool idle = g_connHandle == NO_CONN && g_server->getConnectedCount() == 0;
+    if (g_rpaOn && millis() - g_rpaArmMs >= PHONE_RPA_REARM_S * 1000UL) {
+      ble_hs_set_rpa_timeout(PHONE_RPA_ROTATE_S);
+      g_rpaArmMs = millis();
+    }
+    uint8_t m[6];
+    if (readOwnMac(m)) {
+      if (g_rpaOn && idle && (m[0] & 0xC0) != 0x40) {   // a host reset leaves a static address the phone can't resolve
+        adv->stop();
+        useRpa();
+        readOwnMac(m);
+      }
+      if (memcmp(m, g_ownMac, 6)) {                     // the self filter needs the new address
+        memcpy(g_ownMac, m, 6);
+        Serial.printf("[phone] BLE address changed to %s\n", NimBLEDevice::getAddress().toString().c_str());
+      }
+    }
+    if (idle && !adv->isAdvertising()) adv->start();    // a rotation stops the advert and nothing restarts it
+  }
   // A central that never proves the key is dropped (frees the single GATT slot for the owner's phone).
   if (g_connHandle != NO_CONN && g_authHandle == NO_CONN && millis() - g_connMs > AUTH_TIMEOUT_MS) {
     Serial.println("[phone] auth timeout -> disconnect");
@@ -747,11 +828,15 @@ bool transferAlive(uint32_t epoch) {
 }
 
 int bondCount() { return g_server ? NimBLEDevice::getNumBonds() : -1; }   // no server = a CYD fleet client (no NimBLE)
+int bondRecords() { return g_server ? ble_rpa_get_num_peer_dev_records() : -1; }
 
 bool clearBonds() {
   if (!g_server) return false;
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->stop();                                 // NimBLE refuses to unpair a peer with an IRK while advertising
   bool ok = NimBLEDevice::deleteAllBonds();
   if (g_connHandle != NO_CONN) g_server->disconnect(g_connHandle);   // the link's own bond is gone with the rest
+  else adv->start();
   return ok;
 }
 

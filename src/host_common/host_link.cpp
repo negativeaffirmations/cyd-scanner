@@ -55,6 +55,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
   g_ridStoreCount = 0;
   bool sawStart = false, done = false, anyByte = false;
   uint8_t peer[6]; bool havePeer = phone::peerMac(peer);  // connected phone (dynamic)
+  g_haveOwnMac = phone::ownMac(g_ownMac);                 // our private address can rotate
   while (LinkSerial.available()) LinkSerial.read();
   parser.reset();
   ScanConfig cfg{};
