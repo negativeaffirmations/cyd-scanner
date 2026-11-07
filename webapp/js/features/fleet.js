@@ -11,12 +11,16 @@ import { gattWrite } from '../ble/gattq.js';
 import { onUnitReset } from '../unitreset.js';
 import { askConfirm, listKeys } from '../ble/auth.js';
 import { buildAddCmd } from '../ble/fleetcrypto.js?v=20261031d';
+import { ROLE_OPTIONS, coverage } from './fleetplan.js?v=20261107a';
 
 const REPLY_MS = 25000, POLL_MS = 5000;
+const PLAN_ALL_FULL = 3, APPLY_MS = 1200;   // the leader re-plans on its next tick
+const PICK_HOLD_MS = 15000;                 // a poll must not rebuild the rows under an open role picker
 const STATE_TXT = ["enrolled", "joining", "joined", "lost"], STATE_COL = ["#8b949e", "#d29922", "#3fb950", "#f85149"];
 
 let pending = null, listenOn = null, seqCounter = 0, busy = false;
 let members = [], lastFlt = "", lastPoll = 0, addCtr = 0;
+let planMode = 0, leaderRole = "", pickAt = 0;
 
 function onFltData(ev){
   if (!pending) return;
@@ -99,8 +103,28 @@ export function renderFleet(){
   if (conn && f.role === 2) $("fltChSel").value = String(f.ch);
 }
 
+function roleSelect(m){
+  if (m.ovr === undefined) return "";       // a leader older than fw 0.31.0 doesn't report the override
+  const opts = ROLE_OPTIONS.map(([v, t]) => `<option value="${v}"${v === m.ovr ? " selected" : ""}>${t}</option>`).join("");
+  return `<select class="fltrolesel" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}" aria-label="Role for ${esc(m.name)}"${planMode === PLAN_ALL_FULL ? " disabled" : ""}>${opts}</select>`;
+}
+
+// Who is assigned what right now: the leader plus its joined members. Warns when a band has nobody.
+function renderPlan(){
+  const sel = $("fltPlanSel"), box = $("fltCov");
+  if (!sel || !box) return;                       // a cached older index.html without the coverage elements
+  sel.value = String(planMode);
+  const joined = members.filter(m => m.state === 2);
+  box.hidden = !joined.length;
+  if (!joined.length) return;
+  const { lines, missing } = coverage([{ name: state.scannerName || "This scanner", role: leaderRole }, ...joined]);
+  box.innerHTML = lines.filter(l => l.names.length).map(l => `<div>${esc(l.band)}: ${esc(l.names.join(", "))}</div>`).join("") +
+    (missing.length ? `<div class="fltcovwarn">Nobody is assigned ${esc(missing.join(" or "))}.</div>` : "");
+}
+
 function renderMembers(){
   const box = $("fltMembers");
+  if (Date.now() - pickAt < PICK_HOLD_MS) return;
   if (!members.length) { box.innerHTML = '<div class="sub" style="padding:6px;margin:0">No members yet. Add a scanner below.</div>'; return; }
   box.innerHTML = members.map(m => {
     const live = m.state === 2;
@@ -108,7 +132,7 @@ function renderMembers(){
                  live ? `${m.age} s ago` : "", m.fw ? `fw ${m.fw}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="sessrow keyrow"><span class="material-symbols-outlined" style="color:${STATE_COL[m.state] || "#8b949e"}">radio_button_checked</span>` +
-      `<div class="sessmain"><span class="sessdate">${esc(m.name)}</span><span class="sesssub">${esc(sub)}</span></div>` +
+      `<div class="sessmain"><span class="sessdate">${esc(m.name)}</span><span class="sesssub">${esc(sub)}</span>${roleSelect(m)}</div>` +
       `<div class="fltacts">` +   // stacked: two side-by-side buttons squeezed the name/details into wrapping
       (live ? `<button class="secondary" data-act="x" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Release</button>` : "") +
       `<button class="danger" data-act="r" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Remove</button></div></div>`;
@@ -130,13 +154,17 @@ export async function refreshMembers(){
   busy = true;
   try {
     const t = await fltReq("l");
-    addCtr = +(t.split("\n")[0].split("\t")[6] || 0);   // the leader's enrollment counter (header field 7)
+    const head = t.split("\n")[0].split("\t");
+    addCtr = +(head[6] || 0);                    // the leader's enrollment counter (header field 7)
+    planMode = +(head[4] || 0);
+    leaderRole = head[7] || "";
     members = t.split("\n").slice(1).filter(Boolean).map(l => {
       const c = l.split("\t");
-      return { slot:+c[0], sid:c[1], name:c[2], kg:+c[3], state:+c[4], rssi:+c[5], age:+c[6], role:c[7] || "", fw:c[14] || "" };
+      return { slot:+c[0], sid:c[1], name:c[2], kg:+c[3], state:+c[4], rssi:+c[5], age:+c[6], role:c[7] || "", fw:c[14] || "", ovr:c[15] };
     });
     state.fleetMembers = members.map(m => ({ slot:m.slot, name:m.name, sid:m.sid }));   // "seen by" chip names (detections.js) + live-POST `scanner` (remote.js)
     renderMembers();
+    renderPlan();
     await renderAddChoices();
   } catch (e) { if (!/busy|download/.test(e.message)) log("Fleet: " + e.message); }
   finally { busy = false; lastPoll = Date.now(); }
@@ -174,6 +202,25 @@ export async function fleetChannel(){
   const ch = +$("fltChSel").value;
   if (ch >= 1 && ch <= 13) await run("c:" + ch, "Fleet channel " + ch);
 }
+const applied = () => new Promise(r => setTimeout(r, APPLY_MS));
+export async function fleetPlanMode(){
+  const v = $("fltPlanSel").value;
+  const t = await run("p:" + v, v === String(PLAN_ALL_FULL) ? "Every unit scans everything" : "Coverage split across the fleet");
+  if (t === null) { renderPlan(); return; }       // back to what the scanner really has
+  await applied();
+  refreshMembers();                              // also puts the selector back if the command failed
+}
+export async function onMemberChange(ev){
+  const sel = ev.target.closest("select[data-sid]");
+  if (!sel) return;
+  pickAt = 0;
+  const { sid, name } = sel.dataset, label = sel.options[sel.selectedIndex].text;
+  const t = await run(`o:${sid}:${sel.value}`, `${name}: ${label}`);
+  if (t === null) { renderMembers(); return; }    // back to what the scanner really has
+  if (t.includes("(not saved)")) toast(`${name}: ${label}, but the scanner couldn't save it. It resets on restart.`);
+  await applied();
+  refreshMembers();
+}
 export async function fleetAdd(){
   const sid = $("fltAddSel").value;
   if (!sid) return;
@@ -199,10 +246,14 @@ export async function onMemberClick(ev){
   }
 }
 
-onUnitReset(() => { members = []; state.fleetMembers = []; lastFlt = ""; lastPoll = 0; renderMembers(); renderFleet(); });   // another scanner: not this fleet's members
+onUnitReset(() => { members = []; state.fleetMembers = []; lastFlt = ""; lastPoll = 0; pickAt = 0; planMode = 0; leaderRole = ""; renderMembers(); renderPlan(); renderFleet(); });   // another scanner: not this fleet's members
 
 // Called once from main.js: watch STATUS flt= and poll the member list while it matters.
 export function initFleet(){
+  const hold = ev => { if (ev.target.matches("select[data-sid]")) pickAt = Date.now(); };
+  $("fltMembers").addEventListener("focusin", hold);
+  $("fltMembers").addEventListener("pointerdown", hold);   // reopening after a cancel: the select already has focus
+  $("fltMembers").addEventListener("focusout", () => { pickAt = 0; });
   setInterval(() => {
     const f = state.status.flt || "";
     if (f !== lastFlt || !state.connected) { lastFlt = f; renderFleet(); }

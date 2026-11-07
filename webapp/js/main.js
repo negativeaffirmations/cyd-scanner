@@ -20,7 +20,7 @@ import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
 import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';
-import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, onMemberClick } from './features/fleet.js?v=20261101m';   // new module: versioned so it loads fresh with main.js
+import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261107a';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
 import { initSwitcher } from './features/switcher.js';
@@ -125,6 +125,8 @@ $("fltLeaderOffBtn").onclick = () => fleetLeader(false);
 $("fltLeaveBtn").onclick     = fleetLeave;
 $("fltClientBtn").onclick    = fleetMakeClient;
 $("fltMembers").addEventListener("click", onMemberClick);
+$("fltMembers").addEventListener("change", onMemberChange);
+$("fltPlanSel")?.addEventListener("change", fleetPlanMode);
 initFleet();
 initCacheUI();   // Data page: saved-log cache readout + Clear button
 initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + Settings card (features/switcher.js)

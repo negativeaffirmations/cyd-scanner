@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_random.h>
 #include <NimBLEDevice.h>
 #include "pins.h"
 #include "link_protocol.h"
@@ -693,8 +694,37 @@ static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
   }
 }
 
+// A new address for each radio at every boot. The C5's active scans transmit (Wi-Fi probe requests, BLE SCAN_REQ), and
+// a fixed address there would make the unit trackable by anyone listening (on-air check, docs/fleet-mode.md §17.2).
+// Boot only, not rotated: other units' self filters learn this address through Status, and a change mid-run would let
+// rows of the old address, still alive for the C5 table's 30 s TTL, past them.
+static void randomizeWifiMac() {
+  uint8_t m[6];
+  esp_fill_random(m, sizeof(m));                 // the RF is on by now, so this is a true random source
+  m[0] = (m[0] & 0xFC) | 0x02;                   // locally administered, unicast
+  esp_err_t e = esp_wifi_set_mac(WIFI_IF_STA, m);
+  if (e != ESP_OK) {                             // some IDF versions want the interface stopped first
+    esp_wifi_stop();
+    e = esp_wifi_set_mac(WIFI_IF_STA, m);
+    esp_wifi_start();
+  }
+  if (e != ESP_OK) Serial.printf("[C5] Wi-Fi MAC not randomized (%d): probes keep the fixed address\n", (int)e);
+}
+static void randomizeBleAddr() {
+  uint8_t a[6];                                  // little-endian: a[5] is the top byte
+  esp_fill_random(a, sizeof(a));
+  a[5] |= 0xC0;                                  // random static
+  if (!NimBLEDevice::setOwnAddr(a) || !NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM))
+    Serial.println("[C5] BLE address not randomized: scan requests keep the fixed address");
+}
+
 void setup() {
+  // USB-CDC console must never block the scan loop: with USB plugged in but nobody reading, HWCDC retries each
+  // write up to 20 x 100 ms (see src/xiao_s3/main.cpp). A 4 KB ring holds a normal burst while a terminal IS
+  // reading; timeout 0 drops output instead of waiting when nobody is.
+  Serial.setTxBufferSize(4096);
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);
   // Link UART up FIRST, before the radios: its TX then idles high from the moment the app starts, so a
   // C5 that browns out during Wi-Fi/BLE RF bring-up shows on the host's RX line as a reboot loop
   // (driven-high / floating), not as a silently dead wire. Commands that arrive during init just wait
@@ -711,10 +741,12 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
+  randomizeWifiMac();                        // before anything can transmit
   promisc::begin(&onPromisc, &onPromiscAp);  // promiscuous capture feeds the same table
   ieee154::begin(&on154);      // 802.15.4 presence feeds the same table
 
   NimBLEDevice::init("");
+  randomizeBleAddr();                        // before the first scan
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setScanCallbacks(&g_scanCB, /*wantDuplicates=*/true);  // refresh lastSeen
   scan->setActiveScan(true);

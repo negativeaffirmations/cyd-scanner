@@ -72,7 +72,7 @@ struct MemberRt {
   uint8_t  planSentGen;                // last plan generation sent to it
   uint32_t lastPlanMs;
   uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
-  uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (runtime only, not saved)
+  uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (saved in NVS fltlay)
   uint16_t deauth; uint8_t evil, rid;  // its latest alert counts (MStat), for the fleet-wide maxima
   uint32_t statAtMs;
   // P6 item 6 store-and-forward: the member's last LF_RECS origin files and, per file, the next origin row not stored
@@ -115,6 +115,7 @@ struct Leader {
 };
 Leader* L = nullptr;   // heap, created by the first use (normal-mode static footprint stays one pointer)
 
+void loadLayout();
 bool loadStore() {
   if (L) return true;
   L = new (std::nothrow) Leader();
@@ -131,6 +132,7 @@ bool loadStore() {
   if (!L->addCtr) L->addCtr = 1;
   if (L->st.n > FLEET_MAX_MEMBERS) L->st.n = 0;
   for (int i = 0; i < L->st.n; i++) L->st.m[i].name[20] = 0;
+  loadLayout();
   return true;
 }
 // Persist a candidate store (+ counter) BEFORE it becomes the live one, so RAM and NVS never disagree.
@@ -145,6 +147,33 @@ bool saveStore(const Store& st, uint32_t ctr) {
 int findSid(const uint8_t sid[6]) {
   for (int i = 0; i < L->st.n; i++) if (!memcmp(L->st.m[i].sid, sid, 6)) return i;
   return -1;
+}
+
+// Saved layout (docs §16.1): per-member role overrides, NVS `fltlay`, keyed by sid so they survive reboots and slot shifts.
+struct LayoutEntry { uint8_t sid[6]; uint8_t ovr; };
+struct Layout { uint8_t n; LayoutEntry e[FLEET_MAX_MEMBERS]; };
+void loadLayout() {
+  Layout y;
+  Preferences p;
+  if (!p.begin("cydscan", true)) return;
+  const bool ok = p.getBytesLength("fltlay") == sizeof(y) && p.getBytes("fltlay", &y, sizeof(y)) == sizeof(y);
+  p.end();
+  if (!ok || y.n > FLEET_MAX_MEMBERS) return;
+  for (int k = 0; k < y.n; k++) {
+    const int i = findSid(y.e[k].sid);
+    if (i >= 0 && y.e[k].ovr <= PLANROLE_BLE + 1) L->rt[i].roleOverride = y.e[k].ovr;
+  }
+}
+bool saveLayout() {
+  Layout y;
+  memset(&y, 0, sizeof(y));
+  for (int i = 0; i < L->st.n; i++)
+    if (L->rt[i].roleOverride) { memcpy(y.e[y.n].sid, L->st.m[i].sid, 6); y.e[y.n].ovr = L->rt[i].roleOverride; y.n++; }
+  Preferences p;
+  if (!p.begin("cydscan", false)) return false;
+  const bool ok = p.putBytes("fltlay", &y, sizeof(y)) == sizeof(y);
+  p.end();
+  return ok;
 }
 int findMac(const uint8_t* mac) {
   for (int i = 0; i < L->st.n; i++)
@@ -449,7 +478,7 @@ void assignRoles() {
       }                                                            // 3rd+ Wi-Fi-capable member: FULL
     }
   }
-  for (int i = 0; i < L->st.n; i++)                                // M:o overrides, for members that count
+  for (int i = 0; i < L->st.n && L->planMode != PLANMODE_OFF; i++) // M:o overrides, for members that count ("everyone full" beats them)
     if (L->rt[i].roleOverride && L->rt[i].roleOverride - 1 <= PLANROLE_BLE) {
       bool counts = false;
       for (int k = 0; k < np; k++) if (pres[k] == i) counts = true;
@@ -681,6 +710,7 @@ void cmdAdd(char* args, char* out, size_t cap) {
   L->st = next;
   memset(&next, 0, sizeof(next));
   L->addCtr++;
+  if (i < 0) saveLayout();                                       // a new member starts on auto, whatever an old blob says
   restartProbing();
   Serial.printf("[FLT] member %d added: %s (%s kg %lu)\n", slot + 1, L->st.m[slot].name, sidc, (unsigned long)L->st.m[slot].kg);
   leaderEvent("member_add", slot);
@@ -717,10 +747,10 @@ void cmdList(char* out, size_t cap) {
     const MemberRt& r = L->rt[i];
     char sh[13]; sidToHex(m.sid, sh);
     const bool live = r.state == M_JOINED;
-    n += snprintf(out + n, cap - n, "\n%d\t%s\t%s\t%lu\t%u\t%d\t%lu\t%s\t0\t-1\t-1\t0\t0\t%u\t%s", i + 1, sh, m.name,
+    n += snprintf(out + n, cap - n, "\n%d\t%s\t%s\t%lu\t%u\t%d\t%lu\t%s\t0\t-1\t-1\t0\t0\t%u\t%s\t%s", i + 1, sh, m.name,
                   (unsigned long)m.kg, (unsigned)r.state, live ? (int)r.rssi : 0,
                   live ? (unsigned long)((now - r.lastRxMs) / 1000) : 0UL, fleet::planRoleName(r.role), (unsigned)r.txFailPm,
-                  live ? r.fw : "");
+                  live ? r.fw : "", r.roleOverride ? fleet::planRoleName(r.roleOverride - 1) : "auto");
   }
 }
 
@@ -733,6 +763,7 @@ void begin() {
   if (!loadStore()) { Serial.println("[FLT] leader: out of memory"); return; }
   fleet::knownTrim(L->st.n);
   for (int i = 0; i < FLEET_MAX_MEMBERS; i++) { memset(&L->rt[i], 0, sizeof(MemberRt)); }
+  loadLayout();                                                    // the memset above cleared what loadStore() restored
   static const uint8_t kZero[8] = {0};
   while (!memcmp(L->fleetId, kZero, sizeof(L->fleetId))) esp_fill_random(L->fleetId, sizeof(L->fleetId));
   L->probing = false;
@@ -1037,7 +1068,8 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
       if (!r) { reply(out, cap, "ERR\tunknown role"); return CMD_NONE; }
     }
     L->rt[i].roleOverride = r;
-    reply(out, cap, "OK\trole %s for %s", r ? fleet::planRoleName(r - 1) : "auto", args);
+    const bool saved = saveLayout();
+    reply(out, cap, "OK\trole %s for %s%s", r ? fleet::planRoleName(r - 1) : "auto", args, saved ? "" : " (not saved)");
     return CMD_NONE;
   }
   if (op == 'p') {                                               // plan mode: 0 auto (role template) / 3 off (all full)
@@ -1091,6 +1123,7 @@ CmdAction handleCmd(char* buf, char* out, size_t cap) {
     MemberRec gone = L->st.m[i];                                 // the event names it after the slots shift
     memset(gone.fk, 0, sizeof(gone.fk));                         // ...and needs no key copy
     if (!removeAt(i)) { reply(out, cap, "ERR\tNVS write failed"); return CMD_NONE; }
+    saveLayout();                                                // a re-added member starts on auto
     leaderEventRec("member_remove", &gone, i);
     reply(out, cap, "OK\tremoved\t%s", args);
     return CMD_NONE;

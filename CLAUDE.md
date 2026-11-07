@@ -750,7 +750,7 @@ These are **future/exploratory** — not started. Any code ported from Flock-Noi
 the [docs/references.md](docs/references.md) license+attribution directive.
 
 **scan-analyzer facts that bite here:** its server has no service wrapper (it lives in its Claude session, or a manual `backend\run.ps1`), so an upload's "Failed to fetch" usually means it's down. Its
-`EXCLUDED_MACS` is an exact-address list of the units' radios, so **a new or reflashed unit with a new radio address must be reported to it.**
+`EXCLUDED_MACS` is an exact-address list of the units' radios, so **a new or reflashed unit with a new radio address must be reported to it** (C5 and host BLE addresses are random now; the AP and ESP-NOW identity stay reportable).
 
 **Cross-project coordination:** a **local, git-ignored `REMOTE.md`** in this repo root describes a
 private bridge for this project's Claude session to exchange messages with — and share sensitive
@@ -836,7 +836,14 @@ dropped) and drains the remainder BEFORE this boot's files, re-sending meta, tim
 carrying a `fleet_id` as anchors first (the fleet-line anchor also rides every ordinary rejoin). No protocol change (fleet proto
 stays v3: the leader's per-member 4-file table takes the old `file_id`).
 A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.4 only); `M:o:<sid>:<role|auto>` overrides
-a member's role at runtime (§20.1).
+a member's role (§20.1). From fw 0.31.0 overrides are saved (NVS `fltlay`, by sid), `M:l` lists them as the last member
+column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage selector + per-member role picker
+(`features/fleet.js`, pure logic in `features/fleetplan.js`). **On-air check:** `tools/fleet-sniff` (docs §17.2).
+**Random C5 addresses (2026-11-07, docs §17.3):** each C5 boot draws a new Wi-Fi MAC and BLE scan address, so never treat a
+C5 address as stable; `Status.wifiMac` is the current one. The download AP stays fixed.
+**Private host BLE address (fw 0.32.0, docs/ble-auth.md):** a host advertises from an RPA, new each boot, so `phone::ownMac()` is
+a runtime value too; the identity (public address) and bonds are unchanged. The advert's service UUID and unit name stay fixed.
+So the NVS `fltself` BLE and C5 slots no longer help across a boot: units only filter those once the new address has been shared.
 
 ## Subagents (`.claude/agents/`)
 

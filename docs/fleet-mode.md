@@ -809,9 +809,36 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - Remove → the client searches; release → the CYD reboots normal with its phone link.
   - The real `fleetcrypto.js` (run in Node) built an `M:a` the leader accepted, and the CYD then joined with its
     on-device FK (web ≡ firmware). A tampered name → `bad tag`; a replayed `M:a` → `replayed`.
-- **Not yet done:** web-app enrollment from the phone (card built, untested on a phone); the sniffer check that no
-  sid/name/real MAC goes out in the clear (P1 step 9 + P2); a replay of captured session frames (spare-S3
-  harness).
+- **Not yet done:** a replay of captured session frames (needs a transmitter). The sniffer check is done: §17.2.
+
+### 17.2 On-air check (2026-11-07, fw 0.30.1, `tools/fleet-sniff`)
+Receive-only capture on channel 1, about 9 minutes, mini #2 leading and the CYD rejoining 3 times (the CYD's C5 was the
+sniffer). 1,120 fleet frames: 1,049 protected, 71 cleartext. **PASS.**
+- **Cleartext is only Probe (63), Hello (4) and Join (4).** JoinAck, which carries the name and BLE MAC, was never clear.
+- **No sid, name or radio MAC** in any cleartext frame, in either byte order, raw or as text. Protected frames were
+  searched in their first 128 bytes only.
+- **No fleet frame used a fixed MAC.** The CYD drew a new MAC at each boot.
+- **Fresh values:** 63 of 63 Probe `nl` distinct. Hello `tag`/`nc` and Join `proof`: 3 distinct over 3 joins. The one
+  repeat of each was an 802.11 retry (same bytes, retry bit set).
+- **Negative controls** failed as they should (a fleet MAC listed as fixed; a forged clear Sync; a name in a Hello).
+- **Not fleet traffic, but a limit on what this proves:** the capture showed a unit's C5 sending active-scan probe
+  requests from its fixed MAC (24 from mini #2's C5 on this channel). Fixed since, see §17.3.
+
+### 17.3 Random C5 addresses (2026-11-07)
+Each C5 draws a new locally-administered Wi-Fi MAC and a random static BLE address at every boot (`src/c5/main.cpp`).
+Not rotated mid-run: units learn the address through Status, and a change would let rows of the old address, alive for
+the C5 table's 30 s TTL, past their self filters.
+- **Measured on air:** Wi-Fi probes came only from the random MAC (7 in 90 s, 0 from the fixed one). BLE `SCAN_REQ`,
+  read with `tools/fleet-sniff` env `scanreq`: a random address that changed across a reboot. Control with randomization
+  off: `public`, the C5's fixed address, 110 requests in 40 s.
+- **What it doesn't hide:** the probe's contents are unchanged, byte for byte. scan-analyzer found the same IE hashes
+  on all 3 C5s and on none of its 415 `local` PRB addresses, so a random address carrying them may still stand out
+  (one area's sample). A watcher could treat that as "a C5-class scanner", though not tell one unit from another by it.
+- **Hosts:** a host's download AP keeps its fixed address. Its BLE advert moved to a private address in fw 0.32.0, see
+  [ble-auth.md](ble-auth.md) "Private advert address".
+- **Self filter:** units in a fleet still filter each other, because the address is shared at runtime. A few seconds
+  after a C5 boots, or between units outside a fleet, a unit can log another's probe as a `PRB` row from a random
+  address. scan-analyzer accepts that: it classifies as `local`, so it never becomes a long-lived device.
 
 ### 17.1 Review + security pass (2026-10-31) — fixes applied, all re-bench-tested
 - **HMAC fail-open (both reports, high):** every `Hmac::finish()` is now checked (`[[nodiscard]]`). On a crypto error
@@ -928,7 +955,7 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
 - **Consequence until P5:** each unit's own table / log / phone view covers only its share. The leader's phone view
   lacks the client's Wi-Fi-only finds (they are on the client's SD). Use `M:p:3` (everyone FULL) to field-test
   without P5.
-- **Deferred:** the web layout editor + saved layout (`fltlay`, §16.1), the `M:o` per-member override, a user-set
+- **Deferred (the `M:o` override, its web picker and `fltlay` are built since: §20.1):** the web layout editor + saved layout (`fltlay`, §16.1), the `M:o` per-member override, a user-set
   grace (`fltgrace`), the 4+-member channel split, and the 5 GHz-caps preference (every C5 has 5 GHz).
   FW_VERSION stays 0.20.0 on the bench builds; bump to 0.21.0 at the release flash.
 
@@ -1008,7 +1035,7 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - A group's `rep` (display + the follow line's `src`) can be a member row.
   - `needsSend` doesn't track bssid / channel / svc16 changes (they arrive with the 10 s refresh).
   - A failed send isn't retried before the next refresh.
-  - Multi-member (N ≥ 2 clients) delivery is untested: only one client is on the bench.
+  - Multi-member delivery: tested since, the 3-unit fleet has run from 2026-11-01 (merge from two clients, rx drop 0).
 
 ### 20.1 Deferred P4 items done (2026-11-01)
 - **Band-restricted AP scan** (§19.1 REV-007): the C5 sets `esp_wifi_set_band_mode()` from the plan at each AP-scan
@@ -1019,8 +1046,11 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
   - Bench (CYD forced via `M:o`): AP scan **12.4 s dual-band → 3.0 s 2.4-only → 9.5 s 5-only**.
   - Running AP counts unchanged: 2.4 GHz 10.3 → 10.0, 5 GHz 16.8 → 18.0.
   - A WIFI24 member's cycle drops from ~24 s to ~9.5 s.
-- **`M:o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>`:** a per-member role override (runtime only, not saved; it applies
-  once the member counts). There is no web control yet; serial `fleet m o:…` or a future layout editor (§16.1).
+- **`M:o:<sid>:<full|wifi|wifi24|wifi5|ble|auto>`:** a per-member role override; it applies once the member counts.
+  From fw 0.31.0 it is saved (NVS `fltlay`, keyed by sid), `M:l` reports it as the last member column, and
+  "everyone full" (`M:p:3`) beats it without clearing it. The web Fleet card has a role picker per member, a coverage
+  selector and a warning when no unit is assigned a band. Still not built from §16.1: custom phases and channel masks,
+  presets, and the user-set grace period.
 - **3-unit bench (2026-11-01, release fw 0.22.0: mini #2 leader + CYD + mini #1):**
   - Layout `leader ble, CYD wifi24, mini #1 wifi5`; the ramp works (a new member runs `full` until it has been stable
     10 s).

@@ -159,6 +159,27 @@ Choices the code depends on:
 - **`MYNEWT_VAL_BLE_STORE_MAX_CCCDS=12`.** 3 bonds x 3 subscriptions; at the default 8 a third bond evicts the oldest.
   (`CONFIG_BT_NIMBLE_MAX_CCCDS` does nothing on the S3: the core's sdkconfig.h overrides it.)
 
+Private advert address (fw 0.32.0): the host advertises from a resolvable private address (RPA) instead of its public
+address, through NimBLE's host-based privacy (`useRpa()` in `phone.cpp`). S3 hosts need
+`MYNEWT_VAL_BLE_HOST_BASED_PRIVACY=1` in `platformio.ini`; the ESP32 CYD has it by default.
+- **A new address each boot, kept until the next.** A change mid-run would let rows of the old address, alive for the C5
+  table's 30 s TTL, past the self filters, so `service()` re-arms the stack's 70 min timer every hour before it fires. A
+  longer timeout won't do: the timer overflows 32 bits above 4294 s. Every 5 s `service()` also re-reads the address and
+  restarts a stopped advert, and after a NimBLE host reset, which leaves a static address, it goes back to an RPA.
+- **Bonds from older S3 firmware:** S3 builds ran without host privacy and wrote no peer records, which is how it
+  resolves a phone's address. Without them the LTK lookup fails and re-pairing fails as well, so `migrateBonds()` builds
+  the records from the stored bonds at boot. `bonds clear` stops the advert first: NimBLE refuses to unpair a peer with an
+  IRK while advertising, after already dropping it from the resolving list.
+- **`peerMac()` on the S3** now returns a resolved phone's identity address, as on the CYD, not its on-air address, so
+  the best-effort phone filter is weaker there.
+- **Why not a random static address like the C5:** a phone bonds to the address it knows, so every boot would need a new
+  pairing. An RPA resolves with the unit's IRK, which NimBLE keeps in NVS and sends when pairing, along with the public
+  address as the identity.
+- **What it doesn't hide:** the advert still carries the 128-bit service UUID, and the scan response the unit name, so
+  anyone reading those can still follow a unit. A joined or searching unit advertises the same way.
+- **Measured (mini #1, PC Bluetooth radio):** 3 boots gave 3 RPAs. A 60 s rotation bench build changed address on time,
+  the advert came back and the old address stopped. Not tested: recovery from a host reset (no way to trigger one).
+
 Stale pairing: when the device has lost a bond the phone still holds (`bonds clear`, `erase_flash`), Android's
 encryption attempt fails and the web app can't fix that. The owner must forget the scanner in Android Bluetooth
 settings; the dialog's 10 s hint and the sec=2 failure message say so. A missing LTK may produce no `pf=1` at all

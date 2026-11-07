@@ -696,6 +696,16 @@ select {
   font-family: ui-monospace, monospace;
 }
 
+.fltrolesel {
+  margin: 0.3em 0 0;
+  padding: 0.3em 0.4em;
+  font-size: 0.85rem;
+}
+
+.fltcovwarn {
+  color: #d29922;
+}
+
 .switchinfo {
   margin-top: 0.8em;
   line-height: 1.4;
