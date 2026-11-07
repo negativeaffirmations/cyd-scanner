@@ -215,7 +215,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   fitted the Status carries `gpsFix=0`/`gpsEpoch=0`, so behaviour is identical to phone-only.
   (`PROTOCOL_VERSION` 9→10, `sizeof(Status)`=28; both boards flash together.) **v11** (2026-10-23) adds
   `Detection.bssid[6]` (`sizeof(Detection)`=81) + the data-client flag bits — see the SD-log `bssid`/`data` notes.
-- **C5 behavioral detectors (added in protocol v6; link now v9 — see onboard GPS above).** Alongside fingerprint capture the C5 decodes
+- **C5 behavioral detectors (added in protocol v6; link now v13).** Alongside fingerprint capture the C5 decodes
   broadcast adverts/beacons and sets per-detection `DetFlags` bits (in `link_protocol.h`), all
   **receive-only**: `FLAG_BLE_IBEACON`, `FLAG_BLE_FINDMY` (Apple 0x004C mfr-data types 0x02 / 0x12),
   `FLAG_WIFI_PWNAGOTCHI` (beacon DE:AD:BE:EF IE / "pwnd"), `FLAG_WIFI_EVILTWIN` (same SSID from ≥2
@@ -606,7 +606,7 @@ back (5 GHz included). Things that matter, learned the hard way:
       `calc(100dvh − chrome)`. **`#map` sets `position:relative; z-index:0`** to make its own stacking
       context — otherwise Leaflet's internal panes/controls (z-index up to ~800) paint OVER the fixed
       bottom navbar (z-index 20).
-    - **Data** — download current session (BLE `L`), Wi-Fi download mode, **time-range export of ALL
+    - **Data** — download / upload current session, Wi-Fi download mode, the live-upload toggle, **time-range export of ALL
       logs** (since boot / 24 h / custom; BLE `T:…:*` or Wi-Fi `/dlf?f=all`), and the **Session logs**
       list: a checkbox **multi-select of scans** (`features/sessions.js` groups same-stream files whose
       dated spans are ≤ 6 min apart — older firmware split drives into parts — labelled "Oct 22, 2:05 PM
@@ -748,6 +748,9 @@ intent is to gather **other signals** — either by **adding boards** to the cur
   setup** is required to catch e.g. a car head unit's friendly name.
 These are **future/exploratory** — not started. Any code ported from Flock-Noir or similar follows
 the [docs/references.md](docs/references.md) license+attribution directive.
+
+**scan-analyzer facts that bite here:** its server has no service wrapper (it lives in its Claude session, or a manual `backend\run.ps1`), so an upload's "Failed to fetch" usually means it's down. Its
+`EXCLUDED_MACS` is an exact-address list of the units' radios, so **a new or reflashed unit with a new radio address must be reported to it.**
 
 **Cross-project coordination:** a **local, git-ignored `REMOTE.md`** in this repo root describes a
 private bridge for this project's Claude session to exchange messages with — and share sensitive
