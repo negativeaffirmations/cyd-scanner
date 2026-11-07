@@ -239,7 +239,7 @@ export function onDisconnect(ev){
   if($("scanSetDlg").open) $("scanSetDlg").close();
   state.wifiOn=false; $("wifiBtn").textContent="Download over Wi-Fi"; state.ap=null;   // wififlow.js shows the disconnect in #wifiDlg
   state.scanning=false; updateScanBtn(); resetPause();
-  $("scanPanel").style.display="none"; $("exploreView").style.display="none";
+  $("exploreView").style.display="none";
   if($("detDlg").open) $("detDlg").close();
   $("dets").innerHTML='<div class="sub" style="padding:6px">Connect to see live results…</div>';
   state.lastDetRows = []; $("catChips").innerHTML=""; $("catChips").style.display="none";
