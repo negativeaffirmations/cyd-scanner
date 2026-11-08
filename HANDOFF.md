@@ -12,8 +12,11 @@ AP up with 70 KB free / 63 KB block; PSK found every time). **STOP bar, BOOT hol
 when the dialog closed); it now keeps checking until the scanner reconnects without `apboot`. Node test reproduces the old bug.
 **State:** minis on **0.35.0**, CYD on **0.35.1** (adds console `download`: CYD restarts into the Wi-Fi download, refused in
 fleet mode); CYD back as fleet client (rejoin took ~4 min), fleet whole.
-**Bench tests left (need something not on the bench):** `bonds clear` + re-pair (owner's phone), NimBLE host-reset recovery
-(can't be forced), fleet frame replay (needs a transmitter board).
+**`bonds clear` + re-pair PASSED (2026-11-08, mini #1, owner's phone):** console clear -> stored 0 / records 0, owner forgot it
+in Android, reconnect: authenticated -> paired (enc=1 key=16 bonded=1) -> re-proved over the encrypted link; stored 1 / records 1,
+own key ok. Pairing came only after the HMAC, as 0.33.0 intends.
+**Bench tests left (need something not on the bench):** NimBLE host-reset recovery (can't be forced), fleet frame replay
+(needs a transmitter board).
 
 ## RESUME HERE — 2026-11-07 (night): fw 0.34.0 on all hosts, shared BLE keys, 15 min address rotation
 **State.** All 3 hosts fw **0.34.0**, fleet proto **v5** (all three on the merged build `d3fa085`, C5s unchanged). Fleet whole, CYD back as client (owner's request), roles wifi24 / wifi5 / ble.
