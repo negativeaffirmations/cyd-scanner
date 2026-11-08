@@ -8,6 +8,10 @@
 // (firmware that reports joined stations), when the page becomes visible again after the user left it
 // (they went to Wi-Fi settings), or on "I've joined it"; 3 -> 4 once the download page was opened.
 // Polls state every 300 ms while open, so it doesn't depend on which status.js copy a phone has cached.
+//
+// CYD download boot (fw 0.35.0): the CYD can't fit Wi-Fi beside the Bluetooth link, so it sends the creds with
+// STATUS apboot=1 and restarts with Bluetooth off. The flow keeps those creds (`boot`) and carries on with no link:
+// joining is confirmed by hand, and Stop opens the page's /stop, which restarts the scanner.
 import { state } from '../state.js';
 import { $, log } from '../util/dom.js';
 import { enc } from '../config.js';
@@ -15,6 +19,10 @@ import { enc } from '../config.js';
 const SLOW_MS = 12000, STUCK_MS = 45000;
 let step = 0;          // 0 idle, 1 starting, 2 join, 3 open page, 4 finish
 let startedAt = 0, timer = 0, leftAt = 0, qrKey = "";
+let boot = null;       // {ssid,psk,url} while a CYD download boot is running (no Bluetooth link)
+
+const curAp = () => state.ap || boot;
+const isOn = () => state.wifiOn || !!boot;
 
 // Escape the characters that are special inside a WIFI: QR payload (\ ; , : ").
 const wq = s => String(s).replace(/([\\;,:"])/g, "\\$1");
@@ -37,8 +45,11 @@ async function sendWifi(on){
   state.wifiOn = on;
 }
 
-// STATUS apsta (stations joined to the AP); null while the firmware doesn't send it.
-function apSta(){ const v = state.status && state.status.apsta; return v === undefined || v === "" ? null : +v; }
+// STATUS apsta (stations joined to the AP); null while the firmware doesn't send it, or with no link (download boot).
+function apSta(){
+  if(boot) return null;
+  const v = state.status && state.status.apsta; return v === undefined || v === "" ? null : +v;
+}
 
 function showErr(msg){ $("wfErr").textContent = msg; $("wfErr").hidden = !msg; }
 
@@ -50,8 +61,11 @@ function render(){
     li.classList.toggle("todo", i > step);
     li.querySelector(".wfnum").textContent = i < step ? "✓" : String(i);
   }
-  const ap = state.ap, sta = apSta();
-  if(step === 1){
+  const ap = curAp(), sta = apSta();
+  if(step === 1 && boot){
+    $("wfS1Msg").textContent = "The scanner is restarting into Wi-Fi download…";
+    $("wfS1Sub").textContent = "Bluetooth disconnects until you finish. That's expected.";
+  } else if(step === 1){
     const secs = Math.round((Date.now() - startedAt) / 1000);
     $("wfS1Msg").textContent = "Starting the scanner's Wi-Fi… " + secs + " s";
     $("wfS1Sub").textContent = secs*1000 >= STUCK_MS
@@ -69,11 +83,27 @@ function render(){
   $("wfJoined").hidden = !(sta > 0);
   $("wfJoinedBtn").hidden = sta > 0;
   $("wfNotJoined").hidden = sta !== 0;   // only when the firmware positively reports nobody joined
-  $("wfCancelBtn").hidden = !state.wifiOn || step >= 4;   // step 4 has its own Stop
-  $("wifiBtn").textContent = state.wifiOn ? "Wi-Fi download is on — continue" : "Download over Wi-Fi";
+  $("wfCancelBtn").hidden = !isOn() || step >= 4;   // step 4 has its own Stop
+  $("wifiBtn").textContent = isOn() ? "Wi-Fi download is on — continue" : "Download over Wi-Fi";
+  const s4 = $("wfS4Sub");
+  if(s4) s4.textContent = boot
+    ? "Got what you need? Restart the scanner: it goes back to scanning, and your phone returns to its usual network. Then reconnect over Bluetooth."
+    : "Got what you need? Stop the scanner's Wi-Fi so it goes back to scanning. Your phone then returns to its usual network.";
+  $("wfStopBtn").textContent = boot ? "Restart the scanner" : "Stop Wi-Fi download";
 }
 
 function tick(){
+  // A CYD announces its download boot just before the Bluetooth link drops: keep the creds.
+  if(!boot && state.ap && state.status && state.status.apboot === "1" && step >= 1){
+    boot = { ...state.ap };
+    log("Wi-Fi download: the scanner restarts with Bluetooth off (" + boot.ssid + ").");
+  }
+  if(boot){
+    if(step === 1) step = 2;   // 2 -> 3 by "I've joined it" or coming back from Wi-Fi settings
+    render();
+    if(!$("wifiDlg").open && !boot){ clearInterval(timer); timer = 0; }
+    return;
+  }
   if(!state.connected){
     if(step){ step = 0; showErr("Bluetooth disconnected. Reconnect to the scanner, then start again."); render(); }
     clearInterval(timer); timer = 0; return;
@@ -88,6 +118,7 @@ function tick(){
 export async function openWifiFlow(){
   showErr("");
   $("wifiDlg").showModal();
+  if(boot){ if(!step) step = 2; if(!timer) timer = setInterval(tick, 300); render(); return; }
   if(!state.wifiOn){
     step = 1; startedAt = Date.now(); render();   // instant feedback: the AP takes seconds to come up
     try { await sendWifi(true); log("Wi-Fi download: starting the scanner's Wi-Fi…"); }
@@ -98,6 +129,13 @@ export async function openWifiFlow(){
 }
 
 export async function stopWifiFlow(){
+  if(boot){   // no Bluetooth link: the scanner's own page restarts it
+    window.open(boot.url + "/stop", "_blank", "noopener");
+    log("Wi-Fi download: restarting the scanner. Reconnect over Bluetooth when it's back.");
+    boot = null; step = 0; state.ap = null; state.wifiOn = false; render();
+    $("wifiDlg").close();
+    return;
+  }
   try { await sendWifi(false); log("Wi-Fi download off."); }
   catch(e){ showErr("Couldn't reach the scanner: " + e.message); return; }
   step = 0; state.ap = null; render();
@@ -123,12 +161,12 @@ export function openWifiSettings(){
 
 export function markJoined(){ if(step === 2){ step = 3; render(); } }
 export function pageOpened(){ if(step === 3) setTimeout(()=>{ step = 4; render(); }, 800); }
-export function reopenPage(){ if(state.ap) window.open(state.ap.url, "_blank", "noopener"); }
+export function reopenPage(){ const ap = curAp(); if(ap) window.open(ap.url, "_blank", "noopener"); }
 
 // Leaving the page (Wi-Fi settings, the download tab) and coming back is the cue for the next step.
 document.addEventListener("visibilitychange", ()=>{
   if(document.visibilityState !== "visible"){ if(step === 2 || step === 3) leftAt = step; return; }
-  if(leftAt === 2 && step === 2 && state.ap) step = 3;
+  if(leftAt === 2 && step === 2 && curAp()) step = 3;
   else if(leftAt === 3 && step === 3) step = 4;
   leftAt = 0;
   if($("wifiDlg").open) render();

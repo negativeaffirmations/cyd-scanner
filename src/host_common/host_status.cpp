@@ -57,9 +57,10 @@ void pushStatus() {
     else
       n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";pos=;pfa=-1");
   }
-  if (webshare::active() && n2 > 0 && n2 < (int)sizeof(s2))  // download AP up: the phone draws the join QR from these
-    n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s;apsta=%d",   // apsta: phones joined (web stepper)
-                   webshare::ssid(), webshare::apPass(), webshare::url(), webshare::stations());
+  if ((webshare::active() || webshare::announcing()) && n2 > 0 && n2 < (int)sizeof(s2))  // the phone draws the join QR from these
+    n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";apssid=%s;appsk=%s;apurl=%s;apsta=%d%s",   // apsta: phones joined (web stepper)
+                   webshare::ssid(), webshare::apPass(), webshare::url(), webshare::stations(),
+                   webshare::announcing() ? ";apboot=1" : "");   // the CYD restarts into it: the Bluetooth link is about to drop
   // Fleet LAST: if part 2 ever overflows the ~252 B notify, flt= is what gets cut, never the AP credentials.
   if (n2 > 0 && n2 < (int)sizeof(s2)) {   // role, joined/enrolled, channel, can-lead (web Fleet card)
     char ff[24]; fleet::statusField(ff, sizeof(ff));

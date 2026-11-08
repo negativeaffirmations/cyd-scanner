@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <ArduinoJson.h>
 #include <esp_bt.h>
+#include <esp_attr.h>
+#include <esp_heap_caps.h>
 #include <TFT_eSPI.h>
 #include <qrcode.h>
 #include "pins.h"
@@ -803,6 +805,8 @@ static int drawCenteredQr(const char* text, int qy, uint8_t version = 4, int sca
   return qy + side + 6;
 }
 
+static bool g_dlBoot = false;   // this boot is the Wi-Fi download (see enterDownloadBoot)
+
 static void drawDownloadScreen() {
   tft.fillScreen(TFT_BLACK);
   int W = tft.width();
@@ -810,18 +814,20 @@ static void drawDownloadScreen() {
   bool joined = webshare::clientConnected();
 
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString(joined ? "OPEN DOWNLOAD" : "JOIN WI-FI", W / 2, 14, 2);
+  tft.drawString(joined ? "OPEN DOWNLOAD" : "JOIN WI-FI", W / 2, 12, 2);
+  const int qy = g_dlBoot ? 56 : 40;   // below the STOP bar (y24..42) in the download boot
+  if (g_dlBoot) drawTopBar("STOP - RESTART SCANNER", TFT_MAROON, TFT_RED);
 
   if (joined) {
     // Phone is on the AP — QR now opens the download page directly.
-    int ty = drawCenteredQr(webshare::url(), 40) + 12;
+    int ty = drawCenteredQr(webshare::url(), qy) + 12;
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.drawString("Scan to open & download", W / 2, ty, 2);
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
     tft.drawString(webshare::url(), W / 2, ty + 18, 2);
   } else {
     // Not joined yet — QR joins the Wi-Fi network.
-    int ty = drawCenteredQr(webshare::wifiQr().c_str(), 40) + 12;
+    int ty = drawCenteredQr(webshare::wifiQr().c_str(), qy) + 12;
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.drawString("Scan to join Wi-Fi", W / 2, ty, 2);
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
@@ -2934,9 +2940,80 @@ static void activateFleet() {
   }
 }
 
+// Download boot (fw 0.35.0). With the phone link up the CYD has ~60 KB free and a 49 KB largest block; the SoftAP
+// needs ~51 KB, so it aborted on an allocation. Instead the CYD tells the phone the Wi-Fi creds, saves the clock and the
+// current log path in RTC memory (survives a software restart), sets NVS dlboot and restarts with Bluetooth released,
+// as a fleet client does. That boot only serves the download; STOP / BOOT hold / the page's Done / 10 min idle restart it.
+struct DlCarry { uint32_t magic, epoch; char path[48]; };
+static RTC_NOINIT_ATTR DlCarry s_dlCarry;
+constexpr uint32_t DL_MAGIC = 0xD10AB007;
+constexpr uint32_t DL_IDLE_MS = 10UL * 60 * 1000;
+
+static void enterDownloadBoot() {
+  webshare::prepare();
+  webshare::setAnnounce(true);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString("WI-FI DOWNLOAD", tft.width() / 2, 120, 2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("Restarting with Bluetooth off...", tft.width() / 2, 150, 2);
+  pushStatus();                                    // creds + apboot=1, so the phone can join with no link
+  for (uint32_t t = millis(); millis() - t < 1500;) { phone::service(); delay(10); }
+  pushStatus();                                    // again, in case the first one raced the screen redraw
+  s_dlCarry.magic = DL_MAGIC;
+  s_dlCarry.epoch = timeHasSync() ? epochLocal() : 0;
+  strncpy(s_dlCarry.path, webshare::logPath(), sizeof(s_dlCarry.path) - 1);
+  s_dlCarry.path[sizeof(s_dlCarry.path) - 1] = 0;
+  Preferences p;
+  if (p.begin("cydscan", false)) { p.putUChar("dlboot", 1); p.end(); }
+  Serial.println("[CYD] restarting into the Wi-Fi download");
+  delay(200);
+  ESP.restart();
+}
+
+// One-shot: cleared before anything else runs, so a crash in the download boot comes back normal.
+static bool takeDownloadBoot() {
+  Preferences p;
+  if (!p.begin("cydscan", false)) return false;
+  bool on = p.getUChar("dlboot", 0) != 0;
+  if (on) p.remove("dlboot");
+  p.end();
+  return on;
+}
+
+static void leaveDownloadBoot(const char* why) {
+  Serial.printf("[CYD] Wi-Fi download done (%s), restarting\n", why);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("Restarting...", tft.width() / 2, 150, 2);
+  uint32_t t = millis();
+  while (millis() - t < 800) { webshare::handle(); delay(5); }   // let the /stop page reach the phone
+  webshare::stop();
+  delay(100);
+  ESP.restart();
+}
+
+static void runDownloadBoot() {
+  static int lastJoined = -1;
+  static uint32_t idleFrom = millis();
+  webshare::handle();
+  int joined = webshare::clientConnected() ? 1 : 0;
+  if (joined != lastJoined) { lastJoined = joined; drawDownloadScreen(); }
+  const uint32_t act = webshare::lastActivityMs();
+  if (joined || (act && millis() - act < DL_IDLE_MS)) idleFrom = millis();
+  if (webshare::stopRequested())               { leaveDownloadBoot("page"); return; }
+  if (topBarTapped())                          { leaveDownloadBoot("screen"); return; }
+  if (buttonEvent() == BTN_LONG)               { leaveDownloadBoot("BOOT"); return; }
+  if (millis() - idleFrom > DL_IDLE_MS)        { leaveDownloadBoot("idle"); return; }
+  delay(2);
+}
+
 // Phone-initiated Wi-Fi bulk-download mode: SoftAP + web server + on-screen QR.
 static void runDownload() {
   if (fleet::isClient()) return;   // the SoftAP download is unavailable on a fleet-client CYD (Wi-Fi is the fleet's, no phone)
+  if (!g_dlBoot) { enterDownloadBoot(); return; }   // never returns
   static int lastJoined = -1;
   if (!webshare::active()) { webshare::start(); lastJoined = -1; }
   int joined = webshare::clientConnected() ? 1 : 0;
@@ -3171,9 +3248,10 @@ void setup() {
   fleet::loadRole();   // fltrole/fltch + boot-loop guard
   fleet::setEventSink([](const char* op, const fleet::EventInfo& x) { logFleetEvent(op, nullptr, &x); });   // join / lost / release ... -> the SD log
   const bool fleetClient = fleet::isClient();
-  if (fleetClient) {   // MUST precede anything that touches BT: frees ~43 KB so Wi-Fi + ESP-NOW fit (docs §1.2)
+  g_dlBoot = takeDownloadBoot() && !fleetClient;
+  if (fleetClient || g_dlBoot) {   // MUST precede anything that touches BT: frees ~43 KB so Wi-Fi + ESP-NOW fit (docs §1.2)
     esp_err_t e = esp_bt_mem_release(ESP_BT_MODE_BTDM);
-    Serial.printf("[CYD] fleet client: BT memory release -> %d (phone link OFF)\n", (int)e);
+    Serial.printf("[CYD] %s: BT memory release -> %d (phone link OFF)\n", g_dlBoot ? "Wi-Fi download" : "fleet client", (int)e);
   }
   hostboard::begin(); // initCommon() + battery monitor, seeded so the status bar shows a level immediately
   loadBrightness();
@@ -3190,6 +3268,23 @@ void setup() {
   whitelist::begin();  // load /whitelist.csv (seeds a commented header if absent)
   g_touch.begin(TOUCH_CLK_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_CS_PIN, TOUCH_IRQ_PIN);
   g_touchOk = g_touch.loadCal();
+  if (g_dlBoot) {
+    phone::loadTz();
+    const bool carried = s_dlCarry.magic == DL_MAGIC;
+    if (carried) {
+      phone::restoreTime(s_dlCarry.epoch);   // the "past 24 h" links need the clock; 0 = it had none
+      if (s_dlCarry.path[0]) webshare::setLogPath(s_dlCarry.path);
+    }
+    s_dlCarry.magic = 0;
+    g_scanActive = false;            // only the download runs this boot
+    webshare::setRebootMode(true);
+    webshare::start();
+    Serial.printf("[CYD] Wi-Fi download boot, free heap %u, largest block %u\n", (unsigned)ESP.getFreeHeap(),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    while (millis() - splashStart < 1000) delay(10);
+    drawDownloadScreen();
+    return;
+  }
   if (fleetClient) {
     phone::loadTz();                // local time still works with no phone (NimBLE never starts)
     bool up = fleet::beginClient(); // random-MAC STA + ESP-NOW on the fleet channel
@@ -3209,6 +3304,7 @@ void setup() {
 }
 
 void loop() {
+  if (g_dlBoot) { runDownloadBoot(); return; }   // nothing else runs in the download boot
   fleet::service();  // drain fleet RX (<= 8 frames/pass); no-op when fleet is off
   tickScanLed();  // alternating LED patterns (Axon red/blue, alert blink)
   // Phone commands are honored from any screen. The board-agnostic dispatch (BLE transfers, whitelist,

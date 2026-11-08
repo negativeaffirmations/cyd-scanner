@@ -76,6 +76,7 @@ bool     peerMac(uint8_t out[6]);
 // Time sync
 bool     hasTime();
 uint32_t epochNow();  // current LOCAL epoch seconds, or 0 if never synced
+void     restoreTime(uint32_t localEpoch);   // CYD download boot: the clock carried across the restart (no phone)
 void     setTzOffsetMin(int offMin);   // fleet client: the leader's tz (Sync); NVS written only on change
 bool     tzKnown();                    // the tz offset is real (phone-synced, saved, or from a leader that knew it)
 int      tzOffsetMin();  // last phone tz offset (UTC-local minutes, JS getTimezoneOffset); persisted
