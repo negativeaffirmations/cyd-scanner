@@ -143,7 +143,7 @@ used, where it landed (file/function), the license, and the attribution added.*
   prepended) so the web app can draw the Wi-Fi-join QR for the headless host's download SoftAP without
   any network/CDN dependency near the device.
 - **Where it landed:** `webapp/js/vendor/qrcode.js` (plain `<script>`, defines the global `qrcode`),
-  used by `webapp/js/features/wifiap.js`.
+  used by `webapp/js/features/wififlow.js` (the Wi-Fi download guide; `wifiap.js`, its first user, was removed 2026-11-08).
 - **Source:** *qrcode-generator* v1.4.4 by **Kazuhiko Arase**
   (https://github.com/kazuhikoarase/qrcode-generator, https://www.d-project.com/).
 - **License:** MIT (header retained in the file) — GPL-3.0-compatible. "QR Code" is a registered
