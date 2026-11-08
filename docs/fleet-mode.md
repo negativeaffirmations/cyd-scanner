@@ -1240,6 +1240,10 @@ remember the old ones. Instead each unit shares its IRK, which resolves any addr
 - `isFleetSelf()` resolves a BLE row with a private address (top bits `01`) against every slot but its own (`isSelfDet()`
   tries its own key first). About 8 AES runs per stranger's private-address row, roughly 1 % of a 2 s cycle on the CYD.
 - The BLE radio column no longer goes to NVS (it changes every 15 min; the keys cover it), so rotation adds no flash writes.
+- Console: `fleet` prints `self filter: … N BLE keys (M rows by key), … rows dropped`. `rows by key` counts rows only a shared key
+  caught (an old address, or one not yet in the slots, e.g. after a reboot); it only moves on a unit that scans BLE.
+- Tested 2026-11-07 on the 3-unit fleet: a member's change matched 14 rows by key at the leader, and a leader reboot
+  matched 4 before the members rejoined.
 
 Limits: the keys only identify, they don't authenticate; a copied key lets a device advertise an address the fleet
 filters, the same exposure as a copied MAC. A member removed while offline keeps the fleet's keys in NVS until it is
