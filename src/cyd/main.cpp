@@ -2944,13 +2944,38 @@ static void activateFleet() {
 // needs ~51 KB, so it aborted on an allocation. Instead the CYD tells the phone the Wi-Fi creds, saves the clock and the
 // current log path in RTC memory (survives a software restart), sets NVS dlboot and restarts with Bluetooth released,
 // as a fleet client does. That boot only serves the download; STOP / BOOT hold / the page's Done / 10 min idle restart it.
-struct DlCarry { uint32_t magic, epoch; char path[48]; };
+struct DlCarry { uint32_t magic, epoch; char path[48]; char tok[9]; };
 static RTC_NOINIT_ATTR DlCarry s_dlCarry;
 constexpr uint32_t DL_MAGIC = 0xD10AB007;
 constexpr uint32_t DL_IDLE_MS = 10UL * 60 * 1000;
 
+static void dlBootMessage(const char* l1, const char* l2) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString(l1, tft.width() / 2, 120, 2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(l2, tft.width() / 2, 150, 2);
+}
+
 static void enterDownloadBoot() {
-  webshare::prepare();
+  // Refuse rather than promise the phone an AP it won't get: a PSK the next boot can't read back would differ, and
+  // without dlboot the restart is a normal boot.
+  Preferences p;
+  bool ok = webshare::prepare() && p.begin("cydscan", false);
+  if (ok) { ok = p.putUChar("dlboot", 1) == 1; p.end(); }
+  if (!ok) {
+    Serial.println("[CYD] Wi-Fi download: NVS write failed, not restarting");
+    dlBootMessage("WI-FI DOWNLOAD FAILED", "Couldn't save settings");
+    phone::cancelDownload();
+    pushStatus();
+    delay(2000);
+    g_screen = SCR_MENU; g_menuSel = 0; drawMenu();
+    return;
+  }
+  char tok[9];
+  snprintf(tok, sizeof(tok), "%08lx", (unsigned long)esp_random());
+  webshare::setStopToken(tok);
   webshare::setAnnounce(true);
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
@@ -2965,8 +2990,7 @@ static void enterDownloadBoot() {
   s_dlCarry.epoch = timeHasSync() ? epochLocal() : 0;
   strncpy(s_dlCarry.path, webshare::logPath(), sizeof(s_dlCarry.path) - 1);
   s_dlCarry.path[sizeof(s_dlCarry.path) - 1] = 0;
-  Preferences p;
-  if (p.begin("cydscan", false)) { p.putUChar("dlboot", 1); p.end(); }
+  memcpy(s_dlCarry.tok, tok, sizeof(tok));
   Serial.println("[CYD] restarting into the Wi-Fi download");
   delay(200);
   ESP.restart();
@@ -2991,37 +3015,33 @@ static void leaveDownloadBoot(const char* why) {
   uint32_t t = millis();
   while (millis() - t < 800) { webshare::handle(); delay(5); }   // let the /stop page reach the phone
   webshare::stop();
+  // GPIO0 (BOOT) still held at a restart starts the ROM downloader, which looks dead until a power cycle.
+  for (uint32_t w = millis(); digitalRead(0) == LOW && millis() - w < 10000;) delay(10);
   delay(100);
   ESP.restart();
 }
 
+// Idle = 10 min with no request and no station joining or leaving. A phone left joined but idle doesn't hold the
+// scanner off scanning; a long download stamps its end, so the countdown starts after it.
 static void runDownloadBoot() {
   static int lastJoined = -1;
-  static uint32_t idleFrom = millis();
   webshare::handle();
   int joined = webshare::clientConnected() ? 1 : 0;
   if (joined != lastJoined) { lastJoined = joined; drawDownloadScreen(); }
   const uint32_t act = webshare::lastActivityMs();
-  if (joined || (act && millis() - act < DL_IDLE_MS)) idleFrom = millis();
+  const uint32_t idle = millis() - (act ? act : 0);
+  const bool locked = g_touchLocked;            // the bag-safe lock holds here too
   if (webshare::stopRequested())               { leaveDownloadBoot("page"); return; }
-  if (topBarTapped())                          { leaveDownloadBoot("screen"); return; }
-  if (buttonEvent() == BTN_LONG)               { leaveDownloadBoot("BOOT"); return; }
-  if (millis() - idleFrom > DL_IDLE_MS)        { leaveDownloadBoot("idle"); return; }
+  if (!locked && topBarTapped())               { leaveDownloadBoot("screen"); return; }
+  if (buttonEvent() == BTN_LONG && !locked)    { leaveDownloadBoot("BOOT"); return; }
+  if (idle > DL_IDLE_MS)                       { leaveDownloadBoot("idle"); return; }
   delay(2);
 }
 
 // Phone-initiated Wi-Fi bulk-download mode: SoftAP + web server + on-screen QR.
 static void runDownload() {
   if (fleet::isClient()) return;   // the SoftAP download is unavailable on a fleet-client CYD (Wi-Fi is the fleet's, no phone)
-  if (!g_dlBoot) { enterDownloadBoot(); return; }   // never returns
-  static int lastJoined = -1;
-  if (!webshare::active()) { webshare::start(); lastJoined = -1; }
-  int joined = webshare::clientConnected() ? 1 : 0;
-  if (joined != lastJoined) { lastJoined = joined; drawDownloadScreen(); }  // swap QR
-  webshare::handle();
-  static uint32_t lastS = 0;
-  if (millis() - lastS > 1000) { lastS = millis(); pushStatus(); }
-  delay(2);
+  enterDownloadBoot();   // restarts; returns only if it couldn't (then the phone's request is dropped)
 }
 
 // Act on the highlighted menu item (touch tap or long-press select). g_menuSel >= MENU_N selects a
@@ -3272,8 +3292,14 @@ void setup() {
     phone::loadTz();
     const bool carried = s_dlCarry.magic == DL_MAGIC;
     if (carried) {
-      phone::restoreTime(s_dlCarry.epoch);   // the "past 24 h" links need the clock; 0 = it had none
+      // The "past 24 h" links need the clock (0 = it had none). +1 s for the restart itself, then this boot's uptime.
+      if (s_dlCarry.epoch) phone::restoreTime(s_dlCarry.epoch + 1 + millis() / 1000);
       if (s_dlCarry.path[0]) webshare::setLogPath(s_dlCarry.path);
+      s_dlCarry.tok[sizeof(s_dlCarry.tok) - 1] = 0;
+      webshare::setStopToken(s_dlCarry.tok);
+    }
+    if (!webshare::stopToken()[0]) {             // nothing carried: the page's Done button still needs one
+      char tok[9]; snprintf(tok, sizeof(tok), "%08lx", (unsigned long)esp_random()); webshare::setStopToken(tok);
     }
     s_dlCarry.magic = 0;
     g_scanActive = false;            // only the download runs this boot

@@ -92,6 +92,7 @@ uint32_t gpsAgeMs();  // ms since the last phone fix (UINT32_MAX = none; never w
 
 // Wi-Fi log-download mode requested by the app.
 bool downloadRequested();
+void cancelDownload();      // the board couldn't start it: drop the request (the phone's STATUS shows dl=0)
 
 // True once if the app asked to reload the signature DB (consumed on read).
 bool reloadRequested();

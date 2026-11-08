@@ -23,7 +23,8 @@ wifi_event_id_t g_evId = 0;   // AP station join/leave/IP logger, registered whi
 bool       g_announce = false;   // CYD: creds in STATUS before the download boot
 bool       g_reboot   = false;   // CYD download boot: /stop + the Done button
 volatile bool g_stopReq = false;
-uint32_t   g_lastReqMs = 0;
+volatile uint32_t g_lastReqMs = 0;   // also written from the Wi-Fi event task (join / leave)
+char       g_stopTok[9] = "";
 
 // Console trace of the phone joining the AP, timestamped so a slow page load can be split into
 // "the phone hadn't joined / got no IP yet" vs "the request never arrived" vs "the server was slow".
@@ -31,8 +32,10 @@ uint32_t   g_lastReqMs = 0;
 void onApEvent(arduino_event_id_t ev, arduino_event_info_t info) {
   switch (ev) {
     case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      g_lastReqMs = millis();
       Serial.printf("[webshare] %lu ms: station joined (aid %u)\n", millis(), (unsigned)info.wifi_ap_staconnected.aid); break;
     case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      g_lastReqMs = millis();
       Serial.printf("[webshare] %lu ms: station left (aid %u, reason %u)\n", millis(),
                     (unsigned)info.wifi_ap_stadisconnected.aid, (unsigned)info.wifi_ap_stadisconnected.reason); break;
     case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
@@ -95,8 +98,8 @@ void handleRoot() {
              "background:#a0a;color:#fff;text-align:center;text-decoration:none;font-size:1.1em}"
              "</style></head><body><h2>COINTEL-FLO &mdash; logs</h2>";
   if (g_reboot)   // the phone has no Bluetooth link to stop it from: a big button here, and STOP on the screen
-    h += "<a class=b style='background:#444' href='/stop'>Done: restart the scanner<br><small style='color:#ccc'>"
-         "it goes back to scanning; reconnect it over Bluetooth</small></a>";
+    h += String("<a class=b style='background:#444' href='/stop?t=") + g_stopTok + "'>Done: restart the scanner<br>"
+         "<small style='color:#ccc'>it goes back to scanning; reconnect it over Bluetooth</small></a>";
   if (curFound)
     h += String("<a class=b href='/dl?f=") + logBasename() + "'>Download current log<br><small style='color:#fdf'>" +
          logBasename() + " &middot; " + String(curSize / 1024.0, 1) + " KB</small></a>";
@@ -129,6 +132,8 @@ void handleRoot() {
 
 // Serve any /logs/ file by name (?f=<basename>), validated (no path traversal).
 void handleDl() {
+  g_lastReqMs = millis();
+  struct Stamp { ~Stamp() { g_lastReqMs = millis(); } } stamp;   // also when the (long) send ends
   String f = g_server.arg("f");
   if (!f.length() || f.indexOf('/') >= 0 || f.indexOf("..") >= 0) {
     g_server.send(400, "text/plain", "bad name"); return;
@@ -197,6 +202,8 @@ void handleDlfAll(int mode, uint32_t arg) {
 }
 
 void handleDlf() {
+  g_lastReqMs = millis();
+  struct Stamp { ~Stamp() { g_lastReqMs = millis(); } } stamp;
   String f = g_server.arg("f");
   String path;
   if (f == "all") { handleDlfAll(g_server.arg("mode").toInt(), (uint32_t)g_server.arg("arg").toInt()); return; }
@@ -245,6 +252,8 @@ void handleDlf() {
 
 // /scanlog.jsonl streams the current session directly (/scanlog.csv kept as an alias).
 void handleLog() {
+  g_lastReqMs = millis();
+  struct Stamp { ~Stamp() { g_lastReqMs = millis(); } } stamp;
   Serial.printf("[webshare] GET /scanlog -> %s exists=%d\n", g_logPath, SD.exists(g_logPath));
   if (!SD.exists(g_logPath)) { g_server.send(404, "text/plain", "no log yet"); return; }
   File f = SD.open(g_logPath, "r");
@@ -260,26 +269,28 @@ void handleLog() {
 // AP's BSSID, so anyone in range could recompute it and pull /logs/. Now a random PSK is generated
 // once (esp_random) and persisted in NVS so it is stable across boots (and for the QR). The SSID
 // stays MAC-derived — it isn't a secret.
-void loadOrCreatePsk() {
+bool loadOrCreatePsk() {
   static const char kCs[] = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";  // no look-alikes
   const size_t kLen = 16;  // WPA2 PSK must be 8..63 chars
   Preferences p;
   bool open = p.begin("cydscan", false);
   // getString counts the NUL, so a length check against kLen never matched and every start made a new PSK.
-  if (open && p.getString("appsk", g_pw, sizeof(g_pw)) > 0 && strlen(g_pw) == kLen) { p.end(); return; }  // stored PSK ok
+  if (open && p.getString("appsk", g_pw, sizeof(g_pw)) > 0 && strlen(g_pw) == kLen) { p.end(); return true; }  // stored PSK ok
   for (size_t i = 0; i < kLen; i++) g_pw[i] = kCs[esp_random() % (sizeof(kCs) - 1)];
   g_pw[kLen] = 0;
-  if (open) { p.putString("appsk", g_pw); p.end(); }  // if NVS is unavailable, use this boot's PSK only
+  bool saved = false;
+  if (open) { saved = p.putString("appsk", g_pw) == kLen; p.end(); }  // if NVS is unavailable, use this boot's PSK only
+  return saved;
 }
 
 }  // namespace
 
 namespace webshare {
 
-void prepare() {
+bool prepare() {
   uint64_t mac = ESP.getEfuseMac();
   snprintf(g_ssid, sizeof(g_ssid), "CYD-Scan-%04X", (uint16_t)(mac & 0xFFFF));
-  loadOrCreatePsk();  // g_pw = stored random PSK (SEC-M1)
+  return loadOrCreatePsk();  // g_pw = stored random PSK (SEC-M1)
 }
 
 void start() {
@@ -299,8 +310,15 @@ void start() {
   g_server.on("/scanlog.jsonl", handleLog);
   g_server.on("/scanlog.csv", handleLog);
   if (g_reboot) g_server.on("/stop", []() {
-    g_server.send(200, "text/html", "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-                  "<body style='font-family:sans-serif;margin:1.2em;background:#111;color:#eee'><h2>Restarting the scanner</h2>"
+    g_lastReqMs = millis();
+    static const char kHead[] = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+                                "<body style='font-family:sans-serif;margin:1.2em;background:#111;color:#eee'>";
+    if (!g_stopTok[0] || g_server.arg("t") != g_stopTok) {   // an old tab from an earlier download
+      g_server.send(200, "text/html", String(kHead) + "<h2>This link is from an earlier download</h2>"
+                    "<p><a style='color:#6cf' href='/'>Open the download page</a> and use its Done button.</p></body>");
+      return;
+    }
+    g_server.send(200, "text/html", String(kHead) + "<h2>Restarting the scanner</h2>"
                   "<p>It goes back to scanning in about 10 seconds. Your phone returns to its usual Wi-Fi.</p>"
                   "<p>Then reconnect to it over Bluetooth in the web app.</p></body>");
     g_stopReq = true;
@@ -337,11 +355,16 @@ const char* logPath()  { return g_logPath; }
 void        setAnnounce(bool on) { g_announce = on; }
 bool        announcing() { return g_announce; }
 void        setRebootMode(bool on) { g_reboot = on; }
+void        setStopToken(const char* tok) { strncpy(g_stopTok, tok ? tok : "", sizeof(g_stopTok) - 1); g_stopTok[sizeof(g_stopTok) - 1] = 0; }
+const char* stopToken() { return g_stopTok; }
 bool        stopRequested() { bool r = g_stopReq; g_stopReq = false; return r; }
 uint32_t    lastActivityMs() { return g_lastReqMs; }
 bool        clientConnected() { return g_active && WiFi.softAPgetStationNum() > 0; }
 int         stations() { return g_active ? WiFi.softAPgetStationNum() : 0; }
-void        handle()   { if (g_active) g_server.handleClient(); }
+void        handle()   {
+  if (!g_active) return;
+  g_server.handleClient();
+}
 const char* ssid()     { return g_ssid; }
 const char* password() { return g_pw; }
 const char* apPass()   { return g_pw; }
