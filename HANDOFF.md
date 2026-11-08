@@ -1,6 +1,14 @@
 # Handoff — 2026-11-07 (trunk: `main`; `hardening` merged and pushed)
 
-## RESUME HERE — 2026-11-07 (latest): fw 0.32.0 on all hosts, `hardening` merged, web app deployed
+## RESUME HERE — 2026-11-07 (latest, evening): fw 0.33.0 on all hosts, generic advert name + anonymous AUTH read
+**State.** All 3 hosts fw **0.33.0** (`868ad33`, merged as `9b8a0d5`); C5s unchanged. Web app `20261107b` / footer `anon-auth a` live (the first Pages run stuck queued; a fresh `POST pages/builds` deployed). Fleet whole: mini #2 leader, CYD slot 1, mini #1 slot 2.
+**What changed (owner's decision via scan-analyzer):** every unit advertises `CFLO`; AUTH read v2 carries `n` + key tag `kt`, never sid/name/kg (also reset on connect/disconnect, since a Read Blob bypasses onRead); pairing distributes IRK/identity only once bonding is on (after the HMAC). Details: docs/ble-auth.md.
+**Tested:** owner's phone on mini #2 logged in with no key prompt (only the v2 app can). A bonded phone still shows the saved unit name in the chooser; a fresh central sees `CFLO`. Both minis `stored 1, records 1`. On air only `CFLO` adverts, RPAs.
+**Not tested:** a phone on the CYD in normal mode (it's a fleet client; needs Leave fleet first); Windows bleak couldn't connect to read AUTH ("Unreachable").
+**Open owner decisions (security review):** SEC-002 rotate the address within a boot (needs the previous one kept in the self filter); SEC-003 0.32.0 may have handed its IRK to a central that paired, so rotating the local IRK would close that but forces a re-pair; SEC-004 the download SoftAP SSID `CYD-Scan-%04X` + BSSID are permanent.
+Item 1 below ("tracking still possible") is done by this release, apart from SEC-002/003/004.
+
+## RESUME HERE — 2026-11-07: fw 0.32.0 on all hosts, `hardening` merged, web app deployed
 **State.** All 3 hosts fw **0.32.0** and all 3 C5s random-address builds. Mini #2 `xiao_s3_rgb` leader, CYD `cyd` and mini #1 `xiao_s3` joined; roles wifi24 / wifi5 / ble. Self filter dropping rows.
 **Private host BLE address (owner's call, docs/ble-auth.md "Private advert address"):** RPA, new each boot, kept until the next. Owner's phone test on mini #1 passed. Both minis' older bonds migrated (`bonds` shows `stored 1, records 1`). Wi-Fi probes stay on (owner's call): passive AP scan is declined.
 **Review:** REV-001..004, 006, 007 fixed in `cf25458`; those fixes had no second review. Not tested: `bonds clear` on this build, recovery from a NimBLE host reset, and a phone on the CYD in normal mode. **The CYD's phone path is unchanged by the bond migration but its advert is new.**
