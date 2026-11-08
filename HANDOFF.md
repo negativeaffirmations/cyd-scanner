@@ -1,6 +1,17 @@
 # Handoff — 2026-11-07 (trunk: `main`; `hardening` merged and pushed)
 
-## RESUME HERE — 2026-11-07 (latest, night): fw 0.34.0 on all hosts, shared BLE keys, 15 min address rotation
+## RESUME HERE — 2026-11-07 (latest, late night): CYD Wi-Fi download fixed (fw 0.35.0 on the CYD only)
+**Finding:** the CYD's Wi-Fi download crashed on start (owner test): with the phone link up it has ~60 KB free, largest block
+49 KB, and the SoftAP needs ~51 KB (abort in operator new). Probably broken since mid-Oct: its saved PSK was never found.
+**Fix (owner chose "restart into it"):** CYD download boot, see CLAUDE.md "CYD download boot". Review: 2 P1 (STATUS `dl=0`
+while announcing so the web app dropped the creds; BOOT-hold exit could land in the ROM downloader) + P2/P3 all fixed in
+`a28d98e`; web flow passes a Node test with a dropped link. **Owner tested 3 runs OK** (incl. a 2.5 MB file; Done-button exit;
+AP up with 70 KB free / 63 KB block; PSK found every time). Not tested: STOP-bar / BOOT-hold / idle exits.
+**Also:** PSK bug fixed for all hosts (`getString` counts the NUL); console `mem`. Web app `cyd-wifi-boot b` live.
+**State:** CYD on 0.35.0 and **out of fleet mode** (owner's test). Minis on 0.34.0: same fleet proto, so they interoperate;
+flash them (`xiao_s3`, `xiao_s3_rgb`) for the PSK fix next time they're on USB.
+
+## RESUME HERE — 2026-11-07 (night): fw 0.34.0 on all hosts, shared BLE keys, 15 min address rotation
 **State.** All 3 hosts fw **0.34.0**, fleet proto **v5** (all three on the merged build `d3fa085`, C5s unchanged). Fleet whole, CYD back as client (owner's request), roles wifi24 / wifi5 / ble.
 **What (owner's decision on SEC-002):** advert address changes every 15 min, never under a connection (re-armed in onConnect and every 60 s while connected). Each unit shares its IRK (MStat.irk, leader Msg::Irks, NVS fltirk); the self filters resolve private addresses against them and the unit's own (`phone::ownIrk`, self-checked; `bonds` prints `own key ok`). BLE address column no longer written to NVS. docs/fleet-mode.md §24, docs/ble-auth.md.
 **Tested:** 2-min bench rotation on mini #1; 18 min fleet run: mini #1's change matched 14 rows by key at the leader, mini #2's own change filtered with its own key; leader reboot matched 4 rows by key before members rejoined. CYD own key ok on the original ESP32. CYD cost +136 B RAM, ~1.6 KB flash. Reviewer: no P1; REV-001/003/004/005/008 fixed, docs (REV-002) done.
