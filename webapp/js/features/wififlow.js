@@ -19,7 +19,7 @@ import { enc } from '../config.js';
 const SLOW_MS = 12000, STUCK_MS = 45000;
 let step = 0;          // 0 idle, 1 starting, 2 join, 3 open page, 4 finish
 let startedAt = 0, timer = 0, leftAt = 0, qrKey = "";
-let boot = null;       // {ssid,psk,url} while a CYD download boot is running (no Bluetooth link)
+let boot = null;       // {ssid,psk,url,tok} while a CYD download boot is running (no Bluetooth link)
 
 const curAp = () => state.ap || boot;
 const isOn = () => state.wifiOn || !!boot;
@@ -92,16 +92,24 @@ function render(){
   $("wfStopBtn").textContent = boot ? "Restart the scanner" : "Stop Wi-Fi download";
 }
 
-function tick(){
-  // A CYD announces its download boot just before the Bluetooth link drops: keep the creds.
-  if(!boot && state.ap && state.status && state.status.apboot === "1" && step >= 1){
-    boot = { ...state.ap };
+// A CYD announces its download boot (STATUS apboot=<stop token> + the creds) just before the Bluetooth link drops.
+// Read from state.status directly: status.js isn't versioned, so a cached copy decides state.ap.
+function catchBoot(){
+  const st = state.status || {};
+  if(!boot && step >= 1 && st.apboot && st.apssid && st.appsk){
+    boot = { ssid:st.apssid, psk:st.appsk, url:st.apurl || "http://192.168.4.1", tok:st.apboot };
     log("Wi-Fi download: the scanner restarts with Bluetooth off (" + boot.ssid + ").");
   }
+  // Connected again with no apboot: the scanner left the download boot by itself (STOP, idle, the page's Done).
+  if(boot && state.connected && !st.apboot && st.sid) boot = null;
+}
+
+function tick(){
+  catchBoot();
   if(boot){
     if(step === 1) step = 2;   // 2 -> 3 by "I've joined it" or coming back from Wi-Fi settings
     render();
-    if(!$("wifiDlg").open && !boot){ clearInterval(timer); timer = 0; }
+    if(!$("wifiDlg").open){ clearInterval(timer); timer = 0; }
     return;
   }
   if(!state.connected){
@@ -118,6 +126,7 @@ function tick(){
 export async function openWifiFlow(){
   showErr("");
   $("wifiDlg").showModal();
+  catchBoot();
   if(boot){ if(!step) step = 2; if(!timer) timer = setInterval(tick, 300); render(); return; }
   if(!state.wifiOn){
     step = 1; startedAt = Date.now(); render();   // instant feedback: the AP takes seconds to come up
@@ -129,8 +138,12 @@ export async function openWifiFlow(){
 }
 
 export async function stopWifiFlow(){
+  if(boot && step < 3){   // the phone isn't on its Wi-Fi yet, so nothing here can reach it
+    showErr("Your phone isn't on the scanner's Wi-Fi, so it can't be stopped from here. Tap STOP at the top of the scanner's screen. It also restarts by itself after 10 minutes.");
+    return;
+  }
   if(boot){   // no Bluetooth link: the scanner's own page restarts it
-    window.open(boot.url + "/stop", "_blank", "noopener");
+    window.open(boot.url + "/stop?t=" + encodeURIComponent(boot.tok || ""), "_blank", "noopener");
     log("Wi-Fi download: restarting the scanner. Reconnect over Bluetooth when it's back.");
     boot = null; step = 0; state.ap = null; state.wifiOn = false; render();
     $("wifiDlg").close();
@@ -143,7 +156,7 @@ export async function stopWifiFlow(){
 }
 
 export async function copyPassword(){
-  const psk = state.ap && state.ap.psk, b = $("wfCopyBtn");
+  const ap = curAp(), psk = ap && ap.psk, b = $("wfCopyBtn");
   if(!psk) return;
   try { await navigator.clipboard.writeText(psk); }
   catch(e){ showErr("Copy failed. Type the password shown above."); return; }

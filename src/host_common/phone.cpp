@@ -941,6 +941,7 @@ uint32_t gpsAgeMs() {
 bool     hasGps()           { return authed() && gpsAgeMs() < PHONE_GPS_STALE_MS; }
 bool     hadGps()           { return g_haveGps; }
 bool     downloadRequested(){ return g_download; }
+void     cancelDownload()   { g_download = false; }
 bool     reloadRequested()  { bool r = g_reload; g_reload = false; return r; }
 bool     logRequested()       { bool r = g_logReq; g_logReq = false; return r; }
 bool     scanStartRequested() { bool r = g_scanStart; g_scanStart = false; return r; }
