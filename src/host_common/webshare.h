@@ -21,6 +21,15 @@ const char* ssid();
 const char* password();
 const char* apPass();      // random NVS-persisted WPA2 PSK (valid after start(); same as password())
 const char* url();         // e.g. "http://192.168.4.1"
+const char* logPath();     // the file the "current log" button serves
+
+// CYD download boot (fw 0.35.0): the CYD can't fit Wi-Fi beside the phone link, so it restarts with Bluetooth off.
+void        prepare();             // SSID + stored PSK, with nothing started (STATUS needs them before the restart)
+void        setAnnounce(bool on);  // STATUS carries the creds + apboot=1 although the AP isn't up yet
+bool        announcing();
+void        setRebootMode(bool on);   // the page offers "Done: restart the scanner" and serves /stop
+bool        stopRequested();          // /stop was opened (consume on read)
+uint32_t    lastActivityMs();         // last request served (millis), for the idle timeout
 String      wifiQr();      // WIFI: join string for a QR code
 
 }  // namespace webshare

@@ -915,6 +915,10 @@ bool rekeyAndKick() {
 }
 bool     hasTime()          { return g_haveTime; }
 uint32_t epochNow()         { return g_haveTime ? g_epochBase + (millis() - g_baseMillis) / 1000 : 0; }
+void     restoreTime(uint32_t localEpoch) {
+  if (localEpoch < 1700000000UL) return;
+  g_epochBase = localEpoch; g_baseMillis = millis(); g_haveTime = true;
+}
 int      tzOffsetMin()      { return g_tzOffMin; }
 bool     tzKnown()          { return g_tzKnown; }
 // A phone fix is LIVE only while the phone is connected and wrote one within PHONE_GPS_STALE_MS: a

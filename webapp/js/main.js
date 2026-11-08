@@ -19,7 +19,7 @@ import { renderCatChips, renderScanCounts } from './features/categories.js';
 import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
-import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261031c';
+import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261108a';
 import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261107a';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';

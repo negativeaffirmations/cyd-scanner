@@ -6,6 +6,8 @@
 #include "phone.h"
 #include "fleet.h"
 #include "host_board.h"
+#include <nvs.h>
+#include <esp_heap_caps.h>
 
 namespace {
 
@@ -26,6 +28,7 @@ void help() {
   Serial.println("[cmd] rekey              rotate the phone key (then `rekey confirm` within 15 s)");
   Serial.println("[cmd] bonds              phone-link security level, stored bonds, link state");
   Serial.println("[cmd] bonds clear        forget all paired phones (then `bonds confirm` within 15 s)");
+  Serial.println("[cmd] mem                free heap (now, lowest, largest block) and NVS entries used / free");
   Serial.println("[cmd] fleet              fleet status; also: fleet leave | client | leader on|off | ch <1-13> | remac");
 }
 
@@ -111,6 +114,15 @@ void handle(char* cmd) {
   if (!*cmd) return;
 
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) { help(); return; }
+  if (!strcmp(cmd, "mem")) {
+    Serial.printf("[mem] heap free %u, lowest %u, largest block %u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    nvs_stats_t st;
+    if (nvs_get_stats(NULL, &st) == ESP_OK)
+      Serial.printf("[mem] nvs entries used %u, free %u, total %u, namespaces %u\n", (unsigned)st.used_entries,
+                    (unsigned)st.free_entries, (unsigned)st.total_entries, (unsigned)st.namespace_count);
+    return;
+  }
   if (!strcmp(cmd, "key")) {
     Serial.printf("[key] name %s\n", scannerName());
     Serial.printf("[key] sid  %s\n", scannerIdHex());
