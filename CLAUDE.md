@@ -694,6 +694,16 @@ back (5 GHz included). Things that matter, learned the hard way:
   Pauses scanning while active. The web app walks the user through it with a **4-step dialog** (`features/wififlow.js`,
   `#wifiDlg`): start the AP → join it (Copy password / Open Wi-Fi settings; auto-advances on STATUS `apsta`) → open the
   page (a big button, new tab) → stop. Required steps are big buttons, never links in small text (owner UX rule).
+  **CYD download boot (fw 0.35.0):** with the phone link up the CYD has ~60 KB free / 49 KB largest block and the SoftAP
+  needs ~51 KB, so it aborted on an allocation. On "1" the CYD instead saves the PSK + NVS `cydscan`/`dlboot` (refuses if
+  either write fails), sends STATUS `dl=1` + the creds + **`apboot=<8-hex stop token>`**, carries the clock, log path and
+  token in RTC memory, and restarts with BT memory released (like a fleet client). That boot (`g_dlBoot`; `dlboot` is
+  one-shot) only serves the download (~70 KB free with the AP up): the screen shows the QR + a STOP bar, the page a big
+  "Done: restart the scanner" (`/stop?t=<token>`); STOP / BOOT hold (waits for release: GPIO0 low at a restart = ROM
+  downloader) / Done / 10 min with no request or join restart it normally. The web guide keeps the creds from STATUS
+  (`apboot`), continues with no link, and its Stop opens `/stop?t=`. Minis keep the in-place AP. The PSK is now really
+  kept: `Preferences::getString` counts the NUL, so the old length check regenerated it on every start. Console `mem`
+  = heap free / lowest / largest block + NVS entries.
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is
