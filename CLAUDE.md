@@ -703,7 +703,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   downloader) / Done / 10 min with no request or join restart it normally. The web guide keeps the creds from STATUS
   (`apboot`), continues with no link, and its Stop opens `/stop?t=`. Minis keep the in-place AP. The PSK is now really
   kept: `Preferences::getString` counts the NUL, so the old length check regenerated it on every start. Console `mem`
-  = heap free / lowest / largest block + NVS entries.
+  = heap free / lowest / largest block + NVS entries; `download` (fw 0.35.1) = the same download boot from the console
+  (CYD only, refused in fleet mode).
 - **Browser limits worth remembering:** a web page cannot auto-join Wi-Fi, cannot fetch()
   `http://192.168.4.1` from the HTTPS app (mixed content), and loses the BLE connection if
   it navigates there — which is why bulk transfer uses a separate tab / the QR, and BLE is

@@ -20,4 +20,5 @@ bool    foregroundScan();                  // true -> log to g_fg + run the live
 bool    pipelineAllowed();                 // headless cycle may run now. CYD: false on Explore/drill-down screens
 bool    fleetLeaderCapable();              // CYD: false (client only; no PSRAM); XIAO-S3: true (docs/fleet-mode.md)
 const char* boardTag();                    // short board kind in the device name: "CYD" / "MINI"
+const char* downloadBoot();                // console `download`: CYD restarts into the Wi-Fi download (no return); else why not
 }
