@@ -65,7 +65,7 @@ Both of those C5s have the console fix and random addresses. **Mini #1 (S3 + C5)
 2. Flash mini #1 when attached: `xiao_s3` + `xiao_c5`.
 3. Owner decisions: passive Wi-Fi AP scan (above), and whether the hosts' fixed BLE advert should change too (it is a bigger tracking handle than the C5 was, but phones and bonds rely on it).
 4. Still open from below: the 2-body Upload check, first real `deauth` line, mini #2 `role off` cause. Also the CYD heap during a normal-mode SoftAP download (needs the phone) and a frame replay test (needs a transmitter).
-5. Legacy Wi-Fi shims (`#apCard`, `wifiap.js`) kept: a phone holding a stale `status.js` still imports `wifiap.js`, so remove the `status.js` call one deploy before the file.
+5. ~~Legacy Wi-Fi shims~~ DONE 2026-11-08 in two deploys: `#apCard`, `toggleWifi()` and the `status.js` call went first, `wifiap.js` 10+ min later.
 
 **Bench side effects (2026-11-07 ~12:00-13:00):** the CYD's C5 was the sniffer for about 20 min, so the CYD logged no scan rows in that window. The CYD was reset 3 times (short bg files) and mini #2 rebooted several times; its log has test `plan` lines from role changes.
 
