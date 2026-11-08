@@ -3244,6 +3244,11 @@ int     hostboard::ledBrightness()  { return -1; }     // on/off RGB only (no PW
 void    hostboard::setLedBrightness(int) {}
 bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
 bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN && !fleet::isClient(); }  // a fleet client logs to the bg stream even on the scan screen
+const char* hostboard::downloadBoot() {
+  if (fleet::isClient()) return "this CYD is a fleet client: `fleet leave` first";
+  enterDownloadBoot();
+  return "couldn't save settings";
+}
 bool    hostboard::fleetLeaderCapable() { return false; }  // the CYD (no PSRAM, 58 KB heap) is a fleet CLIENT only
 const char* hostboard::boardTag() { return "CYD"; }
 bool    hostboard::pipelineAllowed() { return !screenIsDrill() && !screenIsExplore(); }

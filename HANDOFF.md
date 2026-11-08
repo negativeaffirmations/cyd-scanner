@@ -6,11 +6,14 @@
 **Fix (owner chose "restart into it"):** CYD download boot, see CLAUDE.md "CYD download boot". Review: 2 P1 (STATUS `dl=0`
 while announcing so the web app dropped the creds; BOOT-hold exit could land in the ROM downloader) + P2/P3 all fixed in
 `a28d98e`; web flow passes a Node test with a dropped link. **Owner tested 3 runs OK** (incl. a 2.5 MB file; Done-button exit;
-AP up with 70 KB free / 63 KB block; PSK found every time). **STOP bar and BOOT hold also owner-tested OK**; idle exit untested.
+AP up with 70 KB free / 63 KB block; PSK found every time). **STOP bar, BOOT hold and the 10 min idle exit all tested OK** (idle: entered 23:38 via console `download`, restarted `(idle)` at ~23:48 into normal mode).
 **Also:** PSK bug fixed for all hosts (`getString` counts the NUL); console `mem`. Web app `cyd-wifi-boot b` live.
 **Web fix (`cyd-wifi-boot c`):** the Data button stayed "Wi-Fi download is on" after the CYD came back (the guide's check stopped
 when the dialog closed); it now keeps checking until the scanner reconnects without `apboot`. Node test reproduces the old bug.
-**State:** all 3 hosts on **0.35.0**; CYD back as fleet client, joined; fleet whole.
+**State:** minis on **0.35.0**, CYD on **0.35.1** (adds console `download`: CYD restarts into the Wi-Fi download, refused in
+fleet mode); CYD back as fleet client (rejoin took ~4 min), fleet whole.
+**Bench tests left (need something not on the bench):** `bonds clear` + re-pair (owner's phone), NimBLE host-reset recovery
+(can't be forced), fleet frame replay (needs a transmitter board).
 
 ## RESUME HERE — 2026-11-07 (night): fw 0.34.0 on all hosts, shared BLE keys, 15 min address rotation
 **State.** All 3 hosts fw **0.34.0**, fleet proto **v5** (all three on the merged build `d3fa085`, C5s unchanged). Fleet whole, CYD back as client (owner's request), roles wifi24 / wifi5 / ble.

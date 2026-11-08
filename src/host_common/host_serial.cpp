@@ -28,6 +28,7 @@ void help() {
   Serial.println("[cmd] rekey              rotate the phone key (then `rekey confirm` within 15 s)");
   Serial.println("[cmd] bonds              phone-link security level, stored bonds, link state");
   Serial.println("[cmd] bonds clear        forget all paired phones (then `bonds confirm` within 15 s)");
+  Serial.println("[cmd] download           CYD: restart into the Wi-Fi download (as the web app's Download over Wi-Fi)");
   Serial.println("[cmd] mem                free heap (now, lowest, largest block) and NVS entries used / free");
   Serial.println("[cmd] fleet              fleet status; also: fleet leave | client | leader on|off | ch <1-13> | remac");
 }
@@ -114,6 +115,7 @@ void handle(char* cmd) {
   if (!*cmd) return;
 
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) { help(); return; }
+  if (!strcmp(cmd, "download")) { Serial.printf("[download] %s\n", hostboard::downloadBoot()); return; }
   if (!strcmp(cmd, "mem")) {
     Serial.printf("[mem] heap free %u, lowest %u, largest block %u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
