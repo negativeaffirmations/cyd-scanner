@@ -3,7 +3,8 @@
 #include <NimBLEDevice.h>
 #include "nimble/nimble/host/src/ble_hs_conn_priv.h"   // bhc_cb: NimBLE offers no way to read a connection's handler
 #include "nimble/nimble/host/include/host/ble_hs_pvcy.h"  // ble_hs_set_rpa_timeout
-#include "nimble/nimble/host/src/ble_hs_resolv_priv.h"   // peer records, see migrateBonds()
+#include "nimble/nimble/host/src/ble_hs_resolv_priv.h"   // peer records, see migrateBonds(); ble_hs_resolv_rpa
+#include "nimble/nimble/host/src/ble_hs_pvcy_priv.h"     // ble_hs_pvcy_our_irk
 #include <Preferences.h>
 #include <esp_random.h>
 #include <math.h>
@@ -126,19 +127,20 @@ uint8_t  g_upSeq      = 0;          // the chunk's request tag, echoed in its re
 volatile bool g_upOverrun = false;  // a chunk arrived before loop() took the previous one
 uint8_t  g_upOverrunSeq = 0;
 bool     g_upSkip = false;          // loop-side: drop the already-queued chunk after an overrun abort
-// A new resolvable private address at every boot, kept until the next one; see useRpa(). The stack would rotate it, and
-// a change mid-run lets rows of the old address, alive for the C5 table's 30 s TTL, past the self filters, so service()
-// keeps re-arming the timer before it fires. Its timer overflows 32 bits above 4294 s, so a long timeout can't do this.
+// A new resolvable private address at every boot and every PHONE_RPA_ROTATE_S after; see useRpa(). The self filters
+// resolve addresses with the IRK (ownIrk(), the fleet's shared keys), so an old address still in the C5's 30 s table is
+// still ours. While a central is connected service() keeps re-arming the timer, so it never fires mid-connection.
+// The stack's timer overflows 32 bits above 4294 s.
 #ifndef PHONE_RPA_ROTATE_S
-#define PHONE_RPA_ROTATE_S 4200
+#define PHONE_RPA_ROTATE_S 900
 #endif
-#ifndef PHONE_RPA_REARM_S
-#define PHONE_RPA_REARM_S 3600
-#endif
+constexpr uint32_t RPA_REARM_MS = 60000;
 constexpr uint32_t ADV_CHECK_MS = 5000;
 uint32_t g_advCheckMs = 0;
 uint32_t g_rpaArmMs   = 0;
 bool     g_rpaOn      = false;
+uint8_t  g_ownIrk[16];                // ownIrk()'s cache; dropped when it stops resolving our address (bonds clear + host reset)
+bool     g_ownIrkHave = false;
 uint8_t  g_ownMac[6]  = {0};
 bool     g_haveOwnMac = false;
 uint8_t  g_peerMac[6] = {0};
@@ -309,6 +311,7 @@ class ServerCB : public NimBLEServerCallbacks {
     Serial.printf("[phone] connected (peer %s)\n", mac.c_str());
     guardConnection(ci.getConnHandle());
     resetAuthValue();                    // a Read Blob would return the previous connection's value
+    if (g_rpaOn) { ble_hs_set_rpa_timeout(PHONE_RPA_ROTATE_S); g_rpaArmMs = millis(); }   // no new address under it, even if due now
     if (g_connHandle != NO_CONN) {  // a second central while one is tracked: the first keeps the slot, drop the newcomer
       queueKick(ci.getConnHandle());
       return;
@@ -773,6 +776,33 @@ bool ownMac(uint8_t out[6]) {
   return true;
 }
 
+bool rpaMatch(const uint8_t mac[6], const uint8_t irk[16]) {
+  if ((mac[0] & 0xC0) != 0x40) return false;           // not a resolvable private address
+  uint8_t v[6], k[16];
+  for (int i = 0; i < 6; i++) v[i] = mac[5 - i];        // NimBLE keeps addresses LSB-first
+  memcpy(k, irk, 16);
+  return ble_hs_resolv_rpa(v, k) == 0;                 // all-zero key: EINVAL
+}
+
+// NimBLE's key, in whichever byte order resolves our own address, so the fleet's keys all have the form rpaMatch()
+// takes. Found once (the key lives in NVS for the unit's life); until then, e.g. while a host reset left a static
+// address, false.
+bool ownIrk(uint8_t out[16]) {
+  if (!g_ownIrkHave) {
+    const uint8_t* p = nullptr;
+    if (!g_rpaOn || !g_haveOwnMac || ble_hs_pvcy_our_irk(&p) != 0 || !p) return false;
+    uint8_t a[16], b[16];
+    for (int i = 0; i < 16; i++) { a[i] = p[i]; b[i] = p[15 - i]; }
+    if (rpaMatch(g_ownMac, a)) memcpy(g_ownIrk, a, 16);
+    else if (rpaMatch(g_ownMac, b)) memcpy(g_ownIrk, b, 16);
+    else return false;
+    g_ownIrkHave = true;
+    Serial.println("[phone] BLE key checked against our own address");
+  }
+  memcpy(out, g_ownIrk, 16);
+  return true;
+}
+
 bool peerMac(uint8_t out[6]) {
   if (!g_havePeer) return false;
   memcpy(out, g_peerMac, 6);
@@ -803,7 +833,7 @@ void service() {
     g_advCheckMs = millis();
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
     const bool idle = g_connHandle == NO_CONN && g_server->getConnectedCount() == 0;
-    if (g_rpaOn && millis() - g_rpaArmMs >= PHONE_RPA_REARM_S * 1000UL) {
+    if (g_rpaOn && !idle && millis() - g_rpaArmMs >= RPA_REARM_MS) {   // no new address under a connected phone
       ble_hs_set_rpa_timeout(PHONE_RPA_ROTATE_S);
       g_rpaArmMs = millis();
     }
@@ -816,6 +846,7 @@ void service() {
       }
       if (memcmp(m, g_ownMac, 6)) {                     // the self filter needs the new address
         memcpy(g_ownMac, m, 6);
+        if (g_ownIrkHave && (m[0] & 0xC0) == 0x40 && !rpaMatch(m, g_ownIrk)) g_ownIrkHave = false;   // a new key: find it again
         Serial.printf("[phone] BLE address changed to %s\n", NimBLEDevice::getAddress().toString().c_str());
       }
     }
@@ -868,6 +899,7 @@ bool clearBonds() {
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->stop();                                 // NimBLE refuses to unpair a peer with an IRK while advertising
   bool ok = NimBLEDevice::deleteAllBonds();
+  g_ownIrkHave = false;                        // that also deletes the stored key; a host reset would make a new one
   if (g_connHandle != NO_CONN) g_server->disconnect(g_connHandle);   // the link's own bond is gone with the rest
   else adv->start();
   return ok;

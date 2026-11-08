@@ -733,6 +733,10 @@ void ownApMac(uint8_t out[6]) {
 
 bool isSelfDet(const Detection& d) {
   bool self = g_haveOwnMac && d.source == (uint8_t)Source::BleScan && memcmp(d.mac, g_ownMac, 6) == 0;
+  if (!self && d.source == (uint8_t)Source::BleScan) {             // our previous address, still in the C5's 30 s table
+    uint8_t k[16];
+    self = phone::ownIrk(k) && phone::rpaMatch(d.mac, k);
+  }
   if (!self && g_haveC5Mac && d.source == (uint8_t)Source::WifiProbe) self = memcmp(d.mac, g_c5Mac, 6) == 0;   // a member reporting our C5
   if (!self && d.source == (uint8_t)Source::WifiScan) { uint8_t ap[6]; ownApMac(ap); self = memcmp(d.mac, ap, 6) == 0; }
   if (!self) self = fleet::isFleetSelf(d.mac, d.source);   // the rest of the fleet, and the phones

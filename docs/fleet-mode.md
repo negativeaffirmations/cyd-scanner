@@ -1224,3 +1224,24 @@ while `M_JOINED`, so a boot burst leaked in.
 
 Limits: the first boot after flashing has nothing stored until a join. A device that copies a unit's MAC on the same radio
 type is hidden. A phone's rotating address still only filters as the connection address. C5 BLE scanning doesn't advertise, so it has no address to filter.
+
+## 24. Shared BLE keys (fw 0.34.0, fleet proto v5)
+
+From fw 0.32.0 a host advertises from a resolvable private address, and from 0.34.0 it changes every 15 min (owner's
+decision 2026-11-07, security review SEC-002). Matching addresses would need every unit to share each new address and
+remember the old ones. Instead each unit shares its IRK, which resolves any address it uses.
+
+- `MStat.irk[16]` (77 B) carries a member's own IRK every 2 s; a CYD client sends zeros (it never starts BLE).
+- `Msg::Irks` (0x13, 121 B, sealed) leader -> each client: 7 slots, 0 = the leader, k+1 = member k, the same order as the
+  radio slots. Sent with a Sync when the table changed (`fleet::irkGen()`) or 10 s passed, and right after a join.
+- `fleet_link.cpp` keeps `g_irk[7][16]` beside the radio slots, in NVS `cydscan`/`fltirk` (written with `fltself`),
+  shifted on a member removal, trimmed at leader start, cleared on any role change. So a unit that is booting or hasn't
+  joined yet still filters the others' adverts.
+- `isFleetSelf()` resolves a BLE row with a private address (top bits `01`) against every slot but its own (`isSelfDet()`
+  tries its own key first). About 8 AES runs per stranger's private-address row, roughly 1 % of a 2 s cycle on the CYD.
+- The BLE radio column no longer goes to NVS (it changes every 15 min; the keys cover it), so rotation adds no flash writes.
+
+Limits: the keys only identify, they don't authenticate; a copied key lets a device advertise an address the fleet
+filters, the same exposure as a copied MAC. A member removed while offline keeps the fleet's keys in NVS until it is
+released or changes role, and NVS isn't encrypted, so treat a lost unit as holding them. Two units NOT in one fleet
+don't share keys, so each now logs the other as a new BLE device every 15 min instead of once per boot.

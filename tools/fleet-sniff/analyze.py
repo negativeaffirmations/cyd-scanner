@@ -17,7 +17,7 @@ import sys
 
 ESPNOW_OUI = bytes.fromhex("18fe34")
 CLEAR_OK = {1: "Probe", 2: "Hello", 3: "Join"}
-NAMES = {4: "JoinAck", 0x10: "Sync", 0x11: "Plan", 0x12: "Ctrl", 0x20: "MStat", 0x21: "DetBatch", 0x22: "RidBatch",
+NAMES = {4: "JoinAck", 0x10: "Sync", 0x11: "Plan", 0x12: "Ctrl", 0x13: "Irks", 0x20: "MStat", 0x21: "DetBatch", 0x22: "RidBatch",
          0x23: "LogRows", 0x24: "LogAck", 0xF0: "DbgPing", 0xF1: "DbgPong", **CLEAR_OK}
 BODY = 24 + 8 + 7   # MAC header, then category + OUI + random, then the vendor IE header
 

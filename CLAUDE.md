@@ -842,10 +842,12 @@ column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage
 (`features/fleet.js`, pure logic in `features/fleetplan.js`). **On-air check:** `tools/fleet-sniff` (docs §17.2).
 **Random C5 addresses (2026-11-07, docs §17.3):** each C5 boot draws a new Wi-Fi MAC and BLE scan address, so never treat a
 C5 address as stable; `Status.wifiMac` is the current one. The download AP stays fixed.
-**Private host BLE address (fw 0.32.0, docs/ble-auth.md):** a host advertises from an RPA, new each boot, so `phone::ownMac()` is
+**Private host BLE address (fw 0.32.0, docs/ble-auth.md):** a host advertises from an RPA, new each boot and (fw 0.34.0) every 15 min, never under a connection, so `phone::ownMac()` is
 a runtime value too; the identity (public address) and bonds are unchanged. The advert's service UUID stays fixed; from fw 0.33.0
 its name is `CFLO` on every unit and pairing hands out the IRK / identity address only after the key was proven.
-So the NVS `fltself` BLE and C5 slots no longer help across a boot: units only filter those once the new address has been shared.
+So the NVS `fltself` C5 slots no longer help across a boot. The BLE adverts do: **fleet proto v5 (fw 0.34.0, docs §24)** shares
+each unit's IRK (`MStat.irk`, leader -> clients `Msg::Irks`, NVS `fltirk`), and `isFleetSelf()` / `isSelfDet()` resolve a BLE private
+address against them, so any address a unit used, now or before a reboot, is filtered.
 
 ## Subagents (`.claude/agents/`)
 

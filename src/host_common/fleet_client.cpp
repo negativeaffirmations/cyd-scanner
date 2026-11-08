@@ -248,7 +248,8 @@ void sendMStat() {
   m->gpsFix = ownFix ? 1 : 0;
   if (ownFix) { m->lat = (int32_t)lroundf(g_onbLat * 1e7f); m->lon = (int32_t)lroundf(g_onbLon * 1e7f); }
   phone::peerMac(m->phoneMac);                                     // a mini client's own phone: the fleet must not log it
-  phone::ownMac(m->bleMac);                                        // its advert's address this boot (zeros for a CYD client's BLE)
+  phone::ownMac(m->bleMac);                                        // its advert's address now (zeros for a CYD client's BLE)
+  phone::ownIrk(m->irk);                                           // the key that resolves any of its addresses (zeros: none)
   if (g_haveC5Mac) memcpy(m->c5Mac, g_c5Mac, 6);
   ownApMac(m->apMac);
   sendSealed(C->leaderMac, buf, sizeof(MStat), Msg::MStat, C->sess, C->txSeq, C->sk);
@@ -366,6 +367,12 @@ void onSync(const Rx& f) {
       for (LogPos& q : g_lf->pos) q.anchor = q.ackOff ? A_META : A_NONE;   // nothing acked yet: line 1 goes out as an ordinary row
     }
   }
+}
+
+void onIrks(const Rx& f) {
+  if (C->st != C_JOINED || !sessionOk(f, sizeof(Irks))) return;
+  Irks k; memcpy(&k, f.data, sizeof(k));
+  fleet::irksSet(&k.irk[0][0], k.n);
 }
 
 void onPlan(const Rx& f) {
@@ -759,6 +766,7 @@ void onFrame(const Rx& f) {
     case Msg::Sync:  onSync(f); break;
     case Msg::Ctrl:  onCtrl(f); break;
     case Msg::Plan:  onPlan(f); break;
+    case Msg::Irks:  onIrks(f); break;
     case Msg::LogAck: onLogAck(f); break;
     default: break;
   }
