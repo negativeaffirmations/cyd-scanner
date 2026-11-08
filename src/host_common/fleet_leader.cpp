@@ -342,14 +342,17 @@ void startJoin(int i, const uint8_t* mac, const Hello& h) {
   Serial.printf("[FLT] Hello matched member %d (%s) from %s: Join sent, sess %04x\n", i + 1, m.name, ms, sess);
 }
 
+// Frames refused, by reason (console `fleet`): a replay or forgery shows up here, not as a silent nothing.
+struct RejStats { uint32_t len, sess, tag, seq, helloStale; } g_rej = {};
+
 void onHello(const Rx& f) {
-  if (f.len != sizeof(Hello)) return;
+  if (f.len != sizeof(Hello)) { g_rej.len++; return; }
   const uint32_t now = millis();
   Hello h; memcpy(&h, f.data, sizeof(h));
   int k = -1;                                                      // which live probe it answers (cheap check first)
   for (int q = 0; q < 2; q++)
     if (L->probeMs[q] && now - L->probeMs[q] < NONCE_LIFE_MS && !memcmp(h.nl, L->probeNl[q], NONCE_LEN)) k = q;
-  if (k < 0) return;
+  if (k < 0) { g_rej.helloStale++; return; }                       // answers no live probe: stale or replayed
   if (now - L->helloWinMs >= 1000) { L->helloWinMs = now; L->helloCount = 0; }
   if (++L->helloCount > HELLOS_PER_S) return;                     // bound the HMAC work a flood of fresh-nonce Hellos causes
   for (int i = 0; i < L->st.n; i++) {
@@ -367,10 +370,12 @@ void onHello(const Rx& f) {
 // Shared checks for a session frame from member i: exact length, session id, tag, then the replay window.
 bool sessionOk(int i, const Rx& f, size_t structLen) {
   MemberRt& r = L->rt[i];
-  if (!r.enc || f.len != structLen + TAG_LEN) return false;
+  if (!r.enc || f.len != structLen + TAG_LEN) { g_rej.len++; return false; }
   const Hdr* h = (const Hdr*)f.data;
-  if (h->sess != r.sess || !tagOk(f.data, f.len, r.sk)) return false;
-  return r.rx.accept(h->seq);
+  if (h->sess != r.sess) { g_rej.sess++; return false; }
+  if (!tagOk(f.data, f.len, r.sk)) { g_rej.tag++; return false; }
+  if (!r.rx.accept(h->seq)) { g_rej.seq++; return false; }
+  return true;
 }
 
 void copyPrintable(char* dst, const char* src, size_t n) {   // member-supplied text goes into the TSV FLT= list
@@ -1007,6 +1012,9 @@ void printStatus() {
   Serial.printf("[FLT] leader: remote rows rx %lu in %lu frames, merged %lu, appended %lu, table %d (%s)\n",
                 (unsigned long)L->rowsRx, (unsigned long)L->framesRx, (unsigned long)L->merged,
                 (unsigned long)L->appended, L->nRemote, L->remote && esp_ptr_external_ram(L->remote) ? "psram" : "internal");
+  Serial.printf("[FLT] leader: refused frames: length %lu, session %lu, tag %lu, replayed seq %lu, stale hello %lu\n",
+                (unsigned long)g_rej.len, (unsigned long)g_rej.sess, (unsigned long)g_rej.tag, (unsigned long)g_rej.seq,
+                (unsigned long)g_rej.helloStale);
   {
     uint32_t tot = 0;
     for (int i = 0; i < L->st.n; i++) tot += L->rt[i].lfStored;
