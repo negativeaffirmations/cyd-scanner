@@ -544,6 +544,7 @@ uint8_t  g_known[FLEET_RADIOS][6];
 constexpr int IRK_UNITS = 1 + FLEET_MAX_MEMBERS;
 uint8_t  g_irk[IRK_UNITS][16];
 uint8_t  g_irkGen = 0;
+uint32_t g_irkHits = 0;               // rows dropped by a shared key, not an exact address (console)
 bool     g_knownDirty = false;
 uint32_t g_knownDirtyMs = 0;
 void knownChanged() { g_knownDirty = true; g_knownDirtyMs = millis(); }
@@ -855,7 +856,7 @@ bool isFleetSelf(const uint8_t mac[6], uint8_t source) {
     uint8_t own[16];
     const bool haveOwn = phone::ownIrk(own);                       // isSelfDet() already tried ours
     for (int u = 0; u < IRK_UNITS; u++)
-      if (irkIsSet(g_irk[u]) && !(haveOwn && !memcmp(g_irk[u], own, 16)) && phone::rpaMatch(mac, g_irk[u])) return true;
+      if (irkIsSet(g_irk[u]) && !(haveOwn && !memcmp(g_irk[u], own, 16)) && phone::rpaMatch(mac, g_irk[u])) { g_irkHits++; return true; }
   }
   if (!g_active || kind != 0) return false;                       // phones are BLE
   return g_leader ? detail::leader::isSelf(mac) : detail::client::isSelf(mac);
@@ -881,8 +882,8 @@ void printStatus() {
   char ms[18]; macStr(g_mac, ms);
   Serial.printf("[FLT] role %s  channel %u  active %s  mac %s  maxPayload %u\n", roleName(g_role), g_ch,
                 g_active ? "yes" : "no", g_active ? ms : "-", g_maxPayload);
-  Serial.printf("[FLT] self filter: %u fixed radios known, %u BLE keys, %lu rows dropped\n", (unsigned)knownRadioCount(), (unsigned)irkCount(),
-                (unsigned long)g_selfDrops);
+  Serial.printf("[FLT] self filter: %u fixed radios known, %u BLE keys (%lu rows by key), %lu rows dropped\n", (unsigned)knownRadioCount(), (unsigned)irkCount(),
+                (unsigned long)g_irkHits, (unsigned long)g_selfDrops);
   { uint8_t ap[6]; ownApMac(ap);
     Serial.printf("[FLT] own radios: c5 %02X:%02X:%02X:%02X:%02X:%02X  ap %02X:%02X:%02X:%02X:%02X:%02X\n", g_c5Mac[0], g_c5Mac[1], g_c5Mac[2], g_c5Mac[3],
                   g_c5Mac[4], g_c5Mac[5], ap[0], ap[1], ap[2], ap[3], ap[4], ap[5]); }

@@ -1,6 +1,13 @@
 # Handoff — 2026-11-07 (trunk: `main`; `hardening` merged and pushed)
 
-## RESUME HERE — 2026-11-07 (latest, evening): fw 0.33.0 on all hosts, generic advert name + anonymous AUTH read
+## RESUME HERE — 2026-11-07 (latest, night): fw 0.34.0 on all hosts, shared BLE keys, 15 min address rotation
+**State.** All 3 hosts fw **0.34.0**, fleet proto **v5** (mini #1 runs `c6ec4ce`; mini #2 + CYD also have the `rows by key` console counter). Fleet whole, CYD back as client (owner's request), roles wifi24 / wifi5 / ble.
+**What (owner's decision on SEC-002):** advert address changes every 15 min, never under a connection (re-armed in onConnect and every 60 s while connected). Each unit shares its IRK (MStat.irk, leader Msg::Irks, NVS fltirk); the self filters resolve private addresses against them and the unit's own (`phone::ownIrk`, self-checked; `bonds` prints `own key ok`). BLE address column no longer written to NVS. docs/fleet-mode.md §24, docs/ble-auth.md.
+**Tested:** 2-min bench rotation on mini #1; 18 min fleet run: mini #1's change matched 14 rows by key at the leader, mini #2's own change filtered with its own key; leader reboot matched 4 rows by key before members rejoined. CYD own key ok on the original ESP32. CYD cost +136 B RAM, ~1.6 KB flash. Reviewer: no P1; REV-001/003/004/005/008 fixed, docs (REV-002) done.
+**Owner decisions:** SEC-003 left as is (assume nobody paired with 0.32.0); SEC-004 not a flaw (download AP must be findable). CYD phone test on 0.33.0 passed.
+**Known side effect:** two units NOT in one fleet log each other as a new BLE device every 15 min (was once per boot). Told scan-analyzer.
+
+## RESUME HERE — 2026-11-07 (evening): fw 0.33.0 on all hosts, generic advert name + anonymous AUTH read
 **State.** All 3 hosts fw **0.33.0** (`868ad33`, merged as `9b8a0d5`); C5s unchanged. Web app `20261107b` / footer `anon-auth a` live (the first Pages run stuck queued; a fresh `POST pages/builds` deployed). Fleet whole: mini #2 leader, CYD slot 1, mini #1 slot 2.
 **What changed (owner's decision via scan-analyzer):** every unit advertises `CFLO`; AUTH read v2 carries `n` + key tag `kt`, never sid/name/kg (also reset on connect/disconnect, since a Read Blob bypasses onRead); pairing distributes IRK/identity only once bonding is on (after the HMAC). Details: docs/ble-auth.md.
 **Tested:** owner's phone on mini #2 logged in with no key prompt (only the v2 app can). A bonded phone still shows the saved unit name in the chooser; a fresh central sees `CFLO`. Both minis `stored 1, records 1`. On air only `CFLO` adverts, RPAs.
