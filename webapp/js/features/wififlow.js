@@ -105,12 +105,17 @@ function catchBoot(){
 }
 
 function tick(){
+  const hadBoot = !!boot;
   catchBoot();
+  if(hadBoot && !boot){   // the scanner is back in normal mode: reset the flow and the Data button
+    step = 0; showErr(""); render();
+    if(!$("wifiDlg").open){ clearInterval(timer); timer = 0; }
+    return;
+  }
   if(boot){
     if(step === 1) step = 2;   // 2 -> 3 by "I've joined it" or coming back from Wi-Fi settings
     render();
-    if(!$("wifiDlg").open){ clearInterval(timer); timer = 0; }
-    return;
+    return;   // keeps ticking with the dialog closed, so the Data button notices the scanner coming back
   }
   if(!state.connected){
     if(step){ step = 0; showErr("Bluetooth disconnected. Reconnect to the scanner, then start again."); render(); }
