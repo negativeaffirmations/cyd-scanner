@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261108c">
+<link rel="stylesheet" href="style.css?v=20261108d">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -69,7 +69,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-07&nbsp;·&nbsp;cyd-wifi-boot&nbsp;c</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-07&nbsp;·&nbsp;legacy-wifi-1&nbsp;a</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -151,9 +151,6 @@
         <input type="checkbox" id="rsLive"> Live upload while scanning
         <span class="sub" style="display:block">POSTs each scan snapshot as it happens (reduced fields). Keep the screen on; a background tab can't hold the link.</span>
       </label>
-      <!-- Legacy stub: a phone still holding a cached pre-20261031b wifiap.js / status.js writes these IDs.
-           Kept hidden so that copy can't throw; the stepper (#wifiDlg) is the real UI. Remove after a few deploys. -->
-      <div id="apCard" hidden><canvas id="apQr"></canvas><div id="apTxt"></div><a id="apUrl"></a></div>
       <details id="filterBox">
         <summary>Download a time range &mdash; all logs</summary>
         <div class="sub" style="margin:.3em 0">Collects every row in the range from <em>every</em> log on the card (scans, background, earlier boots) into one file, filtered on the device.</div>
@@ -578,6 +575,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261108c"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261108d"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

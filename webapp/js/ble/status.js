@@ -3,7 +3,6 @@ import { state } from '../state.js';
 import { $ } from '../util/dom.js';
 import { DEAUTH_ALERT } from '../config.js';
 import { updateScanBtn } from './commands.js';
-import { renderApCard } from '../features/wifiap.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
 import { renderCounts } from '../features/counts.js';
 import { onUnitReset } from '../unitreset.js';
@@ -93,7 +92,6 @@ export function onStatus(ev){
   }
   if("dl" in kv){                                       // Wi-Fi download AP creds (present only while the AP is up)
     state.ap = (kv.dl==="1" && kv.apssid && kv.appsk) ? { ssid:kv.apssid, psk:kv.appsk, url:kv.apurl||"http://192.168.4.1" } : null;
-    renderApCard();
   }
   if("sid" in kv) state.scannerId = kv.sid;            // scan provenance: stable CYD id (eFuse MAC)
   if("flt" in kv){                                      // fleet session for the live-POST meta (fw 0.24.0 fid/fld ride with flt;

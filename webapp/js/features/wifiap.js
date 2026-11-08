@@ -1,4 +1,3 @@
-// Compatibility shim. The Wi-Fi download UI moved to the stepper in wififlow.js (#wifiDlg), which polls
-// state.ap itself. status.js still calls renderApCard() on every STATUS, and a phone can hold a cached
-// status.js for ~10 min after a deploy, so the export stays (a no-op) until a later deploy drops the call.
+// Compatibility shim, last deploy: status.js no longer imports this (2026-11-08), but a phone can hold the previous
+// status.js for ~10 min after that deploy. Delete this file in the NEXT deploy.
 export function renderApCard(){}

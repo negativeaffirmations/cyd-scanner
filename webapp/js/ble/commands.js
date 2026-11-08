@@ -23,17 +23,6 @@ export async function newSession(){
   catch(e){ log("New session failed: " + e.message); }
 }
 
-// Legacy: only a cached pre-20261031b main.js still calls this; the stepper (features/wififlow.js) owns
-// Wi-Fi download now. Remove once caches have turned over.
-export async function toggleWifi(){
-  state.wifiOn = !state.wifiOn;
-  try{ await state.chars.cmd.writeValue(enc.encode(state.wifiOn?"1":"0"));
-    $("wifiBtn").textContent = state.wifiOn ? "Stop Wi-Fi download" : "Wi-Fi download mode";
-    log(state.wifiOn ? "Wi-Fi download on — join the device Wi-Fi (card below, or the QR on a CYD screen), then open the log index."
-              : "Wi-Fi download off."); }
-  catch(e){ state.wifiOn = !state.wifiOn; log("Wi-Fi cmd failed: "+e.message); }
-}
-
 export async function reloadDb(){
   try{ await state.chars.cmd.writeValue(enc.encode("R")); log("Requested signature-DB reload."); }
   catch(e){ log("Reload failed: "+e.message); }
