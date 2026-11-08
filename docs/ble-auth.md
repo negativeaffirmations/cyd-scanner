@@ -178,10 +178,17 @@ Choices the code depends on:
 Private advert address (fw 0.32.0): the host advertises from a resolvable private address (RPA) instead of its public
 address, through NimBLE's host-based privacy (`useRpa()` in `phone.cpp`). S3 hosts need
 `MYNEWT_VAL_BLE_HOST_BASED_PRIVACY=1` in `platformio.ini`; the ESP32 CYD has it by default.
-- **A new address each boot, kept until the next.** A change mid-run would let rows of the old address, alive for the C5
-  table's 30 s TTL, past the self filters, so `service()` re-arms the stack's 70 min timer every hour before it fires. A
-  longer timeout won't do: the timer overflows 32 bits above 4294 s. Every 5 s `service()` also re-reads the address and
-  restarts a stopped advert, and after a NimBLE host reset, which leaves a static address, it goes back to an RPA.
+- **A new address each boot, and every 15 min after (fw 0.34.0; 0.32.0-0.33.0 kept one per boot).** The self filters
+  resolve addresses with the IRK instead of matching the address: `phone::ownIrk()` for the unit's own advert (an old
+  address stays in the C5 table for its 30 s TTL), and the fleet's shared IRKs for the other units (docs/fleet-mode.md
+  §24). The timer never fires under a connection: `onConnect` re-arms it and `service()` re-arms it every 60 s while a
+  central is connected. `PHONE_RPA_ROTATE_S` sets the period; the stack's timer overflows 32 bits above 4294 s. Every
+  5 s `service()` also re-reads the address and restarts a stopped advert, and after a NimBLE host reset, which leaves a
+  static address, it goes back to an RPA.
+- **`ownIrk()`** reads NimBLE's local IRK (`ble_hs_pvcy_our_irk`) and keeps it only in the byte order that resolves the
+  unit's own current address, so every unit's key has the form `rpaMatch()` (`ble_hs_resolv_rpa`, plain AES, works with
+  no BLE stack, e.g. on a CYD fleet client) takes. It's found again if the address stops resolving (`bonds clear`, which
+  deletes the stored key, then a host reset). `bonds` on the console prints `own key ok`.
 - **Bonds from older S3 firmware:** S3 builds ran without host privacy and wrote no peer records, which is how it
   resolves a phone's address. Without them the LTK lookup fails and re-pairing fails as well, so `migrateBonds()` builds
   the records from the stored bonds at boot. `bonds clear` stops the advert first: NimBLE refuses to unpair a peer with an

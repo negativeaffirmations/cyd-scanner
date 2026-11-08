@@ -70,6 +70,8 @@ struct MemberRt {
   uint32_t joinedAtMs, lostAtMs;       // P4 role hysteresis / grace
   uint8_t  role;                       // assigned scan role (PlanRole)
   uint8_t  planSentGen;                // last plan generation sent to it
+  uint8_t  irkSentGen;                 // fleet::irkGen() of the last Irks sent to it
+  uint32_t lastIrksMs;
   uint32_t lastPlanMs;
   uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
   uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (saved in NVS fltlay)
@@ -239,6 +241,8 @@ void addSelf(Sync* s, const uint8_t* m) {
   memcpy(s->selfMacs[s->nSelf++], m, 6);
 }
 
+void sendIrks(int i);
+
 // Sync (every 2 s per member): the fleet clock (UTC + tz) and the ONE fleet position every unit stamps (docs §16.6:
 // the leader's own choice -- phone by default, its GPS, else a member's live GPS), plus the fleet's own radio MACs.
 void sendSync(int i) {
@@ -275,6 +279,22 @@ void sendSync(int i) {
   memcpy(s->fleetId, L->fleetId, sizeof(s->fleetId));
   sendSealed(r.mac, buf, sizeof(Sync), Msg::Sync, r.sess, r.txSeq, r.sk);
   r.lastSyncMs = millis();
+  uint8_t k[16];
+  if (phone::ownIrk(k)) fleet::irkSlotSet(0, k);                    // this leader's own key
+  if (r.irkSentGen != fleet::irkGen() || millis() - r.lastIrksMs >= 10000) sendIrks(i);
+}
+
+// Irks (v5): every unit's BLE key, so each unit can tell the others' adverts at any address.
+void sendIrks(int i) {
+  MemberRt& r = L->rt[i];
+  uint8_t buf[sizeof(Irks) + TAG_LEN];
+  Irks* s = (Irks*)buf;
+  memset(buf, 0, sizeof(buf));
+  s->n = 1 + FLEET_MAX_MEMBERS;
+  memcpy(s->irk, fleet::irks(), sizeof(s->irk));
+  sendSealed(r.mac, buf, sizeof(Irks), Msg::Irks, r.sess, r.txSeq, r.sk);
+  r.irkSentGen = fleet::irkGen();
+  r.lastIrksMs = millis();
 }
 
 void sendCtrl(int i, uint8_t op, uint8_t arg) {
@@ -381,6 +401,7 @@ void onJoinAck(const Rx& f) {
     if (!quick) r.role = PLANROLE_FULL;
     r.lostAtMs = 0;
     r.planSentGen = (uint8_t)(L->planGen - 1);   // force a Plan to go out with the next tick
+    r.irkSentGen = (uint8_t)(fleet::irkGen() - 1);  // and the keys with the first Sync
     r.board = a.board; r.caps = a.caps;
     memcpy(r.bleMac, a.bleMac, 6);
     copyPrintable(r.fw, a.fw, sizeof(r.fw));                     // reads at most sizeof(r.fw)-1 = sizeof(a.fw) bytes
@@ -413,6 +434,7 @@ void onMStat(const Rx& f) {
   r.heapKB = m.heapKB; r.txFailPm = m.txFailPm;
   memcpy(r.phoneMac, m.phoneMac, 6);
   fleet::knownSlotSet((uint8_t)(i + 1), m.bleMac, m.c5Mac, m.apMac);
+  fleet::irkSlotSet((uint8_t)(i + 1), m.irk);
   r.srcMask = m.srcMask;
   r.deauth = m.deauth; r.evil = m.evil; r.rid = m.rid; r.statAtMs = r.lastRxMs;
   if (m.planGen != L->planGen && r.planSentGen == L->planGen && millis() - r.lastPlanMs > 1000)

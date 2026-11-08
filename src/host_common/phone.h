@@ -59,9 +59,14 @@ uint32_t authEpoch();
 bool     transferAlive(uint32_t epoch);
 
 // The BLE address this device advertises from now (as the C5 would report it, MSB-first): a private address that
-// changes at every boot, so read it rather than keep it. Lets the host filter out its own advertisement from the scan
+// changes at every boot and every 15 min (never under a connection), so read it rather than keep it. Lets the host filter out its own advertisement from the scan
 // results. Returns false if unknown.
 bool     ownMac(uint8_t out[6]);
+// This unit's BLE identity resolving key, in the form rpaMatch() takes; false while it isn't using private addresses
+// (a CYD fleet client never starts BLE). Checked against our own address before it's ever returned.
+bool     ownIrk(uint8_t out[16]);
+// True when `mac` (MSB-first) is a resolvable private address made with `irk`. Plain AES: needs no BLE stack.
+bool     rpaMatch(const uint8_t mac[6], const uint8_t irk[16]);
 
 // The connected phone's BLE address (from the GATT link), MSB-first. Best-effort
 // self-ecosystem filter — returns false when no phone is connected. Note: phones use

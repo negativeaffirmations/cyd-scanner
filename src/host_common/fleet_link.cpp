@@ -23,6 +23,7 @@
 #include "webshare.h"
 #include "host_core.h"   // g_srcMask (planString)
 #include "host_log.h"    // logXferActive
+#include "phone.h"       // rpaMatch
 
 using namespace fleet_proto;
 
@@ -540,6 +541,9 @@ namespace fleet {
 
 namespace {
 uint8_t  g_known[FLEET_RADIOS][6];
+constexpr int IRK_UNITS = 1 + FLEET_MAX_MEMBERS;
+uint8_t  g_irk[IRK_UNITS][16];
+uint8_t  g_irkGen = 0;
 bool     g_knownDirty = false;
 uint32_t g_knownDirtyMs = 0;
 void knownChanged() { g_knownDirty = true; g_knownDirtyMs = millis(); }
@@ -548,14 +552,18 @@ void knownFlush() {
   g_knownDirtyMs = millis();             // a failed write retries in 5 s
   Preferences p;
   if (!p.begin("cydscan", false)) return;
-  if (p.putBytes("fltself", g_known, sizeof(g_known)) == sizeof(g_known)) g_knownDirty = false;
+  if (p.putBytes("fltself", g_known, sizeof(g_known)) == sizeof(g_known) &&
+      p.putBytes("fltirk", g_irk, sizeof(g_irk)) == sizeof(g_irk)) g_knownDirty = false;
   p.end();
 }
 bool macIsSet(const uint8_t* m) { for (int k = 0; k < 6; k++) if (m[k]) return true; return false; }
+bool irkIsSet(const uint8_t* k) { for (int i = 0; i < 16; i++) if (k[i]) return true; return false; }
+void irksChanged() { g_irkGen++; knownChanged(); }
+// The BLE column (i % 3 == 0) changes every 15 min and the IRKs cover it, so a change there isn't worth an NVS write.
 void slotPut(int i, const uint8_t* m) {
   if (!m || !macIsSet(m) || !memcmp(g_known[i], m, 6)) return;
   memcpy(g_known[i], m, 6);
-  knownChanged();
+  if (i % 3) knownChanged();
 }
 }  // namespace
 
@@ -569,17 +577,40 @@ void knownSlotRemove(uint8_t unit) {
   const int at = unit * 3;
   memmove(g_known[at], g_known[at + 3 < FLEET_RADIOS ? at + 3 : at], (size_t)(FLEET_RADIOS - at - 3) * 6);
   memset(g_known[FLEET_RADIOS - 3], 0, 3 * 6);
-  knownChanged();
+  memmove(g_irk[unit], g_irk[unit + 1 < IRK_UNITS ? unit + 1 : unit], (size_t)(IRK_UNITS - unit - 1) * 16);
+  memset(g_irk[IRK_UNITS - 1], 0, 16);
+  irksChanged();
 }
 void knownRadiosSet(const uint8_t* macs, uint8_t n) {
   if (n != FLEET_RADIOS || !memcmp(g_known, macs, sizeof(g_known))) return;
+  bool fixed = false;                    // only a non-BLE change is saved (see slotPut)
+  for (int i = 0; i < FLEET_RADIOS && !fixed; i++) fixed = (i % 3) && memcmp(g_known[i], macs + i * 6, 6);
   memcpy(g_known, macs, sizeof(g_known));
-  knownChanged();
+  if (fixed) knownChanged();
 }
 // Leader start: anything above its enrolled members is left over, e.g. a removal that a reboot beat to NVS.
 void knownTrim(uint8_t members) {
   for (int i = 3 * (members + 1); i < FLEET_RADIOS; i++)
     if (macIsSet(g_known[i])) { memset(g_known[i], 0, 6); knownChanged(); }
+  for (int u = members + 1; u < IRK_UNITS; u++)
+    if (irkIsSet(g_irk[u])) { memset(g_irk[u], 0, 16); irksChanged(); }
+}
+void irkSlotSet(uint8_t unit, const uint8_t* irk) {
+  if (unit >= IRK_UNITS || !irk || !irkIsSet(irk) || !memcmp(g_irk[unit], irk, 16)) return;
+  memcpy(g_irk[unit], irk, 16);
+  irksChanged();
+}
+void irksSet(const uint8_t* irks, uint8_t n) {
+  if (n != IRK_UNITS || !memcmp(g_irk, irks, sizeof(g_irk))) return;
+  memcpy(g_irk, irks, sizeof(g_irk));
+  irksChanged();
+}
+const uint8_t* irks() { return &g_irk[0][0]; }
+uint8_t irkGen() { return g_irkGen; }
+uint8_t irkCount() {
+  uint8_t c = 0;
+  for (int u = 0; u < IRK_UNITS; u++) if (irkIsSet(g_irk[u])) c++;
+  return c;
 }
 const uint8_t* knownRadios() { return &g_known[0][0]; }
 uint8_t knownRadioCount() {
@@ -621,8 +652,11 @@ void loadRole() {
       g_bootCounted = n != 0;
     }
   }
-  if (g_role == ROLE_OFF) p.remove("fltself");
-  else if (p.getBytesLength("fltself") == sizeof(g_known)) p.getBytes("fltself", g_known, sizeof(g_known));
+  if (g_role == ROLE_OFF) { p.remove("fltself"); p.remove("fltirk"); }
+  else {
+    if (p.getBytesLength("fltself") == sizeof(g_known)) p.getBytes("fltself", g_known, sizeof(g_known));
+    if (p.getBytesLength("fltirk") == sizeof(g_irk)) p.getBytes("fltirk", g_irk, sizeof(g_irk));
+  }
   p.end();
 }
 
@@ -637,7 +671,7 @@ bool setRole(uint8_t r) {
   Preferences p;
   if (!p.begin("cydscan", false)) return false;
   if (r != g_role) p.remove("fltcarry");   // leave / release / role change: drop the carried log tail (fleet_client.cpp)
-  if (r != g_role) { p.remove("fltself"); memset(g_known, 0, sizeof(g_known)); g_knownDirty = false; }   // another fleet, or none: the old one's radios are ordinary devices
+  if (r != g_role) { p.remove("fltself"); p.remove("fltirk"); memset(g_known, 0, sizeof(g_known)); memset(g_irk, 0, sizeof(g_irk)); g_irkGen++; g_knownDirty = false; }   // another fleet, or none: the old one's radios are ordinary devices
   bool ok = p.putUChar("fltrole", r) == sizeof(uint8_t);
   p.putUChar("fltboot", 0);
   p.end();
@@ -817,6 +851,12 @@ bool isFleetSelf(const uint8_t mac[6], uint8_t source) {
                    source == (uint8_t)Source::WifiScan ? 2 : -1;
   if (kind < 0 || !macIsSet(mac)) return false;
   for (int i = kind; i < FLEET_RADIOS; i += 3) if (!memcmp(g_known[i], mac, 6)) return true;   // also before the fleet is up
+  if (kind == 0 && (mac[0] & 0xC0) == 0x40) {                      // a private BLE address: any unit's, past or present
+    uint8_t own[16];
+    const bool haveOwn = phone::ownIrk(own);                       // isSelfDet() already tried ours
+    for (int u = 0; u < IRK_UNITS; u++)
+      if (irkIsSet(g_irk[u]) && !(haveOwn && !memcmp(g_irk[u], own, 16)) && phone::rpaMatch(mac, g_irk[u])) return true;
+  }
   if (!g_active || kind != 0) return false;                       // phones are BLE
   return g_leader ? detail::leader::isSelf(mac) : detail::client::isSelf(mac);
 }
@@ -841,7 +881,8 @@ void printStatus() {
   char ms[18]; macStr(g_mac, ms);
   Serial.printf("[FLT] role %s  channel %u  active %s  mac %s  maxPayload %u\n", roleName(g_role), g_ch,
                 g_active ? "yes" : "no", g_active ? ms : "-", g_maxPayload);
-  Serial.printf("[FLT] self filter: %u fixed radios known, %lu rows dropped\n", (unsigned)knownRadioCount(), (unsigned long)g_selfDrops);
+  Serial.printf("[FLT] self filter: %u fixed radios known, %u BLE keys, %lu rows dropped\n", (unsigned)knownRadioCount(), (unsigned)irkCount(),
+                (unsigned long)g_selfDrops);
   { uint8_t ap[6]; ownApMac(ap);
     Serial.printf("[FLT] own radios: c5 %02X:%02X:%02X:%02X:%02X:%02X  ap %02X:%02X:%02X:%02X:%02X:%02X\n", g_c5Mac[0], g_c5Mac[1], g_c5Mac[2], g_c5Mac[3],
                   g_c5Mac[4], g_c5Mac[5], ap[0], ap[1], ap[2], ap[3], ap[4], ap[5]); }

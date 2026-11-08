@@ -86,6 +86,13 @@ void knownSlotRemove(uint8_t unit);                               // leader: tha
 void knownRadiosSet(const uint8_t* macs, uint8_t n);              // client: the leader's FLEET_RADIOS replace ours
 const uint8_t* knownRadios();                                     // FLEET_RADIOS x 6 bytes
 uint8_t knownRadioCount();                                        // slots in use
+// v5: each unit's BLE IRK (16 B; slot as above), kept in NVS like the radios. isFleetSelf() resolves a BLE private
+// address against them, so a unit's advert is recognised whatever address it uses now.
+void irkSlotSet(uint8_t unit, const uint8_t* irk);                // leader; zeros keep the old value
+void irksSet(const uint8_t* irks, uint8_t n);                     // client: the leader's table replaces ours
+const uint8_t* irks();                                            // (1 + FLEET_MAX_MEMBERS) x 16 bytes
+uint8_t irkGen();                                                 // bumped on every change
+uint8_t irkCount();                                               // slots in use
 
 // --- P4: coverage split (link v12 ScanPlan, docs §8). The plan this unit's C5 should run, sent on every StartScan:
 // all-zero (legacy full time-slice) unless the fleet assigned this unit a role. Role ids = fleet_proto PlanRole.

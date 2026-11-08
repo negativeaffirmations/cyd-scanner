@@ -9,7 +9,7 @@
 
 namespace fleet_proto {
 
-constexpr uint8_t  FLEET_PROTO_VERSION = 4;   // 4 (fw 0.30.0): radio MACs shared (Sync.nRadio, MStat.bleMac/c5Mac); 3 (fw 0.25.0): LogRows/LogAck store-and-forward (P6 item 6); 2 (0.24.0): Sync.fleetId
+constexpr uint8_t  FLEET_PROTO_VERSION = 5;   // 5 (fw 0.34.0): IRKs shared (MStat.irk, Irks); 4 (fw 0.30.0): radio MACs shared (Sync.nRadio, MStat.bleMac/c5Mac); 3 (fw 0.25.0): LogRows/LogAck store-and-forward (P6 item 6); 2 (0.24.0): Sync.fleetId
 constexpr uint8_t  FLEET_DEFAULT_CH    = 1;
 constexpr uint16_t FLEET_V1_MAX = 250, FLEET_V2_MAX = 1470;
 // Clients per leader (docs/fleet-mode.md §16.5): the prebuilt libs allow 7 ENCRYPTED ESP-NOW peers (the
@@ -22,7 +22,7 @@ constexpr int      DETS_PER_V1 = 2, DETS_PER_V2 = 16, RIDS_PER_V1 = 3, RIDS_PER_
 constexpr int8_t   FLEET_TXPWR_QDBM = 32;
 
 enum class Msg : uint8_t { Probe = 0x01, Hello = 0x02, Join = 0x03, JoinAck = 0x04,
-                           Sync = 0x10, Plan = 0x11, Ctrl = 0x12,
+                           Sync = 0x10, Plan = 0x11, Ctrl = 0x12, Irks = 0x13,
                            MStat = 0x20, DetBatch = 0x21, RidBatch = 0x22, LogRows = 0x23, LogAck = 0x24,
                            DbgPing = 0xF0, DbgPong = 0xF1 };   // Dbg*: P1 bench frames, sent only under -DFLEET_DEBUG
 enum CtrlOp : uint8_t { CTRL_RELEASE = 1, CTRL_UNJOIN = 2, CTRL_NEWSESSION = 3, CTRL_SETCH = 4 };
@@ -52,7 +52,12 @@ struct Ctrl    { Hdr h; uint8_t op; uint8_t arg[3]; };                          
 struct MStat   { Hdr h; uint8_t planGen, c5Link; int8_t bat; uint8_t gpsFix;
                  uint16_t dets, deauth; uint8_t evil, rid, tsrc, psrc; uint32_t uniq;
                  uint16_t heapKB, txFailPm; int32_t lat, lon; uint8_t phoneMac[6];
-                 uint8_t srcMask; uint8_t bleMac[6], c5Mac[6], apMac[6]; };                // 61 encrypted, every 2 s (phoneMac: its own phone; srcMask: its enabled sources)
+                 uint8_t srcMask; uint8_t bleMac[6], c5Mac[6], apMac[6];
+                 uint8_t irk[16]; };                                                       // 77 encrypted, every 2 s (phoneMac: its own phone; srcMask: its enabled sources;
+                                          // v5: irk = its BLE identity resolving key, all-zero = none, e.g. a CYD client)
+// v5: every unit's BLE IRK, slot 0 = the leader, k+1 = member k (all-zero = unknown). Leader -> client every 10 s and on a change.
+// A unit's advert address changes every 15 min; the IRK resolves any of them, so no old address has to be remembered.
+struct Irks    { Hdr h; uint8_t n; uint8_t irk[1 + FLEET_MAX_MEMBERS][16]; };            // 121 encrypted
 struct DetBatchHdr { Hdr h; uint16_t cycle; uint8_t idx, cnt; };                          // 12 + cnt*81
 struct RidBatchHdr { Hdr h; uint8_t cnt, rsv; };                                          // 10 + cnt*75
 // P6 item 6 (docs §22): LogRows client->leader = complete newline-terminated lines of the client's own log file, verbatim,
@@ -69,7 +74,8 @@ struct DbgPing { Hdr h; uint16_t padLen; };                                     
 
 static_assert(sizeof(Hdr) == 8, "fleet wire size");
 static_assert(sizeof(Probe) == 26 && sizeof(Hello) == 58 && sizeof(Join) == 60 && sizeof(JoinAck) == 64, "fleet wire size");
-static_assert(sizeof(Sync) == 235 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 61, "fleet wire size");
+static_assert(sizeof(Sync) == 235 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 77, "fleet wire size");
+static_assert(sizeof(Irks) == 121, "fleet wire size");
 // Sync.flags: bit0 time valid (utc >= 2023), bit1 position valid, bit2 position LIVE at the leader, bit3 tz known.
 static_assert(sizeof(LogRowsHdr) == 22 && sizeof(LogAck) == 20, "fleet wire size");
 static_assert(sizeof(DetBatchHdr) == 12 && sizeof(RidBatchHdr) == 10 && sizeof(DbgPing) == 10, "fleet wire size");
