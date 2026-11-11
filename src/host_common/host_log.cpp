@@ -203,6 +203,7 @@ struct BootFile { char path[48]; char fileId[9]; bool anchored; };
 static constexpr int BOOT_FILES = 8;
 static BootFile g_bootFiles[BOOT_FILES];
 static int g_bootFileN = 0;  // ring write count
+static int fleetOldFiles(const char** out, int cap);   // with the fleet-file code below
 static void rememberBootFile(const LogStream& st) {
   if (!st.started || !st.path[0]) return;
   BootFile& b = g_bootFiles[g_bootFileN++ % BOOT_FILES];
@@ -217,6 +218,7 @@ int thisBootFiles(const char** out, int cap) {
   if (n < cap && g_fleetLog.path[0]) out[n++] = g_fleetLog.path;
   int have = g_bootFileN < BOOT_FILES ? g_bootFileN : BOOT_FILES;
   for (int i = 0; i < have && n < cap; i++) out[n++] = g_bootFiles[i].path;
+  n += fleetOldFiles(out + n, cap - n);   // fleet files closed by a New Session (own ring: they need no anchoring)
   return n;
 }
 
@@ -266,6 +268,7 @@ void openBgSession() {
 void startNewSession(bool forceFg) {
   if (!forceFg && bgCtx()) beginSessionNamed(g_bg, true);
   else                     beginSessionNamed(g_fg, false);
+  if (fleet::role() == fleet::ROLE_LEADER) fleetLogRotate();   // the members' rows start a new fleet file too
   resetFollow();
   enforceLogCap();        // rotation trigger: trim /logs/ to the cap
   syncSharePath();
@@ -934,8 +937,8 @@ int sessionMetaLine(char* out, size_t cap) {
 static void streamMultiOverBle(int mode, int minutes) {
   const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
   if (!g_sdOk) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
-  const char* boot[BOOT_FILES + 3];
-  int nb = thisBootFiles(boot, BOOT_FILES + 3);
+  const char* boot[THIS_BOOT_MAX];
+  int nb = thisBootFiles(boot, THIS_BOOT_MAX);
   logfilter::MultiExport mx(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis(), boot, nb);
   int nf = mx.begin();
   char meta[160];
@@ -1443,10 +1446,17 @@ int logFwdFind(char* path, size_t cap, const char* id, uint32_t minSize, uint32_
   return found;
 }
 
-// LEADER side. The fleet file is created on the first forwarded line (one per leader boot), named by its own NVS
-// counter, and renamed + anchored on time sync like fg/bg (renameStreamOnSync). Counter names never repeat, but a
-// wiped NVS could reuse one: skip any that exist (FILE_WRITE would truncate it).
+// LEADER side. The fleet file is created on the first forwarded line (after a leader boot or a New Session), named by
+// its own NVS counter, and renamed + anchored on time sync like fg/bg (renameStreamOnSync). Counter names never repeat,
+// but a wiped NVS could reuse one: skip any that exist (FILE_WRITE would truncate it).
+// g_fleetGen numbers the fleet files of this boot; g_fleetOld keeps the paths of the last FLEET_OLD_N ones (indexed
+// gen % FLEET_OLD_N) so a member's anchors can still be copied from a file it last wrote to a few rotations ago.
+static constexpr int FLEET_OLD_N = 4;
+static uint32_t g_fleetGen = 0;
+static char (*g_fleetOld)[48] = nullptr;   // heap, made by the first rotation (normal mode never allocates it)
+
 static void fleetLogBegin() {
+  g_fleetGen++;
   Preferences p; p.begin("cydscan", false);
   uint32_t n = p.getULong("fltfcnt", 0);
   do { n++; snprintf(g_fleetLog.path, sizeof(g_fleetLog.path), "/logs/fleet-%05lu.jsonl", (unsigned long)n); }
@@ -1461,15 +1471,94 @@ static void fleetLogBegin() {
 
 const char* fleetLogPath() { return g_fleetLog.path; }
 
+// New Session on the leader. The member state (per origin file nextRow) is untouched, so clients carry on with no
+// resends and no duplicates; their anchors follow lazily (fleetLogStore -> copyAnchors). The closed file goes in
+// g_fleetOld, NOT the boot-file ring: it needs no timesync anchoring (members' own clocks) and must not push pre-sync
+// fg/bg files out of it.
+void fleetLogRotate() {
+  if (!g_fleetLog.path[0] || !g_fleetLog.started) return;   // nothing written yet: the pending file is still fresh
+  if (!g_fleetOld) g_fleetOld = (char (*)[48])calloc(FLEET_OLD_N, 48);
+  if (g_fleetOld) snprintf(g_fleetOld[g_fleetGen % FLEET_OLD_N], 48, "%s", g_fleetLog.path);
+  Serial.printf("[CYD] fleet log closed: %s (%lu lines)\n", g_fleetLog.path, (unsigned long)g_fleetLog.rowCount);
+  g_fleetLog.path[0] = 0;          // the next forwarded line opens a new one
+}
+
+// The fleet files closed this boot that are still in the window, for thisBootFiles(). Generation g_fleetGen itself is
+// the live file while g_fleetLog.path is set; after a rotation and before the next forwarded line it is the file just
+// closed (its slot already holds it).
+static int fleetOldFiles(const char** out, int cap) {
+  int n = 0;
+  if (!g_fleetOld) return 0;
+  for (uint32_t d = 0; d < FLEET_OLD_N && d < g_fleetGen && n < cap; d++) {
+    if (d == 0 && g_fleetLog.path[0]) continue;   // live (listed by thisBootFiles); its slot holds an older file
+    const char* p = g_fleetOld[(g_fleetGen - d) % FLEET_OLD_N];
+    if (p[0]) out[n++] = p;
+  }
+  return n;
+}
+
+// Anchor kinds a member file carries (FleetAnchors slots): 0 meta, 1 first timesync, 2 latest fleet evt with a fleet_id
+// (the same test as the client's lineHasFleetEvt). The member's text is matched as sent: quotes inside JSON string values
+// are escaped, so these can't match inside a value.
+static bool lineHas(const char* ln, size_t ll, const char* pat) {
+  const size_t pl = strlen(pat);
+  for (size_t i = 0; i + pl <= ll; i++) if (ln[i] == pat[0] && !memcmp(ln + i, pat, pl)) return true;
+  return false;
+}
+static int anchorKind(const char* ln, size_t ll) {
+  if (ll >= 14 && !memcmp(ln, "{\"evt\":\"meta\"", 13)) return 0;
+  if (lineHas(ln, ll, "\"evt\":\"timesync\"")) return 1;
+  if (lineHas(ln, ll, "\"evt\":\"fleet\"") && lineHas(ln, ll, "\"fleet_id\":")) return 2;
+  return -1;
+}
+
+// Copy a member file's anchors from the fleet file of generation an->gen into the current one (`f`, open for append),
+// then point `an` at the copies. Each line is read whole and must be exactly one line starting with THIS member file's
+// own prefix ({"scanner":"<sid>","ofile":"<id>","orow":) -- the closed file is no longer protected, so a phone could have
+// replaced it. A source that is gone or no longer matches drops that anchor. Returns false only when a WRITE failed:
+// `an` is left as it was, so the caller stores nothing and the client's resend retries the copy.
+static bool copyAnchors(File& f, FleetAnchors* an, const char* sidHex, const char* ofile) {
+  const char* old = (g_fleetOld && an->gen + FLEET_OLD_N > g_fleetGen) ? g_fleetOld[an->gen % FLEET_OLD_N] : "";
+  File src = (old[0] && SD.exists(old)) ? SD.open(old, FILE_READ) : File();
+  char pre[64];
+  const int pn = snprintf(pre, sizeof(pre), "{\"scanner\":\"%s\",\"ofile\":\"%s\",\"orow\":", sidHex, ofile);
+  FleetAnchors nu = {};
+  nu.gen = g_fleetGen;
+  bool ok = true;
+  for (int k = 0; src && ok && k < 3; k++) {
+    const size_t len = an->len[k];
+    if (!len || len <= (size_t)pn || !src.seek(an->off[k])) continue;
+    uint8_t* buf = (uint8_t*)malloc(len);
+    if (!buf) continue;
+    const bool line = src.read(buf, len) == len && !memcmp(buf, pre, pn) && buf[len - 1] == '\n' &&
+                      !memchr(buf, '\n', len - 1);
+    if (line) {
+      const uint32_t at = (uint32_t)f.size();
+      const size_t w = f.write(buf, len);
+      if (w == len) { nu.off[k] = at; nu.len[k] = (uint16_t)len; }
+      else { if (w) f.write((const uint8_t*)"\n", 1); ok = false; }   // torn: end the line, retry on the resend
+    }
+    free(buf);
+  }
+  if (src) src.close();
+  if (ok) *an = nu;
+  return ok;
+}
+
 // `lines` = `len` bytes of complete '\n'-terminated lines (the leader validated them). Each stored line is the member's
 // text with {"scanner":"<sid>","ofile":"<id>","orow":N, in place of its opening brace.
 bool fleetLogStore(const char* sidHex, const char* ofile, uint32_t firstRow, bool anchor, const char* lines, size_t len,
-                   uint32_t* nextRow, uint32_t* stored) {
+                   uint32_t* nextRow, uint32_t* stored, FleetAnchors* an) {
   if (g_xferDepth || !g_sdOk) return false;   // a transfer is counting/sending file sizes: the client resends later
   if (!g_fleetLog.path[0]) fleetLogBegin();
   if (!ensureLogFile(g_fleetLog)) return false;
   File f = SD.open(g_fleetLog.path, FILE_APPEND);
   if (!f) return false;
+  if (an && an->gen != g_fleetGen) {           // first store for this origin file in this fleet file
+    if (!an->gen) { *an = FleetAnchors{}; an->gen = g_fleetGen; }
+    else if (!copyAnchors(f, an, sidHex, ofile)) { f.close(); return false; }   // bring its anchors along
+  }
+  uint32_t pos = f.size();
   bool ok = true;
   uint32_t row = firstRow;
   for (size_t off = 0; off < len; row++) {
@@ -1487,6 +1576,12 @@ bool fleetLogStore(const char* sidHex, const char* ofile, uint32_t firstRow, boo
       ok = false;
       break;
     }
+    const size_t stLen = (size_t)pn + ll - 1;
+    if (an && stLen <= 0xFFFF) {
+      const int k = anchorKind(ln, ll);
+      if (k == 2 || (k >= 0 && !an->len[k])) { an->off[k] = pos; an->len[k] = (uint16_t)stLen; }
+    }
+    pos += stLen;
     if (!anchor) *nextRow = row + 1;
     (*stored)++;
     g_fleetLog.rowCount++;

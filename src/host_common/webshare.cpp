@@ -174,8 +174,8 @@ void spanOf(const char* line, uint32_t& lo, uint32_t& hi) {
 // /dlf?f=all&mode=&arg= : the window across EVERY /logs/ file, joined into one NDJSON download
 // (logfilter::MultiExport -- same dating/filtering as the BLE "T:...:*" export).
 void handleDlfAll(int mode, uint32_t arg) {
-  const char* boot[12];
-  int nb = thisBootFiles(boot, 12);
+  const char* boot[THIS_BOOT_MAX];
+  int nb = thisBootFiles(boot, THIS_BOOT_MAX);
   logfilter::MultiExport mx(mode, arg, epochLocal(), millis(), boot, nb);
   int nf = mx.begin();
   uint32_t lo = 0xFFFFFFFFUL, hi = 0;  // span pre-pass: the download is named by its contents

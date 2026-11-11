@@ -564,6 +564,77 @@ int countCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N]) {
   return total;
 }
 
+// ---- fw 0.36.0: fleet-wide readout (Msg::Threats; docs/fleet-mode.md §25) ----
+static_assert(CAT_N <= 16, "Category ids must fit ThreatSum / Msg::Threats");
+static fleet::ThreatSum s_fleetThr;
+static bool     s_fleetThrOk = false;
+static uint32_t s_fleetThrAtMs = 0;    // when applyFleetAlerts last took a summary (self-expiring: a frozen loop cannot keep it)
+static uint32_t g_pipelineMs = 0;      // end of the last full scan pipeline (leader: are the counts it sends current?)
+static constexpr uint32_t FLEET_THR_FRESH_MS = 6000, FLEET_ALERT_HOLD_MS = 3000;
+int g_fleetFollowN = 0;
+
+bool fleetReadoutShown() { return s_fleetThrOk && millis() - s_fleetThrAtMs < FLEET_THR_FRESH_MS; }
+
+int displayCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N], bool ownValid) {
+  int total = countCategories(cnt, worstTier, scoreMax);
+  if (!fleetReadoutShown()) return total;
+  if (!ownValid) for (int c = 0; c < CAT_N; c++) { cnt[c] = 0; worstTier[c] = 0; scoreMax[c] = 0; }
+  total = 0;
+  for (int c = 0; c < CAT_N; c++) {           // max, not sum: the leader's counts already include this unit's rows
+    if (s_fleetThr.cnt[c]   > cnt[c])       cnt[c]       = s_fleetThr.cnt[c];
+    if (s_fleetThr.worst[c] > worstTier[c]) worstTier[c] = s_fleetThr.worst[c];
+    if (s_fleetThr.score[c] > scoreMax[c])  scoreMax[c]  = s_fleetThr.score[c];
+    total += cnt[c];
+  }
+  return total;
+}
+// Fleet-sourced alerts are held only FLEET_ALERT_HOLD_MS (re-raised every cycle while reported): the leader's flag
+// already carries its own EVENT_HOLD_MS, so a second full hold would outlive the cause. Never shortens an own hold.
+static void raiseUntil(uint32_t& until, uint32_t now) {
+  uint32_t want = now + FLEET_ALERT_HOLD_MS; if (!want) want = 1;
+  if (!until || (int32_t)(want - until) > 0) until = want;
+}
+
+void applyFleetAlerts() {
+  s_fleetThrOk = fleet::fleetThreats(s_fleetThr);
+  if (s_fleetThrOk) s_fleetThrAtMs = millis();
+  g_fleetFollowN = s_fleetThrOk ? s_fleetThr.follow : 0;
+  uint16_t dN = 0; uint8_t eN = 0, rN = 0;
+  bool dUp, eUp;
+  if (s_fleetThrOk) { dUp = s_fleetThr.deauth; eUp = s_fleetThr.evil; dN = s_fleetThr.deauthN; eN = s_fleetThr.evilN; }
+  else { fleet::alertMax(&dN, &eN, &rN); dUp = dN >= DEAUTH_ALERT; eUp = eN > 0; }   // leader: members (zeros elsewhere)
+  const uint32_t now = millis();
+  if (dUp) {
+    raiseUntil(g_deauthUntil, now);
+    const uint16_t own = g_deauthRecent >= DEAUTH_ALERT ? g_deauthRecent : 0;
+    g_deauthShown = own > dN ? own : dN;
+  }
+  if (eUp) {
+    raiseUntil(g_evilUntil, now);
+    g_evilShown = g_evilCount > eN ? g_evilCount : eN;
+  }
+}
+
+bool fleetThreatFill(fleet::ThreatSum& s) {
+  if (!g_scanActive || !g_pipelineMs || millis() - g_pipelineMs > FLEET_THR_FRESH_MS) return false;   // frozen table
+  int cnt[CAT_N], worst[CAT_N], smax[CAT_N];
+  countCategories(cnt, worst, smax);          // the leader's g_groups already hold every member's merged rows
+  for (int c = 0; c < CAT_N; c++) {
+    s.cnt[c]   = (uint8_t)(cnt[c] > 255 ? 255 : cnt[c]);
+    s.worst[c] = (uint8_t)worst[c];
+    s.score[c] = (uint8_t)(smax[c] > 255 ? 255 : (smax[c] < 0 ? 0 : smax[c]));
+  }
+  s.follow  = (uint8_t)(g_followN > 255 ? 255 : g_followN);   // raw count; the client gates it with FOLLOW_ALERTS_ENABLED
+  s.deauth  = deauthAlertActive();            // after applyFleetAlerts: members' floods included
+  s.evil    = evilAlertActive();
+  s.deauthN = s.deauth ? g_deauthShown : 0;
+  s.evilN   = s.evil ? g_evilShown : 0;
+  uint16_t d; uint8_t e, r;
+  fleet::alertMax(&d, &e, &r);
+  s.ridN = g_ridCount > r ? g_ridCount : r;   // reserved: sent, not shown yet
+  return true;
+}
+
 int countMuted() {
   int m = 0;
   for (int k = 0; k < g_groupCount; k++) if (g_groups[k].whitelisted) m++;
@@ -752,7 +823,8 @@ bool g_touchLocked = false;
 // applyScanLed() picks once per cycle and tickScanLed() alternates every LED_ALT_MS. Priority:
 // Axon = red/blue; else a base colour of Flock/ALPR = amber > Ring/Cam/Glass = cyan > follow = magenta
 // > link green/red; an event alert (deauth / evil twin) alternates red with that base. Threat colours
-// use the same per-category counts as the HOME tiles, and only while the link is up (stale otherwise).
+// use the same per-category counts as the HOME tiles: this unit's own only while the link is up (stale otherwise),
+// plus a fresh fleet summary on a fleet client (displayCategories).
 static constexpr uint32_t LED_ALT_MS = 700;
 static LedColor s_ledA = LedColor::Off, s_ledB = LedColor::Off;
 static bool     s_ledPhase = false;
@@ -766,16 +838,22 @@ static void setLedPattern(LedColor a, LedColor b) {
   hostboard::setScanLed(a);
 }
 
+// Fleet client (fw 0.36.0): the idle colour is blue (solid = joined, blinking = searching) instead of link green;
+// a C5 link loss still shows red, and any threat / alert colour overrides it. Threat colours use the fleet-wide
+// readout (displayCategories) while the leader's summary is fresh.
 void applyScanLed() {
   int cnt[CAT_N] = {0}, worst[CAT_N], smax[CAT_N];
-  if (g_linkOk) countCategories(cnt, worst, smax);
+  if (g_linkOk || fleetReadoutShown()) displayCategories(cnt, worst, smax, g_linkOk);   // own table only while the link is up
   if (cnt[CAT_AXON]) { setLedPattern(LedColor::Red, LedColor::Blue); return; }
-  LedColor base = linkColor();
-  if (cnt[CAT_FLOCK] || cnt[CAT_ALPR])                   base = LedColor::Amber;
-  else if (cnt[CAT_RING] || cnt[CAT_CAM] || cnt[CAT_GLASS]) base = LedColor::Cyan;
-  else if (followAlertN() > 0)                           base = LedColor::Magenta;
-  if (eventAlertActive()) setLedPattern(LedColor::Red, base);
-  else                    setLedPattern(base, base);
+  const bool client = fleet::isClient();
+  LedColor base = (client && g_linkOk) ? LedColor::Blue : linkColor();
+  bool idle = true;
+  if (cnt[CAT_FLOCK] || cnt[CAT_ALPR])                      { base = LedColor::Amber;   idle = false; }
+  else if (cnt[CAT_RING] || cnt[CAT_CAM] || cnt[CAT_GLASS]) { base = LedColor::Cyan;    idle = false; }
+  else if (followAlertDisplayN() > 0)                       { base = LedColor::Magenta; idle = false; }
+  if (eventAlertActive())                                       setLedPattern(LedColor::Red, base);
+  else if (idle && client && g_linkOk && !fleet::clientJoined()) setLedPattern(LedColor::Blue, LedColor::Off);  // searching
+  else                                                          setLedPattern(base, base);
 }
 
 void tickScanLed() {
@@ -785,7 +863,10 @@ void tickScanLed() {
   hostboard::setScanLed(s_ledPhase ? s_ledB : s_ledA);
 }
 
-void showLinkLed() { setLedPattern(linkColor(), linkColor()); }
+void showLinkLed() {   // a fleet client idles blue (blinking while searching), as in applyScanLed()
+  if (fleet::isClient() && g_linkOk) setLedPattern(LedColor::Blue, fleet::clientJoined() ? LedColor::Blue : LedColor::Off);
+  else                               setLedPattern(linkColor(), linkColor());
+}
 
 // One scan → score → log → render cycle, also mirrored to the phone app. The board's UI work is done
 // through the hostboard:: / hostui:: hooks (CYD repaints; the headless host does nothing).
@@ -810,6 +891,7 @@ ScanCycleResult core::runScanCycle() {
     // so we catch the C5 the moment it frees up, instead of waiting the full cadence.
     g_linkOk = c5LinkAgeMs() < LINK_STICKY_MS;
     if (!g_linkOk) { g_deauthRecent = 0; g_evilCount = 0; g_ridCount = 0; }  // no stale C5 events
+    applyFleetAlerts();   // the fleet summary keeps flowing while this unit's own C5 is busy or down
     applyScanLed();
     hostui::onBusyMiss();  // link dot + clock only (never touches the list region); headless in background
     g_lastCycleMs = millis() - (SCAN_CYCLE_MS - SCAN_RETRY_MS);  // fire the next poll in ~SCAN_RETRY_MS
@@ -827,6 +909,8 @@ ScanCycleResult core::runScanCycle() {
   updateFollowState();
   computeFollowScores();
   updateEvents();   // deauth / evil-twin alert hold + rate-limited event log lines
+  g_pipelineMs = millis(); if (!g_pipelineMs) g_pipelineMs = 1;
+  applyFleetAlerts(); // fleet: the banner / LED alerts also follow what the other units see (no log lines)
   applyScanLed();   // alert / follow / link LED (works headless)
   int newCount = logNewDetections();
   logRidEvents();   // rate-limited per-MAC Remote-ID event lines

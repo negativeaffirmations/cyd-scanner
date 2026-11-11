@@ -198,6 +198,19 @@ const char* groupName(const DevGroup* g);
 int  buildGroups();
 Category groupCategory(const DevGroup& g);
 int  countCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N]);
+// fw 0.36.0 fleet-wide readout. On a joined fleet client with a fresh leader summary (Msg::Threats), the per-category
+// MAX of its own counts and the fleet's; everywhere else exactly countCategories(). For the on-device tiles + LED only
+// (DETS / logs / STATUS stay per-unit).
+// ownValid = false: this unit's own table is stale (C5 link down), use the fleet summary alone.
+int  displayCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N], bool ownValid = true);
+bool fleetReadoutShown();   // a fleet summary < 6 s old is in use (tile caption "Fleet threats")
+// Per cycle after updateEvents(): a client raises its banner / LED alerts from the leader's summary, a leader from its
+// members' reports. Display only: event LINES stay what this unit observed itself.
+void applyFleetAlerts();
+namespace fleet { struct ThreatSum; }
+// Leader hook (fleet::setThreatSource): this unit's merged readout. False when not scanning or the pipeline hasn't
+// run for > 6 s, so a frozen table is never sent as fresh.
+bool fleetThreatFill(fleet::ThreatSum& s);
 int  countMuted();
 void countTiers(int& susp, int& lk, int& conf);
 
@@ -253,6 +266,10 @@ extern int         g_followN;   // devices currently FOLLOWING
 static constexpr bool FOLLOW_ALERTS_ENABLED = false;
 // Follower count as surfaced to UI / STATUS / logging — 0 while the alerts feature is disabled.
 static inline int followAlertN() { return FOLLOW_ALERTS_ENABLED ? g_followN : 0; }
+// Display only (LED, banner text): max of own and the fleet's (a client's leader). STATUS, logging and the banner's
+// tap target (the own follower list) keep followAlertN().
+extern int g_fleetFollowN;
+static inline int followAlertDisplayN() { int n = followAlertN(); return FOLLOW_ALERTS_ENABLED && g_fleetFollowN > n ? g_fleetFollowN : n; }
 void resetFollow();
 const FollowState* findFollow(const uint8_t* mac);
 bool isFollowing(const uint8_t* mac);

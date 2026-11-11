@@ -828,7 +828,7 @@ fg/bg switches and New Session resume instead of re-sending; no RAM queue) and s
 frames (`LogRowsHdr` 22 B: fileId[4], firstRow, byteOff, flags bit0 = re-sent anchor, nLines; stop-and-wait, resend after
 600 ms backing off to 5 s, ~8 KB/s; unforwardable lines skipped + counted; disabled on a v1 link). Each file's meta and first
 timesync line are recorded as acked and re-sent on every (re)join. The **leader** (`onLogRows`) validates, appends each line
-to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` on sync, **no leader timesync anchor**; third `LogStream`
+to `/logs/fleet-NNNNN.jsonl` (renamed `fleet-YYYYMMDD-HHMMSS` on sync, **no leader timesync anchor**; a leader New Session starts a new one too (fw 0.35.2), the first lines from each member file after it being preceded by that file's meta / first timesync / last fleet-evt lines copied from the old fleet file; third `LogStream`
 `g_fleetLog`, protected, capped, listed, in `thisBootFiles`) with `"scanner","ofile","orow"` inserted after the `{`, and answers
 `Msg::LogAck`; per member `{file, nextRow}` for its last 4 origin files dedups resends and re-sent anchors. Its meta carries
 `"stream":"fleet"` + fleet keys + its own `file_id`. No append/ack while a phone transfer runs (`logXferActive()`). Fleet files
@@ -851,6 +851,7 @@ A single-band role restricts the C5's radio band (AP scan 12.4 s → 3.0 s on 2.
 a member's role (§20.1). From fw 0.31.0 overrides are saved (NVS `fltlay`, by sid), `M:l` lists them as the last member
 column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage selector + per-member role picker
 (`features/fleet.js`, pure logic in `features/fleetplan.js`). **On-air check:** `tools/fleet-sniff` (docs §17.2).
+**Fleet-wide readout on clients (fw 0.36.0, docs §25):** the leader sends `Msg::Threats` (per-category counts / worst tier / score + alert flags, 63 B, additive, no version bump) after each Sync; a client's tiles ("Fleet threats"), alert banner and LED use it (`displayCategories()` = max of own and fleet, `applyFleetAlerts()`), display only (logs / DETS / STATUS stay per unit); a leader's banner / LED also take its members' alerts. Fleet-client LED idle = blue (solid joined, blinking searching), threats and alerts override it.
 **Random C5 addresses (2026-11-07, docs §17.3):** each C5 boot draws a new Wi-Fi MAC and BLE scan address, so never treat a
 C5 address as stable; `Status.wifiMac` is the current one. The download AP stays fixed.
 **Private host BLE address (fw 0.32.0, docs/ble-auth.md):** a host advertises from an RPA, new each boot and (fw 0.34.0) every 15 min, never under a connection, so `phone::ownMac()` is

@@ -1148,7 +1148,7 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   Per member the leader keeps `{file, nextRow}` for its last 4 origin files (LRU), so a client alternating between files does
   not re-store (REV-001). `fleetLogStore` returns false (no ack) during `XferScope` or on an SD error (no busy signal in
   `LogAck`; the client's backoff covers it). The fleet file is created on the first forwarded line (NVS counter `fltfcnt`; born
-  date-named if the clock is already set), one per leader boot. **On sync it is renamed only -- no leader timesync anchor is
+  date-named if the clock is already set), one per leader boot and (fw 0.35.2) one per leader New Session; see "New Session rotates the fleet file" below. **On sync it is renamed only -- no leader timesync anchor is
   appended** (REV-003): its rows are members' lines on foreign clocks, dated by each origin's own forwarded timesync.
 - **Exports:** a fleet file is **epoch-only everywhere** (REV-004): single-file `keep()` (BLE `T:` and `/dlf`, via
   `Cutoff.epochOnly`) drops epoch-less rows and never compares `ms` (a forwarded meta carrying `ofile` is kept); `MultiExport` does
@@ -1196,6 +1196,21 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   `sess-NNNNN` / `bg-NNNNN` name, <= 40 opens / 150 entries. (8) `carryPersist` copies each carried file's live progress back
   into `W->carry[]`. (9) `carryPersist` is skipped while `logXferActive()`. (10) A leader scan that is still undated (no
   time sync yet, no epoch span) never auto-includes its fleet file on the Data page: tick the Fleet row yourself.
+- **New Session rotates the fleet file (fw 0.35.2, no wire change; only the leader needs it).** `startNewSession()` on a
+  leader calls `fleetLogRotate()`: a fleet file that holds lines is closed (path kept in `g_fleetOld[4]`, heap, by its
+  generation `g_fleetGen`, NOT the boot-file ring, so it never gets a leader timesync and can't push pre-sync fg/bg files
+  out of the ring; `thisBootFiles()` adds the closed ones still in the window, max `THIS_BOOT_MAX` = 14) and the next
+  forwarded line opens a new one. The members' per-origin-file `nextRow` is untouched, so clients notice nothing and nothing
+  is re-sent or duplicated. Each `LfRec` carries a `FleetAnchors` {gen, off[3], len[3]}: where that origin file's meta,
+  FIRST timesync and LATEST `"evt":"fleet"` with a `fleet_id` sit in the fleet file of generation `gen` (recorded by
+  `fleetLogStore` as it writes them, matched on the member's unescaped text). The first store for that origin file into a
+  newer fleet file copies those lines verbatim (prefix and original `orow` included) ahead of its rows, then points the
+  record at the copies. Each copied line is read whole and must be one line starting with that member file's own
+  `{"scanner":"<sid>","ofile":"<id>","orow":` prefix (the closed file is unprotected, so a phone could replace it); a failed
+  WRITE leaves the record unchanged and stores nothing, so the client's resend retries the copy. Lazy on purpose: it runs inside `fleetLogStore`, so never during a phone transfer, and an origin file
+  that sends nothing more needs no anchors in the new file. Limits: anchors older than 4 rotations, or in a file that was
+  deleted / evicted meanwhile, are not copied (rows still carry `scanner`, `ofile` and real epochs); a new fleet file's
+  first 1 KB may hold only old-dated copied anchors, so its `fleetSpan` head can read earlier than its first new row.
 - **Open:** a timesync line appended to an already-finished
   rotated file (renameSessionOnSync) is not forwarded; a member removed and re-enrolled starts a fresh record; leader reboot ->
   new fleet file, and a client continues from its acked offsets (earlier rows live in the previous leader file); carry-over keeps at most
@@ -1249,3 +1264,39 @@ Limits: the keys only identify, they don't authenticate; a copied key lets a dev
 filters, the same exposure as a copied MAC. A member removed while offline keeps the fleet's keys in NVS until it is
 released or changes role, and NVS isn't encrypted, so treat a lost unit as holding them. Two units NOT in one fleet
 don't share keys, so each now logs the other as a new BLE device every 15 min instead of once per boot.
+
+## 25. Fleet-wide threat readout on clients (fw 0.36.0, additive message, no version bump)
+
+Before this, a client's tiles, alert banner and LED showed only what its own C5 heard -- with the coverage split that is
+just its share (e.g. 5 GHz), so a client could read zero while the fleet saw threats. Only the leader merges every unit's
+rows, and nothing came back.
+
+- **Wire:** `Msg::Threats` (0x14, 63 B + tag, sealed), leader -> each joined member right after every Sync (~2 s). Per
+  host_core `Category` id (`FLEET_CATS` = 16 slots, `CAT_N` <= 16 asserted): device count (capped 255), worst tier, best
+  signature score; `follow` (the leader's FOLLOWING count); flags bit0 deauth alert up / bit1 evil-twin alert up; the
+  `deauth` / `evil` / `rid` counts for the banner text. Not a Sync extension: Sync is 235 B + tag, and 250 B is the v1
+  ESP-NOW frame. **Additive:** receivers drop unknown types, so `FLEET_PROTO_VERSION` stays 5 and a mixed fleet works
+  (an un-updated client just keeps its own readout; an un-updated leader sends none).
+- **Leader:** `fleet::setThreatSource(fleetThreatFill)` (host_core): `countCategories()` over its merged `g_groups`, its
+  alert state, and the max Remote-ID count. Rebuilt at most every 500 ms, so one Sync round shares one copy.
+  `applyFleetAlerts()` also raises the LEADER's own banner / LED alert from its members' reports (`alertMax`), so a
+  member's deauth flood shows on the leader too (STATUS already merged these).
+- **Client:** `fleet::fleetThreats()` = the latest summary while joined and < 6 s old. Per cycle `applyFleetAlerts()`
+  (after `updateEvents()`) raises the deauth / evil-twin alert holds from it and sets `g_fleetFollowN` (`followAlertN()`
+  = max of own and fleet, still gated by `FOLLOW_ALERTS_ENABLED`). `displayCategories()` = per category the MAX of own
+  and fleet (the leader's counts already include this unit's forwarded rows; max avoids double counting and a dip
+  while a row is in flight); used by the HOME / FLEET tiles and the LED only. The caption reads "Fleet threats" while
+  the summary is in use. A category drill-down lists only this unit's devices and says "N in fleet, M here".
+  **Display only:** event log lines, DETS, STATUS and the follow engine stay per unit.
+- **LED (fleet client):** idle = solid blue when joined, blue/off blinking while searching (C5 link down = red as
+  before; `showLinkLed()` too); any threat colour (amber / cyan / magenta, Axon red/blue) or event alert (red
+  alternation) overrides it. With the C5 link down only the fleet summary drives the threat colour (the own table is stale).
+- **Staleness (review fixes):** the leader's hook returns false (nothing sent) while it is not scanning or its pipeline
+  has not run for > 6 s, so frozen counts never go out as fresh; the client re-reads the summary on busy-miss cycles
+  too and `fleetReadoutShown()` expires 6 s after the last one taken. Fleet-sourced alerts are held 3 s (re-raised
+  each cycle), not a second `EVENT_HOLD_MS`. `followAlertDisplayN()` (LED, banner text) includes the fleet; STATUS
+  `fol`, logging and the banner tap target keep the per-unit `followAlertN()`.
+- **Known limits:** whitelists are per unit, so a device muted only on a client still counts there via the leader's
+  numbers; `rid` is sent but not shown yet (reserved). Both ends check the exact length, so any future extension of
+  `Threats` needs a new message type (an un-updated unit would drop a longer frame silently).
+
