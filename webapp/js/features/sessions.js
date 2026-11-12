@@ -182,21 +182,43 @@ export function populateSessions(text){
   log(nf+" session file(s) in "+groups.length+" scan(s).");
   if(state.exploreWant){ state.exploreWant=false; exploreSelected(); }   // newest is first -> default pick
 }
+// The list shows SCANS as the file the user gets (one .cflo per scan, docs/cflo-format.md), not the .jsonl files on the
+// card: a fleet file that rides with a scan is folded into that scan's row ("includes Fleet file") instead of having a
+// row of its own; only a fleet file no scan takes keeps one. The card's file names are in the row's tooltip.
+const isFolded = f=>f.kind==="fleet" && groups.some(o=>o.kind!=="fleet" && fleetOf(o).includes(f));
+const visibleGroups = ()=>groups.filter(g=>!isFolded(g));
+const bundleOf = g=>g.kind==="fleet" ? [g] : [g, ...fleetOf(g)];
+function rowSub(g){
+  const b=bundleOf(g);
+  const bits=[g.kind==="bg" ? "Background scan" : g.kind==="fleet" ? "Fleet file · no scan" : "Scan", fmtSize(b.reduce((n,x)=>n+x.size,0))];
+  if(b.length>1) bits.push("includes Fleet file");
+  if(g.parts.length>1) bits.push(g.parts.length+" parts");
+  if(g.flag==="current") bits.push("current"); else if(g.flag==="latest") bits.push("latest");
+  return bits.join(" · ");
+}
+// The name the Download button saves this scan under.
+function rowFile(g){
+  if(g.parts.some(p=>p.csv)) return g.parts[0].base;
+  return cfloSupported() ? cfloName(g.parts[0].base) : groupFileName([g]);
+}
 function renderList(){
   const box=$("sessList");
-  if(!groups.length){ box.innerHTML='<div class="sub">— no sessions —</div>'; updateButtons(); return; }
-  const inc=includedFleet(selGroups());
-  box.innerHTML=groups.map((g,i)=>{
-    const tip=g.parts.map(p=>p.base+" ("+fmtSize(p.size)+")").join("\n");
+  for(const k of [...selected]){ const g=groups.find(x=>x.key===k); if(g && isFolded(g)) selected.delete(k); }   // folded rows can't be ticked
+  const vis=visibleGroups();
+  if(!vis.length){ box.innerHTML='<div class="sub">— no sessions —</div>'; updateButtons(); return; }
+  box.innerHTML=vis.map(g=>{
+    const i=groups.indexOf(g);
+    const tip="On the card:\n"+bundleOf(g).flatMap(x=>x.parts).map(p=>p.base+" ("+fmtSize(p.size)+")").join("\n");
+    const cache=groupCache(g);
     return `<label class="sessrow" title="${esc(tip)}"><input type="checkbox" data-i="${i}"${selected.has(g.key)?" checked":""}>`+
-      `<span class="sessmain"><span class="sesst">${esc(groupNames(g))}</span>`+
-      (groupTitle(g) ? `<span class="sessdate">${esc(groupTitle(g))}</span>` : "")+
-      `<span class="sesssub">${esc(groupSub(g))}${groupCache(g) ? ` · <span class="sesscache">${esc(groupCache(g))}</span>` : ""}${inc.includes(g) ? ` · <span class="sesscache">included with the ticked scan</span>` : ""}</span></span></label>`;
+      `<span class="sessmain"><span class="sesstitle">${esc(groupTitle(g) || groupNames(g))}</span>`+
+      `<span class="sesssub">${esc(rowSub(g))}${cache ? ` · <span class="sesscache">${esc(cache)}</span>` : ""}</span>`+
+      `<span class="sessfile">Downloads as ${esc(rowFile(g))}</span></span></label>`;
   }).join("");
   box.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.addEventListener("change", ()=>{
     const g=groups[+cb.dataset.i]; if(!g) return;
     if(cb.checked) selected.add(g.key); else selected.delete(g.key);
-    renderList();   // refreshes the "included" tags (also updates the buttons)
+    renderList();
   }));
   updateButtons();
 }
@@ -208,17 +230,17 @@ onUnitReset(()=>{   // a different scanner is about to connect: its session list
   updateButtons();
 });
 onCacheChange(()=>{ if(groups.length) renderList(); });   // a fetch finished / the cache was cleared: refresh the saved tags
-export function selectAllSessions(on){ selected.clear(); if(on) groups.forEach(g=>selected.add(g.key)); renderList(); }
+export function selectAllSessions(on){ selected.clear(); if(on) visibleGroups().forEach(g=>selected.add(g.key)); renderList(); }
 function selGroups(){ return groups.filter(g=>selected.has(g.key)); }
 export function updateButtons(){
   const n=selGroups().length, ok=state.connected && n>0 && !busy;
   ["sessDlBtn","sessDlfBtn","sessMapBtn","sessDelBtn"].forEach(id=>$(id).disabled=!ok);
   $("sessUploadBtn").disabled = !(ok && isPaired());
-  $("sessAll").checked = n>0 && n===groups.length;
+  $("sessAll").checked = n>0 && n===visibleGroups().length;
   const all=selGroups().concat(includedFleet(selGroups()));
   const files=all.reduce((s,g)=>s+g.parts.length,0);
-  const nf=all.length-n;
-  $("sessSelInfo").textContent = n ? n+" scan(s)"+(nf?" + "+nf+" fleet":"")+" · "+files+" file(s) · "+fmtSize(all.reduce((s,g)=>s+g.size,0)) : "";
+  const kind=cfloSupported() ? ".cflo" : ".jsonl";
+  $("sessSelInfo").textContent = n ? n+" scan"+(n>1?"s":"")+" → "+n+" "+kind+" file"+(n>1?"s":"")+" · "+files+" log file"+(files>1?"s":"")+" · "+fmtSize(all.reduce((s,g)=>s+g.size,0)) : "";
 }
 
 // Fetch every part of the given groups (one BLE request at a time), joined per group.
@@ -533,8 +555,10 @@ export function uploadSelectedSessions(){
 }
 export function deleteSession(){
   const gs=needSel(); if(!gs) return;
-  const files=gs.flatMap(g=>g.parts);
-  if(!confirm("Delete "+gs.length+" scan(s) ("+files.length+" file(s))?\nThis cannot be undone. (The in-progress session is kept.)")) return;
+  // A scan's folded-in Fleet file goes with it, unless a scan that stays still rides with that fleet file.
+  const fleet=includedFleet(gs).filter(f=>!groups.some(o=>o.kind!=="fleet" && !gs.includes(o) && fleetOf(o).includes(f)));
+  const files=gs.concat(fleet).flatMap(g=>g.parts);
+  if(!confirm("Delete "+gs.length+" scan(s)"+(fleet.length?" and their Fleet file(s)":"")+" ("+files.length+" file(s) on the card)?\nThis cannot be undone. (The in-progress session is kept.)")) return;
   runBusy("Delete", async()=>{
     let k=0;
     for(const p of files){   // each D: answers with a fresh session list; await it before the next
