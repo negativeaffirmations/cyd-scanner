@@ -164,16 +164,20 @@ apps. The server's upload limit becomes 64 MB.
 }
 ```
 
-`session_id` = the first new session, or `null`; top-level `duplicate` is true only when every entry was a duplicate.
-(Numbers synthetic.)
+Top level: `upload_id` = the first entry's `upload_id`; `sightings` / `events` = summed over the entries;
+`session_id` = the first new session, or `null`; `duplicate` is true only when every entry was a duplicate.
+`files[]` keeps manifest order. A duplicate entry reports the existing `upload_id`, `session_ids: []`, `sightings: 0`,
+`events: 0`, `duplicate: true`. (Numbers synthetic.)
 
 **Errors**, body `{"detail": "..."}` as today:
 
 | Code | When |
 |---|---|
 | 413 | Too big: over 64 MB compressed, or over an inflate cap (256 MB per entry, 1 GB per archive). |
-| 415 | Unknown `format` / `version`, or a refused ZIP feature (§1). |
-| 422 | Manifest invalid, or a `files[]` entry missing, or its `bytes` / `sha256` mismatched. |
+| 415 | Unknown `format` / `version`, a refused ZIP feature (§1), or a first entry that is not a STORED `manifest.json`. |
+| 422 | Manifest malformed or invalid, or a `files[]` entry missing, or its `bytes` / `sha256` mismatched. |
+
+400 and 401 keep their current meanings.
 
 ## 5. Firmware addition that goes with it (agreed)
 
