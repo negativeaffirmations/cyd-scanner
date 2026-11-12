@@ -88,7 +88,15 @@ function groupTitle(g){
 // files (the leader switched between foreground and background logging) rides with each of them.
 const FLEET_MIN_OVERLAP_S = 60;
 const overlapS = (a, b)=> a.start && b.start ? Math.min(a.end, b.end) - Math.max(a.start, b.start) : -1;
-const rides = (fleetSpan, scan)=> overlapS(fleetSpan, scan) > FLEET_MIN_OVERLAP_S;
+// A SHORT scan (a session started seconds ago) can't share 60 s with anything, so the bar is also met by sharing at
+// least half of the shorter span; a scan that is still a single instant rides with a fleet file whose span holds it.
+function rides(f, sc){
+  if(!f.start || !sc.start) return false;
+  const ov = overlapS(f, sc), short = Math.min(f.end - f.start, sc.end - sc.start);
+  if(ov > FLEET_MIN_OVERLAP_S) return true;
+  if(short <= 0) return ov >= 0;
+  return ov > 0 && ov >= short/2;
+}
 function fleetOf(g){
   return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && rides(f, g));
 }
@@ -437,8 +445,12 @@ async function currentItem(fname, cur, ctx){
   const item={own:g||null, ownParts:[p], cur:{p, blob:cur.blob || new Blob([cur.text||""]), text:cur.text}, fleet:[]};
   if(state.fleetRole==="leader" && part){
     for(const f of groups.filter(x=>x.kind==="fleet")){
-      const parts=f.parts.filter(q=>rides(q, part));   // the current file is the only own file here: overlap decides
-      if(parts.length) item.fleet.push(...await fetchRaw({...f, parts}, ctx));
+      // Fleet parts that ride with the current file, plus any part paired with it exactly (pair_file_id) whatever the
+      // spans say (a fleet file's dated span can lag: it is dated by its members' rows).
+      const parts=f.parts.filter(q=>rides(q, part) || (q.end>=part.start && q.start<=part.end+600));
+      if(!parts.length) continue;
+      for(const x of await fetchRaw({...f, parts}, ctx))
+        if(rides(x.p, part) || (part.fid && await pairOfBlob(x.blob)===part.fid)) item.fleet.push(x);
     }
   }
   return item;
