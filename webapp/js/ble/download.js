@@ -127,6 +127,7 @@ export async function downloadLog(){
     const cur = await fetchCurrent(fname);   // through the phone-side cache; null = use the plain "L" command
     if(cur){
       if(!cur.blob || !cur.blob.size){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
+      if(state.saveCurrentCflo){ await state.saveCurrentCflo(fname, cur); return; }   // one .cflo (features/sessions.js)
       saveBlob(cur.blob, fname);
       if(state.fleetRole==="leader" && state.saveCurrentFleet) await state.saveCurrentFleet(fname);   // (features/sessions.js)
       return;

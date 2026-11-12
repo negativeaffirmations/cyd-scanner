@@ -11,10 +11,21 @@ byte-exact (DEFLATE). scan-analyzer builds the server side separately (they conf
 **Fallback (agreed, bridge 00:30):** the CURRENT server answers a `.cflo` POST with **415** and stores nothing (both media
 types); its limit is 50 MB, checked first -> **413**. So the web app falls back to today's per-file NDJSON bodies on 415 OR
 413. Never key on the `detail` text.
-**Done (uncommitted at the time of writing):** fw **0.37.0** in `src/host_common/host_log.cpp`: `makeFileId()` helper; the
-fleet file's meta line gets `"pair_file_id"` = the leader's `activeStream()` file_id at fleet-file creation (made early if
-that file has no row yet; `ensureLogFile` keeps it). FW_VERSION + changelog bumped in host_log.h. NOT built / flashed yet.
-**To do (web app, plan):**
+**Done, firmware (`9a4b31d`):** fw **0.37.0** in `src/host_common/host_log.cpp`: `makeFileId()` helper; the fleet file's
+meta line gets `"pair_file_id"` = the leader's `activeStream()` file_id at fleet-file creation (made early if that file has no
+row yet; `ensureLogFile` keeps it). cyd / xiao_s3 / xiao_s3_rgb BUILD OK. **NOT flashed yet** (fleet proto unchanged, so no
+lockstep needed).
+**Done, web app (committed on `hardening`, NOT deployed; Pages serves `main`):** items 1-5 below. New `js/data/cflo.js`
+(writer + reader + `isCflo`; Node round-trip test + Python `zipfile` check passed, tamper detected; test script was synthetic,
+in the session scratchpad), new `js/features/cfloupload.js` (`uploadCflo` -> true/false/"auth"/"fallback" on 415|413; uses
+`state.remoteApi` set by remote.js), `sessions.js` (`cfloPlan`, `packScan`, `pairOf`/`belongsElsewhere`, `saveCfloSel`,
+`uploadItem` -> `uploadPlain` fallback, `state.saveCurrentCflo` / `state.uploadCurrentCflo`), hooks in `ble/download.js`
+`downloadLog` + `remote.js` `uploadCurrentSession`, Map Load file reads `.cflo` (main.js). Tokens `?v=20261112a`, uiver
+`cflo a`. Browsers without CompressionStream keep the old per-file behaviour.
+**Next:** reviewer pass on the web diff; flash 0.37.0 on the 4 hosts; owner test (solo + leader download, open the `.cflo` on
+the Map, upload against the OLD server -> fallback works); merge to `main` to deploy; scan-analyzer ships its side, then
+re-test the archive upload; CLAUDE.md notes (webapp Data page + fleet meta `pair_file_id`).
+**Plan (as written before the build):**
 1. NEW `webapp/js/data/cflo.js` (stale-module rule: new exports in new files): ZIP writer (CRC-32, `CompressionStream
    ("deflate-raw")`, PKZIP 2.0, no ZIP64, STORED manifest first) + `crypto.subtle` sha256; reader (`DecompressionStream`)
    enforcing the §1 refusals; `buildCflo(...)` -> Blob, `readCflo(buf)` -> [{entry, text}].
