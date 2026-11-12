@@ -1,4 +1,34 @@
-# Handoff — 2026-11-07 (trunk: `main`; `hardening` merged and pushed)
+# Handoff — 2026-11-12 (working branch: `hardening`, pushed; trunk `main`)
+
+## RESUME HERE — 2026-11-12: `.cflo` scan archive, IN PROGRESS (spec final, build started)
+**Before this:** fw **0.36.0** on all 4 hosts (CYD #1, CYD #2 CFLO-CYD-…, mini #1, mini #2 = leader), commit `51c2143`:
+fleet-wide threat readout on clients (`Msg::Threats`, docs/fleet-mode.md §25, blue fleet-client LED, alerts override),
+a leader New Session starts a new fleet file (0.35.2, §22.1), fleet client screen layout fixes. Owner confirmed it works
+and an upload reached scan-analyzer.
+**Spec:** [docs/cflo-format.md](docs/cflo-format.md) **v1 FINAL** (owner-approved 2026-11-12, commit `2bf59e7`), agreed with
+scan-analyzer (bridge entries 23:00 … 00:30). One ZIP per scan: `manifest.json` (STORED, first) + `logs/<sid>/<file_id>.jsonl`
+byte-exact (DEFLATE). scan-analyzer builds the server side separately (they confirm go with the owner).
+**Fallback (agreed, bridge 00:30):** the CURRENT server answers a `.cflo` POST with **415** and stores nothing (both media
+types); its limit is 50 MB, checked first -> **413**. So the web app falls back to today's per-file NDJSON bodies on 415 OR
+413. Never key on the `detail` text.
+**Done (uncommitted at the time of writing):** fw **0.37.0** in `src/host_common/host_log.cpp`: `makeFileId()` helper; the
+fleet file's meta line gets `"pair_file_id"` = the leader's `activeStream()` file_id at fleet-file creation (made early if
+that file has no row yet; `ensureLogFile` keeps it). FW_VERSION + changelog bumped in host_log.h. NOT built / flashed yet.
+**To do (web app, plan):**
+1. NEW `webapp/js/data/cflo.js` (stale-module rule: new exports in new files): ZIP writer (CRC-32, `CompressionStream
+   ("deflate-raw")`, PKZIP 2.0, no ZIP64, STORED manifest first) + `crypto.subtle` sha256; reader (`DecompressionStream`)
+   enforcing the §1 refusals; `buildCflo(...)` -> Blob, `readCflo(buf)` -> [{entry, text}].
+2. `features/sessions.js`: Download = one `.cflo` per scan (own parts + its fleet file(s); pair by `pair_file_id` from the
+   fleet file's line-1 meta, else today's overlap rule); Upload = POST the archive (`application/vnd.cointelflo+zip`, Bearer,
+   `X-Client-Tz`), fall back to `uploadSessionText` per file on 415/413. Range (`T:`) exports stay plain `.jsonl` (they are
+   rewritten, not byte-exact).
+3. "Download / Upload current session" (`ble/download.js` `downloadLog`, `features/remote.js` `uploadCurrentSession`):
+   one `.cflo` incl. the leader's fleet file (replaces `state.saveCurrentFleet` / `uploadCurrentFleet` second files).
+4. Map "Load file" + Explore accept `.cflo` (read entries, `joinLogParts`).
+5. Deploy: bump `?v=` on style.css + main.js (+ connection.js if touched) + `#uiver`; CLAUDE.md webapp + SD-log notes.
+6. Build `pio run -e cyd -e xiao_s3 -e xiao_s3_rgb`, flash all 4 hosts (fleet proto unchanged, so no lockstep needed), test
+   a solo + a fleet download/upload; tester + reviewer passes.
+
 
 ## RESUME HERE — 2026-11-07 (latest, late night): CYD Wi-Fi download fixed (fw 0.35.0 on the CYD only)
 **Finding:** the CYD's Wi-Fi download crashed on start (owner test): with the phone link up it has ~60 KB free, largest block

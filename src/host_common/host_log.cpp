@@ -279,16 +279,20 @@ void startNewSession(bool forceFg) {
 // session with the scanner + sig-DB generation that produced it; readers skip it by its "evt" like
 // the timesync anchor). No-op once created. Returns false if SD is unavailable or can't be opened.
 static void writeSessionMeta(File& f, const LogStream& st);  // defined with FW_VERSION/DB_GEN below
+// Give a stream its file_id if it has none yet. Normally made when the file is created, but the fleet file's meta can
+// name the leader's own file (pair_file_id) before that file has written a row, so it may be made early; it stays.
+static void makeFileId(LogStream& st) {
+  if (st.fileId[0]) return;
+  uint8_t b[4];
+  esp_fill_random(b, sizeof(b));
+  snprintf(st.fileId, sizeof(st.fileId), "%02x%02x%02x%02x", b[0], b[1], b[2], b[3]);
+}
 bool ensureLogFile(LogStream& st) {
   if (st.started) return true;
   if (!g_sdOk || !st.path[0]) return false;
   File f = SD.open(st.path, FILE_WRITE);
   if (!f) return false;
-  if (!st.fileId[0]) {   // P6 item 6: the file's own random id, fixed for its life (survives the sync rename)
-    uint8_t b[4];
-    esp_fill_random(b, sizeof(b));
-    snprintf(st.fileId, sizeof(st.fileId), "%02x%02x%02x%02x", b[0], b[1], b[2], b[3]);
-  }
+  makeFileId(st);   // P6 item 6: the file's own random id, fixed for its life (survives the sync rename)
   writeSessionMeta(f, st);
   f.close();
   st.started = true;
@@ -410,7 +414,14 @@ const char* scannerName() {
 static void writeSessionMeta(File& f, const LogStream& st) {
   f.printf("{\"evt\":\"meta\",\"scanner_id\":\"%s\",\"scanner_name\":\"%s\",\"fw\":\"%s\",\"db_gen\":%lu",
            scannerIdHex(), scannerName(), FW_VERSION, (unsigned long)DB_GEN);
-  if (&st == &g_fleetLog) f.print(",\"stream\":\"fleet\"");
+  if (&st == &g_fleetLog) {
+    f.print(",\"stream\":\"fleet\"");
+    // .cflo (docs/cflo-format.md §5): the leader's own file live when this fleet file was created, so a reader can
+    // pair them exactly instead of by overlapping time.
+    LogStream& own = activeStream();
+    makeFileId(own);
+    f.printf(",\"pair_file_id\":\"%s\"", own.fileId);
+  }
   if (fleet::role() != fleet::ROLE_OFF) {
     f.printf(",\"fleet_role\":\"%s\"", fleet::role() == fleet::ROLE_LEADER ? "leader" : "client");
     char id[17], leader[13];
