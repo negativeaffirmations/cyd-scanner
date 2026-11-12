@@ -32,9 +32,12 @@ rule (`rides`: spans share > 60 s) decides everywhere (`fleetOf`, `planCflo`, `c
 fleet file is never dropped from a scan it ran beside. Deploy all of 0ad7edb..3c48764 together (sessions.js imports exports
 cflo.js only gained in 4669cbf). **scan-analyzer `.cflo` is LIVE** (bridge 01:55, schema v13): after our deploy + an archive
 upload, tell them so they can check the sessions.
-**Next:** flash 0.37.0 on the 4 hosts; owner test (solo + leader download, open the `.cflo` on
-the Map, upload against the OLD server -> fallback works); merge to `main` to deploy; scan-analyzer ships its side, then
-re-test the archive upload; CLAUDE.md notes (webapp Data page + fleet meta `pair_file_id`).
+**Rolled out 2026-11-12:** fw **0.37.0 FLASHED on all 4 hosts** (COM10 mini #2 leader, COM16 mini #1, COM17 + COM13 the
+CYDs); console `fleet` on the leader: 3 members joined, all fw 0.37.0, forwarding. **Merged to `main` (`990c34d`) and
+pushed**: web app `cflo c` (`?v=20261112c`) deploying via Pages. CLAUDE.md updated.
+**Next:** owner test on the phone: Data page download of a solo scan and a leader scan (one `.cflo` each, the leader's with
+its fleet file), "Download current session", open a `.cflo` on the Map, upload one (server side is live, so it should go in
+as an archive, not the fallback). Then tell scan-analyzer the upload landed so they check the sessions it made.
 **Plan (as written before the build):**
 1. NEW `webapp/js/data/cflo.js` (stale-module rule: new exports in new files): ZIP writer (CRC-32, `CompressionStream
    ("deflate-raw")`, PKZIP 2.0, no ZIP64, STORED manifest first) + `crypto.subtle` sha256; reader (`DecompressionStream`)

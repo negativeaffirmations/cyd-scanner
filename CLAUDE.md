@@ -852,6 +852,14 @@ a member's role (§20.1). From fw 0.31.0 overrides are saved (NVS `fltlay`, by s
 column, and `M:p:3` (everyone full) beats them. Web: Settings → Fleet coverage selector + per-member role picker
 (`features/fleet.js`, pure logic in `features/fleetplan.js`). **On-air check:** `tools/fleet-sniff` (docs §17.2).
 **Fleet-wide readout on clients (fw 0.36.0, docs §25):** the leader sends `Msg::Threats` (per-category counts / worst tier / score + alert flags, 63 B, additive, no version bump) after each Sync; a client's tiles ("Fleet threats"), alert banner and LED use it (`displayCategories()` = max of own and fleet, `applyFleetAlerts()`), display only (logs / DETS / STATUS stay per unit); a leader's banner / LED also take its members' alerts. Fleet-client LED idle = blue (solid joined, blinking searching), threats and alerts override it.
+**`.cflo` scan archives (fw 0.37.0 + web app `cflo`, spec [docs/cflo-format.md](docs/cflo-format.md) v1, agreed with scan-analyzer):**
+what the web app downloads and uploads is ONE ZIP per scan (`manifest.json` STORED first + each log file byte-exact as
+`logs/<sid>/<file_id>.jsonl`), built on the phone (`js/data/cflo.js`, one file at a time; `features/cfloupload.js` POSTs it as
+`application/vnd.cointelflo+zip`, falling back to the per-file NDJSON bodies on 415 / 413). Scanners still write plain NDJSON.
+A leader's fleet-file meta carries `"pair_file_id"` (the own file New Session rotated with it, `g_fleetPair`, else the
+active stream at creation); in `sessions.js` the pair only chooses between the action's own scans, otherwise the one overlap
+rule `rides` (spans share > 60 s) decides, so a fleet file is never dropped from a scan it ran beside. Legacy `.csv` and
+time-range (`T:`) exports stay plain files. Map "Load file" opens a `.cflo`.
 **Random C5 addresses (2026-11-07, docs §17.3):** each C5 boot draws a new Wi-Fi MAC and BLE scan address, so never treat a
 C5 address as stable; `Status.wifiMac` is the current one. The download AP stays fixed.
 **Private host BLE address (fw 0.32.0, docs/ble-auth.md):** a host advertises from an RPA, new each boot and (fw 0.34.0) every 15 min, never under a connection, so `phone::ownMac()` is
