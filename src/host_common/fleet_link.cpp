@@ -840,6 +840,13 @@ void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid) {
   *deauth = 0; *evil = 0; *rid = 0;
   if (g_active && g_leader) detail::leader::alertMax(deauth, evil, rid);
 }
+static bool (*g_threatSrc)(ThreatSum&) = nullptr;
+void setThreatSource(bool (*fn)(ThreatSum& s)) { g_threatSrc = fn; }
+namespace detail {
+bool threatSource(ThreatSum& s) { memset(&s, 0, sizeof(s)); return g_threatSrc && g_threatSrc(s); }
+}
+bool fleetThreats(ThreatSum& s) { return g_active && !g_leader && detail::client::threats(s); }
+bool clientJoined() { return g_active && !g_leader && detail::client::joined(); }
 void fwdStats(FwdStats& s) {
   memset(&s, 0, sizeof(s));
   if (!g_active) return;

@@ -19,7 +19,7 @@ import { $, log, esc, toast } from '../util/dom.js';
 import { enc, TIER_NAMES } from '../config.js';
 import { scannerFix } from '../gps.js';
 import { fetchCurrent } from '../ble/logfetch.js';
-import { reqBusy } from '../ble/xfer.js';
+import { reqBusy, connGen } from '../ble/xfer.js';
 
 // --- persisted config (localStorage) ------------------------------------------------------------
 const LS = { server:"rs.server", key:"rs.key", dev:"rs.deviceId", live:"rs.live" };
@@ -40,6 +40,8 @@ function clientTz(){ try{ return Intl.DateTimeFormat().resolvedOptions().timeZon
 // The CYD logs `epoch` as LOCAL wall-clock encoded as seconds (read back with UTC getters — see
 // util/format.js). Match that convention for live rows so they line up with file-uploaded rows.
 function localEpoch(){ return Math.floor(Date.now()/1000) - new Date().getTimezoneOffset()*60; }
+// The .cflo archive upload (features/cfloupload.js) uses these; a state hook, not an export (stale-module rule).
+state.remoteApi = { api, authHeaders, clientTz };
 
 // --- pairing ------------------------------------------------------------------------------------
 // Exchange a one-time token for a per-device key. Returns true on success.
@@ -94,7 +96,8 @@ export async function handlePairHash(){
 function setUploadBusy(busy){
   if(busy){ ["rsUploadCurBtn","sessUploadBtn"].forEach(id=>{ const e=$(id); if(e) e.disabled = true; }); return; }
   renderRemoteUI();   // restores rsUploadCurBtn per paired+connected
-  const su = $("sessUploadBtn"); if(su) su.disabled = !(state.connected && isPaired());
+  const su = $("sessUploadBtn");   // a running Session-logs action owns that button (sessions.js updateButtons)
+  if(su && !(state.sessionsBusy && state.sessionsBusy())) su.disabled = !(state.connected && isPaired());
 }
 
 // Upload raw NDJSON text (as fetched from the device) to the server. sessionName -> X-Session-Name.
@@ -292,10 +295,16 @@ export async function uploadCurrentSession(){
   if(!state.connected || !state.chars.cmd){ log("Remote: connect to the scanner first."); return; }
   const sess = ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "scanlog";
   const fname = sess.endsWith(".jsonl")||sess.endsWith(".csv") ? sess : sess+".jsonl";
+  if(state.sessionsBusy && state.sessionsBusy()){ toast("Another transfer is running — wait for it to finish.", {err:true}); return; }
+  const ctx = {gen:connGen(), sid:state.scannerId};          // the .cflo hook guards the whole action with this
   setUploadBusy(true);                                        // optimistic: lock buttons the instant it's tapped
   toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
   try{
     const cur = await fetchCurrent(fname, { trim:true });   // through the phone-side cache (whole file, no torn last row); null = plain "L"
+    if(cur && state.uploadCurrentCflo){   // one .cflo archive (features/sessions.js), incl. a leader's Fleet file
+      try{ await state.uploadCurrentCflo(fname, cur, ctx); } finally { setUploadBusy(false); }
+      return;
+    }
     if(cur){
       const r=await uploadSessionText(cur.text, fname);
       if(r===true && state.fleetRole==="leader" && state.uploadCurrentFleet) await state.uploadCurrentFleet(fname);   // (features/sessions.js)

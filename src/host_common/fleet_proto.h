@@ -22,7 +22,7 @@ constexpr int      DETS_PER_V1 = 2, DETS_PER_V2 = 16, RIDS_PER_V1 = 3, RIDS_PER_
 constexpr int8_t   FLEET_TXPWR_QDBM = 32;
 
 enum class Msg : uint8_t { Probe = 0x01, Hello = 0x02, Join = 0x03, JoinAck = 0x04,
-                           Sync = 0x10, Plan = 0x11, Ctrl = 0x12, Irks = 0x13,
+                           Sync = 0x10, Plan = 0x11, Ctrl = 0x12, Irks = 0x13, Threats = 0x14,
                            MStat = 0x20, DetBatch = 0x21, RidBatch = 0x22, LogRows = 0x23, LogAck = 0x24,
                            DbgPing = 0xF0, DbgPong = 0xF1 };   // Dbg*: P1 bench frames, sent only under -DFLEET_DEBUG
 enum CtrlOp : uint8_t { CTRL_RELEASE = 1, CTRL_UNJOIN = 2, CTRL_NEWSESSION = 3, CTRL_SETCH = 4 };
@@ -58,6 +58,13 @@ struct MStat   { Hdr h; uint8_t planGen, c5Link; int8_t bat; uint8_t gpsFix;
 // v5: every unit's BLE IRK, slot 0 = the leader, k+1 = member k (all-zero = unknown). Leader -> client every 10 s and on a change.
 // A unit's advert address changes every 15 min; the IRK resolves any of them, so no old address has to be remembered.
 struct Irks    { Hdr h; uint8_t n; uint8_t irk[1 + FLEET_MAX_MEMBERS][16]; };            // 121 encrypted
+// fw 0.36.0: the fleet-wide threat readout, leader -> each client right after every Sync, so a client's tiles, alert
+// banner and LED show what the whole fleet sees (the leader merges every unit's rows). Additive: no version bump, a
+// unit that doesn't know the type ignores it. Per category id (host_core Category, < FLEET_CATS): device count
+// (capped 255), worst tier, best signature score. flags bit0 = deauth alert up, bit1 = evil-twin alert up.
+constexpr uint8_t FLEET_CATS = 16;
+struct Threats { Hdr h; uint8_t n; uint8_t cnt[FLEET_CATS], worst[FLEET_CATS], score[FLEET_CATS];
+                 uint8_t follow, flags; uint16_t deauth; uint8_t evil, rid; };              // 63 encrypted
 struct DetBatchHdr { Hdr h; uint16_t cycle; uint8_t idx, cnt; };                          // 12 + cnt*81
 struct RidBatchHdr { Hdr h; uint8_t cnt, rsv; };                                          // 10 + cnt*75
 // P6 item 6 (docs §22): LogRows client->leader = complete newline-terminated lines of the client's own log file, verbatim,
@@ -75,7 +82,7 @@ struct DbgPing { Hdr h; uint16_t padLen; };                                     
 static_assert(sizeof(Hdr) == 8, "fleet wire size");
 static_assert(sizeof(Probe) == 26 && sizeof(Hello) == 58 && sizeof(Join) == 60 && sizeof(JoinAck) == 64, "fleet wire size");
 static_assert(sizeof(Sync) == 235 && sizeof(Plan) == 30 && sizeof(Ctrl) == 12 && sizeof(MStat) == 77, "fleet wire size");
-static_assert(sizeof(Irks) == 121, "fleet wire size");
+static_assert(sizeof(Irks) == 121 && sizeof(Threats) == 63, "fleet wire size");
 // Sync.flags: bit0 time valid (utc >= 2023), bit1 position valid, bit2 position LIVE at the leader, bit3 tz known.
 static_assert(sizeof(LogRowsHdr) == 22 && sizeof(LogAck) == 20, "fleet wire size");
 static_assert(sizeof(DetBatchHdr) == 12 && sizeof(RidBatchHdr) == 10 && sizeof(DbgPing) == 10, "fleet wire size");

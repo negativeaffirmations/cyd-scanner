@@ -117,7 +117,9 @@ void dropSession(const char* why);         // back to searching (rekey, unjoin)
 void forgetKey();                          // the device key changed: recompute FK on next use
 bool ident(uint8_t id[8], uint8_t leaderSid[6]);            // the joined leader's fleet id + sid (false unless joined)
 bool gpsIsFleetPos();                                       // the leader uses THIS unit's GPS as the fleet position
+bool threats(ThreatSum& s);                                 // the leader's latest Threats (joined, < 6 s old)
 }
+bool threatSource(ThreatSum& s);                            // leader: the host's readout (false = no hook set)
 
 }  // namespace detail
 }  // namespace fleet

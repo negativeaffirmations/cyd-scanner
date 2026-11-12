@@ -106,6 +106,19 @@ int  mergeRemote();            // leader: right after requestScan(), fold fresh 
                                // (g_detVia bit k = member slot k); returns the number of rows appended
 bool hasRemote();              // leader: fresh member rows exist (drives the fleet-only cycle when its own C5 is down)
 void alertMax(uint16_t* deauth, uint8_t* evil, uint8_t* rid);   // worst fresh member alert counts (0 when none)
+// fw 0.36.0: the fleet-wide threat readout (Msg::Threats). Indexed by host_core Category id (< 16).
+struct ThreatSum {
+  static constexpr int N = 16;              // = fleet_proto FLEET_CATS (asserted in fleet_client.cpp)
+  uint8_t  cnt[N], worst[N], score[N];      // per category: devices (capped 255), worst tier, best signature score
+  uint8_t  follow;                          // devices FOLLOWING (the leader's own engine)
+  bool     deauth, evil;                    // that alert is up somewhere in the fleet
+  uint16_t deauthN; uint8_t evilN, ridN;    // the counts for the banner text
+};
+// Leader: fill `s` for the clients (hook set by the host, which owns the categories + alerts). Client: the latest
+// summary from the leader -- true only while joined and it is < 6 s old (else use this unit's own readout).
+void setThreatSource(bool (*fn)(ThreatSum& s));   // fn returns false = nothing current to send (scanning stopped / stale)
+bool fleetThreats(ThreatSum& s);
+bool clientJoined();           // a client in a session with its leader (false on a leader / outside a fleet)
 struct FwdStats { uint32_t rowsSent, framesSent, ridFrames, rowsRx, framesRx, merged, appended; };
 void fwdStats(FwdStats& s);
 

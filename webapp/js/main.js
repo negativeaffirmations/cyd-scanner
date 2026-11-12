@@ -1,6 +1,8 @@
 // Entry point: wires every DOM event listener to its handler. Loaded as <script type="module">,
 // which is deferred, so the DOM is ready by the time this runs.
-import { $, log } from './util/dom.js';
+import { $, log, toast } from './util/dom.js';
+import { isCflo, readCflo } from './data/cflo.js';
+import { joinLogParts } from './data/parse.js';
 import { connect, reconnect, switchTo } from './ble/connection.js?v=20261106j';   // versioned with main.js (bump together): its exports change (a stale copy would break the import)
 import { handleDevKeyHash, addPasted, forgetKey, renderKeysUI, askConfirm, answerConfirm, mayShareLocation } from './ble/auth.js';
 import { toggleScan, newSession, reloadDb, setBrightness, setLock, sendSrcMask, sendSourcePref, syncTime } from './ble/commands.js';
@@ -178,12 +180,16 @@ $("mapFiltBtn").onclick = ()=> $("mapFiltDlg").showModal();
 $("mapFiltClose").onclick = ()=> $("mapFiltDlg").close();
 $("mapFiltDlg").addEventListener("click", e=>{ if(e.target === $("mapFiltDlg")) $("mapFiltDlg").close(); });
 ["fThreats","f24","f5","fble","fprb","f154","fEvents"].forEach(id=>$(id).addEventListener("change", ()=> renderMap()));
-$("mapFile").addEventListener("change", e=>{
+$("mapFile").addEventListener("change", async e=>{
   const f=e.target.files[0]; if(!f) return;
-  const rd=new FileReader();
-  rd.onload=()=>plotCsvText(rd.result, f.name, true);   // true: a local file, kept when the scanner changes
-  rd.readAsText(f);
   e.target.value="";   // allow re-loading the same file
+  try{
+    const u8=new Uint8Array(await f.arrayBuffer());
+    if(isCflo(u8)){   // a .cflo scan archive: every log file in it, joined (docs/cflo-format.md)
+      const a=await readCflo(u8);
+      plotCsvText(joinLogParts(a.files.map(x=>x.text)), f.name, true);
+    } else plotCsvText(new TextDecoder().decode(u8), f.name, true);   // true: a local file, kept when the scanner changes
+  }catch(err){ log("Could not open "+f.name+": "+err.message); toast("Could not open "+f.name+": "+err.message, {err:true}); }
 });
 // Scanner keys (BLE phone-link auth, js/ble/auth.js). Add from the Settings paste field; Forget per row;
 // the #authDlg "Save & reconnect" stores the pasted key and reconnects to the same scanner (no chooser).

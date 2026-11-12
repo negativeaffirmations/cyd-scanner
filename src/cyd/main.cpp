@@ -720,19 +720,19 @@ static void drawScanInfo() {
   // (opens the drill-down), else one-shot feedback, else the scan state + tier counts. The
   // scan/pause state is also shown by the buttons. Plain '!' (the TFT font has no warning glyph).
   bool evA = eventAlertActive();
-  if (followAlertN() > 0 || evA) {
+  if (followAlertDisplayN() > 0 || evA) {
     // Red deauth / evil-twin alert (full width alone, right half when stacked with the follow
     // banner, which keeps the left half and stays tappable anywhere on the band).
     int W = tft.width(), fw = evA ? W / 2 : W;
     tft.setTextDatum(MC_DATUM);
-    if (followAlertN() > 0) {
+    if (followAlertDisplayN() > 0) {
       tft.fillRect(0, BANNER_Y, fw, BANNER_H, TFT_MAGENTA);
       tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
-      snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", followAlertN());
+      snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", followAlertDisplayN());
       tft.drawString(buf, fw / 2, BANNER_Y + BANNER_H / 2 + 1, 1);
     }
     if (evA) {
-      int x0 = (followAlertN() > 0) ? fw : 0;
+      int x0 = (followAlertDisplayN() > 0) ? fw : 0;
       tft.fillRect(x0, BANNER_Y, W - x0, BANNER_H, TFT_RED);
       tft.setTextColor(TFT_WHITE, TFT_RED);
       char a[32];
@@ -994,18 +994,20 @@ static void chipRect(int i, int n, int& x, int& y, int& w) {
   x = startX + col * cellW; y = CHIP_Y0 + rowg * CHIP_STEP; w = cellW;
 }
 
-static void drawMenuThreats() {
+// bottomY = first row the band must NOT clear (HOME: just above the hint; FLEET: just above its buttons,
+// which sit right under the last tile row and were being wiped by the HOME-height clear).
+static void drawMenuThreats(int bottomY = MENU_THREAT_Y + MENU_THREAT_H) {
   int cnt[CAT_N], worst[CAT_N], scoreMax[CAT_N];
-  countCategories(cnt, worst, scoreMax);
+  displayCategories(cnt, worst, scoreMax);       // fleet client: the whole fleet's counts (same as countCategories elsewhere)
   g_menuCatN = 0;                                   // every category except OTHER (the catch-all is not tiled)
   for (int c = 1; c < CAT_N; c++) if (c != CAT_OTHER) g_menuCat[g_menuCatN++] = (uint8_t)c;
   if (g_menuSel >= MENU_CHIP0 + g_menuCatN) g_menuSel = 0;
 
   int W = tft.width();
-  tft.fillRect(0, MENU_THREAT_Y, W, MENU_THREAT_H, TFT_BLACK);
+  tft.fillRect(0, MENU_THREAT_Y, W, bottomY - MENU_THREAT_Y, TFT_BLACK);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Background threats", W / 2, MENU_THREAT_Y + 1, 1);
+  tft.drawString(fleetReadoutShown() ? "Fleet threats" : "Background threats", W / 2, MENU_THREAT_Y + 1, 1);
   for (int i = 0; i < g_menuCatN; i++) {
     int c = g_menuCat[i], x, y, w; chipRect(i, g_menuCatN, x, y, w);
     bool sel = (g_menuSel == MENU_CHIP0 + i);
@@ -1043,18 +1045,18 @@ static void drawHomeAlerts() {
   int W = tft.width();
   tft.fillRect(0, HOME_ALERT_Y, W, BANNER_H, TFT_BLACK);
   bool evA = eventAlertActive();
-  if (followAlertN() <= 0 && !evA) return;
+  if (followAlertDisplayN() <= 0 && !evA) return;
   int fw = evA ? W / 2 : W;
   char buf[32];
   tft.setTextDatum(MC_DATUM);
-  if (followAlertN() > 0) {
+  if (followAlertDisplayN() > 0) {
     tft.fillRect(0, HOME_ALERT_Y, fw, BANNER_H, TFT_MAGENTA);
     tft.setTextColor(TFT_WHITE, TFT_MAGENTA);
-    snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", followAlertN());
+    snprintf(buf, sizeof(buf), evA ? "! FOLLOW: %d" : "! FOLLOWING: %d  (tap)", followAlertDisplayN());
     tft.drawString(buf, fw / 2, HOME_ALERT_Y + BANNER_H / 2 + 1, 1);
   }
   if (evA) {
-    int x0 = (followAlertN() > 0) ? fw : 0;
+    int x0 = (followAlertDisplayN() > 0) ? fw : 0;
     tft.fillRect(x0, HOME_ALERT_Y, W - x0, BANNER_H, TFT_RED);
     tft.setTextColor(TFT_WHITE, TFT_RED);
     int an = snprintf(buf, sizeof(buf), "! ");
@@ -1260,7 +1262,7 @@ static void drawRekeyConfirm() {
 }
 
 // ---- Fleet client screens (docs/fleet-mode.md §2). SCR_FLEET replaces HOME as the root while fltrole=1.
-// Layout: title y24, info lines y52..134 (alert band y120), threat tiles reuse the HOME readout (y176..268),
+// Layout: title y24, info lines y52..160 (alert band y120), threat tiles reuse the HOME readout (y176..268),
 // 2x2 buttons y272..318. BOOT nav (g_fleetSel): 0..3 = the buttons, 4+ = the threat tiles (g_menuSel mirrors it
 // for drawMenuThreats' highlight). Everything is direct TFT draws: no heap.
 static constexpr int FL_BTN_N = 4, FL_BTN_Y0 = 272, FL_BTN_H = 22, FL_BTN_STEP = 24;
@@ -1327,9 +1329,9 @@ static void drawFleetInfo() {
     snprintf(b, sizeof(b), "Leader %s", u.leaderName[0] ? u.leaderName : "(joined)");
     tft.drawString(b, 6, 52, 2);
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    snprintf(b, sizeof(b), "%s  %d dBm  %.0fs", fleet::planRoleName(u.planRole), (int)u.rssi,
+    snprintf(b, sizeof(b), "Role %s   %d dBm   %.0fs ago", fleet::planRoleName(u.planRole), (int)u.rssi,
              u.ageMs / 1000.0f);
-    tft.drawString(b, 150, 56, 1);
+    tft.drawString(b, 6, 70, 1);   // own line: a full leader name in font 2 reaches past mid-screen
   } else if (u.leaderSeen) {           // FLEET_DEBUG: bench pings heard, not joined
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     snprintf(b, sizeof(b), "Ping %02x:%02x %d dBm (not joined)", u.leaderMac[4], u.leaderMac[5], (int)u.rssi);
@@ -1341,22 +1343,23 @@ static void drawFleetInfo() {
   }
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   snprintf(b, sizeof(b), "Time: %s   Pos: %s", srcWord(timeSource(), false), srcWord(posSource(), true));
-  tft.drawString(b, 6, 72, 1);
+  tft.drawString(b, 6, 82, 1);
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   snprintf(b, sizeof(b), "2.4:%d 5G:%d BLE:%d PRB:%d U:%lu", n24, n5, nble, nprb, (unsigned long)g_bg.uniqCount);
-  tft.drawString(b, 6, 84, 1);
+  tft.drawString(b, 6, 94, 1);
   uint32_t tot = u.txOk + u.txFail;
-  snprintf(b, sizeof(b), "TX %lu ok  %.1f%% fail  C5 link", (unsigned long)u.txOk, tot ? 100.0f * u.txFail / tot : 0.0f);
-  tft.drawString(b, 6, 96, 1);
-  tft.fillCircle(6 + tft.textWidth(b, 1) + 8, 100, 3, g_linkOk ? TFT_GREEN : TFT_RED);
+  snprintf(b, sizeof(b), "TX %lu ok  %.1f%% fail  C5", (unsigned long)u.txOk, tot ? 100.0f * u.txFail / tot : 0.0f);
+  tft.drawString(b, 6, 106, 1);
+  tft.fillCircle(6 + tft.textWidth(b, 1) + 8, 110, 3, g_linkOk ? TFT_GREEN : TFT_RED);
+  // y120..131 = the deauth / evil-twin alert band (drawHomeAlerts below)
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   snprintf(b, sizeof(b), "ch %u   payload %u B   rx %lu", (unsigned)u.channel, (unsigned)fleet::maxPayload(),
            (unsigned long)u.rxFrames);
-  tft.drawString(b, 6, 108, 1);
+  tft.drawString(b, 6, 138, 1);
   char sb[32]; sessBase(g_bg, sb, sizeof(sb));   // a fleet client always logs to the background stream
   snprintf(b, sizeof(b), "Sess: %s", sb);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString(b, 6, 134, 1);
+  tft.drawString(b, 6, 152, 1);
   drawHomeAlerts();   // deauth / evil-twin band (y120); clears itself
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
 }
@@ -1370,7 +1373,7 @@ static void drawFleet() {
   tft.setTextDatum(TL_DATUM);
   drawFleetInfo();
   g_menuSel = g_fleetSel >= FL_BTN_N ? MENU_CHIP0 + (g_fleetSel - FL_BTN_N) : 0;   // tile highlight for drawMenuThreats
-  drawMenuThreats();
+  drawMenuThreats(FL_BTN_Y0 - 2);   // stop above the buttons
   drawFleetButtons();
 }
 
@@ -2543,12 +2546,18 @@ static void drawMenuCat() {
   tft.setTextDatum(TL_DATUM);
   char b[40];
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  snprintf(b, sizeof(b), "%s: %d", kCatName[g_mcCat], g_mcN);
+  // Fleet client: the tile counted the whole fleet, but only this unit's own devices can be listed here.
+  int fc[CAT_N], fw[CAT_N], fs[CAT_N];
+  displayCategories(fc, fw, fs);
+  const bool more = fleetReadoutShown() && fc[g_mcCat] > g_mcN;
+  if (more) snprintf(b, sizeof(b), "%s: %d in fleet, %d here", kCatName[g_mcCat], fc[g_mcCat], g_mcN);
+  else      snprintf(b, sizeof(b), "%s: %d", kCatName[g_mcCat], g_mcN);
   tft.drawString(b, 4, 46, 1);
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   tft.drawString(catDescription(g_mcCat), 4, 58, 1);   // what signatures this category matches
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Tap a device for details", 4, 72, 1);
+  tft.drawString(more ? (g_mcN ? "Tap one; the rest are on the leader" : "Listed on the leader / web app")
+                      : "Tap a device for details", 4, 72, 1);
   drawMenuCatRows(false);
 }
 
@@ -3272,6 +3281,7 @@ void setup() {
   Serial.println("[CYD] boot: scanner + phone link + SD");
   fleet::loadRole();   // fltrole/fltch + boot-loop guard
   fleet::setEventSink([](const char* op, const fleet::EventInfo& x) { logFleetEvent(op, nullptr, &x); });   // join / lost / release ... -> the SD log
+  fleet::setThreatSource(fleetThreatFill);   // leader: the fleet-wide readout its clients show (Msg::Threats)
   const bool fleetClient = fleet::isClient();
   g_dlBoot = takeDownloadBoot() && !fleetClient;
   if (fleetClient || g_dlBoot) {   // MUST precede anything that touches BT: frees ~43 KB so Wi-Fi + ESP-NOW fit (docs §1.2)
@@ -3425,7 +3435,7 @@ void loop() {
         lastLockedFleet = millis();
         drawStatusBar();
         drawFleetInfo();
-        drawMenuThreats();
+        drawMenuThreats(FL_BTN_Y0 - 2);
       }
     } else if (g_screen == SCR_MENU) {
       // HOME's live readout is normally repainted by the SCR_MENU idle branch, which the early
@@ -3540,7 +3550,7 @@ void loop() {
           lastFleet = millis();
           drawStatusBar();
           drawFleetInfo();
-          drawMenuThreats();
+          drawMenuThreats(FL_BTN_Y0 - 2);
         }
       }
       delay(20);

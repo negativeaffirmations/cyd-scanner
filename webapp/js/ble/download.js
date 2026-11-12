@@ -15,7 +15,7 @@ import { uploadSessionText } from '../features/remote.js';
 import { exportSpec, exportCmd, rangeFileName } from '../features/timerange.js';
 import { resetDl } from './transfer.js';
 import { fetchCurrent } from './logfetch.js';
-import { reqBusy } from './xfer.js';
+import { reqBusy, connGen } from './xfer.js';
 
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
 // hiccup, a short send), give up after IDLE_MS instead of leaving state.dl stuck in "file" mode, which
@@ -122,11 +122,14 @@ export async function downloadLog(){
   // "scanlog.jsonl". Falls back to scanlog.jsonl before any session name is known.
   const sess=($("sessName").textContent.replace(/^Session:\s*/,"").trim())||"scanlog";
   const fname=sess.endsWith(".jsonl")?sess:sess+".jsonl";
+  if(state.sessionsBusy && state.sessionsBusy()){ toast("Another transfer is running — wait for it to finish.", {err:true}); return; }
+  const ctx = {gen:connGen(), sid:state.scannerId};   // the .cflo hook guards the whole action with this
   try{
     toast("Fetching "+fname+" over BLE…", {work:true, sticky:true});
     const cur = await fetchCurrent(fname);   // through the phone-side cache; null = use the plain "L" command
     if(cur){
       if(!cur.blob || !cur.blob.size){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
+      if(state.saveCurrentCflo){ await state.saveCurrentCflo(fname, cur, ctx); return; }   // one .cflo (features/sessions.js)
       saveBlob(cur.blob, fname);
       if(state.fleetRole==="leader" && state.saveCurrentFleet) await state.saveCurrentFleet(fname);   // (features/sessions.js)
       return;

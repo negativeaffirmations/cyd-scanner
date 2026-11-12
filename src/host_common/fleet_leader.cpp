@@ -80,7 +80,8 @@ struct MemberRt {
   // P6 item 6 store-and-forward: the member's last LF_RECS origin files and, per file, the next origin row not stored
   // yet (a client alternates between its live streams and a rotated file). Kept across a rejoin so resent rows dedup;
   // a new leader boot starts clean (and a new fleet file).
-  struct LfRec { uint8_t file[4]; bool used; uint32_t nextRow, stamp; } lf[4];
+  // `an` = where that file's anchors sit in the fleet file, so a New Session can carry them into the next one.
+  struct LfRec { uint8_t file[4]; bool used; uint32_t nextRow, stamp; FleetAnchors an; } lf[4];
   uint32_t lfClock;
   uint8_t  lfLast[4];                  // the file of the latest frame (console)
   bool     lfHave;
@@ -242,6 +243,7 @@ void addSelf(Sync* s, const uint8_t* m) {
 }
 
 void sendIrks(int i);
+void sendThreats(int i);
 
 // Sync (every 2 s per member): the fleet clock (UTC + tz) and the ONE fleet position every unit stamps (docs §16.6:
 // the leader's own choice -- phone by default, its GPS, else a member's live GPS), plus the fleet's own radio MACs.
@@ -282,6 +284,27 @@ void sendSync(int i) {
   uint8_t k[16];
   if (phone::ownIrk(k)) fleet::irkSlotSet(0, k);                    // this leader's own key
   if (r.irkSentGen != fleet::irkGen() || millis() - r.lastIrksMs >= 10000) sendIrks(i);
+  sendThreats(i);
+}
+
+// Threats (fw 0.36.0): the fleet-wide readout, after every Sync, so a client shows what the whole fleet sees.
+// Built once per Sync round (all members in the same ms window get the same copy).
+void sendThreats(int i) {
+  static fleet::ThreatSum s;
+  static uint32_t builtMs = 0;
+  static bool have = false;
+  if (!builtMs || millis() - builtMs > 500) { have = threatSource(s); builtMs = millis(); if (!builtMs) builtMs = 1; }
+  if (!have) return;
+  MemberRt& r = L->rt[i];
+  uint8_t buf[sizeof(Threats) + TAG_LEN];
+  Threats* t = (Threats*)buf;
+  memset(buf, 0, sizeof(buf));
+  t->n = FLEET_CATS;
+  memcpy(t->cnt, s.cnt, FLEET_CATS); memcpy(t->worst, s.worst, FLEET_CATS); memcpy(t->score, s.score, FLEET_CATS);
+  t->follow = s.follow;
+  t->flags = (s.deauth ? 1 : 0) | (s.evil ? 2 : 0);
+  t->deauth = s.deauthN; t->evil = s.evilN; t->rid = s.ridN;
+  sendSealed(r.mac, buf, sizeof(Threats), Msg::Threats, r.sess, r.txSeq, r.sk);
 }
 
 // Irks (v5): every unit's BLE key, so each unit can tell the others' adverts at any address.
@@ -614,6 +637,7 @@ void onLogRows(const Rx& f) {
     for (auto& e : r.lf) if (!e.used) { rec = &e; break; }
     if (!rec) { rec = &r.lf[0]; for (auto& e : r.lf) if (e.stamp < rec->stamp) rec = &e; }
     memcpy(rec->file, hd.fileId, 4); rec->used = true; rec->nextRow = 0;   // a file not seen lately: store from its first row
+    rec->an = FleetAnchors{};
   }
   rec->stamp = ++r.lfClock;
   memcpy(r.lfLast, hd.fileId, 4); r.lfHave = true;
@@ -621,7 +645,7 @@ void onLogRows(const Rx& f) {
   for (int k = 0; k < 4; k++) snprintf(ofile + 2 * k, 3, "%02x", hd.fileId[k]);
   sidToHex(L->st.m[i].sid, sh);
   uint32_t stored = 0;
-  if (!fleetLogStore(sh, ofile, hd.firstRow, (hd.flags & LOGROWS_ANCHOR) != 0, lines, blen, &rec->nextRow, &stored)) {
+  if (!fleetLogStore(sh, ofile, hd.firstRow, (hd.flags & LOGROWS_ANCHOR) != 0, lines, blen, &rec->nextRow, &stored, &rec->an)) {
     r.lfStored += stored; L->logBusy++;                            // partial storage is fine: the resend dedups by row
     return;
   }

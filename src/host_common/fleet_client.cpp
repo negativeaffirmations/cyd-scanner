@@ -86,6 +86,9 @@ struct ClientSt {
   uint16_t fwdStart;                   // where the last capped cycle stopped: the next one resumes there (no starving)
   uint16_t lastDets;                   // rows of the last successful cycle (MStat.dets; steady across a busy miss)
   uint32_t rowsSent, framesSent, ridFrames;
+  // fw 0.36.0: the leader's fleet-wide threat readout (Msg::Threats) + the millis() it arrived (0 = none yet)
+  Threats  thr;
+  uint32_t thrAtMs;
 };
 // P6 item 6 store-and-forward (docs §22): this boot's log files go to the leader from line 1, read straight from the
 // unit's own SD files at acked byte offsets (no RAM queue). Each file (live fg / bg stream, or one rotated away earlier
@@ -373,6 +376,12 @@ void onIrks(const Rx& f) {
   if (C->st != C_JOINED || !sessionOk(f, sizeof(Irks))) return;
   Irks k; memcpy(&k, f.data, sizeof(k));
   fleet::irksSet(&k.irk[0][0], k.n);
+}
+
+void onThreats(const Rx& f) {
+  if (C->st != C_JOINED || !sessionOk(f, sizeof(Threats))) return;
+  memcpy(&C->thr, f.data, sizeof(Threats));
+  C->thrAtMs = millis(); if (!C->thrAtMs) C->thrAtMs = 1;
 }
 
 void onPlan(const Rx& f) {
@@ -767,6 +776,7 @@ void onFrame(const Rx& f) {
     case Msg::Ctrl:  onCtrl(f); break;
     case Msg::Plan:  onPlan(f); break;
     case Msg::Irks:  onIrks(f); break;
+    case Msg::Threats: onThreats(f); break;
     case Msg::LogAck: onLogAck(f); break;
     default: break;
   }
@@ -869,6 +879,19 @@ void printStatus() {
 }
 
 bool joined() { return C && C->st == C_JOINED; }
+
+static_assert(ThreatSum::N == FLEET_CATS, "ThreatSum arrays = Threats arrays");
+bool threats(ThreatSum& s) {
+  if (!C || C->st != C_JOINED || !C->thrAtMs || millis() - C->thrAtMs > 6000) return false;
+  const Threats& t = C->thr;
+  const int n = t.n < FLEET_CATS ? t.n : FLEET_CATS;
+  memset(&s, 0, sizeof(s));
+  memcpy(s.cnt, t.cnt, n); memcpy(s.worst, t.worst, n); memcpy(s.score, t.score, n);
+  s.follow = t.follow;
+  s.deauth = t.flags & 1; s.evil = (t.flags & 2) != 0;
+  s.deauthN = t.deauth; s.evilN = t.evil; s.ridN = t.rid;
+  return true;
+}
 
 // P5 (docs §9.1): after each successful scan cycle, forward the rows that changed (or are due a refresh) as sealed
 // DetBatch frames, and the Remote-IDs as a RidBatch. Raw Detections: the leader re-scores with its own DB.

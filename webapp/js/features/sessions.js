@@ -22,8 +22,9 @@ import { connGen } from '../ble/xfer.js';
 import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
+import { buildCflo, cfloName, cfloSupported, blobMeta, CFLO_MAX } from '../data/cflo.js';
+import { uploadCflo } from './cfloupload.js';
 
-const FLEET_SLACK_S = 300;         // a Fleet group "overlaps" a scan when their dated spans touch within this
 const GROUP_GAP_S = 6*60;          // next part starts within 6 min of the previous part's last row
 let groups = [];                   // [{key, kind, parts:[{path,base,size,flag,first,last}], start, end, size, flag}]
 const selected = new Set();        // group keys (first part's path) — survives a list refresh
@@ -81,10 +82,15 @@ function groupTitle(g){
   return fmtDay(g.start)+(g.end-g.start>=60 ? " – "+(same?fmtTime(g.end):fmtDay(g.end)) : "");
 }
 // Fleet groups that ride along with the selected scans (not already ticked themselves).
+// The ONE overlap rule (lists, archives, current session): a fleet file / part rides with a scan when their dated
+// spans share more than FLEET_MIN_OVERLAP_S. A fleet file that only touches the scan's edge (the previous session's,
+// ending at New Session; the next one, starting at its end) stays out; a long fleet file that runs beside several own
+// files (the leader switched between foreground and background logging) rides with each of them.
+const FLEET_MIN_OVERLAP_S = 60;
+const overlapS = (a, b)=> a.start && b.start ? Math.min(a.end, b.end) - Math.max(a.start, b.start) : -1;
+const rides = (fleetSpan, scan)=> overlapS(fleetSpan, scan) > FLEET_MIN_OVERLAP_S;
 function fleetOf(g){
-  // The fleet file's END must fall inside the scan (+slack): a carried tail only skews a fleet file's START, so a fleet
-  // file that merely touches a neighbouring scan is not pulled in.
-  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && f.start && f.start<=g.end+FLEET_SLACK_S && f.end>=g.start-FLEET_SLACK_S && f.end<=g.end+FLEET_SLACK_S);
+  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && rides(f, g));
 }
 function includedFleet(gs){
   const out=[];
@@ -223,15 +229,131 @@ async function fetchGroups(gs, cmdFor, opts){
       const saved = !cmdFor && cacheStatus(p.path, p.size, p.fid).st==="full";
       toast((saved?"Loading saved ":"Fetching ")+(total>1?"file "+k+"/"+total+" — ":"")+p.base+"…", {work:true, sticky:true});
       alive();
-      pt.push(cmdFor ? await bleFetch(cmdFor(p), p.base) : (await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base, gen, sid, trim:!!(opts && opts.trim)})).text);
+      if(cmdFor) pt.push(await bleFetch(cmdFor(p), p.base));
+      else {
+        const r=await fetchLog(p.path, {size:p.size, fileId:p.fid, name:p.base, gen, sid, trim:!!(opts && opts.trim)});
+        pt.push(opts && opts.raw ? {p, blob:r.blob, text:r.blob ? null : r.text} : r.text);
+      }
       alive();
     }
-    texts.push(joinLogParts(pt));
+    texts.push(opts && opts.raw ? pt : joinLogParts(pt));   // raw: the parts as fetched (a .cflo stores them byte-exact)
   }
   return texts;
 }
+
+// ---- .cflo scan archives (docs/cflo-format.md): one archive per scan = its own parts + its Fleet file(s) ----
+// An item = {own: the own scan group (null for a Fleet-only archive), ownParts, cur (the current file, already fetched),
+// fleet: [{p, blob}] fleet parts already fetched + assigned, fleetGroup (Fleet-only item)}.
+// Each fleet PART goes to exactly one item, decided before packing: when its meta pair_file_id (fw >= 0.37.0) names
+// a scan that is part of this action, that item; otherwise (no pair, an unknown one, or a scan outside the action) the
+// first selected scan it rides with (`rides`, the shared overlap rule). A ticked Fleet group's parts that no scan
+// took form a Fleet-only archive. So the pair only settles which of the selected scans holds a fleet file.
+const isCsvGroup = g=>g.parts.some(p=>p.csv);
+const pairOwner = pair=>pair ? groups.find(g=>g.kind!=="fleet" && g.parts.some(p=>p.fid===pair)) : null;
+async function pairOfBlob(blob){ const m=await blobMeta(blob); return m && /^[0-9a-f]{8}$/.test(m.pair_file_id||"") ? m.pair_file_id : ""; }
+async function fetchRaw(g, ctx){   // [{p, blob}] (no decoded text kept: the archive needs the bytes only)
+  return (await fetchGroups([g], null, {ctx, raw:true}))[0].map(x=>({p:x.p, blob:x.blob || new Blob([x.text||""])}));
+}
+async function planCflo(gs, ctx){
+  const own=gs.filter(g=>g.kind!=="fleet" && !isCsvGroup(g));
+  const items=own.map(g=>({own:g, ownParts:g.parts, fleet:[]}));
+  const ticked=gs.filter(g=>g.kind==="fleet");
+  const cand=[];
+  for(const g of own.flatMap(fleetOf).concat(ticked)) if(!cand.some(c=>c.key===g.key)) cand.push(g);
+  const lone=new Map();
+  for(const f of cand){
+    for(const x of await fetchRaw(f, ctx)){
+      const pair=await pairOfBlob(x.blob), po=pairOwner(pair);
+      // The pair only CHOOSES between the action's own scans; a pair naming a scan outside the action (or none, or an
+      // unknown one) falls back to the overlap rule, so a fleet file is never dropped from a scan it ran beside.
+      let it = po ? items.find(i=>i.own.key===po.key) : null;
+      if(!it) it = items.find(i=>rides(x.p, i.own));
+      if(it){ it.fleet.push(x); continue; }
+      if(ticked.some(t=>t.key===f.key)){
+        let l=lone.get(f.key); if(!l){ l={own:null, ownParts:[], fleet:[], fleetGroup:f}; lone.set(f.key, l); }
+        l.fleet.push(x);
+      }
+    }
+  }
+  return items.concat([...lone.values()]);
+}
+// Scan identity for scan.id: the group's first part file_id (same from the list and from "current session"); a file
+// from before file_ids (fw < 0.25.0) gets a key from its first epoch + name instead of a shared "nofid-1".
+function scanKey(g){
+  const p=g && g.parts[0];
+  if(!p) return "";
+  return p.fid || "n"+(p.start||0)+"-"+p.base.replace(/\.(jsonl|csv)$/i, "").replace(/[^A-Za-z0-9]/g, "").slice(0, 24);
+}
+const uiBuild = ()=>{ const e=$("uiver"); return e ? e.textContent.replace(/\s+/g," ").trim() : ""; };
+async function packItem(item, ctx){
+  const ownX = item.cur ? [item.cur] : item.own ? await fetchRaw({...item.own, parts:item.ownParts}, ctx) : [];
+  const files=ownX.concat(item.fleet).map(x=>({blob:x.blob, device_path:x.p.path, first:x.p.start, last:x.p.end}));
+  toast("Packing the scan archive…", {work:true, sticky:true});
+  const g=item.own || item.fleetGroup;
+  const r=await buildCflo(files, {ownerSid:ctx.sid, scanKey:scanKey(g), build:uiBuild()});
+  return r ? {...r, name:cfloName(item.cur ? item.cur.p.base : g.parts[0].base)} : null;
+}
+const saveCflo = a=>saveBlob(new Blob([a.blob], {type:"application/octet-stream"}), a.name);   // octet-stream: Android keeps the name
+async function saveCfloSel(gs){
+  const ctx=actionCtx(); let n=0;
+  const csv=gs.filter(g=>g.kind!=="fleet" && isCsvGroup(g));   // legacy CSV sessions stay plain .csv files
+  if(csv.length){ await saveSplit(csv, null, undefined, "Nothing to download — those sessions are empty."); n++; }
+  for(const item of await planCflo(gs, ctx)){
+    const a=await packItem(item, ctx);
+    if(!a) continue;
+    if(n++) await pause(400);
+    saveCflo(a);
+  }
+  if(!n) toast("Nothing to download — those sessions are empty.", {err:true});
+  else if(n>1) toast("Saved "+n+" scan files.");
+}
+// The pre-.cflo upload of one item: the own files joined as one NDJSON body, then each fleet part as its own body
+// (the same files the archive would have held).
+const cutTorn = t=>{ const i=(t||"").lastIndexOf("\n"); return i<0 ? "" : t.slice(0, i+1); };
+async function uploadPlain(item, ctx){
+  const res=[];
+  if(item.cur) res.push(await uploadSessionText(cutTorn(item.cur.text || await item.cur.blob.text()), item.cur.p.base));
+  else if(item.own){
+    const g={...item.own, parts:item.ownParts};
+    const [text]=await fetchGroups([g], null, {trim:true, ctx});
+    res.push(await uploadSessionText(text, groupFileName([g])));
+  }
+  for(const f of item.fleetGroups || []){
+    if(res.includes("auth")) break;
+    const [text]=await fetchGroups([f], null, {trim:true, ctx});
+    res.push(await uploadSessionText(text, groupFileName([f])));
+  }
+  for(const x of item.fleet){
+    if(res.includes("auth")) break;
+    res.push(await uploadSessionText(cutTorn(await x.blob.text()), x.p.base));
+  }
+  return res.includes("auth") ? "auth" : res.length && res.every(r=>r===true) ? true : false;
+}
+// run = {noCflo} shared by one action: after the first 415/413 (or with no archive upload available) the rest of the
+// selection goes straight to the plain bodies instead of packing again.
+// No CompressionStream: today's grouping (own scan + its overlapping Fleet groups, each Fleet group once).
+function legacyPlan(gs){
+  const used=new Set(), plan=[];
+  for(const g of gs.filter(x=>x.kind!=="fleet" && !isCsvGroup(x))){
+    const f=fleetOf(g).filter(x=>!used.has(x.key)); f.forEach(x=>used.add(x.key));
+    plan.push({own:g, ownParts:g.parts, fleet:[], fleetGroups:f});
+  }
+  for(const f of gs.filter(x=>x.kind==="fleet")) if(!used.has(f.key)){ used.add(f.key); plan.push({own:null, ownParts:[], fleet:[], fleetGroups:[f]}); }
+  return plan;
+}
+async function uploadItem(item, ctx, run){
+  if(cfloSupported() && state.remoteApi && !run.noCflo){
+    const a=await packItem(item, ctx);
+    if(!a){ toast("Nothing to upload — that session is empty.", {err:true}); return false; }
+    if(a.blob.size > CFLO_MAX){ toast("That scan is too big to upload ("+Math.round(a.blob.size/1048576)+" MB, limit 64 MB).", {err:true}); return false; }
+    const r=await uploadCflo(a.blob, a.manifest, a.name);
+    if(r!=="fallback") return r;
+    run.noCflo=true;
+  }
+  return uploadPlain(item, ctx);   // old server (415 / 413), stale remote.js, or no CompressionStream
+}
 async function runBusy(what, fn){
-  if(busy) return;
+  if(busy){ toast("Another transfer is running — wait for it to finish.", {err:true}); return false; }
   if(!state.connected || !state.chars.cmd){ toast("Connect to the scanner first.", {err:true}); return; }
   busy=true; updateButtons();
   state.xferBusy=(state.xferBusy||0)+1;   // presence watching (features/switcher.js) pauses during transfers
@@ -283,22 +405,12 @@ async function currentFleet(sess){
   const part=groups.flatMap(g=>g.kind==="fleet" ? [] : g.parts).find(p=>p.base.replace(/\.jsonl$/, "")===base);
   if(!part) return [];
   return groups.filter(f=>f.kind==="fleet").map(f=>{
-    const parts=f.parts.filter(p=>p.end>part.start && p.start<=part.end+FLEET_SLACK_S);
+    const parts=f.parts.filter(p=>rides(p, part));
     return parts.length ? {...f, parts, start:parts[0].start, end:parts[parts.length-1].end} : null;
   }).filter(Boolean);
 }
-state.uploadCurrentFleet = sess => runBusy("Fleet upload", async ()=>{
-  if(state.fleetRole!=="leader") return;
-  const ctx=actionCtx(), fleet=await currentFleet(sess);
-  if(!fleet.length){ toast("Uploaded the scan. It has no Fleet file."); return; }
-  let bad=false;
-  for(const f of fleet){   // its OWN body, as on the Session-logs list
-    const [text]=await fetchGroups([f], null, {trim:true, ctx});
-    const r=await uploadSessionText(text, groupFileName([f]));
-    if(r!==true) bad=true;
-    if(r==="auth") break;   // a revoked key fails every body: stop
-  }
-  toast(bad ? "Uploaded the scan, but its Fleet file failed." : "Uploaded the scan + its Fleet file.", {err:bad});
+state.uploadCurrentFleet = sess => runBusy("Fleet upload", async ()=>{   // (a stale remote.js without the .cflo hook)
+  if(state.fleetRole==="leader") await uploadFleetOf(sess, actionCtx());
 });
 state.saveCurrentFleet = sess => runBusy("Fleet download", async ()=>{
   if(state.fleetRole!=="leader") return;
@@ -312,9 +424,59 @@ state.saveCurrentFleet = sess => runBusy("Fleet download", async ()=>{
   }
   toast("Saved the scan + its Fleet file as separate downloads.");
 });
+// "Download / Upload current session" as ONE .cflo (ble/download.js, features/remote.js call these state hooks with
+// the ctx they took BEFORE fetching): the current file as fetched + on a leader the fleet parts started beside it.
+// The list is refreshed first so the file's span and its scan's identity (scanKey) match the Session-logs path.
+async function currentItem(fname, cur, ctx){
+  toast("Reading the session list…", {work:true, sticky:true});
+  await bleFetch("Q", "sessions");   // download.js refreshes `groups` before this resolves
+  const sess=state.status && state.status.sess, base=(sess || fname.replace(/\.jsonl$/, ""));
+  const g=groups.find(x=>x.kind!=="fleet" && x.parts.some(p=>p.base.replace(/\.jsonl$/, "")===base));
+  const part=g && g.parts.find(p=>p.base.replace(/\.jsonl$/, "")===base);
+  const p=part || {path:"/logs/"+base+".jsonl", base:fname, start:0, end:0, fid:""};
+  const item={own:g||null, ownParts:[p], cur:{p, blob:cur.blob || new Blob([cur.text||""]), text:cur.text}, fleet:[]};
+  if(state.fleetRole==="leader" && part){
+    for(const f of groups.filter(x=>x.kind==="fleet")){
+      const parts=f.parts.filter(q=>rides(q, part));   // the current file is the only own file here: overlap decides
+      if(parts.length) item.fleet.push(...await fetchRaw({...f, parts}, ctx));
+    }
+  }
+  return item;
+}
+const sessionsRefused = ()=>{ toast("Another transfer is running — wait for it to finish.", {err:true}); };
+state.sessionsBusy = ()=>busy;
+state.saveCurrentCflo = (fname, cur, ctx) => {
+  if(!cfloSupported()){ saveBlob(cur.blob, fname); return state.fleetRole==="leader" ? state.saveCurrentFleet(fname) : undefined; }   // pre-.cflo behaviour
+  if(busy){ sessionsRefused(); return; }
+  return runBusy("Download", async ()=>{
+    const c=ctx || actionCtx(), a=await packItem(await currentItem(fname, cur, c), c);
+    if(!a){ toast("Nothing to download — no log on the device yet.", {err:true}); return; }
+    saveCflo(a);
+  });
+};
+state.uploadCurrentCflo = (fname, cur, ctx) => {
+  if(busy){ sessionsRefused(); return; }
+  return runBusy("Upload", async ()=>{
+    const c=ctx || actionCtx(), item=await currentItem(fname, cur, c);
+    await uploadItem(item, c, {noCflo:false});
+  });
+};
+async function uploadFleetOf(sess, ctx){
+  const fleet=await currentFleet(sess);
+  if(!fleet.length){ toast("Uploaded the scan. It has no Fleet file."); return; }
+  let bad=false;
+  for(const f of fleet){   // its OWN body, as on the Session-logs list
+    const [text]=await fetchGroups([f], null, {trim:true, ctx});
+    const r=await uploadSessionText(text, groupFileName([f]));
+    if(r!==true) bad=true;
+    if(r==="auth") break;
+  }
+  toast(bad ? "Uploaded the scan, but its Fleet file failed." : "Uploaded the scan + its Fleet file.", {err:bad});
+}
 export function downloadSession(){
   const gs=needSel(); if(!gs) return;
-  runBusy("Download", ()=>saveSplit(gs, null, undefined, "Nothing to download — those sessions are empty."));
+  if(!cfloSupported()){ runBusy("Download", ()=>saveSplit(gs, null, undefined, "Nothing to download — those sessions are empty.")); return; }
+  runBusy("Download", ()=>saveCfloSel(gs));
 }
 // Selected scans, filtered to the Data page's time range ON the device (T:<mode>[:min]:<path> per file).
 export function downloadSessionRange(){
@@ -340,17 +502,18 @@ export function uploadSelectedSessions(){
   if(!isPaired()){ toast("Not paired — pair a server in Settings.", {err:true}); return; }
   const gs=needSel(); if(!gs) return;
   runBusy("Upload", async()=>{
-    const ctx=actionCtx(), list=gs.concat(includedFleet(gs)), res=[];   // the Fleet file is its OWN body, after the scan
-    for(const g of list){
-      const [text]=await fetchGroups([g], null, {trim:true, ctx});
-      const r=await uploadSessionText(text, groupFileName([g]));
-      res.push({g, r});
+    // One archive per scan (its Fleet file inside); an old server gets the per-file NDJSON bodies (uploadItem).
+    const ctx=actionCtx(), run={noCflo:false}, res=[];
+    const csv=gs.filter(g=>g.kind!=="fleet" && isCsvGroup(g)).map(g=>({own:g, ownParts:g.parts, fleet:[]}));
+    const plan=csv.concat(cfloSupported() ? await planCflo(gs, ctx) : legacyPlan(gs));
+    for(const item of plan){
+      const r=isCsvGroup(item.own||{parts:[]}) ? await uploadPlain(item, ctx) : await uploadItem(item, ctx, run);
+      res.push(r);
       if(r==="auth") break;   // a revoked key fails every body: stop
     }
-    if(list.length>1){   // one closing summary (each body already toasted its own result)
-      const what=x=>(x.g.kind==="fleet"?"fleet":"scan")+(x.r===true?" uploaded":x.r==="auth"?" rejected (re-pair)":" failed");
-      const parts=res.map(what).concat(list.slice(res.length).map(g=>(g.kind==="fleet"?"fleet":"scan")+" skipped"));
-      toast("Upload: "+parts.join(", ")+".", {err:res.length<list.length || res.some(x=>x.r!==true)});
+    if(plan.length>1){   // one closing summary (each upload already toasted its own result)
+      const ok=res.filter(r=>r===true).length, auth=res.includes("auth");
+      toast("Upload: "+ok+" of "+plan.length+" scan(s) uploaded"+(auth?" — rejected, re-pair in Settings":"")+".", {err:ok<plan.length});
     }
   });
 }
