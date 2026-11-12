@@ -136,7 +136,7 @@ unit).
   (peak memory = one entry) through the existing NDJSON path (unchanged). `scan.id` is stored per session, so a later,
   bigger re-export is recognized as the same scan; row-level dedup keeps re-uploads safe. Entries present in the ZIP
   but not in `files[]` are ignored.
-- **Web app:** Map / Explore open a `.cflo` like a `.jsonl` (parse each file entry, join with `joinLogParts`).
+- **Web app:** Map "Load file" opens a `.cflo` like a `.jsonl` (parse each file entry, join with `joinLogParts`).
 - Anything else: unzip and read the `.jsonl` files.
 
 ## 4. Upload
@@ -182,8 +182,11 @@ Top level: `upload_id` = the first entry's `upload_id`; `sightings` / `events` =
 ## 5. Firmware addition that goes with it (agreed)
 
 Today the web app pairs a leader's session file with its fleet file by overlapping time (±5 min). Since fw 0.35.2 a
-New Session starts both together, so the fleet file's meta could carry `"pair_file_id":"<file_id of the leader's own
-file that was live when this fleet file was created>"`. The web app then groups exactly, and `scan.id` is unambiguous.
+New Session starts both together, so the fleet file's meta carries `"pair_file_id":"<file_id of the leader's own file
+it was started beside>"` (**fw 0.37.0**): the own stream that New Session rotated with it, else, for a boot's first
+fleet file, the stream active when it was created. The web app then groups exactly. The fleet file does not rotate when
+the leader switches between foreground and background logging, so it can run beside more than one own file; it names
+only the first, and a fleet file whose pair is unknown or older than 0.37.0 is grouped by overlap as before.
 Additive key; readers that don't know it ignore it.
 
 ## 6. Decisions (scan-analyzer, owner-approved 2026-11-11)

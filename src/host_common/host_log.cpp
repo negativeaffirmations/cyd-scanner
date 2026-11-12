@@ -106,6 +106,10 @@ bool logXferActive() { return g_xferDepth > 0; }
 
 bool bgCtx() { return g_bgScan && !hostboard::foregroundScan(); }
 LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
+// .cflo pairing: the own stream a leader New Session rotated together with the fleet file (null = none yet: the fleet
+// file names the active stream when it is created). Set at rotation time, not at fleet-file creation, because the
+// Scan menu's New Session rotates fg while the menu itself is a bg context.
+static LogStream* g_fleetPair = nullptr;
 void syncSharePath() {
   static char last[48] = "";
   const char* cur = activeStream().path;
@@ -268,7 +272,10 @@ void openBgSession() {
 void startNewSession(bool forceFg) {
   if (!forceFg && bgCtx()) beginSessionNamed(g_bg, true);
   else                     beginSessionNamed(g_fg, false);
-  if (fleet::role() == fleet::ROLE_LEADER) fleetLogRotate();   // the members' rows start a new fleet file too
+  if (fleet::role() == fleet::ROLE_LEADER) {   // the members' rows start a new fleet file too
+    g_fleetPair = (!forceFg && bgCtx()) ? &g_bg : &g_fg;   // the stream rotated just above
+    fleetLogRotate();
+  }
   resetFollow();
   enforceLogCap();        // rotation trigger: trim /logs/ to the cap
   syncSharePath();
@@ -416,9 +423,10 @@ static void writeSessionMeta(File& f, const LogStream& st) {
            scannerIdHex(), scannerName(), FW_VERSION, (unsigned long)DB_GEN);
   if (&st == &g_fleetLog) {
     f.print(",\"stream\":\"fleet\"");
-    // .cflo (docs/cflo-format.md §5): the leader's own file live when this fleet file was created, so a reader can
-    // pair them exactly instead of by overlapping time.
-    LogStream& own = activeStream();
+    // .cflo (docs/cflo-format.md §5): the leader's own file this fleet file was started beside (the stream New Session
+    // rotated with it, else the active one), so a reader can pair them exactly. The fleet file does not rotate on a
+    // later fg/bg context change, so it can run beside more than one own file; it names only the first.
+    LogStream& own = g_fleetPair ? *g_fleetPair : activeStream();
     makeFileId(own);
     f.printf(",\"pair_file_id\":\"%s\"", own.fileId);
   }

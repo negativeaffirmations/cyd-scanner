@@ -22,7 +22,12 @@ in the session scratchpad), new `js/features/cfloupload.js` (`uploadCflo` -> tru
 `uploadItem` -> `uploadPlain` fallback, `state.saveCurrentCflo` / `state.uploadCurrentCflo`), hooks in `ble/download.js`
 `downloadLog` + `remote.js` `uploadCurrentSession`, Map Load file reads `.cflo` (main.js). Tokens `?v=20261112a`, uiver
 `cflo a`. Browsers without CompressionStream keep the old per-file behaviour.
-**Next:** reviewer pass on the web diff; flash 0.37.0 on the 4 hosts; owner test (solo + leader download, open the `.cflo` on
+**Review 1 (REV-001..016) fixed** in the follow-up commit: fw pair taken at rotation (`g_fleetPair`), fleet parts assigned
+to exactly one item before packing (`planCflo`), one-file-at-a-time packing, CSV stays plain, one `scanKey` rule, capped
+inflate, ZIP64/spanning refusals, busy refusals + ctx taken before `fetchCurrent`, octet-stream save, 64 MB check, run-wide
+`noCflo`. Not fixed: REV-013 (`tz_offset_min` = the phone's offset now; noted in code). scan-analyzer validated a synthetic
+archive from our writer (bridge 01:50). Server side `c1e4213` built, NOT deployed (needs owner push + restart).
+**Next:** focused re-review of the rework; flash 0.37.0 on the 4 hosts; owner test (solo + leader download, open the `.cflo` on
 the Map, upload against the OLD server -> fallback works); merge to `main` to deploy; scan-analyzer ships its side, then
 re-test the archive upload; CLAUDE.md notes (webapp Data page + fleet meta `pair_file_id`).
 **Plan (as written before the build):**
