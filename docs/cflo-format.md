@@ -1,4 +1,4 @@
-# `.cflo` scan archive — DRAFT v0 (not built; for agreement with scan-analyzer)
+# `.cflo` scan archive — DRAFT v0.1 (scan-analyzer's answers folded in; not built, not final)
 
 One file per **scan**, solo or fleet, for what the web app downloads and uploads. It replaces "a scan is several
 `.jsonl` parts + maybe a Fleet file" with one object the user sees and moves. The scanners do not change what they
@@ -13,11 +13,18 @@ Middlebury optical-flow format). Media type: `application/vnd.cointelflo+zip` (u
 
 ## 1. Container
 
-- A standard **ZIP** (PKZIP 2.0: no ZIP64, no encryption, no spanning; total < 4 GB, practical cap 64 MB).
-  Rename to `.zip` and any tool opens it.
+- A standard **ZIP** (PKZIP 2.0: no ZIP64, no encryption, no spanning). Size caps: **64 MB compressed**, **256 MB
+  uncompressed per entry**, **1 GB uncompressed per archive** (readers enforce the inflated caps while inflating, not
+  from the manifest). Rename to `.zip` and any tool opens it.
+- Compression methods: STORE (0) and DEFLATE (8) only. Data descriptors (flag bit 3, as streaming writers emit) are
+  allowed.
+- **Refused** (a reader rejects the whole archive): ZIP64, encryption, any other compression method, entry names with
+  `..`, a leading `/`, a backslash, or a duplicate name.
 - **First entry `manifest.json`, STORED** (uncompressed), so a reader can sniff the format from the first bytes.
 - Log entries **DEFLATE** (web: `CompressionStream("deflate-raw")`; NDJSON compresses ~5-10x). STORE is also valid.
-- Entry names: UTF-8, `/` separators, no `..`, no leading `/`, no duplicates. Readers ignore entries they don't know.
+- Entry names: UTF-8, `/` separators. Readers ignore entries they don't know.
+- A reader recognizes the format by the `PK\x03\x04` magic plus a first entry named `manifest.json`, whatever media
+  type or file name it arrived with.
 - Layout:
 
 ```
@@ -44,6 +51,7 @@ unit).
     "fleet_id": "0011223344556677",
     "start_epoch": 1700000000,
     "end_epoch": 1700003600,
+    "tz": "America/New_York",
     "tz_offset_min": -300
   },
   "units": [
@@ -93,13 +101,14 @@ unit).
 | `scan.kind` | `"solo"` (one unit's own files) or `"fleet"` (includes a fleet file). |
 | `scan.leader`, `scan.fleet_id` | Fleet only: the leader's id and the `fleet_id` from its fleet file's meta (newest if several). Omitted for solo. |
 | `scan.start_epoch` / `end_epoch` | Span over all files, in the logs' epoch convention (LOCAL wall clock seconds, as `epoch` in rows). 0 = undatable. |
+| `scan.tz` | IANA zone name of the phone that built the archive (`Intl.DateTimeFormat().resolvedOptions().timeZone`, the value the web app sends today as `X-Client-Tz`). Readers bucket by it; a fixed offset is wrong across a DST change. Omitted if unknown. With it present the `X-Client-Tz` header is optional. |
 | `scan.tz_offset_min` | The offset that local epoch carries (from the phone; omitted if unknown) so a reader can get UTC = epoch − offset·60. |
 | `units[]` | Every unit with rows in the archive: from each file's meta, and for fleet files from forwarded member meta lines (`ofile` lines). `role`: `leader` / `client` / `solo`. Display / provenance only; **the rows and meta lines inside the files stay authoritative**. |
 | `files[].path` | The entry name. |
 | `files[].scanner_id`, `file_id` | The writer and the file's own id (line-1 meta). |
 | `files[].stream` | `fg` / `bg` / `fleet` (from the device name: `bg-`, `fleet-`, else `fg`). |
 | `files[].device_path` | Where it lived on the SD card when fetched (names change on time sync; informational). |
-| `bytes`, `lines`, `sha256` | Of the stored entry (after any tail trim), so a reader can verify it got the whole file. |
+| `bytes`, `lines`, `sha256` | Of the stored entry (after any tail trim), so a reader can verify it got the whole file. `sha256` is also scan-analyzer's whole-file idempotency key: a re-export stores only the entries that changed. |
 | `first_epoch`, `last_epoch` | The file's dated span (the session-list values), 0 = unknown. |
 | `trimmed_tail_bytes` | Bytes of a torn last line removed before packing (the live file is being appended while fetched). Normally 0. |
 
@@ -122,30 +131,63 @@ unit).
 
 ## 3. Readers
 
-- **scan-analyzer:** check `format` / `version`; verify each entry's `sha256` + `bytes`; then ingest every `files[]`
-  entry through the existing NDJSON path (unchanged). Row-level dedup makes re-uploading the same scan, or a later bigger
-  export of it, safe. Entries present in the ZIP but not in `files[]` are ignored; `files[]` entries missing from the ZIP
-  fail the upload.
+- **scan-analyzer:** check `format` / `version`; then verify **every** `files[]` entry (present, `bytes`, `sha256`)
+  **before ingesting any** — one bad entry rejects the whole upload and nothing is stored. Then ingest entry by entry
+  (peak memory = one entry) through the existing NDJSON path (unchanged). `scan.id` is stored per session, so a later,
+  bigger re-export is recognized as the same scan; row-level dedup keeps re-uploads safe. Entries present in the ZIP
+  but not in `files[]` are ignored.
 - **Web app:** Map / Explore open a `.cflo` like a `.jsonl` (parse each file entry, join with `joinLogParts`).
 - Anything else: unzip and read the `.jsonl` files.
 
 ## 4. Upload
 
-Proposal for scan-analyzer (its API, its decision): the existing `POST /api/v1/uploads` also accepts
-`Content-Type: application/vnd.cointelflo+zip` (body = the archive). One request per scan replaces today's one-request-
-per-scan NDJSON body and the separate fleet-file body. Plain NDJSON uploads stay supported for older web apps.
+Agreed with scan-analyzer (its API): the existing `POST /api/v1/uploads` also accepts the archive as the body, with
+`Content-Type: application/vnd.cointelflo+zip` or `application/zip`; the server also sniffs it by magic bytes (§1) in
+case a browser relabels the type. **One request = one scan**, replacing today's NDJSON body plus the separate
+fleet-file body, so a failure stays scoped to one scan. Plain NDJSON uploads stay supported unchanged for older web
+apps. The server's upload limit becomes 64 MB.
 
-## 5. Firmware addition that goes with it (small, optional but recommended)
+**Response (200):** today's top-level keys stay, plus `scan_id` and `files[]`:
+
+```json
+{
+  "upload_id": 412,
+  "session_id": 97,
+  "sightings": 5310,
+  "events": 42,
+  "duplicate": false,
+  "scan_id": "0a1b2c3d4e5f-f00dfeed",
+  "files": [
+    { "path": "logs/0a1b2c3d4e5f/f00dfeed.jsonl", "upload_id": 412, "session_ids": [97], "sightings": 2900, "events": 30, "duplicate": false },
+    { "path": "logs/0a1b2c3d4e5f/deadc0de.jsonl", "upload_id": 413, "session_ids": [98, 99], "sightings": 2410, "events": 12, "duplicate": false }
+  ]
+}
+```
+
+`session_id` = the first new session, or `null`; top-level `duplicate` is true only when every entry was a duplicate.
+(Numbers synthetic.)
+
+**Errors**, body `{"detail": "..."}` as today:
+
+| Code | When |
+|---|---|
+| 413 | Too big: over 64 MB compressed, or over an inflate cap (256 MB per entry, 1 GB per archive). |
+| 415 | Unknown `format` / `version`, or a refused ZIP feature (§1). |
+| 422 | Manifest invalid, or a `files[]` entry missing, or its `bytes` / `sha256` mismatched. |
+
+## 5. Firmware addition that goes with it (agreed)
 
 Today the web app pairs a leader's session file with its fleet file by overlapping time (±5 min). Since fw 0.35.2 a
 New Session starts both together, so the fleet file's meta could carry `"pair_file_id":"<file_id of the leader's own
 file that was live when this fleet file was created>"`. The web app then groups exactly, and `scan.id` is unambiguous.
 Additive key; readers that don't know it ignore it.
 
-## 6. Open questions
+## 6. Decisions (scan-analyzer, owner-approved 2026-11-11)
 
-1. `scan.id` from the owner's first own file: fine for the server, or should the server mint ids?
-2. One archive per scan for multi-select (proposed), or one archive with several scans (`scans[]`)?
-3. Is the 64 MB cap right for the server's request limit?
-4. Should the phone also keep `.cflo` downloads compressed in its log cache, or keep caching per file (proposed:
-   per file, the archive is built on demand)?
+1. `scan.id` is made by the client (prefixed by the owner's scanner_id, so no collisions); the server stores it.
+2. One archive per scan; no `scans[]`.
+3. 64 MB compressed, with the inflate caps in §1.
+4. The phone keeps caching per file; the archive is built on demand.
+5. `pair_file_id` (§5) and `scan.tz` added.
+
+Status: the spec is final once the owner signs off; nothing is built on either side before that.
