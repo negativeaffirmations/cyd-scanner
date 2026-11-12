@@ -35,7 +35,8 @@ upload, tell them so they can check the sessions.
 **Rolled out 2026-11-12:** fw **0.37.0 FLASHED on all 4 hosts** (COM10 mini #2 leader, COM16 mini #1, COM17 + COM13 the
 CYDs); console `fleet` on the leader: 3 members joined, all fw 0.37.0, forwarding. **Merged to `main` (`990c34d`) and
 pushed**: web app `cflo c` (`?v=20261112c`) deploying via Pages. CLAUDE.md updated.
-**Next:** owner test on the phone: Data page download of a solo scan and a leader scan (one `.cflo` each, the leader's with
+**Owner test 2026-11-12:** 1st "Upload current session" = archive, but NO fleet file (fresh session < 60 s overlap; fixed in `cflo d`, `f273392`). Re-upload = 1 archive, 3 entries (own + 2 fleet files), per-member sessions OK (scan-analyzer uploads 83-85). Open: their fleet_role/fleet_id comes only from join lines (bridge 03:20, their call).
+**Next (remaining):** owner test of the Data-page download/upload of a solo scan and a leader scan (one `.cflo` each, the leader's with
 its fleet file), "Download current session", open a `.cflo` on the Map, upload one (server side is live, so it should go in
 as an archive, not the fallback). Then tell scan-analyzer the upload landed so they check the sessions it made.
 **Plan (as written before the build):**
