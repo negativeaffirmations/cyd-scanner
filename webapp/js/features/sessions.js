@@ -25,7 +25,6 @@ import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
 import { buildCflo, cfloName, cfloSupported, blobMeta, CFLO_MAX } from '../data/cflo.js';
 import { uploadCflo } from './cfloupload.js';
 
-const FLEET_SLACK_S = 300;         // a Fleet group "overlaps" a scan when their dated spans touch within this
 const GROUP_GAP_S = 6*60;          // next part starts within 6 min of the previous part's last row
 let groups = [];                   // [{key, kind, parts:[{path,base,size,flag,first,last}], start, end, size, flag}]
 const selected = new Set();        // group keys (first part's path) — survives a list refresh
@@ -83,10 +82,15 @@ function groupTitle(g){
   return fmtDay(g.start)+(g.end-g.start>=60 ? " – "+(same?fmtTime(g.end):fmtDay(g.end)) : "");
 }
 // Fleet groups that ride along with the selected scans (not already ticked themselves).
+// The ONE overlap rule (lists, archives, current session): a fleet file / part rides with a scan when their dated
+// spans share more than FLEET_MIN_OVERLAP_S. A fleet file that only touches the scan's edge (the previous session's,
+// ending at New Session; the next one, starting at its end) stays out; a long fleet file that runs beside several own
+// files (the leader switched between foreground and background logging) rides with each of them.
+const FLEET_MIN_OVERLAP_S = 60;
+const overlapS = (a, b)=> a.start && b.start ? Math.min(a.end, b.end) - Math.max(a.start, b.start) : -1;
+const rides = (fleetSpan, scan)=> overlapS(fleetSpan, scan) > FLEET_MIN_OVERLAP_S;
 function fleetOf(g){
-  // The fleet file's END must fall inside the scan (+slack): a carried tail only skews a fleet file's START, so a fleet
-  // file that merely touches a neighbouring scan is not pulled in.
-  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && f.start && f.start<=g.end+FLEET_SLACK_S && f.end>=g.start-FLEET_SLACK_S && f.end<=g.end+FLEET_SLACK_S);
+  return g.kind==="fleet" || !g.start ? [] : groups.filter(f=>f.kind==="fleet" && rides(f, g));
 }
 function includedFleet(gs){
   const out=[];
@@ -240,10 +244,10 @@ async function fetchGroups(gs, cmdFor, opts){
 // ---- .cflo scan archives (docs/cflo-format.md): one archive per scan = its own parts + its Fleet file(s) ----
 // An item = {own: the own scan group (null for a Fleet-only archive), ownParts, cur (the current file, already fetched),
 // fleet: [{p, blob}] fleet parts already fetched + assigned, fleetGroup (Fleet-only item)}.
-// Each fleet PART goes to exactly one item, decided before packing: its meta pair_file_id (fw >= 0.37.0) names the
-// leader file it was started beside -> that item; a pair naming a file of a scan that is NOT selected -> left out
-// (it belongs to that scan) unless its Fleet row was ticked; no pair (older firmware) or an unknown pair -> the first
-// selected scan it overlaps (today's rule). A ticked Fleet group's parts that no scan took form a Fleet-only archive.
+// Each fleet PART goes to exactly one item, decided before packing: when its meta pair_file_id (fw >= 0.37.0) names
+// a scan that is part of this action, that item; otherwise (no pair, an unknown one, or a scan outside the action) the
+// first selected scan it rides with (`rides`, the shared overlap rule). A ticked Fleet group's parts that no scan
+// took form a Fleet-only archive. So the pair only settles which of the selected scans holds a fleet file.
 const isCsvGroup = g=>g.parts.some(p=>p.csv);
 const pairOwner = pair=>pair ? groups.find(g=>g.kind!=="fleet" && g.parts.some(p=>p.fid===pair)) : null;
 async function pairOfBlob(blob){ const m=await blobMeta(blob); return m && /^[0-9a-f]{8}$/.test(m.pair_file_id||"") ? m.pair_file_id : ""; }
@@ -260,8 +264,10 @@ async function planCflo(gs, ctx){
   for(const f of cand){
     for(const x of await fetchRaw(f, ctx)){
       const pair=await pairOfBlob(x.blob), po=pairOwner(pair);
+      // The pair only CHOOSES between the action's own scans; a pair naming a scan outside the action (or none, or an
+      // unknown one) falls back to the overlap rule, so a fleet file is never dropped from a scan it ran beside.
       let it = po ? items.find(i=>i.own.key===po.key) : null;
-      if(!it && !po) it = items.find(i=>fleetOf(i.own).some(z=>z.key===f.key));   // no / unknown pair: overlap rule
+      if(!it) it = items.find(i=>rides(x.p, i.own));
       if(it){ it.fleet.push(x); continue; }
       if(ticked.some(t=>t.key===f.key)){
         let l=lone.get(f.key); if(!l){ l={own:null, ownParts:[], fleet:[], fleetGroup:f}; lone.set(f.key, l); }
@@ -399,7 +405,7 @@ async function currentFleet(sess){
   const part=groups.flatMap(g=>g.kind==="fleet" ? [] : g.parts).find(p=>p.base.replace(/\.jsonl$/, "")===base);
   if(!part) return [];
   return groups.filter(f=>f.kind==="fleet").map(f=>{
-    const parts=f.parts.filter(p=>p.end>part.start && p.start<=part.end+FLEET_SLACK_S);
+    const parts=f.parts.filter(p=>rides(p, part));
     return parts.length ? {...f, parts, start:parts[0].start, end:parts[parts.length-1].end} : null;
   }).filter(Boolean);
 }
@@ -431,12 +437,8 @@ async function currentItem(fname, cur, ctx){
   const item={own:g||null, ownParts:[p], cur:{p, blob:cur.blob || new Blob([cur.text||""]), text:cur.text}, fleet:[]};
   if(state.fleetRole==="leader" && part){
     for(const f of groups.filter(x=>x.kind==="fleet")){
-      const parts=f.parts.filter(q=>q.end>part.start && q.start<=part.end+FLEET_SLACK_S);
-      if(!parts.length) continue;
-      for(const x of await fetchRaw({...f, parts}, ctx)){
-        const pair=await pairOfBlob(x.blob);
-        if(!pair || pair===part.fid || !pairOwner(pair)) item.fleet.push(x);   // pair names another listed file: not this one's
-      }
+      const parts=f.parts.filter(q=>rides(q, part));   // the current file is the only own file here: overlap decides
+      if(parts.length) item.fleet.push(...await fetchRaw({...f, parts}, ctx));
     }
   }
   return item;
