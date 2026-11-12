@@ -2,7 +2,7 @@
 // state back via STATUS, so these are fire-and-log.
 import { state } from '../state.js';
 import { enc } from '../config.js';
-import { $, log } from '../util/dom.js';
+import { $, log, toast } from '../util/dom.js';
 
 export function updateScanBtn(){
   const b = $("scanBtn");
@@ -18,9 +18,21 @@ export async function toggleScan(){
     log(want ? "Start scan requested." : "Stop scan requested."); }
   catch(e){ log("Scan command failed: " + e.message); }
 }
+// New Session: the scanner starts new log files (fw >= 0.37.2: both the scan and the background log, plus a leader's
+// fleet file). Feedback right away, then the new name once STATUS sess= changes.
 export async function newSession(){
-  try { await state.chars.cmd.writeValue(enc.encode("N")); log("New session started."); }
-  catch(e){ log("New session failed: " + e.message); }
+  const before = state.status && state.status.sess;
+  try { await state.chars.cmd.writeValue(enc.encode("N")); log("New session requested."); }
+  catch(e){ log("New session failed: " + e.message); toast("New session failed: " + e.message, {err:true}); return; }
+  toast("Starting a new session…", {work:true, sticky:true});
+  const t0 = Date.now();
+  const tick = ()=>{
+    const now = state.status && state.status.sess;
+    if(now && now !== before){ toast("New session: " + now + (now.startsWith("bg-") ? " (background scan)" : "") + "."); return; }
+    if(Date.now() - t0 > 4000){ toast("New session started. Its file is created with the first detection."); return; }
+    setTimeout(tick, 250);
+  };
+  tick();
 }
 
 export async function reloadDb(){
