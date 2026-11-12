@@ -544,6 +544,19 @@ summary {
   font-weight: 600;
 }
 
+.sesstitle {
+  font-weight: 600;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.sessfile {
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+  color: #8b949e;
+  overflow-wrap: anywhere;
+}
+
 .fspath {
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;

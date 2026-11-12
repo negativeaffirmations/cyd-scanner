@@ -162,6 +162,8 @@ summary { cursor:pointer; font-weight:600; }
 .sessdate { font-size:.9rem; }
 .sesssub { font-size:.8rem; color:$color-text-muted; }
 .sesscache { color:$color-src-phone; font-weight:600; }   // "saved" / "+N KB new" tag (phone-side log cache)
+.sesstitle { font-weight:600; font-size:.95rem; overflow-wrap:anywhere; }   // a scan row's date span (or its file name when undated)
+.sessfile { font-size:.78rem; font-family:ui-monospace, monospace; color:$color-text-muted; overflow-wrap:anywhere; }   // "Downloads as <name>.cflo"
 
 // --- SD card file explorer (#filesDlg): reuses .sesslist / .sessrow / .sessmain for the rows ---
 .fspath { font-family:ui-monospace, monospace; font-size:.85rem; overflow-wrap:anywhere; margin:.2em 0; color:$color-text-muted; }
