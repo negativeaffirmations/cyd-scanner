@@ -27,7 +27,12 @@ to exactly one item before packing (`planCflo`), one-file-at-a-time packing, CSV
 inflate, ZIP64/spanning refusals, busy refusals + ctx taken before `fetchCurrent`, octet-stream save, 64 MB check, run-wide
 `noCflo`. Not fixed: REV-013 (`tz_offset_min` = the phone's offset now; noted in code). scan-analyzer validated a synthetic
 archive from our writer (bridge 01:50). Server side `c1e4213` built, NOT deployed (needs owner push + restart).
-**Next:** focused re-review of the rework; flash 0.37.0 on the 4 hosts; owner test (solo + leader download, open the `.cflo` on
+**Re-review fixed (`3c48764`, REV-101..103):** the pair only chooses between the action's own scans; otherwise ONE overlap
+rule (`rides`: spans share > 60 s) decides everywhere (`fleetOf`, `planCflo`, `currentItem`, stale `currentFleet`), so a
+fleet file is never dropped from a scan it ran beside. Deploy all of 0ad7edb..3c48764 together (sessions.js imports exports
+cflo.js only gained in 4669cbf). **scan-analyzer `.cflo` is LIVE** (bridge 01:55, schema v13): after our deploy + an archive
+upload, tell them so they can check the sessions.
+**Next:** flash 0.37.0 on the 4 hosts; owner test (solo + leader download, open the `.cflo` on
 the Map, upload against the OLD server -> fallback works); merge to `main` to deploy; scan-analyzer ships its side, then
 re-test the archive upload; CLAUDE.md notes (webapp Data page + fleet meta `pair_file_id`).
 **Plan (as written before the build):**
