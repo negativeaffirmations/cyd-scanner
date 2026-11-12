@@ -1,4 +1,4 @@
-# `.cflo` scan archive — DRAFT v0.1 (scan-analyzer's answers folded in; not built, not final)
+# `.cflo` scan archive — v1 (FINAL, owner-approved 2026-11-12)
 
 One file per **scan**, solo or fleet, for what the web app downloads and uploads. It replaces "a scan is several
 `.jsonl` parts + maybe a Fleet file" with one object the user sees and moves. The scanners do not change what they
@@ -194,4 +194,4 @@ Additive key; readers that don't know it ignore it.
 4. The phone keeps caching per file; the archive is built on demand.
 5. `pair_file_id` (§5) and `scan.tz` added.
 
-Status: the spec is final once the owner signs off; nothing is built on either side before that.
+Status: **final**, owner-approved 2026-11-12. Both sides build to it.
