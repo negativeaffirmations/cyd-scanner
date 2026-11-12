@@ -1,6 +1,6 @@
 # Handoff — 2026-11-12 (working branch: `hardening`, pushed; trunk `main`)
 
-## RESUME HERE — 2026-11-12: `.cflo` scan archive, IN PROGRESS (spec final, build started)
+## RESUME HERE — 2026-11-12: `.cflo` scan archive DONE + verified (fw 0.37.2 on all 4 hosts, web `cflo f` live)
 **Before this:** fw **0.36.0** on all 4 hosts (CYD #1, CYD #2 CFLO-CYD-…, mini #1, mini #2 = leader), commit `51c2143`:
 fleet-wide threat readout on clients (`Msg::Threats`, docs/fleet-mode.md §25, blue fleet-client LED, alerts override),
 a leader New Session starts a new fleet file (0.35.2, §22.1), fleet client screen layout fixes. Owner confirmed it works
@@ -39,7 +39,7 @@ pushed**: web app `cflo c` (`?v=20261112c`) deploying via Pages. CLAUDE.md updat
 **fw 0.37.1 (flashed all 4, 2026-11-12):** fleet rotation dropped the timesync + fleet anchors of most members (owner .cflo, bridge 03:45): `copyAnchors` took each copy's offset from `File::size()` AFTER a write, which stats the disk and misses stdio-buffered bytes, so later anchors got stale offsets and the next copy failed its line check. Now `pos` is taken once before any write and tracked by hand. OPEN: both fleet files' `pair_file_id` named leader files other than the uploaded fg file `d56be5f0` (a mini's web New Session rotates the ACTIVE stream: bg unless a phone "G" scan runs) -- needs a controlled test.
 **fw 0.37.2 + web `cflo e` (2026-11-12, flashed all 4):** owner found New Session did nothing visible during a bg scan (it only rotated bg; a scan started afterwards continued the old fg file). New Session now rotates fg AND bg (+ fleet), the web toasts the new name and labels "· background scan". Also: files WITH a file_id are never joined into multi-part scan groups (a New Session file had been grouped as part 2 of the previous scan, so its scan.id took the old file's id; scan-analyzer bridge 04:30). 0.37.1 anchor fix confirmed on the owner's 2nd .cflo.
 **VERIFIED 2026-11-12 21:03 (scan-analyzer):** fw 0.37.2 + `cflo e` upload = 1 archive, 2 entries (leader bg file + its fleet file), 4 sessions, scan_id = leader sid + that file's own file_id, every member role client with the fleet_id. The `.cflo` rollout is DONE.
-**web `cflo f`:** Session-logs rows show the SCAN as the file you get (date title, kind + size + "includes Fleet file", "Downloads as <name>.cflo"; card file names in the tooltip); a fleet file that rides with a scan is folded into its row, only an unattached one keeps a row; Delete takes a folded fleet file along unless another scan still uses it.
+**web `cflo f` (owner: "looks good"):** Session-logs rows show the SCAN as the file you get (date title, kind + size + "includes Fleet file", "Downloads as <name>.cflo"; card file names in the tooltip); a fleet file that rides with a scan is folded into its row, only an unattached one keeps a row; Delete takes a folded fleet file along unless another scan still uses it.
 **Next (remaining, optional):** owner test of the Data-page download/upload of a solo scan and a leader scan (one `.cflo` each, the leader's with
 its fleet file), "Download current session", open a `.cflo` on the Map, upload one (server side is live, so it should go in
 as an archive, not the fallback). Then tell scan-analyzer the upload landed so they check the sessions it made.
