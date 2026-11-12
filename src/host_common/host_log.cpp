@@ -1536,7 +1536,10 @@ static int anchorKind(const char* ln, size_t ll) {
 // own prefix ({"scanner":"<sid>","ofile":"<id>","orow":) -- the closed file is no longer protected, so a phone could have
 // replaced it. A source that is gone or no longer matches drops that anchor. Returns false only when a WRITE failed:
 // `an` is left as it was, so the caller stores nothing and the client's resend retries the copy.
-static bool copyAnchors(File& f, FleetAnchors* an, const char* sidHex, const char* ofile) {
+// `at` = the append position (the caller's f.size() taken BEFORE any write); advanced past each copied line.
+// Never f.size() after a write: Arduino's size() then stats the file on disk, which leaves out stdio-buffered bytes, so
+// every anchor after the first got a stale offset and the next rotation's copy dropped it (fw 0.37.1).
+static bool copyAnchors(File& f, uint32_t& at, FleetAnchors* an, const char* sidHex, const char* ofile) {
   const char* old = (g_fleetOld && an->gen + FLEET_OLD_N > g_fleetGen) ? g_fleetOld[an->gen % FLEET_OLD_N] : "";
   File src = (old[0] && SD.exists(old)) ? SD.open(old, FILE_READ) : File();
   char pre[64];
@@ -1552,10 +1555,9 @@ static bool copyAnchors(File& f, FleetAnchors* an, const char* sidHex, const cha
     const bool line = src.read(buf, len) == len && !memcmp(buf, pre, pn) && buf[len - 1] == '\n' &&
                       !memchr(buf, '\n', len - 1);
     if (line) {
-      const uint32_t at = (uint32_t)f.size();
       const size_t w = f.write(buf, len);
-      if (w == len) { nu.off[k] = at; nu.len[k] = (uint16_t)len; }
-      else { if (w) f.write((const uint8_t*)"\n", 1); ok = false; }   // torn: end the line, retry on the resend
+      if (w == len) { nu.off[k] = at; nu.len[k] = (uint16_t)len; at += len; }
+      else { if (w) { f.write((const uint8_t*)"\n", 1); at += w + 1; } ok = false; }   // torn: end the line, retry on the resend
     }
     free(buf);
   }
@@ -1573,11 +1575,11 @@ bool fleetLogStore(const char* sidHex, const char* ofile, uint32_t firstRow, boo
   if (!ensureLogFile(g_fleetLog)) return false;
   File f = SD.open(g_fleetLog.path, FILE_APPEND);
   if (!f) return false;
+  uint32_t pos = f.size();                     // before any write (see copyAnchors): tracked by hand from here on
   if (an && an->gen != g_fleetGen) {           // first store for this origin file in this fleet file
     if (!an->gen) { *an = FleetAnchors{}; an->gen = g_fleetGen; }
-    else if (!copyAnchors(f, an, sidHex, ofile)) { f.close(); return false; }   // bring its anchors along
+    else if (!copyAnchors(f, pos, an, sidHex, ofile)) { f.close(); return false; }   // bring its anchors along
   }
-  uint32_t pos = f.size();
   bool ok = true;
   uint32_t row = firstRow;
   for (size_t off = 0; off < len; row++) {
