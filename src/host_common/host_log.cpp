@@ -265,15 +265,18 @@ void openBgSession() {
   beginSessionNamed(g_bg, true);
 }
 
-// Start a fresh session without rebooting (Scan menu / phone CMD "N"). Rotates the stream the
-// current screen logs to (the Scan menu passes forceFg so its New Session always means the manual
-// foreground session). The writer opens with FILE_APPEND and closes every cycle, so there is no
-// handle to flush. An unused previous session left no file (lazy create), so nothing is orphaned.
+// Start a fresh session without rebooting (Scan menu / phone CMD "N"). fw 0.37.2: rotates BOTH the foreground and the
+// background stream, so whatever is logged next -- now, or after a scan start / stop switches stream -- goes to a new
+// file (before, a New Session during the background scan only rotated bg, and a scan started afterwards carried on in
+// the old fg file). A stream whose current file was never created is already fresh and is kept (no counter burnt).
+// The fleet file pairs with the stream that is logging now (the Scan menu's forceFg: the manual scan it opens next).
+// The writer opens with FILE_APPEND and closes every cycle, so there is no handle to flush.
 void startNewSession(bool forceFg) {
-  if (!forceFg && bgCtx()) beginSessionNamed(g_bg, true);
-  else                     beginSessionNamed(g_fg, false);
+  const bool bgNow = !forceFg && bgCtx();
+  if (g_fg.started || !g_fg.path[0]) beginSessionNamed(g_fg, false);
+  if (g_bgScan && (g_bg.started || !g_bg.path[0])) beginSessionNamed(g_bg, true);
   if (fleet::role() == fleet::ROLE_LEADER) {   // the members' rows start a new fleet file too
-    g_fleetPair = (!forceFg && bgCtx()) ? &g_bg : &g_fg;   // the stream rotated just above
+    g_fleetPair = bgNow ? &g_bg : &g_fg;
     fleetLogRotate();
   }
   resetFollow();

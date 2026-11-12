@@ -56,7 +56,9 @@ function buildGroups(text){
     const ps=parts.filter(p=>p.kind===kind && p.start && !p.csv).sort((a,b)=>a.start-b.start);
     let g=null;
     for(const p of ps){
-      if(g && p.start - g.end <= GROUP_GAP_S){ g.parts.push(p); g.end=Math.max(g.end,p.end); }
+      // Only files WITHOUT a file_id (fw < 0.25.0) are joined as parts: older firmware split one drive into several. A file
+      // with a file_id is one scan by itself (one scan = one file since fw 0.11.0), so a New Session file is its own scan.
+      if(g && p.start - g.end <= GROUP_GAP_S && !p.fid && !g.parts[g.parts.length-1].fid){ g.parts.push(p); g.end=Math.max(g.end,p.end); }
       else { g={kind, parts:[p], start:p.start, end:p.end}; out.push(g); }
     }
   }

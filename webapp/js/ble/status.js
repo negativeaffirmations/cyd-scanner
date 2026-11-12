@@ -47,6 +47,7 @@ onUnitReset(()=>{
   ["timeState","gpsState","db"].forEach(id=>$(id).classList.remove("on"));
   setSrc("timeState", 0, ""); setSrc("gpsState", 0, ""); $("gpsSats").textContent = "";
   $("sessName").textContent = "Session: \u2014"; $("unitName").textContent = "";
+  if($("sessKind")) $("sessKind").textContent = "";
   $("ledCard").style.display = "none";
   const lb = $("lockBtn"); lb.dataset.locked = "0"; lb.textContent = "Lock display"; lb.classList.remove("danger");
   for(const k in state.status) delete state.status[k];
@@ -102,7 +103,10 @@ export function onStatus(ev){
   if("fw"  in kv) state.scannerFw = kv.fw;             // CYD firmware version
   if("dbgen"in kv) state.scannerDbGen = +kv.dbgen||0;  // sig-DB generation
   if("name"in kv){ state.scannerName = kv.name; $("unitName").textContent = kv.name; }  // unit name, e.g. CFLO-MINI-KOBALI
-  if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;
+  if("sess"in kv){
+    $("sessName").textContent = "Session: " + kv.sess;   // (download.js / remote.js read the name back from this label)
+    const k = $("sessKind"); if(k) k.textContent = kv.sess.startsWith("bg-") ? "· background scan" : kv.sess ? "· scan" : "";
+  }
   if("scan"in kv){ state.scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv){ const m=+kv.src;
     if(!$("scanSetDlg").open){ $("sBle").checked=!!(m&2); $("s24").checked=!!(m&1); $("s5").checked=!!(m&16); $("s154").checked=!!(m&4); }

@@ -464,7 +464,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
-    current session · `"G"/"X"` start/stop scan · `"N"` new log session · `"Q"` list sessions · `"F:<path>"` download
+    current session · `"G"/"X"` start/stop scan · `"N"` new log session (fw 0.37.2: rotates BOTH the fg and the bg stream, + a leader's fleet file; the web app toasts the new name) · `"Q"` list sessions · `"F:<path>"` download
     any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · **`"F:<path>@<offset>:<file_id>:<crc>"`** tail
     download (fw 0.26.0, `transferTail`; `<crc>` = 8 lowercase hex CRC-32 (IEEE) of the up-to-64 bytes before `<offset>`,
     `00000000` at offset 0, so a file replaced under the same line 1 is refused): the device checks line 1's `file_id` and
@@ -609,8 +609,8 @@ back (5 GHz included). Things that matter, learned the hard way:
       bottom navbar (z-index 20).
     - **Data** — download / upload current session, Wi-Fi download mode, the live-upload toggle, **time-range export of ALL
       logs** (since boot / 24 h / custom; BLE `T:…:*` or Wi-Fi `/dlf?f=all`), and the **Session logs**
-      list: a checkbox **multi-select of scans** (`features/sessions.js` groups same-stream files whose
-      dated spans are ≤ 6 min apart — older firmware split drives into parts — labelled "Oct 22, 2:05 PM
+      list: a checkbox **multi-select of scans** (`features/sessions.js` groups same-stream files WITHOUT a file_id whose
+      dated spans are ≤ 6 min apart — older firmware split drives into parts; a file with a file_id is always its own scan — labelled "Oct 22, 2:05 PM
       – 3:09 PM · Scan · 13 parts · 914 KB"). Download / time-range / Map act on the selection; parts
       are fetched one at a time (`ble/transfer.js` `bleFetch`, a promise over the LOGDATA stream) and
       joined by `parse.js` `joinLogParts` (per-part timesync backfill; each distinct meta line kept in part order, since parts can span a reflash and readers take the last) into ONE file;
