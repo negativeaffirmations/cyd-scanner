@@ -13,6 +13,15 @@
   31-33). Not yet: phone pairing / time sync, fleet enrollment, and reporting its fixed radio IDs (download AP
   `12:B4:1D:E9:08:20`) to scan-analyzer's `EXCLUDED_MACS`.
 - The 28.5 s dual-band AP scan is normal with BLE on (see the 2026-11-12 entry below).
+- **Mini #3 is now the fleet LEADER** (mini #2 BEMOPU off; members ZUDIMU, TOLUBA, BEMOPU re-enrolled). TOLUBA "searched for
+  5+ min" while ZUDIMU joined: NOT a member limit or a key problem. The leader's S3 has no antenna, so the ESP-NOW range is
+  tiny; the leader logged 0 refused / stale Hellos (it never heard TOLUBA), and once TOLUBA was beside it it joined at -73/-81
+  dBm while ZUDIMU went lost. Fit the S3 antenna.
+- **Web `names a` (2026-11-16):** keys added from a pairing QR had no name (the QR carries none, AUTH v2 rarely sends one),
+  so Settings → Scanner keys and the Fleet add list showed "Scanner". New `js/ble/unitname.js`: `learnKeyName()` names an
+  EXISTING key record from the authenticated unit's STATUS `name=` and from the leader's `M:l` member list; `unitLabel()`
+  replaces the advert's "CFLO" in the "Connecting to…" log and the connection info line. The browser's own Bluetooth
+  chooser still shows the advert name (CFLO) and can't be changed by the page.
 
 ## RESUME HERE — 2026-11-12: `.cflo` scan archive DONE + verified (fw 0.37.2 on all 4 hosts, web `cflo f` live)
 **Before this:** fw **0.36.0** on all 4 hosts (CYD #1, CYD #2 CFLO-CYD-…, mini #1, mini #2 = leader), commit `51c2143`:

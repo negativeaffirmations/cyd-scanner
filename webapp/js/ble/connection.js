@@ -15,6 +15,7 @@ import { updateButtons as updateSessButtons } from '../features/sessions.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
 import { acquireWake, releaseWake } from '../wakelock.js';
 import { rememberDevice } from './devices.js';
+import { unitLabel } from './unitname.js';
 import { runUnitReset } from '../unitreset.js';
 import { ensureEncrypted, pairingRefusal } from './linkenc.js';
 import { AUTH_UUID, authenticate, setLinkSecurity, clearLinkSecurity, openAuthDlg, legacyRefusal, legacyStatusRefusal, primeLegacyGuard, showRefusal, mayShareLocation } from './auth.js';
@@ -105,7 +106,7 @@ async function connectDevice(timeoutMs){
     if(lastDeviceId && lastDeviceId !== state.device.id) runUnitReset();   // a different scanner: drop everything the last one left
     lastDeviceId = state.device.id;
     once(state.device, "gattserverdisconnected", onDisconnect);
-    log("Connecting to "+state.device.name+"…");
+    log("Connecting to "+unitLabel({ remembered:true })+"…");   // the advert name is "CFLO" on every unit from fw 0.33.0
     let server, to = 0;
     if(timeoutMs) to = setTimeout(()=>{ connectTimedOut = true; try{ state.device.gatt.disconnect(); }catch(e){} }, timeoutMs);
     try{ server = await state.device.gatt.connect(); } finally { clearTimeout(to); }
