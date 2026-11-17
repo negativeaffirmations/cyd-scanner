@@ -1298,8 +1298,8 @@ rows, and nothing came back.
   too and `fleetReadoutShown()` expires 6 s after the last one taken. Fleet-sourced alerts are held 3 s (re-raised
   each cycle), not a second `EVENT_HOLD_MS`. `followAlertDisplayN()` (LED, banner text) includes the fleet; STATUS
   `fol`, logging and the banner tap target keep the per-unit `followAlertN()`.
-- **Known limits:** whitelists are per unit, so a device muted only on a client still counts there via the leader's
-  numbers; `rid` is sent but not shown yet (reserved). Both ends check the exact length, so any future extension of
+- **Known limits:** whitelists were per unit, so a device muted only on a client still counted there via the leader's
+  numbers (fixed in fw 0.39.0: the leader shares its whole whitelist, §26); `rid` is sent but not shown yet (reserved). Both ends check the exact length, so any future extension of
   `Threats` needs a new message type (an un-updated unit would drop a longer frame silently).
 
 
