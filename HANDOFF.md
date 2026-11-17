@@ -1,48 +1,48 @@
-# Handoff — 2026-11-12 (working branch: `hardening`, pushed; trunk `main`)
+# Handoff — 2026-11-16 (working branch: `hardening`, pushed + merged to `main`; trunk `main`)
 
-## RESUME HERE — 2026-11-16 (night): fw 0.38.1 fleet LED (SOPAFE + BEMOPU on 0.38.1, TOLUBA on 0.38.0; ZUDIMU still 0.37.2)
-- **0.38.0 left the mini LEDs DARK:** its 13-bit PWM can't run at 5 kHz on the S3 (ledcAttach failed on all three pins).
-  0.38.1 restores 12 bit; boot logs clean on both minis. CYD unaffected (8-bit), so TOLUBA stays on 0.38.0.
-  A CYD showing solid cyan is the camera-category colour (Ring/Cam/Glass in its own or the fleet's counts), not this bug.
-- **Fleet status LED:** leader solid blue; joined client slow (4 s) blue breathing; searching client fast (1.2 s) yellow
-  breathing. Threat / alert colours override as before. `host_core.cpp`: `setLedBreath()` + a 25 ms `esp_timer`, every LED
-  write under one mutex (`ledWrite()`); board hook `hostboard::setScanLedLevel()`; new `LedColor::Yellow` (appended);
-  CYD RGB moved to 8-bit LEDC PWM; mini PWM 12 -> 13 bit; the mini's LED-brightness change goes through `ledRefresh()`.
-  No link / fleet protocol change, so ZUDIMU on 0.37.2 still joins (it keeps the old blue blink until flashed).
-  Fleet verified after the flash: all 3 members joined to SOPAFE, probing off, rssi -38..-67 with the S3 antenna fitted.
-  **Owner to confirm by eye** (breathing smoothness, yellow hue on both boards). Not yet flashed: ZUDIMU.
-- **fw 0.39.0 fleet whitelist (docs §26, owner chose the leader's WHOLE whitelist):** `Msg::Wlist` leader -> clients
-  (on join, on change, every 30 s); a client mutes own OR fleet matches, RAM only. Flashed SOPAFE, BEMOPU, TOLUBA;
-  verified both clients applied the leader's 1 rule. ZUDIMU (0.37.2) ignores it. Web `fleet wl`: a note in the
-  Whitelist manager (`#wlFleetNote`), committed, deploy pending owner OK. To mute the camera fleet-wide, whitelist it ON SOPAFE.
+## RESUME HERE — 2026-11-16 (night): fw 0.39.0 on all 4 hosts, fleet whitelist + breathing fleet LED, web `fleet wl` live
+**Units now:** CYD TOLUBA, CYD ZUDIMU, mini #2 BEMOPU (client), mini #3 SOPAFE (= fleet LEADER). Mini #1 GABAME is retired
+(below). All four run **fw 0.39.0** (`cyd` / `xiao_s3_rgb`); all C5s run current `c5` / `xiao_c5`. Fleet: all 3 members joined
+to SOPAFE on channel 1, probing off, rssi about -32..-67 with SOPAFE's S3 antenna fitted. `main` = `13e4d8d`.
+- **Fleet whitelist (fw 0.39.0, docs/fleet-mode.md §26; owner chose the leader's WHOLE whitelist):** `Msg::Wlist` (0x15,
+  additive) carries the leader's rules to every joined client (on join, on change, every 30 s; 8 rules / 229 B frame). A
+  client mutes a device when its own OR the fleet list matches; RAM only, its own `/whitelist.csv` untouched. **Owner
+  verified:** whitelisting the camera on SOPAFE muted it fleet-wide. Edit on the leader. Serial `fleet` on a client prints
+  `fleet whitelist N rule(s) from the leader`. Web: a note in the Whitelist manager (`#wlFleetNote`). Commit `62f2229`.
+- **Fleet status LED (fw 0.38.0/0.38.1):** leader solid blue; joined client slow (4 s) blue breathing; searching client
+  fast (1.2 s) yellow breathing; threat / alert colours override as before (a CYD showing solid cyan = the camera category,
+  own or fleet counts). `host_core.cpp`: `setLedBreath()` + a 25 ms `esp_timer`, every LED write under one mutex
+  (`ledWrite()`); board hook `hostboard::setScanLedLevel()`; `LedColor::Yellow` (appended); CYD RGB is 8-bit LEDC PWM.
+  **0.38.0 left the mini LEDs dark** (13-bit PWM can't run at 5 kHz on the S3, ledcAttach failed); 0.38.1 went back to 12
+  bit. The breathing itself has not been explicitly confirmed by eye yet.
+- **Web `names a`:** keys added from a pairing QR had no name, so Scanner keys / the Fleet add list showed "Scanner". New
+  `js/ble/unitname.js` names an EXISTING key record from the authenticated unit's STATUS `name=` and the leader's `M:l`
+  list; `unitLabel()` replaces the advert's "CFLO" in the connecting log / info line. Owner verified. The browser's own
+  Bluetooth chooser still shows CFLO (the advert name), which a page can't change.
+- **Fleet range lesson:** TOLUBA "searched for 5+ min" while ZUDIMU joined: not a member limit or a key problem but the
+  leader's missing S3 antenna (0 refused / stale Hellos logged: it never heard TOLUBA). A mini client joins via Settings →
+  Fleet → "Make this scanner a fleet client…" after "Stop leading".
+- **28.5 s dual-band AP scan is normal with BLE on** (measured on a XIAO C5, BLE off / on: dual 11.9 / 28.5 s, 2.4 only 2.6 /
+  8.8 s, 5 only 9.3 / 19.7 s; the DevKit C5 gives the same 28503 ms). The 12.4 s bench ran in a Wi-Fi-only fleet role with BLE
+  off. Pausing BLE during the AP scan would give ~12 s at the cost of BLE airtime (owner decision, not built).
 - **NEXT (owner request, own commit):** CYD fleet-client screen (`SCR_FLEET`): use the same cog icon for Settings as
   normal-mode HOME, and put a QR-code icon (show the phone key, like Settings -> Phone key) where HOME's phone icon sits.
-- Fleet search pauses: clients dwell 9 s per channel; the leader's 3 s probe burst only restarts when probing STARTS, so
-  with an enrolled member powered off it stays on 15 s probes and a dropped client can take ~2 min to rejoin. Proposed
-  fix (not built, owner deferred): restart the fast burst whenever a member goes missing.
+- **Open, owner deferred:** fleet search pauses. Clients dwell 9 s per channel; the leader's 3 s probe burst only restarts
+  when probing STARTS, so while an enrolled member is powered off it stays on 15 s probes and a dropped client can take ~2
+  min to rejoin. Proposed fix: restart the fast burst whenever a member goes missing. (With every member on, the leader
+  stops probing and the next drop starts a fresh burst, so it only bites with a member left off.)
+- **scan-analyzer:** told on the bridge about mini #3 (download AP `12:B4:1D:E9:08:20` for `EXCLUDED_MACS`) and mini #1's
+  retirement; it added the address to its PC config, and the live server edit needed the owner's sudo (confirm it landed).
 
 ## NOTE — 2026-11-16: mini #1 retired, mini #3 (CFLO-MINI-SOPAFE) built on new boards
 - **Mini #1 (CFLO-MINI-GABAME; S3 `10:b4:1d:e7:ed:a0`, C5 `10:bd:a3:cf:02:dc`) is DISASSEMBLED and out of commission.** The owner
   tried to rebuild it but couldn't clear the old solder from the pin holes to fit new headers, so the rebuild used two NEW XIAO
-  boards instead (= mini #3 below). If mini #1 is ever rebuilt it gets an RGB status LED (flash `xiao_s3_rgb`, not `xiao_s3`).
-  Its open item above (C5 ran band 3 under role wifi5) is moot until then. It is still enrolled on the fleet leader: remove it
-  in web Settings → Fleet when convenient.
-- **Mini #3 = CFLO-MINI-SOPAFE** (second RGB mini): S3 `10:B4:1D:E9:08:20` (sid `2008e91db410`), C5 `10:bd:a3:ca:22:ac`, fw
-  0.37.2 (`xiao_s3_rgb` + `xiao_c5`). Bring-up passed after two link rewires (the link was wired straight, D6↔D4 / D7↔D5,
-  and needed crossing) and a battery-divider fix: `[LINK] PASS` 0 miss / 0 corrupt, RGB self-test OK, bat 4.1 V, RTC + SD +
-  GPS data OK. Pairing QR in `qr-codes/` (git-ignored). Its IPEX antennas are not fitted yet (C5 heard 6 APs vs the DevKit's
-  31-33). Not yet: phone pairing / time sync, fleet enrollment, and reporting its fixed radio IDs (download AP
-  `12:B4:1D:E9:08:20`) to scan-analyzer's `EXCLUDED_MACS`.
-- The 28.5 s dual-band AP scan is normal with BLE on (see the 2026-11-12 entry below).
-- **Mini #3 is now the fleet LEADER** (mini #2 BEMOPU off; members ZUDIMU, TOLUBA, BEMOPU re-enrolled). TOLUBA "searched for
-  5+ min" while ZUDIMU joined: NOT a member limit or a key problem. The leader's S3 has no antenna, so the ESP-NOW range is
-  tiny; the leader logged 0 refused / stale Hellos (it never heard TOLUBA), and once TOLUBA was beside it it joined at -73/-81
-  dBm while ZUDIMU went lost. Fit the S3 antenna.
-- **Web `names a` (2026-11-16):** keys added from a pairing QR had no name (the QR carries none, AUTH v2 rarely sends one),
-  so Settings → Scanner keys and the Fleet add list showed "Scanner". New `js/ble/unitname.js`: `learnKeyName()` names an
-  EXISTING key record from the authenticated unit's STATUS `name=` and from the leader's `M:l` member list; `unitLabel()`
-  replaces the advert's "CFLO" in the "Connecting to…" log and the connection info line. The browser's own Bluetooth
-  chooser still shows the advert name (CFLO) and can't be changed by the page.
+  boards instead (= mini #3). If mini #1 is ever rebuilt it gets an RGB status LED (flash `xiao_s3_rgb`, not `xiao_s3`). Its
+  old open item (C5 ran band 3 under role wifi5) is moot until then. It is not in SOPAFE's fleet.
+- **Mini #3 = CFLO-MINI-SOPAFE** (second RGB mini): S3 `10:B4:1D:E9:08:20` (sid `2008e91db410`), C5 `10:bd:a3:ca:22:ac`.
+  Bring-up passed after two link rewires (the link was wired straight, D6↔D4 / D7↔D5, and needed crossing; found with
+  input-only pin-probe sketches on both boards) and a battery-divider fix: `[LINK] PASS` 0 miss / 0 corrupt, RGB self-test
+  OK, bat 4.1 V, RTC + SD + GPS data OK. Antenna fitted, phone paired, fleet leader. Pairing QR in `qr-codes/` (git-ignored).
 
 ## RESUME HERE — 2026-11-12: `.cflo` scan archive DONE + verified (fw 0.37.2 on all 4 hosts, web `cflo f` live)
 **Before this:** fw **0.36.0** on all 4 hosts (CYD #1, CYD #2 CFLO-CYD-…, mini #1, mini #2 = leader), commit `51c2143`:
