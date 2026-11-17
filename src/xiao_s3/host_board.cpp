@@ -40,9 +40,10 @@ static_assert(sizeof(kLedLevel) / sizeof(kLedLevel[0]) == (int)LedColor::Yellow 
 
 // Overall brightness % (web Settings "LED brightness", CMD "I:", NVS cydui/ledbri). 100 = the tuned duty
 // above; the default is 5 (25 was still glaring in the dark, and 5 stays visible in daylight -- tested on
-// mini #2, 2026-10-28). PWM is 13-bit (the most 5 kHz allows) so the dim green/blue channels keep enough steps to
-// hold the colour balance when scaled down, and a breathing fade (fw 0.38.0) has steps to spare.
-static constexpr int kLedPwmBits = 13, kLedPwmMax = (1 << kLedPwmBits) - 1;
+// mini #2, 2026-10-28). PWM is 12-bit so the dim green/blue channels keep enough steps to hold the colour
+// balance when scaled down. 12 is the S3's limit at 5 kHz: 13 bits fails ledcAttach ("can not be achieved",
+// fw 0.38.0 left the LED dark), so a breathing fade at low brightness has few steps.
+static constexpr int kLedPwmBits = 12, kLedPwmMax = (1 << kLedPwmBits) - 1;
 static constexpr uint8_t kLedDefaultPct = 5;
 static uint8_t  s_ledPct = kLedDefaultPct;
 

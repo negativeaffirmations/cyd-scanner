@@ -1,6 +1,9 @@
 # Handoff — 2026-11-12 (working branch: `hardening`, pushed; trunk `main`)
 
-## RESUME HERE — 2026-11-16 (night): fw 0.38.0 fleet LED (SOPAFE, BEMOPU, TOLUBA flashed; ZUDIMU still 0.37.2)
+## RESUME HERE — 2026-11-16 (night): fw 0.38.1 fleet LED (SOPAFE + BEMOPU on 0.38.1, TOLUBA on 0.38.0; ZUDIMU still 0.37.2)
+- **0.38.0 left the mini LEDs DARK:** its 13-bit PWM can't run at 5 kHz on the S3 (ledcAttach failed on all three pins).
+  0.38.1 restores 12 bit; boot logs clean on both minis. CYD unaffected (8-bit), so TOLUBA stays on 0.38.0.
+  A CYD showing solid cyan is the camera-category colour (Ring/Cam/Glass in its own or the fleet's counts), not this bug.
 - **Fleet status LED:** leader solid blue; joined client slow (4 s) blue breathing; searching client fast (1.2 s) yellow
   breathing. Threat / alert colours override as before. `host_core.cpp`: `setLedBreath()` + a 25 ms `esp_timer`, every LED
   write under one mutex (`ledWrite()`); board hook `hostboard::setScanLedLevel()`; new `LedColor::Yellow` (appended);
