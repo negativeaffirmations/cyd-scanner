@@ -6,6 +6,8 @@ import { updateScanBtn } from './commands.js';
 import { renderStatusInfo } from '../features/statusinfo.js';
 import { renderCounts } from '../features/counts.js';
 import { onUnitReset } from '../unitreset.js';
+import { linkSecurity } from './auth.js';
+import { learnKeyName } from './unitname.js';
 
 // Clock + location icons: two stacked source dots (blue = phone on top, purple = device below; grey when
 // that source is unavailable) and the icon tinted with the source in use. Built from the merged
@@ -102,7 +104,11 @@ export function onStatus(ev){
   }
   if("fw"  in kv) state.scannerFw = kv.fw;             // CYD firmware version
   if("dbgen"in kv) state.scannerDbGen = +kv.dbgen||0;  // sig-DB generation
-  if("name"in kv){ state.scannerName = kv.name; $("unitName").textContent = kv.name; }  // unit name, e.g. CFLO-MINI-KOBALI
+  if("name"in kv){
+    state.scannerName = kv.name; $("unitName").textContent = kv.name;   // unit name, e.g. CFLO-MINI-KOBALI
+    // A key added from a QR has no name, and AUTH v2 rarely supplies one: name it from this authenticated STATUS.
+    if(linkSecurity() === "auth" && state.scannerId) learnKeyName(state.scannerId, kv.name);
+  }
   if("sess"in kv){
     $("sessName").textContent = "Session: " + kv.sess;   // (download.js / remote.js read the name back from this label)
     const k = $("sessKind"); if(k) k.textContent = kv.sess.startsWith("bg-") ? "· background scan" : kv.sess ? "· scan" : "";

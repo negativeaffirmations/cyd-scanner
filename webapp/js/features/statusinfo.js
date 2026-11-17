@@ -3,6 +3,7 @@
 // while open (ble/status.js calls renderStatusInfo on every notify; connection changes too).
 import { state } from '../state.js';
 import { $, esc } from '../util/dom.js';
+import { unitLabel } from '../ble/unitname.js';
 
 let focusId = "";   // the icon that was tapped (its row is highlighted)
 
@@ -67,7 +68,7 @@ const ROWS = [
          "Scanner keys are managed in Settings.",
     status(){
       const c = $("conn").className;
-      const who = (state.device && state.device.name ? " to " + state.device.name : "") + (state.status.fw ? " · fw " + state.status.fw : "");
+      const who = (state.device ? " to " + unitLabel() : "") + (state.status.fw ? " · fw " + state.status.fw : "");   // the advert just says "CFLO"
       if(c.includes("legacy")) return ["Connected" + who + " · UNSECURED firmware (no authentication)", "warn"];
       if(c.includes("up"))   return ["Connected" + who + (c.includes("authed") ? " · authenticated" : ""), "ok"];
       if(c.includes("wait")) return ["Connecting…", "warn"];

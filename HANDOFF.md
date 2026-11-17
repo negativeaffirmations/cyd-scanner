@@ -1,5 +1,28 @@
 # Handoff — 2026-11-12 (working branch: `hardening`, pushed; trunk `main`)
 
+## NOTE — 2026-11-16: mini #1 retired, mini #3 (CFLO-MINI-SOPAFE) built on new boards
+- **Mini #1 (CFLO-MINI-GABAME; S3 `10:b4:1d:e7:ed:a0`, C5 `10:bd:a3:cf:02:dc`) is DISASSEMBLED and out of commission.** The owner
+  tried to rebuild it but couldn't clear the old solder from the pin holes to fit new headers, so the rebuild used two NEW XIAO
+  boards instead (= mini #3 below). If mini #1 is ever rebuilt it gets an RGB status LED (flash `xiao_s3_rgb`, not `xiao_s3`).
+  Its open item above (C5 ran band 3 under role wifi5) is moot until then. It is still enrolled on the fleet leader: remove it
+  in web Settings → Fleet when convenient.
+- **Mini #3 = CFLO-MINI-SOPAFE** (second RGB mini): S3 `10:B4:1D:E9:08:20` (sid `2008e91db410`), C5 `10:bd:a3:ca:22:ac`, fw
+  0.37.2 (`xiao_s3_rgb` + `xiao_c5`). Bring-up passed after two link rewires (the link was wired straight, D6↔D4 / D7↔D5,
+  and needed crossing) and a battery-divider fix: `[LINK] PASS` 0 miss / 0 corrupt, RGB self-test OK, bat 4.1 V, RTC + SD +
+  GPS data OK. Pairing QR in `qr-codes/` (git-ignored). Its IPEX antennas are not fitted yet (C5 heard 6 APs vs the DevKit's
+  31-33). Not yet: phone pairing / time sync, fleet enrollment, and reporting its fixed radio IDs (download AP
+  `12:B4:1D:E9:08:20`) to scan-analyzer's `EXCLUDED_MACS`.
+- The 28.5 s dual-band AP scan is normal with BLE on (see the 2026-11-12 entry below).
+- **Mini #3 is now the fleet LEADER** (mini #2 BEMOPU off; members ZUDIMU, TOLUBA, BEMOPU re-enrolled). TOLUBA "searched for
+  5+ min" while ZUDIMU joined: NOT a member limit or a key problem. The leader's S3 has no antenna, so the ESP-NOW range is
+  tiny; the leader logged 0 refused / stale Hellos (it never heard TOLUBA), and once TOLUBA was beside it it joined at -73/-81
+  dBm while ZUDIMU went lost. Fit the S3 antenna.
+- **Web `names a` (2026-11-16):** keys added from a pairing QR had no name (the QR carries none, AUTH v2 rarely sends one),
+  so Settings → Scanner keys and the Fleet add list showed "Scanner". New `js/ble/unitname.js`: `learnKeyName()` names an
+  EXISTING key record from the authenticated unit's STATUS `name=` and from the leader's `M:l` member list; `unitLabel()`
+  replaces the advert's "CFLO" in the "Connecting to…" log and the connection info line. The browser's own Bluetooth
+  chooser still shows the advert name (CFLO) and can't be changed by the page.
+
 ## RESUME HERE — 2026-11-12: `.cflo` scan archive DONE + verified (fw 0.37.2 on all 4 hosts, web `cflo f` live)
 **Before this:** fw **0.36.0** on all 4 hosts (CYD #1, CYD #2 CFLO-CYD-…, mini #1, mini #2 = leader), commit `51c2143`:
 fleet-wide threat readout on clients (`Msg::Threats`, docs/fleet-mode.md §25, blue fleet-client LED, alerts override),
@@ -39,7 +62,7 @@ pushed**: web app `cflo c` (`?v=20261112c`) deploying via Pages. CLAUDE.md updat
 **fw 0.37.1 (flashed all 4, 2026-11-12):** fleet rotation dropped the timesync + fleet anchors of most members (owner .cflo, bridge 03:45): `copyAnchors` took each copy's offset from `File::size()` AFTER a write, which stats the disk and misses stdio-buffered bytes, so later anchors got stale offsets and the next copy failed its line check. Now `pos` is taken once before any write and tracked by hand. OPEN: both fleet files' `pair_file_id` named leader files other than the uploaded fg file `d56be5f0` (a mini's web New Session rotates the ACTIVE stream: bg unless a phone "G" scan runs) -- needs a controlled test.
 **fw 0.37.2 + web `cflo e` (2026-11-12, flashed all 4):** owner found New Session did nothing visible during a bg scan (it only rotated bg; a scan started afterwards continued the old fg file). New Session now rotates fg AND bg (+ fleet), the web toasts the new name and labels "· background scan". Also: files WITH a file_id are never joined into multi-part scan groups (a New Session file had been grouped as part 2 of the previous scan, so its scan.id took the old file's id; scan-analyzer bridge 04:30). 0.37.1 anchor fix confirmed on the owner's 2nd .cflo.
 **VERIFIED 2026-11-12 21:03 (scan-analyzer):** fw 0.37.2 + `cflo e` upload = 1 archive, 2 entries (leader bg file + its fleet file), 4 sessions, scan_id = leader sid + that file's own file_id, every member role client with the fleet_id. The `.cflo` rollout is DONE.
-**ON HOLD 2026-11-12 (owner charging all batteries).** Mini #1 C5 FLASHED (`xiao_c5`, current code incl. the USB-CDC TX fix: 4 KB buffer + timeout 0; the old "next C5 flash" TODO is done for mini #1). After the flash it scanned and captured fine, BUT it ran BOTH bands ("AP scan 28.5 s ... band 3") although the leader shows mini #1 (GABAME) joined with role wifi5 -- i.e. its C5 was not applying the scan plan (link to its S3 not up after the C5 reboot, or no plan sent), and the AP scan took ~28 s vs the usual ~12 s. Batteries were low, which may explain it. **Resume:** with charged batteries, plug mini #1's S3 into USB and read its console (C5 link status) + the C5 console (`[C5] AP scan ... (band N)` should say the 5 GHz band only for role wifi5, ~3-4 s). Next planned work after that: async BLE transfers so logging keeps running during a phone download.
+**ON HOLD 2026-11-12 (owner charging all batteries).** Mini #1 C5 FLASHED (`xiao_c5`, current code incl. the USB-CDC TX fix: 4 KB buffer + timeout 0; the old "next C5 flash" TODO is done for mini #1). After the flash it scanned and captured fine, BUT it ran BOTH bands ("AP scan 28.5 s ... band 3") although the leader shows mini #1 (GABAME) joined with role wifi5 -- i.e. its C5 was not applying the scan plan (link to its S3 not up after the C5 reboot, or no plan sent), and the AP scan took ~28 s vs the usual ~12 s. **Update 2026-11-16: the 28.5 s is NOT a fault.** It is the normal FULL-mode dual-band AP scan with the continuous BLE scan sharing the radio (coex); the 12.4 s bench ran in a Wi-Fi-only fleet role with BLE off. Measured on a XIAO C5 with a scratch sketch, BLE off / on: dual 11.9 / 28.5 s, 2.4 only 2.6 / 8.8 s, 5 only 9.3 / 19.7 s; the DevKit C5 also gives 28503 ms. Pausing BLE during the AP scan would bring it to ~12 s at the cost of BLE airtime (owner decision, not built). The open question is only why mini #1 ran band 3 under role wifi5. **Resume:** with charged batteries, plug mini #1's S3 into USB and read its console (C5 link status) + the C5 console (`[C5] AP scan ... (band N)` should say the 5 GHz band only for role wifi5, ~3-4 s). Next planned work after that: async BLE transfers so logging keeps running during a phone download.
 **Pre-0.37.1 fleet sessions relabeled as clients on scan-analyzer (owner, 2026-11-12): nothing open.**
 **web `cflo f` (owner: "looks good"):** Session-logs rows show the SCAN as the file you get (date title, kind + size + "includes Fleet file", "Downloads as <name>.cflo"; card file names in the tooltip); a fleet file that rides with a scan is folded into its row, only an unattached one keeps a row; Delete takes a folded fleet file along unless another scan still uses it.
 **Next (remaining, optional):** owner test of the Data-page download/upload of a solo scan and a leader scan (one `.cflo` each, the leader's with

@@ -10,6 +10,7 @@ import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
 import { onUnitReset } from '../unitreset.js';
 import { askConfirm, listKeys } from '../ble/auth.js';
+import { learnKeyNames } from '../ble/unitname.js';
 import { buildAddCmd } from '../ble/fleetcrypto.js?v=20261031d';
 import { ROLE_OPTIONS, coverage } from './fleetplan.js?v=20261107a';
 
@@ -165,6 +166,7 @@ export async function refreshMembers(){
     state.fleetMembers = members.map(m => ({ slot:m.slot, name:m.name, sid:m.sid }));   // "seen by" chip names (detections.js) + live-POST `scanner` (remote.js)
     renderMembers();
     renderPlan();
+    await learnKeyNames(members);                // the leader knows its members' names; stored keys added from a QR don't
     await renderAddChoices();
   } catch (e) { if (!/busy|download/.test(e.message)) log("Fleet: " + e.message); }
   finally { busy = false; lastPoll = Date.now(); }
