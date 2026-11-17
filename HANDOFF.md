@@ -11,6 +11,10 @@
   No link / fleet protocol change, so ZUDIMU on 0.37.2 still joins (it keeps the old blue blink until flashed).
   Fleet verified after the flash: all 3 members joined to SOPAFE, probing off, rssi -38..-67 with the S3 antenna fitted.
   **Owner to confirm by eye** (breathing smoothness, yellow hue on both boards). Not yet flashed: ZUDIMU.
+- **fw 0.39.0 fleet whitelist (docs §26, owner chose the leader's WHOLE whitelist):** `Msg::Wlist` leader -> clients
+  (on join, on change, every 30 s); a client mutes own OR fleet matches, RAM only. Flashed SOPAFE, BEMOPU, TOLUBA;
+  verified both clients applied the leader's 1 rule. ZUDIMU (0.37.2) ignores it. Web `fleet wl`: a note in the
+  Whitelist manager (`#wlFleetNote`), committed, deploy pending owner OK. To mute the camera fleet-wide, whitelist it ON SOPAFE.
 - **NEXT (owner request, own commit):** CYD fleet-client screen (`SCR_FLEET`): use the same cog icon for Settings as
   normal-mode HOME, and put a QR-code icon (show the phone key, like Settings -> Phone key) where HOME's phone icon sits.
 - Fleet search pauses: clients dwell 9 s per channel; the leader's 3 s probe burst only restarts when probing STARTS, so

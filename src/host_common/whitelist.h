@@ -47,4 +47,16 @@ bool lineAt(int idx, char* buf, size_t cap);
 // pass over the file. Same order as lineAt()/removeAt() indices.
 void listAll(String& out);
 
+// --- Fleet whitelist (fw 0.39.0, docs/fleet-mode.md §26) ---
+// A fleet LEADER shares its whole whitelist with its joined clients; a client mutes a device when its own
+// list OR the fleet list matches. The fleet list lives in RAM only (heap, allocated on first use, so a unit
+// outside a fleet pays nothing) and never touches this unit's /whitelist.csv.
+constexpr int MAX_LIST = 48;  // rules per list (own or fleet)
+constexpr int REC_LEN = 26;   // wire form of one rule: kind, srcmask, 24-byte pattern (no label)
+uint16_t gen();               // bumped on every reload(): the leader re-sends when it changes
+bool     exportRec(int idx, uint8_t out[REC_LEN]);   // idx-th own rule in wire form; false if out of range
+void     setFleet(const uint8_t* recs, int n);       // client: replace the fleet list (invalid records dropped)
+void     clearFleet();
+int      fleetCount();
+
 }  // namespace whitelist

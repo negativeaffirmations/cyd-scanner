@@ -47,7 +47,16 @@ export function wlKindChanged(){   // name rules match only the first 23 chars o
   $("wlPat").maxLength = nm ? 23 : 40;
   if(nm && $("wlPat").value.length>23) $("wlPat").value=$("wlPat").value.slice(0,23);
 }
-export function openWhitelist(){ $("wlDlg").showModal(); refreshWhitelist(); }
+// fw 0.39.0: a fleet leader shares its whole whitelist with its joined clients, and a client mutes its leader's
+// rules on top of its own (the leader's rules are not listed here: they live on the leader).
+function fleetNote(){
+  const n = $("wlFleetNote"); if(!n) return;
+  const t = state.fleetRole === "leader" ? "This scanner leads a fleet: every joined client mutes these devices too."
+          : state.fleetRole === "client" ? "This scanner is a fleet client: it also mutes everything on its leader's whitelist (edit those on the leader)."
+          : "";
+  n.textContent = t; n.hidden = !t;
+}
+export function openWhitelist(){ fleetNote(); $("wlDlg").showModal(); refreshWhitelist(); }
 
 // Fill the detail modal's action slot with a whitelist control for `mac`. Add is one tap
 // (A:mac,<MAC>,A); removal is rule/index-based (a device may be matched by a prefix/name rule), so a
