@@ -15,6 +15,7 @@
 #include "phone.h"
 #include "host_core.h"
 #include "host_log.h"
+#include "whitelist.h"
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -29,6 +30,8 @@ constexpr uint32_t PROBE_FAST_MS = 3000, PROBE_SLOW_MS = 15000, PROBE_BURST_MS =
 constexpr uint32_t NONCE_LIFE_MS = 10000;   // a Hello may answer either of the last 2 probes for 10 s
 constexpr uint32_t JOIN_TIMEOUT_MS = 5000, ENCRYPT_FALLBACK_MS = 500, SENT_WAIT_MS = 200;
 constexpr uint32_t SYNC_MS = 2000, LOST_MS = 10000;
+constexpr uint32_t WLIST_RESEND_MS = 30000;      // the whitelist goes out on join, on a change, and this often
+static_assert(WL_REC == whitelist::REC_LEN && WL_MAX_RULES == whitelist::MAX_LIST, "Wlist = whitelist wire form");
 constexpr uint32_t REMAC_IDLE_MS = 15UL * 60 * 1000;   // nobody joined: rotate the leader MAC this often (tracking)
 constexpr int      HELLOS_PER_S = 10;
 constexpr uint32_t MEMBER_FIX_LIVE_MS = 10000;   // a member's own GPS fix counts as live this long
@@ -72,6 +75,8 @@ struct MemberRt {
   uint8_t  planSentGen;                // last plan generation sent to it
   uint8_t  irkSentGen;                 // fleet::irkGen() of the last Irks sent to it
   uint32_t lastIrksMs;
+  uint16_t wlSentGen;                  // whitelist::gen() of the last Wlist sent to it (fw 0.39.0)
+  uint32_t lastWlMs;                   // 0 = not sent this session
   uint32_t lastPlanMs;
   uint8_t  srcMask;                    // its enabled scan sources (MStat); 0 = not reported yet
   uint8_t  roleOverride;               // M:o: 0 = auto (the template), else PlanRole + 1 (saved in NVS fltlay)
@@ -244,6 +249,7 @@ void addSelf(Sync* s, const uint8_t* m) {
 
 void sendIrks(int i);
 void sendThreats(int i);
+void sendWlist(int i);
 
 // Sync (every 2 s per member): the fleet clock (UTC + tz) and the ONE fleet position every unit stamps (docs §16.6:
 // the leader's own choice -- phone by default, its GPS, else a member's live GPS), plus the fleet's own radio MACs.
@@ -284,7 +290,30 @@ void sendSync(int i) {
   uint8_t k[16];
   if (phone::ownIrk(k)) fleet::irkSlotSet(0, k);                    // this leader's own key
   if (r.irkSentGen != fleet::irkGen() || millis() - r.lastIrksMs >= 10000) sendIrks(i);
+  if (!r.lastWlMs || r.wlSentGen != whitelist::gen() || millis() - r.lastWlMs >= WLIST_RESEND_MS) sendWlist(i);
   sendThreats(i);
+}
+
+// Wlist (fw 0.39.0, docs §26): this leader's whole whitelist, so every joined client mutes the same devices. One frame
+// per WL_PER_FRAME rules (one, empty, when there are none), 5 ms apart like the clients' DetBatch frames.
+void sendWlist(int i) {
+  MemberRt& r = L->rt[i];
+  const int total = whitelist::count();
+  const uint16_t gen = whitelist::gen();
+  for (int first = 0; first == 0 || first < total; first += WL_PER_FRAME) {
+    uint8_t buf[sizeof(Wlist) + TAG_LEN];
+    Wlist* w = (Wlist*)buf;
+    memset(buf, 0, sizeof(buf));
+    w->gen = gen; w->total = (uint8_t)total; w->first = (uint8_t)first;
+    int n = 0;
+    while (n < WL_PER_FRAME && first + n < total && whitelist::exportRec(first + n, w->rec[n])) n++;
+    w->n = (uint8_t)n;
+    if (first) delay(5);
+    if (!sendSealed(r.mac, buf, sizeof(Wlist), Msg::Wlist, r.sess, r.txSeq, r.sk)) return;   // retried next Sync
+    if (total == 0) break;
+  }
+  r.wlSentGen = gen;
+  r.lastWlMs = millis(); if (!r.lastWlMs) r.lastWlMs = 1;
 }
 
 // Threats (fw 0.36.0): the fleet-wide readout, after every Sync, so a client shows what the whole fleet sees.
@@ -430,6 +459,7 @@ void onJoinAck(const Rx& f) {
     r.lostAtMs = 0;
     r.planSentGen = (uint8_t)(L->planGen - 1);   // force a Plan to go out with the next tick
     r.irkSentGen = (uint8_t)(fleet::irkGen() - 1);  // and the keys with the first Sync
+    r.lastWlMs = 0;                                 // and the whitelist
     r.board = a.board; r.caps = a.caps;
     memcpy(r.bleMac, a.bleMac, 6);
     copyPrintable(r.fw, a.fw, sizeof(r.fw));                     // reads at most sizeof(r.fw)-1 = sizeof(a.fw) bytes

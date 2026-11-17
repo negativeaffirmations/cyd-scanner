@@ -34,23 +34,24 @@ static const uint8_t kLedLevel[][3] = {
   { 255,   0, 255 },  // Magenta
   {   0, 255, 255 },  // Cyan
   { 255, 100,   0 },  // Amber
+  { 255, 255,   0 },  // Yellow (fleet client searching; R+G at the tuned duty = true yellow)
 };
+static_assert(sizeof(kLedLevel) / sizeof(kLedLevel[0]) == (int)LedColor::Yellow + 1, "one row per LedColor");
 
 // Overall brightness % (web Settings "LED brightness", CMD "I:", NVS cydui/ledbri). 100 = the tuned duty
 // above; the default is 5 (25 was still glaring in the dark, and 5 stays visible in daylight -- tested on
 // mini #2, 2026-10-28). PWM is 12-bit so the dim green/blue channels keep enough steps to hold the colour
-// balance when scaled down.
+// balance when scaled down. 12 is the S3's limit at 5 kHz: 13 bits fails ledcAttach ("can not be achieved",
+// fw 0.38.0 left the LED dark), so a breathing fade at low brightness has few steps.
 static constexpr int kLedPwmBits = 12, kLedPwmMax = (1 << kLedPwmBits) - 1;
 static constexpr uint8_t kLedDefaultPct = 5;
 static uint8_t  s_ledPct = kLedDefaultPct;
-static LedColor s_ledColor = LedColor::Off;
 
-static void writeRgb(LedColor c) {  // active high (common cathode)
-  s_ledColor = c;
+static void writeRgb(LedColor c, uint8_t level = 255) {  // active high (common cathode); level 0..255 of full (breathing)
   const uint8_t* lv = kLedLevel[(int)c];
   for (int i = 0; i < 3; i++) {
-    uint32_t d = (uint32_t)kLedDuty[i] * lv[i] * s_ledPct;           // <= 255*255*100
-    uint32_t v = (uint32_t)((uint64_t)d * kLedPwmMax / (255u * 255u * 100u));
+    uint64_t d = (uint64_t)kLedDuty[i] * lv[i] * s_ledPct * level;   // <= 255*255*100*255
+    uint32_t v = (uint32_t)(d * kLedPwmMax / (255ull * 255u * 100u * 255u));
     if (d && !v) v = 1;  // a lit channel never rounds to fully off
     ledcWrite(kLedPin[i], v);
   }
@@ -69,7 +70,7 @@ void hostboard::setLedBrightness(int pct) {
   pct = constrain(pct, 0, 100);
   if (pct == s_ledPct) return;  // skip a no-op NVS write
   s_ledPct = (uint8_t)pct;
-  writeRgb(s_ledColor);         // re-apply the current colour at the new level
+  ledRefresh();                 // re-apply the current colour at the new level (under the core's LED lock)
   Preferences p; p.begin("cydui", false); p.putUChar("ledbri", s_ledPct); p.end();
 #else
   (void)pct;
@@ -119,13 +120,14 @@ bool hostboard::sdBegin() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   return SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
 }
-void hostboard::setScanLed(LedColor c) {
+void hostboard::setScanLed(LedColor c) { setScanLedLevel(c, 255); }
+void hostboard::setScanLedLevel(LedColor c, uint8_t level) {
 #ifdef MINI_RGB_LED
-  writeRgb(c);
+  writeRgb(c, level);
 #elif SCAN_LED_PIN >= 0
-  digitalWrite(SCAN_LED_PIN, c != LedColor::Off ? LOW : HIGH);
+  digitalWrite(SCAN_LED_PIN, (c != LedColor::Off && level) ? LOW : HIGH);   // on/off LED: a breath shows as on
 #else
-  (void)c;  // GPIO21 is the SD chip-select; no LED
+  (void)c; (void)level;  // GPIO21 is the SD chip-select; no LED
 #endif
 }
 int     hostboard::batteryPercent() { return power::percent(); }

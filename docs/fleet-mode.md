@@ -1289,7 +1289,9 @@ rows, and nothing came back.
   the summary is in use. A category drill-down lists only this unit's devices and says "N in fleet, M here".
   **Display only:** event log lines, DETS, STATUS and the follow engine stay per unit.
 - **LED (fleet client):** idle = solid blue when joined, blue/off blinking while searching (C5 link down = red as
-  before; `showLinkLed()` too); any threat colour (amber / cyan / magenta, Axon red/blue) or event alert (red
+  before; `showLinkLed()` too). **From fw 0.38.0:** a joined client breathes blue slowly (4 s), a searching client
+  breathes yellow quickly (1.2 s), and a leader is solid blue; a 25 ms `esp_timer` drives the breathing under one LED
+  lock (`host_core.cpp`), and the CYD's RGB LED is PWM for it. Any threat colour (amber / cyan / magenta, Axon red/blue) or event alert (red
   alternation) overrides it. With the C5 link down only the fleet summary drives the threat colour (the own table is stale).
 - **Staleness (review fixes):** the leader's hook returns false (nothing sent) while it is not scanning or its pipeline
   has not run for > 6 s, so frozen counts never go out as fresh; the client re-reads the summary on busy-miss cycles
@@ -1300,3 +1302,25 @@ rows, and nothing came back.
   numbers; `rid` is sent but not shown yet (reserved). Both ends check the exact length, so any future extension of
   `Threats` needs a new message type (an un-updated unit would drop a longer frame silently).
 
+
+## 26. Fleet whitelist (fw 0.39.0, additive message, no version bump)
+Owner decision (2026-11-16): the fleet whitelist is the **leader's whole whitelist**, not a separate list, and not a
+merge of every unit's lists (removal would be ambiguous) or a copy kept in the web app (scanners mute with no phone, and
+a CYD client has no phone link).
+- **Before:** the leader already applied its own whitelist to everything it merges (its display, LED and the `Threats`
+  summary), but a client counted its own rows with only its own list and showed the max of own and fleet, so a device
+  muted on the leader still lit a client that heard it (the §25 "known limit").
+- **Wire:** `Msg::Wlist` (0x15), leader -> each joined client, sealed. `Wlist { Hdr; gen u16; total, first, n u8;
+  rec[8][26] }` = 221 B (229 with the tag, fits a v1 250 B frame). A rule's wire form is `whitelist::exportRec()`:
+  kind, srcmask, the 24-byte pattern; the label stays on the leader. One list = ceil(total / 8) frames (one empty frame
+  when the leader has no rules), 5 ms apart, sharing `gen` (`whitelist::gen()`, bumped by every `reload()`).
+- **When:** on join (`lastWlMs = 0`), right after a change (`gen` differs), and every 30 s, all from `sendSync()`.
+- **Client:** `onWlist()` stages frames in order (`first` must equal what it holds, same `gen` / `total`; a gap drops the
+  partial list until the next send) and applies a complete list with `whitelist::setFleet()`. `whitelist::match()` checks
+  its own rules, then the fleet's, so the muted state, counts, LED, follow guard and the log's `wl` all follow. The fleet
+  list is RAM only (heap, first use), kept through a short leader loss, gone on the reboot that leaving a fleet causes,
+  and never written to the client's `/whitelist.csv`. Records are re-validated on receipt (kind, MAC length, name NUL).
+- **Edit:** add / remove on the leader (web Whitelist manager or the leader's own UI); clients follow within one Sync.
+  The web manager notes the sharing (`#wlFleetNote`, from STATUS `flt`). Serial `fleet` on a client prints
+  `fleet whitelist N rule(s) from the leader (M list(s) applied), own K`.
+- **Old firmware:** a unit before 0.39.0 ignores the unknown type and keeps muting with its own list only.

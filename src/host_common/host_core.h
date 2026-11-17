@@ -294,6 +294,7 @@ extern bool g_touchLocked;
 void applyScanLed();  // pick the LED pattern from link / alerts / threat categories (each scan cycle)
 void tickScanLed();   // step an alternating pattern (Axon red/blue, alert blink); call every loop()
 void showLinkLed();   // drop any pattern and show the plain link colour (scan stopped / idle)
+void ledRefresh();    // re-write the LED's current colour + level (board calls it after an LED-brightness change)
 
 struct ScanCycleResult {
   bool busyMiss;            // the C5 did not answer (its Wi-Fi-scan busy window) -- table kept, no pipeline run

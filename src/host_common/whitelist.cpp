@@ -2,12 +2,14 @@
 #include "whitelist.h"
 #include <SD.h>
 #include "link_protocol.h"  // MASK_*
+#include <new>
+#include <stddef.h>
 
 using namespace link_protocol;
 
 namespace {
 
-constexpr int MAX_RULES = 48;
+constexpr int MAX_RULES = whitelist::MAX_LIST;
 constexpr int NAME_LEN  = 24;
 constexpr int LABEL_LEN = 16;
 constexpr int LINE_BUF  = 128;
@@ -31,6 +33,11 @@ struct WlRule {
 
 WlRule g_rules[MAX_RULES];
 int    g_n = 0;
+uint16_t g_gen = 0;           // reload() counter (the fleet leader re-sends its list when it changes)
+WlRule*  g_fleet = nullptr;   // a fleet client's copy of its leader's rules (heap, first use only; labels empty)
+int      g_fleetN = 0;
+static_assert(sizeof(WlRule::v) + 2 == whitelist::REC_LEN, "wire record = kind + srcmask + pattern");
+static_assert(offsetof(WlRule, v) == 2, "pattern follows kind + srcmask");
 
 const char* kSeedCsv =
     "# cyd-scanner whitelist (known, not-a-threat devices; shown muted, never 'following').\n"
@@ -181,6 +188,7 @@ bool begin() {
 
 bool reload() {
   g_n = 0;
+  g_gen++;
   File f = SD.open(kPath, "r");
   if (!f) { Serial.println("[wl] no whitelist file"); return false; }
   char line[LINE_BUF];
@@ -195,28 +203,38 @@ bool reload() {
 
 int count() { return g_n; }
 
+}  // namespace whitelist
+
+namespace {
+bool ruleMatches(const WlRule& r, const uint8_t mac[6], const char* name, bool haveName, uint16_t companyId,
+                 const uint8_t svc[16], bool haveSvc, uint8_t srcBits) {
+  if (!(r.srcMask & srcBits)) return false;
+  switch (r.kind) {
+    case K_MAC:
+    case K_MACPFX:    return mac && memcmp(mac, r.v.m.mac, r.v.m.len) == 0;
+    case K_NEXACT:    return haveName && strcmp(name, r.v.name) == 0;
+    case K_NCONTAINS: return haveName && strstr(name, r.v.name);
+    case K_CID:       return companyId && companyId == r.v.cid;
+    case K_UUID:      return haveSvc && memcmp(svc, r.v.uuid, 16) == 0;
+  }
+  return false;
+}
+}  // namespace
+
+namespace whitelist {
+
 bool match(const uint8_t mac[6], const char* name, uint16_t companyId,
            const uint8_t svc[16], uint8_t srcBits) {
-  if (g_n == 0) return false;
+  if (g_n == 0 && g_fleetN == 0) return false;
   // A probe request is still a Wi-Fi frame: W/A rules match it (as in sigdb).
   if (srcBits & MASK_PROBE) srcBits |= MASK_WIFI24;
   bool haveName = name && name[0];
   bool haveSvc = false;
   if (svc) for (int k = 0; k < 16; k++) if (svc[k]) { haveSvc = true; break; }
-  for (int i = 0; i < g_n; i++) {
-    const WlRule& r = g_rules[i];
-    if (!(r.srcMask & srcBits)) continue;
-    switch (r.kind) {
-      case K_MAC:
-      case K_MACPFX:
-        if (mac && memcmp(mac, r.v.m.mac, r.v.m.len) == 0) return true;
-        break;
-      case K_NEXACT:    if (haveName && strcmp(name, r.v.name) == 0)   return true; break;
-      case K_NCONTAINS: if (haveName && strstr(name, r.v.name))        return true; break;
-      case K_CID:       if (companyId && companyId == r.v.cid)         return true; break;
-      case K_UUID:      if (haveSvc && memcmp(svc, r.v.uuid, 16) == 0) return true; break;
-    }
-  }
+  for (int i = 0; i < g_n; i++)                     // this unit's own rules
+    if (ruleMatches(g_rules[i], mac, name, haveName, companyId, svc, haveSvc, srcBits)) return true;
+  for (int i = 0; i < g_fleetN; i++)                // + the fleet leader's (a joined client)
+    if (ruleMatches(g_fleet[i], mac, name, haveName, companyId, svc, haveSvc, srcBits)) return true;
   return false;
 }
 
@@ -309,5 +327,49 @@ void listAll(String& out) {
   }
   f.close();
 }
+
+uint16_t gen() { return g_gen; }
+
+bool exportRec(int idx, uint8_t out[REC_LEN]) {
+  if (idx < 0 || idx >= g_n) return false;
+  out[0] = g_rules[idx].kind;
+  out[1] = g_rules[idx].srcMask;
+  memcpy(out + 2, &g_rules[idx].v, sizeof(g_rules[idx].v));
+  return true;
+}
+
+void setFleet(const uint8_t* recs, int n) {
+  if (n <= 0 || !recs) { clearFleet(); return; }
+  if (!g_fleet) {
+    g_fleet = new (std::nothrow) WlRule[MAX_RULES];
+    if (!g_fleet) { g_fleetN = 0; return; }
+  }
+  if (n > MAX_RULES) n = MAX_RULES;
+  int k = 0;
+  for (int i = 0; i < n; i++) {                     // the leader is authenticated, but check each record anyway
+    const uint8_t* p = recs + i * REC_LEN;
+    WlRule r;
+    memset(&r, 0, sizeof(r));
+    r.kind = p[0];
+    r.srcMask = p[1] & MASK_ALL;
+    memcpy(&r.v, p + 2, sizeof(r.v));
+    if (!r.srcMask) continue;
+    bool ok = false;
+    switch (r.kind) {
+      case K_MAC:       ok = r.v.m.len == 6; break;
+      case K_MACPFX:    ok = r.v.m.len >= 3 && r.v.m.len <= 5; break;
+      case K_NEXACT:
+      case K_NCONTAINS: r.v.name[NAME_LEN - 1] = 0; ok = r.v.name[0] != 0; break;
+      case K_CID:       ok = r.v.cid != 0; break;
+      case K_UUID:      ok = true; break;
+      default:          ok = false;
+    }
+    if (ok) g_fleet[k++] = r;
+  }
+  g_fleetN = k;
+}
+
+void clearFleet() { g_fleetN = 0; }   // the table stays allocated for the next list
+int  fleetCount() { return g_fleetN; }
 
 }  // namespace whitelist

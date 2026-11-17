@@ -16,6 +16,7 @@
 #include "phone.h"
 #include "host_core.h"
 #include "host_log.h"
+#include "whitelist.h"
 
 using namespace fleet::detail;
 
@@ -89,6 +90,12 @@ struct ClientSt {
   // fw 0.36.0: the leader's fleet-wide threat readout (Msg::Threats) + the millis() it arrived (0 = none yet)
   Threats  thr;
   uint32_t thrAtMs;
+  // fw 0.39.0 (docs §26): the leader's whitelist arrives in Wlist frames; they're staged here and applied
+  // (whitelist::setFleet) once a whole list with one gen is in. wlStage is heap, allocated on the first frame.
+  uint8_t* wlStage;
+  uint16_t wlGen;
+  uint8_t  wlTotal, wlHave;
+  uint32_t wlLists;                    // complete lists applied (serial `fleet`)
 };
 // P6 item 6 store-and-forward (docs §22): this boot's log files go to the leader from line 1, read straight from the
 // unit's own SD files at acked byte offsets (no RAM queue). Each file (live fg / bg stream, or one rotated away earlier
@@ -376,6 +383,30 @@ void onIrks(const Rx& f) {
   if (C->st != C_JOINED || !sessionOk(f, sizeof(Irks))) return;
   Irks k; memcpy(&k, f.data, sizeof(k));
   fleet::irksSet(&k.irk[0][0], k.n);
+}
+
+// The leader's whitelist (fw 0.39.0). Frames of one list share a gen and arrive in order (first = 0, 8, ...); a gap,
+// or a frame from another gen, drops the partial list and waits for the next send (on change or within 30 s).
+// The applied list stays through a short leader loss, so a reboot of the leader doesn't un-mute anything.
+void onWlist(const Rx& f) {
+  if (C->st != C_JOINED || !sessionOk(f, sizeof(Wlist))) return;
+  Wlist w; memcpy(&w, f.data, sizeof(w));
+  if (w.n > WL_PER_FRAME || w.total > WL_MAX_RULES || w.first + w.n > w.total) return;
+  if (w.total == 0) { whitelist::clearFleet(); C->wlLists++; C->wlHave = C->wlTotal = 0; return; }
+  if (!C->wlStage) {
+    C->wlStage = new (std::nothrow) uint8_t[WL_MAX_RULES * WL_REC];
+    if (!C->wlStage) return;
+  }
+  if (w.first == 0) { C->wlGen = w.gen; C->wlTotal = w.total; C->wlHave = 0; }
+  else if (w.gen != C->wlGen || w.total != C->wlTotal || w.first != C->wlHave) { C->wlHave = C->wlTotal = 0; return; }
+  if (w.n == 0 && w.first + w.n < w.total) { C->wlHave = C->wlTotal = 0; return; }   // a frame must add rules
+  memcpy(C->wlStage + w.first * WL_REC, w.rec, (size_t)w.n * WL_REC);
+  C->wlHave = w.first + w.n;
+  if (C->wlHave == C->wlTotal) {
+    whitelist::setFleet(C->wlStage, C->wlTotal);
+    C->wlLists++;
+    C->wlHave = C->wlTotal = 0;
+  }
 }
 
 void onThreats(const Rx& f) {
@@ -777,6 +808,7 @@ void onFrame(const Rx& f) {
     case Msg::Plan:  onPlan(f); break;
     case Msg::Irks:  onIrks(f); break;
     case Msg::Threats: onThreats(f); break;
+    case Msg::Wlist:   onWlist(f); break;
     case Msg::LogAck: onLogAck(f); break;
     default: break;
   }
@@ -851,6 +883,8 @@ void printStatus() {
                 C->havePos ? "yes" : "none", (unsigned)C->nSelf);
   Serial.printf("[FLT] client: forwarded %lu rows in %lu frames, %lu RID frames\n", (unsigned long)C->rowsSent,
                 (unsigned long)C->framesSent, (unsigned long)C->ridFrames);
+  Serial.printf("[FLT] client: fleet whitelist %d rule(s) from the leader (%lu list(s) applied), own %d\n",
+                whitelist::fleetCount(), (unsigned long)C->wlLists, whitelist::count());
   if (g_lf) {                                                      // P6 item 6: log store-and-forward
     Serial.printf("[FLT] client: log fwd %lu lines in %lu frames, %lu resends, %lu skipped, %lu anchors%s\n",
                   (unsigned long)g_lf->rowsFwd, (unsigned long)g_lf->frames, (unsigned long)g_lf->resends,

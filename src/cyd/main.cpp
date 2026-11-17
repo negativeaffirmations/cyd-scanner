@@ -54,17 +54,20 @@ static constexpr uint16_t UI_ACCENT = 0xA815;  // #AA00AA
 
 TFT_eSPI       tft = TFT_eSPI();
 
-static void setLed(bool r, bool g, bool b) {  // active low
-  digitalWrite(LED_R_PIN, r ? LOW : HIGH);
-  digitalWrite(LED_G_PIN, g ? LOW : HIGH);
-  digitalWrite(LED_B_PIN, b ? LOW : HIGH);
+// Onboard RGB LED, active low, 8-bit LEDC PWM on all three legs (fw 0.38.0, for the fleet breathing colours).
+// Level 0..255 of full; ledcWrite(255) is a solid high (the core widens full scale), so "off" is fully dark.
+static void setLedLevels(uint8_t r, uint8_t g, uint8_t b) {
+  ledcWrite(LED_R_PIN, 255 - r);
+  ledcWrite(LED_G_PIN, 255 - g);
+  ledcWrite(LED_B_PIN, 255 - b);
 }
+static void setLed(bool r, bool g, bool b) { setLedLevels(r ? 255 : 0, g ? 255 : 0, b ? 255 : 0); }
 
 static void initCommon() {
   pinMode(0, INPUT_PULLUP);  // BOOT button (runtime use: pop up the app QR)
-  pinMode(LED_R_PIN, OUTPUT);
-  pinMode(LED_G_PIN, OUTPUT);
-  pinMode(LED_B_PIN, OUTPUT);
+  ledcAttach(LED_R_PIN, 5000, 8);
+  ledcAttach(LED_G_PIN, 5000, 8);
+  ledcAttach(LED_B_PIN, 5000, 8);
   setLed(false, false, false);
   tft.init();
   tft.setRotation(UI_ROTATION);
@@ -3242,10 +3245,12 @@ bool hostboard::sdBegin() {
   sdSPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   return SD.begin(SD_CS_PIN, sdSPI) && SD.cardType() != CARD_NONE;
 }
-void    hostboard::setScanLed(LedColor c) {  // on/off RGB: Amber shows as yellow
-  setLed(c == LedColor::Red   || c == LedColor::Magenta || c == LedColor::Amber,
-         c == LedColor::Green || c == LedColor::Cyan    || c == LedColor::Amber,
-         c == LedColor::Blue  || c == LedColor::Magenta || c == LedColor::Cyan);
+void    hostboard::setScanLed(LedColor c) { setScanLedLevel(c, 255); }
+void    hostboard::setScanLedLevel(LedColor c, uint8_t lv) {   // full-on mixes: Amber and Yellow both show as yellow
+  const bool r = c == LedColor::Red   || c == LedColor::Magenta || c == LedColor::Amber || c == LedColor::Yellow;
+  const bool g = c == LedColor::Green || c == LedColor::Cyan    || c == LedColor::Amber || c == LedColor::Yellow;
+  const bool b = c == LedColor::Blue  || c == LedColor::Magenta || c == LedColor::Cyan;
+  setLedLevels(r ? lv : 0, g ? lv : 0, b ? lv : 0);
 }
 int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }

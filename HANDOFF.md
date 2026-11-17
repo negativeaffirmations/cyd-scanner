@@ -1,5 +1,26 @@
 # Handoff — 2026-11-12 (working branch: `hardening`, pushed; trunk `main`)
 
+## RESUME HERE — 2026-11-16 (night): fw 0.38.1 fleet LED (SOPAFE + BEMOPU on 0.38.1, TOLUBA on 0.38.0; ZUDIMU still 0.37.2)
+- **0.38.0 left the mini LEDs DARK:** its 13-bit PWM can't run at 5 kHz on the S3 (ledcAttach failed on all three pins).
+  0.38.1 restores 12 bit; boot logs clean on both minis. CYD unaffected (8-bit), so TOLUBA stays on 0.38.0.
+  A CYD showing solid cyan is the camera-category colour (Ring/Cam/Glass in its own or the fleet's counts), not this bug.
+- **Fleet status LED:** leader solid blue; joined client slow (4 s) blue breathing; searching client fast (1.2 s) yellow
+  breathing. Threat / alert colours override as before. `host_core.cpp`: `setLedBreath()` + a 25 ms `esp_timer`, every LED
+  write under one mutex (`ledWrite()`); board hook `hostboard::setScanLedLevel()`; new `LedColor::Yellow` (appended);
+  CYD RGB moved to 8-bit LEDC PWM; mini PWM 12 -> 13 bit; the mini's LED-brightness change goes through `ledRefresh()`.
+  No link / fleet protocol change, so ZUDIMU on 0.37.2 still joins (it keeps the old blue blink until flashed).
+  Fleet verified after the flash: all 3 members joined to SOPAFE, probing off, rssi -38..-67 with the S3 antenna fitted.
+  **Owner to confirm by eye** (breathing smoothness, yellow hue on both boards). Not yet flashed: ZUDIMU.
+- **fw 0.39.0 fleet whitelist (docs §26, owner chose the leader's WHOLE whitelist):** `Msg::Wlist` leader -> clients
+  (on join, on change, every 30 s); a client mutes own OR fleet matches, RAM only. Flashed SOPAFE, BEMOPU, TOLUBA;
+  verified both clients applied the leader's 1 rule. ZUDIMU (0.37.2) ignores it. Web `fleet wl`: a note in the
+  Whitelist manager (`#wlFleetNote`), committed, deploy pending owner OK. To mute the camera fleet-wide, whitelist it ON SOPAFE.
+- **NEXT (owner request, own commit):** CYD fleet-client screen (`SCR_FLEET`): use the same cog icon for Settings as
+  normal-mode HOME, and put a QR-code icon (show the phone key, like Settings -> Phone key) where HOME's phone icon sits.
+- Fleet search pauses: clients dwell 9 s per channel; the leader's 3 s probe burst only restarts when probing STARTS, so
+  with an enrolled member powered off it stays on 15 s probes and a dropped client can take ~2 min to rejoin. Proposed
+  fix (not built, owner deferred): restart the fast burst whenever a member goes missing.
+
 ## NOTE — 2026-11-16: mini #1 retired, mini #3 (CFLO-MINI-SOPAFE) built on new boards
 - **Mini #1 (CFLO-MINI-GABAME; S3 `10:b4:1d:e7:ed:a0`, C5 `10:bd:a3:cf:02:dc`) is DISASSEMBLED and out of commission.** The owner
   tried to rebuild it but couldn't clear the old solder from the pin holes to fit new headers, so the rebuild used two NEW XIAO
