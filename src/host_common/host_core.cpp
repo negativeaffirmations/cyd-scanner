@@ -11,6 +11,7 @@
 #include "host_board.h"
 #include "host_ui.h"
 #include <esp_mac.h>
+#include <esp_timer.h>
 #include "phone.h"
 #include "fleet.h"
 #include "webshare.h"
@@ -820,52 +821,125 @@ bool isSelfDet(const Detection& d) {
 bool g_touchLocked = false;
 
 // Scan-cycle LED (works headless). The core keeps a two-colour pattern (A == B = solid) that
-// applyScanLed() picks once per cycle and tickScanLed() alternates every LED_ALT_MS. Priority:
+// applyScanLed() picks once per cycle and tickScanLed() alternates every LED_ALT_MS, or a breathing colour that a
+// 25 ms esp_timer drives (so it stays smooth while loop() is busy reading a scan burst or redrawing). Priority:
 // Axon = red/blue; else a base colour of Flock/ALPR = amber > Ring/Cam/Glass = cyan > follow = magenta
-// > link green/red; an event alert (deauth / evil twin) alternates red with that base. Threat colours
+// > fleet idle (fw 0.38.0: leader solid blue, joined client slow blue breathing, searching client fast yellow
+// breathing) > link green/red; an event alert (deauth / evil twin) alternates red with that base. Threat colours
 // use the same per-category counts as the HOME tiles: this unit's own only while the link is up (stale otherwise),
 // plus a fresh fleet summary on a fleet client (displayCategories).
+// Every LED write goes through ledWrite() under s_ledMux: loop() and the breathing timer never write at once.
 static constexpr uint32_t LED_ALT_MS = 700;
+static constexpr uint16_t BREATH_SLOW_MS = 4000, BREATH_FAST_MS = 1200;   // joined client / searching client
+static constexpr uint8_t  BREATH_MIN = 8;                                  // floor of the 0..255 level (never fully dark)
+static constexpr uint32_t BREATH_TICK_US = 25000;
 static LedColor s_ledA = LedColor::Off, s_ledB = LedColor::Off;
 static bool     s_ledPhase = false;
 static uint32_t s_ledAtMs  = 0;
+static SemaphoreHandle_t  s_ledMux = nullptr;
+static esp_timer_handle_t s_breathTimer = nullptr;
+static uint16_t s_breathMs = 0;                    // 0 = not breathing (guarded by s_ledMux)
+static LedColor s_breathColor = LedColor::Off;
+static uint32_t s_breathT0 = 0;
+static LedColor s_curColor = LedColor::Off;        // what the LED shows now, for ledRefresh()
+static uint8_t  s_curLevel = 0;
+
+static bool ledLock(TickType_t wait) {
+  if (!s_ledMux) s_ledMux = xSemaphoreCreateMutex();   // first use is always from loop(), before the timer exists
+  return s_ledMux && xSemaphoreTake(s_ledMux, wait) == pdTRUE;
+}
+static void ledUnlock() { xSemaphoreGive(s_ledMux); }
+static void ledWrite(LedColor c, uint8_t level) {   // caller holds s_ledMux
+  s_curColor = c; s_curLevel = level;
+  hostboard::setScanLedLevel(c, level);
+}
+
+static void breathTick(void*) {                     // esp_timer task: short, never blocks
+  if (!ledLock(0)) return;                          // loop() is writing: skip this frame
+  if (s_breathMs) {
+    const uint32_t p = (millis() - s_breathT0) % s_breathMs;
+    const float x = (1.0f - cosf(6.2831853f * (float)p / (float)s_breathMs)) * 0.5f;   // 0..1..0
+    ledWrite(s_breathColor, (uint8_t)(BREATH_MIN + (255 - BREATH_MIN) * x * x));          // squared: eases at the bottom
+  }
+  ledUnlock();
+}
 
 static LedColor linkColor() { return g_linkOk ? LedColor::Green : LedColor::Red; }
 
 static void setLedPattern(LedColor a, LedColor b) {
-  if (a == s_ledA && b == s_ledB) return;  // unchanged: keep an alternation's rhythm across cycles
+  if (!s_breathMs && a == s_ledA && b == s_ledB) return;  // unchanged: keep an alternation's rhythm across cycles
+  if (!ledLock(portMAX_DELAY)) return;
+  const bool wasBreathing = s_breathMs != 0;
+  s_breathMs = 0;                                   // the timer writes nothing from here on
   s_ledA = a; s_ledB = b; s_ledPhase = false; s_ledAtMs = millis();
-  hostboard::setScanLed(a);
+  ledWrite(a, 255);
+  ledUnlock();
+  if (wasBreathing && s_breathTimer) esp_timer_stop(s_breathTimer);
 }
 
-// Fleet client (fw 0.36.0): the idle colour is blue (solid = joined, blinking = searching) instead of link green;
-// a C5 link loss still shows red, and any threat / alert colour overrides it. Threat colours use the fleet-wide
-// readout (displayCategories) while the leader's summary is fresh.
+static void setLedBreath(LedColor c, uint16_t periodMs) {
+  if (s_breathMs == periodMs && s_breathColor == c) return;   // unchanged: keep its rhythm across cycles
+  if (!s_breathTimer) {
+    esp_timer_create_args_t args = {};
+    args.callback = &breathTick;
+    args.name = "ledbreath";
+    if (esp_timer_create(&args, &s_breathTimer) != ESP_OK) { s_breathTimer = nullptr; setLedPattern(c, c); return; }
+  }
+  if (!ledLock(portMAX_DELAY)) return;
+  const bool wasBreathing = s_breathMs != 0;
+  s_breathColor = c; s_breathMs = periodMs; s_breathT0 = millis();
+  s_ledA = s_ledB = c;                              // a single colour: tickScanLed() leaves it alone
+  ledWrite(c, BREATH_MIN);                          // the cycle starts at its dim end
+  ledUnlock();
+  if (!wasBreathing) esp_timer_start_periodic(s_breathTimer, BREATH_TICK_US);
+}
+
+void ledRefresh() {
+  if (!ledLock(portMAX_DELAY)) return;
+  hostboard::setScanLedLevel(s_curColor, s_curLevel);
+  ledUnlock();
+}
+
+// Fleet idle colours (fw 0.38.0): a leader is solid blue; a client breathes, slow blue once joined and fast yellow
+// while it searches for its leader. A C5 link loss still shows red, and any threat / alert colour overrides these.
+// Threat colours use the fleet-wide readout (displayCategories) while the leader's summary is fresh.
+static bool showFleetIdle() {                       // true when it set the LED
+  if (!g_linkOk) return false;
+  if (fleet::isClient()) {
+    if (fleet::clientJoined()) setLedBreath(LedColor::Blue, BREATH_SLOW_MS);
+    else                       setLedBreath(LedColor::Yellow, BREATH_FAST_MS);
+    return true;
+  }
+  if (fleet::role() == fleet::ROLE_LEADER) { setLedPattern(LedColor::Blue, LedColor::Blue); return true; }
+  return false;
+}
+
 void applyScanLed() {
   int cnt[CAT_N] = {0}, worst[CAT_N], smax[CAT_N];
   if (g_linkOk || fleetReadoutShown()) displayCategories(cnt, worst, smax, g_linkOk);   // own table only while the link is up
   if (cnt[CAT_AXON]) { setLedPattern(LedColor::Red, LedColor::Blue); return; }
-  const bool client = fleet::isClient();
-  LedColor base = (client && g_linkOk) ? LedColor::Blue : linkColor();
+  const bool inFleet = fleet::isClient() || fleet::role() == fleet::ROLE_LEADER;
+  LedColor base = (inFleet && g_linkOk) ? LedColor::Blue : linkColor();
   bool idle = true;
   if (cnt[CAT_FLOCK] || cnt[CAT_ALPR])                      { base = LedColor::Amber;   idle = false; }
   else if (cnt[CAT_RING] || cnt[CAT_CAM] || cnt[CAT_GLASS]) { base = LedColor::Cyan;    idle = false; }
   else if (followAlertDisplayN() > 0)                       { base = LedColor::Magenta; idle = false; }
-  if (eventAlertActive())                                       setLedPattern(LedColor::Red, base);
-  else if (idle && client && g_linkOk && !fleet::clientJoined()) setLedPattern(LedColor::Blue, LedColor::Off);  // searching
-  else                                                          setLedPattern(base, base);
+  if (eventAlertActive())          setLedPattern(LedColor::Red, base);
+  else if (idle && showFleetIdle()) {}
+  else                             setLedPattern(base, base);
 }
 
 void tickScanLed() {
-  if (s_ledA == s_ledB || millis() - s_ledAtMs < LED_ALT_MS) return;
+  if (s_breathMs || s_ledA == s_ledB || millis() - s_ledAtMs < LED_ALT_MS) return;
+  if (!ledLock(portMAX_DELAY)) return;
   s_ledAtMs = millis();
   s_ledPhase = !s_ledPhase;
-  hostboard::setScanLed(s_ledPhase ? s_ledB : s_ledA);
+  ledWrite(s_ledPhase ? s_ledB : s_ledA, 255);
+  ledUnlock();
 }
 
-void showLinkLed() {   // a fleet client idles blue (blinking while searching), as in applyScanLed()
-  if (fleet::isClient() && g_linkOk) setLedPattern(LedColor::Blue, fleet::clientJoined() ? LedColor::Blue : LedColor::Off);
-  else                               setLedPattern(linkColor(), linkColor());
+void showLinkLed() {   // the plain idle colour: the fleet colours above, else link green / red
+  if (!showFleetIdle()) setLedPattern(linkColor(), linkColor());
 }
 
 // One scan → score → log → render cycle, also mirrored to the phone app. The board's UI work is done

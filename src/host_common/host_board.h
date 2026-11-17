@@ -4,13 +4,17 @@
 #include <stdint.h>
 
 // Status-LED colours the core asks for (applyScanLed); each board maps them onto its own LED.
-enum class LedColor : uint8_t { Off, Red, Green, Blue, Magenta, Cyan, Amber };
+enum class LedColor : uint8_t { Off, Red, Green, Blue, Magenta, Cyan, Amber, Yellow };   // append only (tables index by it)
 
 namespace hostboard {
 void    begin();                           // board bring-up (pins, link UART, LED, power, display/RTC)
 void    sample();                          // refresh the battery reading (called every scan cadence)
 bool    sdBegin();                         // bring up the SD bus on the board's pins + SD.begin(); true if a card is present
-void    setScanLed(LedColor c);            // CYD: on/off RGB on 4/16/17 (Amber shows yellow); S3: PWM RGB or no-op
+void    setScanLed(LedColor c);            // = setScanLedLevel(c, 255)
+void    setScanLedLevel(LedColor c, uint8_t level);   // colour at 0..255 of full (breathing). CYD: PWM RGB on 4/16/17
+                                           // (Amber shows yellow); S3: PWM RGB, or on/off (level > 0) / no-op
+                                           // without one. Called from loop() and the core's breathing timer, always
+                                           // under the core's LED lock (host_core.cpp), never concurrently.
 int     batteryPercent();                  // power::percent() (-1 = no battery sensed)
 uint8_t brightness();                      // CYD: backlight %; S3: 100 (reported in STATUS only)
 int     ledBrightness();                   // status-LED brightness % (STATUS led=); -1 = no dimmable LED (CYD, mini #1)

@@ -1289,7 +1289,9 @@ rows, and nothing came back.
   the summary is in use. A category drill-down lists only this unit's devices and says "N in fleet, M here".
   **Display only:** event log lines, DETS, STATUS and the follow engine stay per unit.
 - **LED (fleet client):** idle = solid blue when joined, blue/off blinking while searching (C5 link down = red as
-  before; `showLinkLed()` too); any threat colour (amber / cyan / magenta, Axon red/blue) or event alert (red
+  before; `showLinkLed()` too). **From fw 0.38.0:** a joined client breathes blue slowly (4 s), a searching client
+  breathes yellow quickly (1.2 s), and a leader is solid blue; a 25 ms `esp_timer` drives the breathing under one LED
+  lock (`host_core.cpp`), and the CYD's RGB LED is PWM for it. Any threat colour (amber / cyan / magenta, Axon red/blue) or event alert (red
   alternation) overrides it. With the C5 link down only the fleet summary drives the threat colour (the own table is stale).
 - **Staleness (review fixes):** the leader's hook returns false (nothing sent) while it is not scanning or its pipeline
   has not run for > 6 s, so frozen counts never go out as fresh; the client re-reads the summary on busy-miss cycles
