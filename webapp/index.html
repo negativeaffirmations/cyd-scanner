@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261116b">
+<link rel="stylesheet" href="style.css?v=20261119a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -69,7 +69,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-16&nbsp;·&nbsp;fleet&nbsp;wl</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-19&nbsp;·&nbsp;notify</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -230,6 +230,35 @@
         <button id="syncBtn" class="secondary" disabled>Sync time &amp; GPS</button>
         <button id="reloadBtn" class="secondary" disabled>Reload signature DB</button>
         <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
+      </div>
+
+      <!-- Notifications (js/features/notify.js + notify-sw.js): local alerts raised by this page from the live
+           BLE data; rules saved on this phone. Only while the page is open and connected. -->
+      <div class="card" id="nfCard" style="margin-top:12px">
+        <strong class="cardhdr">Notifications</strong>
+        <div id="nfState" class="sub keystate" style="margin:.4em 0">Off.</div>
+        <button id="nfEnableBtn">Turn notifications on</button>
+        <div class="sub" style="margin:.6em 0 .2em">Alert when a threat of these kinds appears (tap to switch):</div>
+        <div id="nfCats" class="tgrid"></div>
+        <label class="k" for="nfTier" style="display:block;margin-top:.5em">Any category at this tier</label>
+        <select id="nfTier">
+          <option value="0">Off</option><option value="1">Suspect or worse</option>
+          <option value="2">Likely or worse</option><option value="3">Confirmed only</option>
+        </select>
+        <label style="display:block;margin-top:.5em"><input type="checkbox" id="nfFol"> Possible follower</label>
+        <label style="display:block"><input type="checkbox" id="nfRid"> Drone Remote-ID</label>
+        <label style="display:block"><input type="checkbox" id="nfDeauth"> Deauth flood</label>
+        <label style="display:block"><input type="checkbox" id="nfEvil"> Evil-twin access point</label>
+        <div class="sub" style="margin:.6em 0 .2em">Watched devices (alert even when whitelisted):</div>
+        <div id="nfWatch" class="sesslist"></div>
+        <label class="k" for="nfQuiet" style="display:block;margin-top:.3em">Alert again after a device was gone for</label>
+        <select id="nfQuiet">
+          <option value="5">5 minutes</option><option value="15">15 minutes</option>
+          <option value="30">30 minutes</option><option value="60">1 hour</option>
+        </select>
+        <label style="display:block;margin-top:.5em"><input type="checkbox" id="nfVib"> Vibrate</label>
+        <button id="nfTestBtn" class="secondary" disabled style="margin-top:.6em">Send a test notification</button>
+        <div class="sub" style="margin-top:.5em">Alerts come only while this page is open and connected to a scanner. Keep the screen on: Android pauses a screen-off or long-backgrounded tab, and then nothing fires. Connected to a fleet leader, alerts cover the whole fleet.</div>
       </div>
 
       <!-- Switch scanner (js/features/switcher.js): jump between remembered scanners without reloading; always
@@ -451,6 +480,7 @@
     </div>
     <div id="detInfo"></div>
     <div id="detActions"></div>
+    <div id="detNotify"></div>
     <div id="detMapMsg" class="sub" style="display:none;margin-top:.7em"></div>
     <div id="detMap"></div>
   </dialog>
@@ -576,6 +606,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261116b"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261119a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

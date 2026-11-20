@@ -653,6 +653,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   status/detections/sessions/explore/map/whitelist/fleet/files register with `onUnitReset()` (readouts, DETS buffers,
   Remote-ID, session list, Explore rows, a device-sourced Map — a local file loaded with `plotCsvText(...,true)` stays —
   whitelist view, fleet members, file-explorer state). New webapp state/exports go in NEW files (the stale-module rule).
+  **Notifications (webapp 2026-11-19, `features/notify.js` + `webapp/notify-sw.js`; no firmware involved):** LOCAL
+  notifications the page raises from the live BLE data (no push server; Android needs the service worker, which only
+  shows / focuses and caches nothing). Rules saved on the phone (localStorage `cflo.notify`): threat categories, a tier
+  floor, watched MACs (device popup "Notify me when seen", alert even when whitelisted), follower, Remote-ID, deauth
+  flood / evil twin (the banner thresholds). A device alerts when it appears (first seen, or back after the quiet time,
+  default 15 min); one snapshot = one notification (several folded). No hooks in old modules: it polls
+  `state.lastDetRows` / `state.status` each second and watches `#detInfo`. Fires only while the page runs.
   Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
   follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS
   `deauth`/`evil`) + behavioral-flag badges on rows. On connect it takes a **Screen Wake Lock**
