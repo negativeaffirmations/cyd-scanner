@@ -1,4 +1,21 @@
-# Handoff — 2026-11-16 (working branch: `hardening`, pushed + merged to `main`; trunk `main`)
+# Handoff — 2026-11-19 (working branch: `hardening`, pushed; trunk `main`)
+
+## RESUME HERE — 2026-11-19: CYD fleet-client screen icons (fw 0.39.1 on both CYDs)
+- **Done (owner request from 11-16):** `SCR_FLEET` now uses HOME's title-line icons: the cog (Settings) upper left and a
+  new QR glyph (`drawQrIcon`, Show key) where HOME's phone icon sits, centred on `FL_ICON_CY` = 37 (the font-4 title at
+  y24). The remaining buttons, Live scan / Leave fleet, share one taller row (y278..312). BOOT order: Live scan → Leave
+  fleet → cog → QR → threat tiles (`FL_NAV_COG/QR/CHIP0`). HOME and FLEET share one hit test, `titleIconTapped(cy)`.
+  Commit `8d642e2`. **Both CYDs flashed** (COM13 `b4:bf:e9:c9:2b:b0`, COM21 `d4:e9:f4:f4:17:b8`), both rejoined SOPAFE.
+  Owner eye check of the new layout still pending. The minis stay on 0.39.0 (only the version string would differ).
+- **Camera question (owner):** answered with scan-analyzer on the bridge (2026-11-19 20:35 / 21:30). The device is
+  known, has been seen since late October, and shows no change in its probing pattern. Details (address, location) live
+  ONLY on the bridge, never here. CYD-side explanation for "seen all the time": since 0.36.0 every client's tiles show the
+  fleet-wide counts, so 4 units catch far more of its ~5-min probe bursts than one did (each burst lists it ~30 s, the C5
+  TTL).
+- **scan-analyzer upload speed:** uploads took 65–95 s each because its server recomputed every derived table before
+  replying. Fixed on its side 2026-11-19 (replies after ingest, one recompute 30 s after a batch). No contract change.
+- Also this session: the mini-build RGB wiring diagrams committed; `.gitignore` gains `*.tmp` (Illustrator temp files).
+- **Open, owner deferred (unchanged):** fleet search pauses (see 11-16 below).
 
 ## RESUME HERE — 2026-11-16 (night): fw 0.39.0 on all 4 hosts, fleet whitelist + breathing fleet LED, web `fleet wl` live
 **Units now:** CYD TOLUBA, CYD ZUDIMU, mini #2 BEMOPU (client), mini #3 SOPAFE (= fleet LEADER). Mini #1 GABAME is retired
@@ -25,8 +42,7 @@ to SOPAFE on channel 1, probing off, rssi about -32..-67 with SOPAFE's S3 antenn
 - **28.5 s dual-band AP scan is normal with BLE on** (measured on a XIAO C5, BLE off / on: dual 11.9 / 28.5 s, 2.4 only 2.6 /
   8.8 s, 5 only 9.3 / 19.7 s; the DevKit C5 gives the same 28503 ms). The 12.4 s bench ran in a Wi-Fi-only fleet role with BLE
   off. Pausing BLE during the AP scan would give ~12 s at the cost of BLE airtime (owner decision, not built).
-- **NEXT (owner request, own commit):** CYD fleet-client screen (`SCR_FLEET`): use the same cog icon for Settings as
-  normal-mode HOME, and put a QR-code icon (show the phone key, like Settings -> Phone key) where HOME's phone icon sits.
+- ~~**NEXT:** CYD fleet-client screen cog + QR icons~~ — DONE 2026-11-19 (fw 0.39.1, above).
 - **Open, owner deferred:** fleet search pauses. Clients dwell 9 s per channel; the leader's 3 s probe burst only restarts
   when probing STARTS, so while an enrolled member is powered off it stays on 15 s probes and a dropped client can take ~2
   min to rejoin. Proposed fix: restart the fast burst whenever a member goes missing. (With every member on, the leader

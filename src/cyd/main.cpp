@@ -1138,8 +1138,25 @@ static void drawHomeIcons() {
                 g_menuSel == MENU_N + 1);
 }
 
-// Fresh tap on a HOME title icon: 0 = cog (Settings), 1 = phone (Phone Link), else -1.
-static int homeIconTapped() {
+// QR-code glyph in the same circular badge as the phone icon (FLEET screen: Show key).
+static void drawQrIcon(int cx, int cy, int r, uint16_t color, bool sel) {
+  if (sel) tft.drawCircle(cx, cy, r + 2, TFT_CYAN);
+  tft.drawCircle(cx, cy, r, color);
+  const int x0 = cx - 6, y0 = cy - 6;            // 12x12 code, fits inside the badge
+  const int fx[3] = { x0, x0 + 7, x0 }, fy[3] = { y0, y0, y0 + 7 };
+  for (int k = 0; k < 3; k++) {                  // three finder squares
+    tft.drawRect(fx[k], fy[k], 5, 5, color);
+    tft.drawPixel(fx[k] + 2, fy[k] + 2, color);
+  }
+  tft.fillRect(x0 + 7, y0 + 7, 2, 2, color);     // a few data modules
+  tft.fillRect(x0 + 10, y0 + 7, 2, 2, color);
+  tft.fillRect(x0 + 7, y0 + 10, 2, 2, color);
+  tft.fillRect(x0 + 10, y0 + 10, 2, 2, color);
+}
+
+// Fresh tap on a title-line icon centred on row cy: 0 = left (cog), 1 = right (phone / QR), else -1.
+// HOME and FLEET share it; only one of them is on screen, so one edge tracker is enough.
+static int titleIconTapped(int cy) {
   static bool prev = false;
   if (!g_touchOk) { prev = false; return -1; }
   bool now = g_touch.touched();
@@ -1148,7 +1165,7 @@ static int homeIconTapped() {
     int16_t sx, sy, z;
     if (g_touch.getScreen(tft, sx, sy, z)) {
       int d = HOME_ICON_R + 3;
-      if (abs(sy - HOME_ICON_CY) <= d) {
+      if (abs(sy - cy) <= d) {
         if      (abs(sx - homeCogCx())   <= d) hit = 0;
         else if (abs(sx - homePhoneCx()) <= d) hit = 1;
       }
@@ -1157,6 +1174,7 @@ static int homeIconTapped() {
   prev = now;
   return hit;
 }
+static int homeIconTapped() { return titleIconTapped(HOME_ICON_CY); }
 
 // Home menu. Reuses the status bar (time / GPS / connection / link dot) up top. Phone Link and
 // Settings are the two title-bar icons (phone right, cog left); the list holds just Scan.
@@ -1265,11 +1283,14 @@ static void drawRekeyConfirm() {
 }
 
 // ---- Fleet client screens (docs/fleet-mode.md §2). SCR_FLEET replaces HOME as the root while fltrole=1.
-// Layout: title y24, info lines y52..160 (alert band y120), threat tiles reuse the HOME readout (y176..268),
-// 2x2 buttons y272..318. BOOT nav (g_fleetSel): 0..3 = the buttons, 4+ = the threat tiles (g_menuSel mirrors it
-// for drawMenuThreats' highlight). Everything is direct TFT draws: no heap.
-static constexpr int FL_BTN_N = 4, FL_BTN_Y0 = 272, FL_BTN_H = 22, FL_BTN_STEP = 24;
-static const char* const kFleetBtn[FL_BTN_N] = { "Live scan", "Show key", "Settings", "Leave fleet" };
+// Layout: title y24 with HOME's title-line icons beside it (cog = Settings left, QR = Show key right, centred on
+// FL_ICON_CY), info lines y52..160 (alert band y120), threat tiles reuse the HOME readout (y176..268), one row of
+// 2 buttons y278..312. BOOT nav (g_fleetSel): 0..1 = the buttons, then the cog, the QR, then the threat tiles
+// (g_menuSel mirrors the tile part for drawMenuThreats' highlight). Everything is direct TFT draws: no heap.
+static constexpr int FL_BTN_N = 2, FL_BTN_Y0 = 278, FL_BTN_H = 34, FL_BTN_STEP = 24;
+static constexpr int FL_NAV_COG = FL_BTN_N, FL_NAV_QR = FL_BTN_N + 1, FL_NAV_CHIP0 = FL_BTN_N + 2;
+static constexpr int FL_ICON_CY = 24 + 13;   // middle of the font-4 title (HOME: 32 -> 44)
+static const char* const kFleetBtn[FL_BTN_N] = { "Live scan", "Leave fleet" };
 static bool g_flvFromSettings = false;   // LEAVE confirm opened from Settings: Cancel returns there
 static int g_fleetSel = 0, g_flvSel = 0, g_fleSel = 0;   // FLEET focus / LEAVE confirm / ENTER confirm
 
@@ -1374,8 +1395,10 @@ static void drawFleet() {
   tft.setTextColor(UI_ACCENT, TFT_BLACK);
   tft.drawString("FLEET CLIENT", tft.width() / 2, 24, 4);
   tft.setTextDatum(TL_DATUM);
+  drawCogIcon(homeCogCx(), FL_ICON_CY, HOME_ICON_R, TFT_LIGHTGREY, g_fleetSel == FL_NAV_COG);
+  drawQrIcon(homePhoneCx(), FL_ICON_CY, HOME_ICON_R, TFT_LIGHTGREY, g_fleetSel == FL_NAV_QR);
   drawFleetInfo();
-  g_menuSel = g_fleetSel >= FL_BTN_N ? MENU_CHIP0 + (g_fleetSel - FL_BTN_N) : 0;   // tile highlight for drawMenuThreats
+  g_menuSel = g_fleetSel >= FL_NAV_CHIP0 ? MENU_CHIP0 + (g_fleetSel - FL_NAV_CHIP0) : 0;   // tile highlight for drawMenuThreats
   drawMenuThreats(FL_BTN_Y0 - 2);   // stop above the buttons
   drawFleetButtons();
 }
@@ -2940,14 +2963,14 @@ static void activateFleetEnter(int sel) {
 static void showScan();            // defined with the scanner actions above
 static void openMenuCat(Category); // defined with the HOME drill-down above
 
-// Act on the highlighted FLEET item: 0 Live scan / 1 Show key / 2 Settings / 3 Leave fleet / 4+ a threat tile.
+// Act on the highlighted FLEET item: 0 Live scan / 1 Leave fleet / cog Settings / QR Show key / then a threat tile.
 static void activateFleet() {
   if (g_fleetSel == 0)      { g_scrollOffset = 0; resetFollow(); g_viewFrozen = false; g_frozenCount = 0; showScan(); }
-  else if (g_fleetSel == 1) { g_pkToFleet = true; g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey(); }
-  else if (g_fleetSel == 2) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
-  else if (g_fleetSel == 3) { g_flvSel = 0; g_flvFromSettings = false; g_screen = SCR_FLEETLEAVE; drawFleetLeave(); }
+  else if (g_fleetSel == 1) { g_flvSel = 0; g_flvFromSettings = false; g_screen = SCR_FLEETLEAVE; drawFleetLeave(); }
+  else if (g_fleetSel == FL_NAV_COG) { g_screen = SCR_SETTINGS; g_setSel = 0; drawSettings(); }
+  else if (g_fleetSel == FL_NAV_QR)  { g_pkToFleet = true; g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey(); }
   else {
-    int ci = g_fleetSel - FL_BTN_N;
+    int ci = g_fleetSel - FL_NAV_CHIP0;
     if (ci >= 0 && ci < g_menuCatN) openMenuCat((Category)g_menuCat[ci]);
   }
 }
@@ -3542,11 +3565,13 @@ void loop() {
     }
 
     case SCR_FLEET: {
-      int bt = fleetButtonTapped();   // both edge-trackers run every pass
+      int bt = fleetButtonTapped();   // all three edge-trackers run every pass
+      int it = titleIconTapped(FL_ICON_CY);
       int ct = menuChipTapped();
       if (bt >= 0) { g_fleetSel = bt; activateFleet(); return; }
-      if (ct >= 0) { g_fleetSel = FL_BTN_N + ct; activateFleet(); return; }
-      int navN = FL_BTN_N + g_menuCatN;   // BOOT walks the 4 buttons, then the threat tiles
+      if (it >= 0) { g_fleetSel = it == 0 ? FL_NAV_COG : FL_NAV_QR; activateFleet(); return; }
+      if (ct >= 0) { g_fleetSel = FL_NAV_CHIP0 + ct; activateFleet(); return; }
+      int navN = FL_NAV_CHIP0 + g_menuCatN;   // BOOT walks the 2 buttons, the cog, the QR, then the threat tiles
       if      (ev == BTN_SHORT) { g_fleetSel = (g_fleetSel + 1) % navN; drawFleet(); }
       else if (ev == BTN_LONG)  { activateFleet(); }
       else {
