@@ -670,6 +670,30 @@ select {
   border: 1px solid #30363d;
 }
 
+.dtocustom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0.1em 0 0.3em;
+}
+.dtocustom input[type=number] {
+  width: 5.5em;
+  font-size: 1rem;
+  padding: 0.55em;
+}
+.dtocustom select {
+  width: auto;
+  margin: 0;
+}
+.dtocustom button {
+  margin: 0;
+}
+
+.dtocustom[hidden] {
+  display: none;
+}
+
 .subhdr {
   display: flex;
   align-items: center;

@@ -28,7 +28,7 @@ import { initCacheUI } from './features/cacheui.js';
 import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261119a';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
-import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120a';   // new module: versioned so it loads fresh with main.js
+import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.

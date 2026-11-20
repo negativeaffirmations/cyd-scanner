@@ -479,7 +479,7 @@ back (5 GHz included). Things that matter, learned the hard way:
     `.bak`, 8 MB cap; all guards case-insensitive — FAT aliases `/LOGS`, `/logs.` — and the live/held/streaming/
     uploading files plus `/` and `/logs` can't be deleted, renamed or overwritten; `/logs/` names ≤ 47 chars for
     the 48-B log-code buffers. Web: Data page "SD card files" → `features/files.js`, its own FS= listener)
-    · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · **`"V:<mode>:<dimS>:<offS>"`** CYD display timeout (fw 0.40.0; mode 0 always on / 1 dim only / 2 dim then off, 0 s = never; NVS `cydui/dmode`,`dimS`,`offS`; web Settings → Device(s) "Display timeout", `features/displaytimeout.js`) · `"K1"/"K0"` lock / unlock the CYD
+    · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · **`"V:<mode>:<dimS>:<offS>"`** CYD display timeout (fw 0.40.0; mode 0 always on / 1 dim only / 2 dim then off, 0 s = never; NVS `cydui/dmode`,`dimS`,`offS`; web Settings → Device(s) "Display timeout", `features/displaytimeout.js`: presets + "Custom…" 5 s–120 min) · `"K1"/"K0"` lock / unlock the CYD
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
