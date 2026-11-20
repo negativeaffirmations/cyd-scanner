@@ -642,7 +642,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   **Switch scanner (webapp 2026-11-01; no firmware involved):** `ble/devices.js` remembers every `BluetoothDevice` picked
   this page session (+ `navigator.bluetooth.getDevices()` when Chrome has it; unit names kept in localStorage
   `cflo.unitNames`); `features/switcher.js` owns the app-bar swap button (`#switchBtn`, beside the Bluetooth icon), the
-  `#switchDlg` dialog and the Settings → Scanners button (always reachable; also how a second scanner is added via
+  `#switchDlg` dialog and the Settings → Device(s) → Scanners button (always reachable; also how a second scanner is added via
   the chooser, `connect()`). Presence = `device.watchAdvertisements()` on every remembered scanner except the connected
   one, only while the page is visible and `state.xferBusy` is 0 / no BLE transfer runs; "in range" for 10 s after the
   last advertisement. The app-bar button is enabled only when another remembered scanner is in range; without
