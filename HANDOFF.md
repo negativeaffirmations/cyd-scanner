@@ -13,7 +13,7 @@ dim 30 s, off 2 min. Scanning / logging / repaints continue in the dark; only th
 - Phone: CMD `V:<mode>:<dimS>:<offS>` (`phone.cpp` → `hostboard::setDisplayTimeout`, which also wakes the screen), STATUS
   part 2 `dto=<mode>,<dimS>,<offS>` (CYD only; minis stub `displayTimeout()` → false, key omitted). Web: Settings →
   Device(s) "Display timeout" card, `js/features/displaytimeout.js` (polls `state.status`, hidden without `dto`), tokens
-  `?v=20261120a`, footer `ui 2026-11-20 · display timeout`, deployed to Pages.
+  `?v=20261120a`, footer `ui 2026-11-20 · display timeout`, deployed to Pages. Follow-up (webapp `?v=20261120b`, footer `custom display times`): both time dropdowns end in "Custom…" (number + seconds/minutes + Set / Cancel, 5 s–120 min; nothing sent until Set).
 - Verified: `cyd` + `xiao_s3_rgb` build; both CYDs flashed 0.40.0 (COM13 = d4:e9:f4:f4:17:b8, COM21 = b4:bf:e9:c9:2b:b0)
   and scan normally. **Owner tested 2026-11-20: all works** (dim / off, swallowed wake tap, locked double-tap wake,
   the Display screen, the web card). Minis not reflashed (no behaviour change for them beyond the version string).

@@ -205,6 +205,14 @@ select {
   background:$color-surface-inset; color:$color-text; border:1px solid $color-border;
 }
 
+// Display timeout "Custom…" row (js/features/displaytimeout.js): number + unit + Set / Cancel on one line.
+.dtocustom { display:flex; flex-wrap:wrap; align-items:center; gap:.4em; margin:.1em 0 .3em;
+  input[type=number] { width:5.5em; font-size:1rem; padding:.55em; }
+  select { width:auto; margin:0; }
+  button { margin:0; }
+}
+.dtocustom[hidden] { display:none; }   // beats the display:flex above when the hidden attr is set
+
 // --- Settings subpages (js/features/settingspages.js): the menu rows reuse .sesslist / .sessrow / .sessmain; the
 // back arrow reuses .xbtn. A subpage's first card sits right under the title (the cards keep their inline margins).
 .subhdr { display:flex; align-items:center; gap:.3em; margin:.4em 0 .3em;
