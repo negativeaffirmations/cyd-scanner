@@ -27,6 +27,7 @@ import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
 import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261119a';   // new module: versioned so it loads fresh with main.js
+import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -133,6 +134,7 @@ $("fltPlanSel")?.addEventListener("change", fleetPlanMode);
 initFleet();
 initCacheUI();   // Data page: saved-log cache readout + Clear button
 initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + Settings card (features/switcher.js)
+initSettingsPages();   // Settings = a menu of subpages (Device(s) / Notifications / Fleet / Remote Server)
 initNotify();    // Settings -> Notifications + the device popup's "Notify me when seen" (features/notify.js)
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;

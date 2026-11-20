@@ -205,6 +205,20 @@ select {
   background:$color-surface-inset; color:$color-text; border:1px solid $color-border;
 }
 
+// --- Settings subpages (js/features/settingspages.js): the menu rows reuse .sesslist / .sessrow / .sessmain; the
+// back arrow reuses .xbtn. A subpage's first card sits right under the title (the cards keep their inline margins).
+.subhdr { display:flex; align-items:center; gap:.3em; margin:.4em 0 .3em;
+  h3 { margin:0; }
+  .subback { display:flex; align-items:center; padding:.15em .25em;
+    .material-symbols-outlined { font-size:24px; } } }
+.setmenu { max-height:none; overflow:visible; }
+.setrow {
+  padding:.85em .8em;
+  > .material-symbols-outlined { flex:none; color:$color-text-muted; }
+  .chev { margin-left:auto; }
+}
+.subpage > .card:first-of-type { margin-top:0 !important; }
+
 // --- Scanner keys (Settings card + #authDlg, js/ble/auth.js): rows reuse .sesslist / .sessrow / .sessmain ---
 .keystate.ok   { color:$color-ok; }
 .keystate.warn { color:$color-warn; }

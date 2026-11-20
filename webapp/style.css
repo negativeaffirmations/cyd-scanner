@@ -670,6 +670,44 @@ select {
   border: 1px solid #30363d;
 }
 
+.subhdr {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin: 0.4em 0 0.3em;
+}
+.subhdr h3 {
+  margin: 0;
+}
+.subhdr .subback {
+  display: flex;
+  align-items: center;
+  padding: 0.15em 0.25em;
+}
+.subhdr .subback .material-symbols-outlined {
+  font-size: 24px;
+}
+
+.setmenu {
+  max-height: none;
+  overflow: visible;
+}
+
+.setrow {
+  padding: 0.85em 0.8em;
+}
+.setrow > .material-symbols-outlined {
+  flex: none;
+  color: #8b949e;
+}
+.setrow .chev {
+  margin-left: auto;
+}
+
+.subpage > .card:first-of-type {
+  margin-top: 0 !important;
+}
+
 .keystate.ok {
   color: #3fb950;
 }
