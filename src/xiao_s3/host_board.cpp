@@ -132,6 +132,8 @@ void hostboard::setScanLedLevel(LedColor c, uint8_t level) {
 }
 int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
+bool    hostboard::displayTimeout(uint8_t*, uint16_t*, uint16_t*) { return false; }  // screenless: no dto=
+void    hostboard::setDisplayTimeout(int, int, int) {}
 bool    hostboard::rtcPresent()     { return s_rtcPresent; }
 bool    hostboard::foregroundScan() { return g_fgScan; }
 const char* hostboard::boardTag() { return "MINI"; }

@@ -1,13 +1,22 @@
-# Handoff — 2026-11-19 (working branch: `hardening`, pushed + merged to `main`; trunk `main`)
+# Handoff — 2026-11-20 (working branch: `hardening`; trunk `main`)
 
-## NEXT (owner request, 2026-11-19): CYD display timeout
-The CYD display is always on and drains the battery fast. Wanted: the screen **dims and then turns off by default**,
-with settings for the **mode** plus **"Dim display after:"** and **"Power off display after:"** in a settings menu (CYD
-Settings, and likely the web app's Settings → Device(s) next to brightness). Not started; design with the owner first.
-Starting points: backlight is GPIO 21 (`applyBrightness()` / `g_brightness`, web CMD `B:<pct>`, NVS-saved); the
-bag-safe touch lock and BOOT input are in `main.cpp` (`serviceTouchLock()`, `buttonEvent()`). Open questions to settle:
-what wakes it (touch, BOOT, a threat / alert, a phone command?), whether the first wake tap is swallowed so it can't
-also press a button, whether scanning / logging continue with the screen off (they should), and the default times.
+## RESUME HERE — 2026-11-20: CYD display timeout DONE (fw 0.40.0 on both CYDs, owner-tested, merged + deployed)
+Owner decisions (2026-11-20): wake = touch + BOOT only (no alert / phone wake); the waking tap/press is swallowed;
+while the touch lock is on a **double tap anywhere** (or BOOT) wakes and the lock stays on; defaults mode "Dim then off",
+dim 30 s, off 2 min. Scanning / logging / repaints continue in the dark; only the backlight changes (dim = PWM 8/255).
+- CYD: `serviceDisplayTimeout(ev)` in `main.cpp` (right after `buttonEvent()`, before `serviceTouchLock()`): never returns
+  early from loop; while dark it clears `ev` and `Touch::setSuppressed(true)` (new in `touch.*`; `touchedRaw()` ignores it)
+  so every handler sees no touch; the waking press is held (`g_wakeHold`) until touch + BOOT are released. While locked,
+  touches don't restart the idle clock (bag pressure). Settings → **Display...** (`SCR_DISPLAY`, replaces the Brightness
+  row): Brightness / Mode / Dim after (15 s..5 min, never) / Off after (1..30 min, never), each row cycles. NVS
+  `cydui/dmode`,`dimS`,`offS`.
+- Phone: CMD `V:<mode>:<dimS>:<offS>` (`phone.cpp` → `hostboard::setDisplayTimeout`, which also wakes the screen), STATUS
+  part 2 `dto=<mode>,<dimS>,<offS>` (CYD only; minis stub `displayTimeout()` → false, key omitted). Web: Settings →
+  Device(s) "Display timeout" card, `js/features/displaytimeout.js` (polls `state.status`, hidden without `dto`), tokens
+  `?v=20261120a`, footer `ui 2026-11-20 · display timeout`, deployed to Pages.
+- Verified: `cyd` + `xiao_s3_rgb` build; both CYDs flashed 0.40.0 (COM13 = d4:e9:f4:f4:17:b8, COM21 = b4:bf:e9:c9:2b:b0)
+  and scan normally. **Owner tested 2026-11-20: all works** (dim / off, swallowed wake tap, locked double-tap wake,
+  the Display screen, the web card). Minis not reflashed (no behaviour change for them beyond the version string).
 
 ## RESUME HERE — 2026-11-19 (late): web notifications + Settings subpages LIVE (webapp `?v=20261119b`)
 Both webapp-only, no firmware change, merged to `main` and deployed to Pages (footer `ui 2026-11-19 · settings pages`).

@@ -97,6 +97,8 @@ bool     g_briReq     = false;
 int      g_briVal     = 100;
 bool     g_ledReq     = false;  // "I:<0-100>" status-LED brightness
 int      g_ledVal     = 5;
+bool     g_dtoReq     = false;  // "V:<mode>:<dimS>:<offS>" display timeout (CYD)
+int      g_dtoMode = 2, g_dtoDim = 30, g_dtoOff = 120;
 bool     g_lockReq    = false;
 bool     g_lockVal    = false;
 bool     g_wlReload   = false;
@@ -563,6 +565,13 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_ledVal = atoi(val.c_str() + colon + 1);
           g_ledReq = true;
           Serial.printf("[phone] cmd LED brightness %d\n", g_ledVal);
+        }
+      } else if (c0 == 'V' || c0 == 'v') {           // "V:<mode>:<dimS>:<offS>" display timeout (mode 0 always on / 1 dim / 2 dim then off)
+        int m, d, o;
+        if (sscanf(val.c_str() + 1, ":%d:%d:%d", &m, &d, &o) == 3) {
+          g_dtoMode = m; g_dtoDim = d; g_dtoOff = o;
+          g_dtoReq = true;
+          Serial.printf("[phone] cmd display timeout mode %d dim %d off %d\n", m, d, o);
         }
       } else if (c0 == 'Z') {                        // "Z<seq>:<op>:<arg>" file-explorer op (see host_files.cpp)
         if (val.size() > 3 && !g_fsReq) {
@@ -1057,6 +1066,13 @@ bool ledBrightnessRequested(int* outPct) {
   if (!g_ledReq) return false;
   g_ledReq = false;
   *outPct = g_ledVal;
+  return true;
+}
+
+bool displayTimeoutRequested(int* mode, int* dimS, int* offS) {
+  if (!g_dtoReq) return false;
+  g_dtoReq = false;
+  *mode = g_dtoMode; *dimS = g_dtoDim; *offS = g_dtoOff;
   return true;
 }
 

@@ -93,6 +93,10 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       hostboard::setLedBrightness(b);                      // the board clamps, applies and saves it (no-op without a dimmable LED)
       pushStatus();
     } }
+  { int m, d, o; if (phone::displayTimeoutRequested(&m, &d, &o)) {   // web-app display timeout (CYD)
+      hostboard::setDisplayTimeout(m, d, o);               // the board clamps, saves and wakes the screen (no-op without one)
+      pushStatus();
+    } }
   { bool lk; if (phone::lockRequested(&lk)) {              // web-app lock / unlock the display
       g_touchLocked = lk;
       f.lockChanged = true; f.lockState = lk;              // the board repaints + pushes status

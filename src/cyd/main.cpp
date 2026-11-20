@@ -152,7 +152,8 @@ enum Screen { SCR_MENU, SCR_SCAN, SCR_APPQR, SCR_SETTINGS, SCR_SCANMENU, SCR_SCA
               SCR_SCANROW, SCR_SCANDETAIL, SCR_SCANCONFIRM, SCR_SCANFILTER,
               SCR_MENUCAT, SCR_MENUCATDETAIL,
               SCR_PHONEKEY, SCR_REKEYCONFIRM,
-              SCR_FLEET, SCR_FLEETLEAVE, SCR_FLEETENTER };   // fleet mode (docs/fleet-mode.md §2): FLEET is the root while fltrole=1
+              SCR_FLEET, SCR_FLEETLEAVE, SCR_FLEETENTER,   // fleet mode (docs/fleet-mode.md §2): FLEET is the root while fltrole=1
+              SCR_DISPLAY };   // Settings -> Display... (brightness + dim / off timeout)
 static Screen g_screen  = SCR_MENU;
 static int    g_menuSel = 0;
 static int    g_setSel  = 0;
@@ -171,7 +172,7 @@ static constexpr int MENU_N = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 static constexpr int HOME_ICONS = 2;
 static constexpr int HOME_ICON_R = 11, HOME_ICON_CY = 44;  // radius + vertical centre on the title line
                                                            // (down from the status-bar line at y=21 for padding)
-static constexpr int SET_N  = 5;  // Calibrate Touch / Brightness / Phone key / Fleet client (Leave fleet) / Back
+static constexpr int SET_N  = 5;  // Calibrate Touch / Display... / Phone key / Fleet client (Leave fleet) / Back
 static const char* kScanItems[] = { "Scanner", "New Session", "Explore Scan", "Scan Settings", "Back" };
 static constexpr int SCAN_N = sizeof(kScanItems) / sizeof(kScanItems[0]);
 
@@ -218,9 +219,66 @@ static BtnEv buttonEvent() {
   return ev;
 }
 
+// --- Display timeout: after no input the backlight dims, then turns off (owner request 2026-11-19).
+// Scanning, logging and screen repaints all keep running; only the backlight changes. Touch or BOOT
+// wakes it and that press is swallowed; while the touch lock is on, a double tap (anywhere) or BOOT
+// wakes it. Settings (NVS cydui/dmode, dimS, offS) from Settings -> Display or the web app ("V:").
+enum DispMode : uint8_t { DISP_ALWAYS = 0, DISP_DIM = 1, DISP_DIMOFF = 2 };
+static uint8_t  g_dispMode  = DISP_DIMOFF;
+static uint16_t g_dimAfterS = 30;        // seconds idle before dimming; 0 = never
+static uint16_t g_offAfterS = 120;       // seconds idle before the backlight goes off (DIMOFF only); 0 = never
+enum DispState : uint8_t { DS_FULL = 0, DS_DIM = 1, DS_OFF = 2 };
+static uint8_t  g_dispState = DS_FULL;
+static uint32_t g_lastInputMs = 0;       // last input (or wake / settings change) — the idle clock
+static bool     g_wakeHold = false;      // the waking press is still down: swallow input until released
+static constexpr uint8_t DIM_PWM = 8;    // dimmed backlight duty /255 (readable up close)
+static const uint16_t kDimChoices[] = { 15, 30, 60, 120, 300, 0 };     // CYD Settings cycles these
+static const uint16_t kOffChoices[] = { 60, 120, 300, 600, 1800, 0 };
+static constexpr uint16_t DISP_MAX_S = 7200;
+
 // --- Backlight brightness: LEDC PWM on TFT_BL_PIN, persisted in NVS ---
 static void applyBrightness() {
-  ledcWrite(TFT_BL_PIN, map(g_brightness, 0, 100, 20, 255));  // floor so never fully dark
+  int full = map(g_brightness, 0, 100, 20, 255);  // floor so the lit screen is never fully dark
+  int v = g_dispState == DS_OFF ? 0 : g_dispState == DS_DIM ? min(full, (int)DIM_PWM) : full;
+  ledcWrite(TFT_BL_PIN, v);
+}
+static void setDispState(uint8_t st) {
+  if (st == g_dispState) return;
+  g_dispState = st;
+  applyBrightness();
+  Serial.printf("[CYD] display %s\n", st == DS_OFF ? "off" : st == DS_DIM ? "dimmed" : "on");
+}
+static uint16_t clampDispS(long s) { return s <= 0 ? 0 : (uint16_t)constrain(s, 5L, (long)DISP_MAX_S); }
+static void loadDisplayTimeout() {
+  Preferences p; p.begin("cydui", true);
+  g_dispMode  = p.getUChar("dmode", DISP_DIMOFF);
+  g_dimAfterS = clampDispS(p.getUShort("dimS", 30));
+  g_offAfterS = clampDispS(p.getUShort("offS", 120));
+  p.end();
+  if (g_dispMode > DISP_DIMOFF) g_dispMode = DISP_DIMOFF;
+}
+static void saveDisplayTimeout() {
+  Preferences p; p.begin("cydui", false);
+  p.putUChar("dmode", g_dispMode); p.putUShort("dimS", g_dimAfterS); p.putUShort("offS", g_offAfterS);
+  p.end();
+}
+// A settings change counts as input: the screen comes back on and the idle clock restarts.
+// From dark, touch stays suppressed until nothing is pressed (the wake gate's hold), same as a wake.
+static void displayActivity() {
+  g_lastInputMs = millis();
+  if (g_dispState != DS_FULL) { g_wakeHold = true; setDispState(DS_FULL); }
+}
+static const char* dispModeName(uint8_t m) {
+  return m == DISP_ALWAYS ? "Always on" : m == DISP_DIM ? "Dim only" : "Dim then off";
+}
+static void fmtDispS(char* out, size_t n, uint16_t s) {
+  if (!s)               snprintf(out, n, "never");
+  else if (s % 60 == 0) snprintf(out, n, "%u min", (unsigned)(s / 60));
+  else                  snprintf(out, n, "%u s", (unsigned)s);
+}
+static uint16_t nextDispChoice(const uint16_t* c, size_t n, uint16_t cur) {
+  for (size_t i = 0; i < n; i++) if (c[i] == cur) return c[(i + 1) % n];
+  return c[0];   // a custom value (set from the phone): restart the cycle
 }
 static void loadBrightness() {
   Preferences p; p.begin("cydui", true);
@@ -510,6 +568,59 @@ static bool serviceTouchLock() {
     return true;                       // consume the toggle tap (never passes to the screen)
   }
   return g_touchLocked;                 // while locked, swallow every other touch + BOOT event
+}
+
+// Display-timeout gate. Call right after buttonEvent(), BEFORE serviceTouchLock(). It never returns
+// early from loop(): it only clears `ev` and suppresses touch (g_touch.setSuppressed), so the scan
+// cycle and the idle repaints keep running while the screen is dark.
+//  - awake: a touch / BOOT press restarts the idle clock (while locked only BOOT does, so pressure in
+//    a bag can't keep the screen lit); then dim / off when the idle time passes.
+//  - dim or off: input only wakes. Unlocked = any tap or BOOT; locked = BOOT or LOCK_TAPS taps
+//    anywhere within LOCK_TAP_WINDOW_MS (the lock stays on). The waking press is swallowed until
+//    everything is released, so it can't also press a button or count toward the padlock gesture.
+static void serviceDisplayTimeout(BtnEv& ev) {
+  static bool     prevTouch = false, prevBtn = false, prevLocked = false;
+  static int      wakeTaps = 0;
+  static uint32_t lastWakeTap = 0;
+  uint32_t now = millis();
+  bool touch = g_touchOk && g_touch.touchedRaw();
+  bool btn   = digitalRead(0) == LOW;
+  bool touchRise = touch && !prevTouch, btnRise = btn && !prevBtn;
+  prevTouch = touch; prevBtn = btn;
+
+  if (g_wakeHold) {                       // swallow the waking press until it's released
+    ev = BTN_NONE;
+    if (!touch && !btn) { g_wakeHold = false; g_touch.setSuppressed(false); }
+    return;
+  }
+  if (g_touchLocked != prevLocked) { prevLocked = g_touchLocked; g_lastInputMs = now; }  // lock toggled = activity
+
+  if (g_dispState != DS_FULL) {           // dark: input only wakes
+    ev = BTN_NONE;
+    g_touch.setSuppressed(true);
+    bool wake = btnRise;
+    if (touchRise) {
+      if (!g_touchLocked) wake = true;
+      else {
+        if (now - lastWakeTap > LOCK_TAP_WINDOW_MS) wakeTaps = 0;
+        lastWakeTap = now;
+        if (++wakeTaps >= LOCK_TAPS) wake = true;
+      }
+    }
+    if (wake) { wakeTaps = 0; g_lastInputMs = now; g_wakeHold = true; setDispState(DS_FULL); return; }
+  } else if (btnRise || (touchRise && !g_touchLocked)) {
+    g_lastInputMs = now;
+  }
+
+  // Idle timeouts only ever darken the screen; waking is input-driven (above) or a settings change.
+  uint8_t want = DS_FULL;
+  uint32_t idle = now - g_lastInputMs;
+  if (g_dispMode == DISP_DIMOFF && g_offAfterS && idle >= g_offAfterS * 1000UL) want = DS_OFF;
+  else if (g_dispMode != DISP_ALWAYS && g_dimAfterS && idle >= g_dimAfterS * 1000UL) want = DS_DIM;
+  if (want > g_dispState) {
+    setDispState(want);
+    g_touch.setSuppressed(true);          // from now on a tap only wakes
+  }
 }
 
 // --- shared scrolling list: geometry, icons, touch (live scan, scan viewer, detail,
@@ -1198,15 +1309,48 @@ static void drawMenu() {
   drawHomeAlerts();
 }
 
-// Settings screen: Calibrate Touch / Brightness / Phone key / Back.
+// Settings screen: Calibrate Touch / Display... / Phone key / Fleet / Back.
 static void drawSettings() {
-  char bright[24];
-  snprintf(bright, sizeof(bright), "Brightness: %d%%", g_brightness);
-  const char* items[SET_N] = { "Calibrate Touch", bright, "Phone key",
+  const char* items[SET_N] = { "Calibrate Touch", "Display...", "Phone key",
                                fleet::isClient() ? "Leave fleet..." : "Fleet client...", "Back" };
   drawListMenu("SETTINGS", items, SET_N, g_setSel);
   tft.drawString(g_touchOk ? "Touch OK - tap an item" : "Touch not calibrated yet",
                  10, tft.height() - 18, 1);
+}
+
+// Display settings (Settings -> Display...): each row cycles its value; saved at once.
+static int g_dispSel = 0;
+static constexpr int DISPSET_N = 5;   // Brightness / Mode / Dim after / Off after / Back
+static void drawDisplaySettings() {
+  char bright[24], mode[28], dim[28], off[28], t[12];
+  snprintf(bright, sizeof(bright), "Brightness: %d%%", g_brightness);
+  snprintf(mode, sizeof(mode), "Mode: %s", dispModeName(g_dispMode));
+  if (g_dispMode == DISP_ALWAYS) strcpy(t, "-"); else fmtDispS(t, sizeof(t), g_dimAfterS);
+  snprintf(dim, sizeof(dim), "Dim after: %s", t);
+  if (g_dispMode != DISP_DIMOFF) strcpy(t, "-"); else fmtDispS(t, sizeof(t), g_offAfterS);
+  snprintf(off, sizeof(off), "Off after: %s", t);
+  const char* items[DISPSET_N] = { bright, mode, dim, off, "Back" };
+  drawListMenu("DISPLAY", items, DISPSET_N, g_dispSel);
+  tft.drawString("Wake: tap or BOOT (locked: double tap)", 10, tft.height() - 18, 1);
+}
+static void activateDisplaySettings(int sel) {
+  if (sel == 0) {                                  // Brightness: cycle 25/50/75/100%
+    g_brightness = (g_brightness >= 100) ? 25 : (uint8_t)(g_brightness + 25);
+    applyBrightness(); saveBrightness();
+  } else if (sel == 1) {                           // Mode: Dim then off -> Dim only -> Always on
+    g_dispMode = g_dispMode == DISP_DIMOFF ? DISP_DIM : g_dispMode == DISP_DIM ? DISP_ALWAYS : DISP_DIMOFF;
+    saveDisplayTimeout();
+  } else if (sel == 2) {
+    g_dimAfterS = nextDispChoice(kDimChoices, sizeof(kDimChoices) / sizeof(kDimChoices[0]), g_dimAfterS);
+    saveDisplayTimeout();
+  } else if (sel == 3) {
+    g_offAfterS = nextDispChoice(kOffChoices, sizeof(kOffChoices) / sizeof(kOffChoices[0]), g_offAfterS);
+    saveDisplayTimeout();
+  } else {                                         // Back
+    g_screen = SCR_SETTINGS; drawSettings(); return;
+  }
+  pushStatus();                                    // dto= / bri= back to the web app
+  drawDisplaySettings();
 }
 
 // ---- Phone key (SEC-H3, docs/ble-auth.md): the pairing QR + the key as text, and re-keying. ----
@@ -2901,12 +3045,10 @@ static void activateSettings(int sel) {
   if (sel == 0) {                                  // Calibrate Touch
     g_touch.calibrate(tft);
     g_touchOk = g_touch.cal().valid;
+    g_lastInputMs = millis();                      // its taps bypass the timeout gate: restart the idle clock
     drawSettings();
-  } else if (sel == 1) {                           // Brightness: cycle 25/50/75/100%
-    g_brightness = (g_brightness >= 100) ? 25 : (uint8_t)(g_brightness + 25);
-    applyBrightness();
-    saveBrightness();
-    drawSettings();
+  } else if (sel == 1) {                           // Display...: brightness + the dim / off timeout
+    g_screen = SCR_DISPLAY; g_dispSel = 0; drawDisplaySettings();
   } else if (sel == 2) {                           // Phone key: pairing QR + key text + re-key
     g_pkToFleet = false;
     g_screen = SCR_PHONEKEY; g_pkSel = 0; drawPhoneKey();
@@ -3139,6 +3281,7 @@ static void redrawScreen() {
     case SCR_FLEET:        drawFleet();        break;
     case SCR_FLEETLEAVE:   drawFleetLeave();   break;
     case SCR_FLEETENTER:   drawFleetEnter();   break;
+    case SCR_DISPLAY:      drawDisplaySettings(); break;
     case SCR_MENU:
     default:               drawMenu();         break;
   }
@@ -3279,6 +3422,18 @@ int     hostboard::batteryPercent() { return power::percent(); }
 uint8_t hostboard::brightness()     { return g_brightness; }
 int     hostboard::ledBrightness()  { return -1; }     // on/off RGB only (no PWM)
 void    hostboard::setLedBrightness(int) {}
+bool    hostboard::displayTimeout(uint8_t* mode, uint16_t* dimS, uint16_t* offS) {
+  *mode = g_dispMode; *dimS = g_dimAfterS; *offS = g_offAfterS;
+  return true;
+}
+void    hostboard::setDisplayTimeout(int mode, int dimS, int offS) {
+  g_dispMode  = (uint8_t)constrain(mode, (int)DISP_ALWAYS, (int)DISP_DIMOFF);
+  g_dimAfterS = clampDispS(dimS);
+  g_offAfterS = clampDispS(offS);
+  saveDisplayTimeout();
+  displayActivity();                                   // the change shows: screen back on, idle clock restarted
+  if (g_screen == SCR_DISPLAY) drawDisplaySettings();
+}
 bool    hostboard::rtcPresent()     { return false; }  // no DS3231 on the CYD
 bool    hostboard::foregroundScan() { return g_screen == SCR_SCAN && !fleet::isClient(); }  // a fleet client logs to the bg stream even on the scan screen
 const char* hostboard::downloadBoot() {
@@ -3318,6 +3473,7 @@ void setup() {
   }
   hostboard::begin(); // initCommon() + battery monitor, seeded so the status bar shows a level immediately
   loadBrightness();
+  loadDisplayTimeout();
   loadSrcMask();
   loadBgScan();
   if (fleetClient) g_bgScan = true;  // scanning is why a client exists: forced on, logged to the bg stream (not saved)
@@ -3370,6 +3526,7 @@ void setup() {
                 g_linkOk ? "up" : "down", g_touchOk ? "cal" : "uncal", g_brightness);
   while (millis() - splashStart < SPLASH_MS) delay(10);  // keep the splash up a beat (init often outlasts it)
   drawMenu();      // start on the home menu
+  g_lastInputMs = millis();   // the display-timeout idle clock starts at the end of boot
 }
 
 void loop() {
@@ -3448,6 +3605,7 @@ void loop() {
   }
 
   BtnEv ev = buttonEvent();
+  serviceDisplayTimeout(ev);   // dim / off after idle; a dark screen only wakes (clears ev, suppresses touch)
 
   // Bag-safe input lock: 2 taps on the status-bar padlock toggle it; while locked, swallow all
   // input (touch + BOOT) so a bagged device can't navigate itself. The background scan already ran
@@ -3538,6 +3696,15 @@ void loop() {
       if (t >= 0)               { g_setSel = t; activateSettings(t); return; }  // touch select
       if      (ev == BTN_SHORT) { g_setSel = (g_setSel + 1) % SET_N; drawSettings(); }
       else if (ev == BTN_LONG)  { activateSettings(g_setSel); }
+      delay(20);
+      return;
+    }
+
+    case SCR_DISPLAY: {
+      int t = tappedRow(DISPSET_N);
+      if (t >= 0)               { g_dispSel = t; activateDisplaySettings(t); return; }  // touch select
+      if      (ev == BTN_SHORT) { g_dispSel = (g_dispSel + 1) % DISPSET_N; drawDisplaySettings(); }
+      else if (ev == BTN_LONG)  { activateDisplaySettings(g_dispSel); }
       delay(20);
       return;
     }
