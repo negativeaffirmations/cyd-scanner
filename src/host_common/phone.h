@@ -135,6 +135,9 @@ bool uploadOverrun(uint8_t* seq);
 // True once if the app set the status-LED brightness ("I:<0-100>"); fills the percent value.
 bool ledBrightnessRequested(int* outPct);
 
+// True once if the app set the display timeout ("V:<mode>:<dimS>:<offS>"); raw values (the board clamps).
+bool displayTimeoutRequested(int* mode, int* dimS, int* offS);
+
 // True once if the app asked to lock/unlock the CYD display ("K1"/"K0"); fills the desired state.
 bool lockRequested(bool* outLock);
 

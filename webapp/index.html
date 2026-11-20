@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261119b">
+<link rel="stylesheet" href="style.css?v=20261120a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -69,7 +69,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-19&nbsp;·&nbsp;settings&nbsp;pages</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-20&nbsp;·&nbsp;display&nbsp;timeout</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -213,6 +213,36 @@
         <label class="k" for="briSlider" style="display:block;margin-top:.5em">Brightness: <span id="briVal">–</span>%</label>
         <input type="range" id="briSlider" min="10" max="100" step="5" value="100" disabled>
         <button id="lockBtn" class="secondary" disabled data-locked="0" style="margin-top:.6em">Lock display</button>
+      </div>
+
+      <!-- CYD display timeout (CMD "V:<mode>:<dimS>:<offS>", saved on the scanner; shown once STATUS reports dto=; features/displaytimeout.js) -->
+      <div class="card" id="dtoCard" style="margin-top:12px" hidden>
+        <strong class="cardhdr">Display timeout</strong>
+        <div class="sub" style="margin:.3em 0 .4em">The CYD screen dims, then turns off, when nobody touches it. Scanning and logging keep running. Tap the screen or press BOOT to wake it (locked: double tap).</div>
+        <label class="k" for="dtoMode" style="display:block">Mode</label>
+        <select id="dtoMode" disabled>
+          <option value="2">Dim, then turn off</option>
+          <option value="1">Dim only</option>
+          <option value="0">Always on</option>
+        </select>
+        <label class="k" for="dtoDim" style="display:block;margin-top:.5em">Dim display after</label>
+        <select id="dtoDim" disabled>
+          <option value="15">15 seconds</option>
+          <option value="30">30 seconds</option>
+          <option value="60">1 minute</option>
+          <option value="120">2 minutes</option>
+          <option value="300">5 minutes</option>
+          <option value="0">Never</option>
+        </select>
+        <label class="k" for="dtoOff" style="display:block;margin-top:.5em">Power off display after</label>
+        <select id="dtoOff" disabled>
+          <option value="60">1 minute</option>
+          <option value="120">2 minutes</option>
+          <option value="300">5 minutes</option>
+          <option value="600">10 minutes</option>
+          <option value="1800">30 minutes</option>
+          <option value="0">Never</option>
+        </select>
       </div>
 
       <!-- Status LED (mini RGB build, CMD "I:<pct>", saved on the scanner; shown once STATUS reports led>=0) -->
@@ -625,6 +655,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261119b"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261120a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

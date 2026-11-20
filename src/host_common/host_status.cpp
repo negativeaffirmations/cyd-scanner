@@ -45,6 +45,11 @@ void pushStatus() {
                     (int)posAvailMask(), (int)timeAvailMask(), (int)g_timePref, (int)g_gpsPref,
                     hostboard::ledBrightness(),
                     scannerIdHex(), FW_VERSION, (unsigned long)DB_GEN, scannerName());
+  // dto = display timeout "mode,dimS,offS" (mode 0 always on / 1 dim only / 2 dim then off; 0 s = never).
+  // Only from a board with a display (CYD); absent -> the web app hides its card.
+  { uint8_t m; uint16_t d, o;
+    if (n2 > 0 && n2 < (int)sizeof(s2) && hostboard::displayTimeout(&m, &d, &o))
+      n2 += snprintf(s2 + n2, sizeof(s2) - n2, ";dto=%u,%u,%u", (unsigned)m, (unsigned)d, (unsigned)o); }
   // pos = the position the scanner is stamping on its log right now (same source order as the file
   // log; empty with no fix), pfa = the fix_age the log would carry (-1 = live, no marker). The web app
   // stamps live-POST rows with these, so they match the file log instead of the phone's last fix.

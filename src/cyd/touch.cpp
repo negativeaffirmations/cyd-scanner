@@ -66,6 +66,9 @@ int16_t Touch::readZ() {
 }
 
 bool Touch::touched() {
+  return !suppressed_ && touchedRaw();
+}
+bool Touch::touchedRaw() {
   return readZ() >= Z_THRESHOLD;  // pressure-based; PENIRQ (GPIO36) is unreliable here
 }
 
@@ -218,7 +221,7 @@ void Touch::calibrate(TFT_eSPI& tft) {
 
 bool Touch::getScreen(TFT_eSPI& tft, int16_t& sx, int16_t& sy, int16_t& z) {
   int16_t px, py;
-  if (!readRaw(px, py)) return false;
+  if (suppressed_ || !readRaw(px, py)) return false;
   z = 1;  // pressed (bit-bang path uses PENIRQ for presence, not analog pressure)
 
   // Normalize raw -> native pixels (handles inverted axes via signed spans).

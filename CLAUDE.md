@@ -402,6 +402,7 @@ back (5 GHz included). Things that matter, learned the hard way:
 
 ### Display / UI (portrait)
 
+- **Display timeout (fw 0.40.0):** after no input the backlight dims (30 s) then goes off (2 min) by default (Settings → **Display...** = brightness / mode / dim after / off after; web `V:`). Only the backlight changes: scanning, logging and repaints continue. `serviceDisplayTimeout()` runs right after `buttonEvent()`: while dark it clears the BOOT event and `Touch::setSuppressed()` makes every handler see no touch; touch or BOOT wakes (locked: BOOT or a double tap anywhere, lock stays on) and the waking press is swallowed until released. While locked, touches do not restart the idle clock (bag pressure).
 - Rotation `0` (portrait 240×320). Top **status bar**: local time (left; **cyan when the onboard GPS
   is keeping time**, white when phone-synced), then a right-hand icon cluster — a **GPS location-pin
   glyph** (with a small **phone** or **chip** badge showing the fix source; **tap it for a GPS modal**
@@ -478,13 +479,13 @@ back (5 GHz included). Things that matter, learned the hard way:
     `.bak`, 8 MB cap; all guards case-insensitive — FAT aliases `/LOGS`, `/logs.` — and the live/held/streaming/
     uploading files plus `/` and `/logs` can't be deleted, renamed or overwritten; `/logs/` names ≤ 47 chars for
     the 48-B log-code buffers. Web: Data page "SD card files" → `features/files.js`, its own FS= listener)
-    · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · `"K1"/"K0"` lock / unlock the CYD
+    · `"B:<0-100>"` set brightness · `"I:<0-100>"` status-LED brightness (fw 0.17.0, mini RGB; NVS `cydui/ledbri`, default 5) · **`"V:<mode>:<dimS>:<offS>"`** CYD display timeout (fw 0.40.0; mode 0 always on / 1 dim only / 2 dim then off, 0 s = never; NVS `cydui/dmode`,`dimS`,`offS`; web Settings → Device(s) "Display timeout", `features/displaytimeout.js`) · `"K1"/"K0"` lock / unlock the CYD
     display (the bag-safe touch lock, also toggled on-device by the 2-tap padlock) ·
     `"T:<mode>[:min][:path]"` **time-filtered export** (mode 0 = since boot, 1 = past 24 h,
     2 = custom minutes; optional `/logs/` path, or `*` = every log file joined; filtered on-device) · `"W…"` whitelist · `"E…"`
     whitelist-remove · **`"P:<t><g>"`** time / GPS source preference (fw 0.15.0; each digit 0 prefer phone /
     1 prefer device / 2 device only; NVS `cydui/tpref`,`gpref`; web Settings "Time & location sources")
-  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name;pos;pfa[;apssid;appsk;apurl;apsta]` (**`apsta`** = phones joined to the download SoftAP, drives the web Wi-Fi stepper); the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden). Keys:
+  - `…0004` STATUS (read/notify) — `key=val;…`, sent as **two notifications** per push (a notify is capped at MTU−3 ≈ 252 B and the one-line form outgrew it, cutting `name=` + the AP creds): part 1 = the live counts/state, part 2 = `dl;gav;tav;tpref;gpref;led;sid;fw;dbgen;name[;dto];pos;pfa[;apssid;appsk;apurl;apsta]` (**`apsta`** = phones joined to the download SoftAP, drives the web Wi-Fi stepper); the web app merges keys across notifications (`dl` and the AP creds stay together; part 1's worst case is already ~252 B, so new keys go in part 2; **`led`** fw 0.17.0 = status-LED brightness %, −1 = no dimmable LED → web card hidden; **`dto`** fw 0.40.0 = display timeout `mode,dimS,offS`, CYD only → absent hides the web card). Keys:
     `link,w24,w5,ble,prb,z,uniq,time,gps,dl,susp,lk,conf,db,scan,bri,src,wl,muted,fol,sess,deauth,evil,rid,bg,lock,bat,gpssrc,sats,tsrc,gav,tav,tpref,gpref,led,pos,pfa,sid,fw,dbgen`
     (**`gav`/`tav`** fw 0.14.0 = AVAILABLE position / clock sources, bit0 phone, bit1 device. Device GPS = a live
     onboard fix; device clock (0.15.0) = the onboard GPS is supplying time right now OR the RTC holds a valid

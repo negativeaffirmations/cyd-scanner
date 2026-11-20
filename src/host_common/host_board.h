@@ -19,6 +19,8 @@ int     batteryPercent();                  // power::percent() (-1 = no battery 
 uint8_t brightness();                      // CYD: backlight %; S3: 100 (reported in STATUS only)
 int     ledBrightness();                   // status-LED brightness % (STATUS led=); -1 = no dimmable LED (CYD, mini #1)
 void    setLedBrightness(int pct);         // "I:<pct>": clamp, apply, persist (NVS cydui/ledbri); no-op without a dimmable LED
+bool    displayTimeout(uint8_t* mode, uint16_t* dimS, uint16_t* offS);  // STATUS dto=; false = no display (minis: key omitted)
+void    setDisplayTimeout(int mode, int dimS, int offS);  // "V:<mode>:<dimS>:<offS>": clamp, save, wake the screen; no-op without a display
 bool    rtcPresent();                      // CYD: false (no DS3231); S3: DS3231 probe result
 bool    foregroundScan();                  // true -> log to g_fg + run the live-scan path. CYD: g_screen == SCR_SCAN
 bool    pipelineAllowed();                 // headless cycle may run now. CYD: false on Explore/drill-down screens

@@ -41,7 +41,11 @@ class Touch {
   // and stores the native-frame calibration. Restores the display rotation after.
   void calibrate(TFT_eSPI& tft);
 
-  bool    touched();  // true while the panel is pressed (Z-pressure over SPI)
+  bool    touched();    // true while the panel is pressed (Z-pressure over SPI); false while suppressed
+  bool    touchedRaw(); // the same, ignoring suppression (main.cpp's display-timeout wake gate)
+  // While suppressed, touched()/getScreen() report no touch, so every screen's handler stays idle
+  // (main.cpp display timeout: the screen is dark, or the press that woke it is still down).
+  void    setSuppressed(bool s) { suppressed_ = s; }
   int16_t pressure() const { return lastZ_; }  // last Z proxy read (diagnostics)
 
   // If touched, fill screen coords (sx, sy) for the display's CURRENT rotation
@@ -53,6 +57,7 @@ class Touch {
  private:
   int8_t   sck_ = -1, miso_ = -1, mosi_ = -1, cs_ = -1, irq_ = -1;
   int16_t  lastZ_ = 0;
+  bool     suppressed_ = false;
   TouchCal cal_;
 
   uint16_t readChan(uint8_t cmd);                 // one 12-bit bit-bang conversion
