@@ -38,5 +38,7 @@ webapp/*.css.map
 # Ignore Adobe files
 *.psd
 *.ai
+# Editor temp files (Illustrator leaves ~ai-*.tmp next to open files)
+*.tmp
 # Device pairing QR codes -- each encodes a scanner's secret phone-link key. Never commit.
 qr-codes/
