@@ -1,6 +1,26 @@
-# Handoff — 2026-11-19 (working branch: `hardening`, pushed; trunk `main`)
+# Handoff — 2026-11-19 (working branch: `hardening`, pushed + merged to `main`; trunk `main`)
 
-## RESUME HERE — 2026-11-19: CYD fleet-client screen icons (fw 0.39.1 on both CYDs)
+## RESUME HERE — 2026-11-19 (late): web notifications + Settings subpages LIVE (webapp `?v=20261119b`)
+Both webapp-only, no firmware change, merged to `main` and deployed to Pages (footer `ui 2026-11-19 · settings pages`).
+- **Notifications** (`js/features/notify.js` + `webapp/notify-sw.js`, commit `11b6e52`): Settings → Notifications. LOCAL
+  notifications raised by the page from the live BLE data, no push server (a push server can't help: its data comes from
+  this same page). Rules saved on the phone (localStorage `cflo.notify`): threat categories (default Flock / Axon / ALPR /
+  Raven, toggled with the Home-style category cards), a tier floor (default Confirmed only), watched MACs (device popup
+  "Notify me when seen"; alert even when whitelisted; ≤ 50), follower, Remote-ID, deauth flood, evil twin (the red-banner
+  thresholds). A device alerts when it APPEARS: first seen, or back after the quiet time (default 15 min), so a camera
+  probing every 5 min alerts once. One snapshot = one notification (several folded, lines tagged Watched: / Follower: /
+  Drone:). Tap -> the app, that device's detail (or "out of range now"). No hooks in old modules: it polls
+  `state.lastDetRows` / `state.status` once a second and watches `#detInfo`. The service worker only shows / focuses (no
+  fetch handler, no caching). **Limit:** only while the page runs; a screen-off tab is frozen by Android. Logic tested in
+  Node with a fake DOM (9 checks); owner has the live build. Still to confirm on the phone: the real notifications, the
+  tap-through, and how long Android keeps alerting with the app in the background.
+- **Settings subpages** (`js/features/settingspages.js`, commit `680822f`): Settings is a menu of **Device(s)** (CYD
+  brightness + lock, status LED, time & location sources, Data & sync incl. Whitelist, Switch scanner, Scanner keys),
+  **Notifications**, **Fleet**, **Remote Server**. The cards moved unchanged (same ids). A subpage pushes a history entry,
+  so Android's back gesture returns to the menu instead of leaving the app; the bottom-nav Settings button lands on the
+  menu. **Owner checked it on the phone: looks good.** Styles in `scss/_base.scss` (`.subhdr` / `.setmenu` / `.setrow`).
+
+## Earlier — 2026-11-19: CYD fleet-client screen icons (fw 0.39.1 on both CYDs)
 - **Done (owner request from 11-16):** `SCR_FLEET` now uses HOME's title-line icons: the cog (Settings) upper left and a
   new QR glyph (`drawQrIcon`, Show key) where HOME's phone icon sits, centred on `FL_ICON_CY` = 37 (the font-4 title at
   y24). The remaining buttons, Live scan / Leave fleet, share one taller row (y278..312). BOOT order: Live scan → Leave
