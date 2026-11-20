@@ -57,6 +57,10 @@ bool     rekeyAndKick();
 // working through a long chunk loop.
 uint32_t authEpoch();
 bool     transferAlive(uint32_t epoch);
+// The same check without the servicing: a cooperative transfer serviced from loop() (host_log.cpp xferService).
+bool     peerAlive(uint32_t epoch);
+// Largest LOGDATA notify payload for the authed phone (negotiated ATT MTU - 3; 180 without one).
+size_t   logChunkMax();
 
 // The BLE address this device advertises from now (as the C5 would report it, MSB-first): a private address that
 // changes at every boot and every 15 min (never under a connection), so read it rather than keep it. Lets the host filter out its own advertisement from the scan
@@ -156,7 +160,8 @@ bool wlAddRequested(char* out, size_t cap);
 bool wlRemoveRequested(int* outIdx);
 
 // Notify a chunk of log data to the authenticated phone (used during BLE log download); no-op unless authed().
-void logNotify(const uint8_t* data, size_t len);
+// false = not queued (no authed phone, or the stack is out of buffers: the caller may retry the same chunk).
+bool logNotify(const uint8_t* data, size_t len);
 
 // Notify one line of the live detection snapshot (mirrors the CYD screen). The
 // caller sends a "D:<count>" header then <count> rows each scan cycle.
