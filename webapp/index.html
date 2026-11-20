@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261119a">
+<link rel="stylesheet" href="style.css?v=20261119b">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -69,7 +69,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-19&nbsp;·&nbsp;notify</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-19&nbsp;·&nbsp;settings&nbsp;pages</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -193,8 +193,20 @@
 
     <!-- ============================ SETTINGS ============================ -->
     <section class="page" id="page-settings">
-      <h3 style="margin:.4em 0 .3em">Settings</h3>
+      <!-- Settings is a menu of subpages (js/features/settingspages.js): the menu lists them, a subpage shows its
+           cards under a back arrow. The cards themselves are unchanged (same ids, same modules). -->
+      <div class="subhdr">
+        <button id="setBack" class="xbtn subback" hidden aria-label="Back to Settings"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h3 id="setTitle">Settings</h3>
+      </div>
+      <div id="setMenu" class="sesslist setmenu">
+        <div class="sessrow setrow" role="button" tabindex="0" data-sub="devices"><span class="material-symbols-outlined">devices</span><div class="sessmain"><span class="sesstitle">Device(s)</span><span class="sesssub">Brightness, status LED, time &amp; location, sync, switch scanner, keys</span></div><span class="material-symbols-outlined chev">chevron_right</span></div>
+        <div class="sessrow setrow" role="button" tabindex="0" data-sub="notify"><span class="material-symbols-outlined">notifications</span><div class="sessmain"><span class="sesstitle">Notifications</span><span class="sesssub">Alerts for threats and watched devices</span></div><span class="material-symbols-outlined chev">chevron_right</span></div>
+        <div class="sessrow setrow" role="button" tabindex="0" data-sub="fleet"><span class="material-symbols-outlined">hub</span><div class="sessmain"><span class="sesstitle">Fleet</span><span class="sesssub">Scanners working together</span></div><span class="material-symbols-outlined chev">chevron_right</span></div>
+        <div class="sessrow setrow" role="button" tabindex="0" data-sub="remote"><span class="material-symbols-outlined">cloud_upload</span><div class="sessmain"><span class="sesstitle">Remote Server</span><span class="sesssub">Pair with your scan-analyzer server</span></div><span class="material-symbols-outlined chev">chevron_right</span></div>
+      </div>
 
+      <div class="subpage" id="set-devices" hidden>
       <!-- CYD device: physical-display controls -->
       <div class="card">
         <strong class="cardhdr">CYD device</strong>
@@ -232,6 +244,27 @@
         <button id="wlBtn" class="secondary" disabled>Whitelist (<span id="wlCnt">–</span>)</button>
       </div>
 
+      <!-- Switch scanner (js/features/switcher.js): jump between remembered scanners without reloading; always
+           reachable here (the app-bar button is enabled only while another remembered scanner is in range) -->
+      <div class="card" style="margin-top:12px">
+        <strong class="cardhdr">Scanners</strong>
+        <div class="sub" style="margin:.4em 0">Switch to another scanner without reloading the page, or add one. Logs, counts and lists from the previous scanner are cleared.</div>
+        <button id="switchOpenBtn" class="secondary">Switch scanner&hellip;</button>
+      </div>
+
+      <!-- Scanner keys (BLE phone-link auth, docs/ble-auth.md): per-scanner keys held in this browser as
+           non-extractable CryptoKeys (IndexedDB) — see js/ble/auth.js -->
+      <div class="card" style="margin-top:12px">
+        <strong class="cardhdr">Scanner keys</strong>
+        <div id="keyLinkState" class="sub keystate" style="margin:.4em 0">Not connected.</div>
+        <div id="keyList" class="sesslist"><div class="sub" style="padding:6px;margin:0">No scanner keys stored.</div></div>
+        <div class="sub" style="margin-bottom:.4em">Add a key: scan the scanner's key sticker or its CYD Settings &rarr; Phone key QR with the phone camera, or paste the key link (or &ldquo;scanner-id key&rdquo;) here.</div>
+        <input type="text" id="keyPaste" placeholder="key link, or scanner-id + key" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button id="keyAddBtn" class="secondary" style="margin-top:.4em">Add key</button>
+      </div>
+      </div>
+
+      <div class="subpage" id="set-notify" hidden>
       <!-- Notifications (js/features/notify.js + notify-sw.js): local alerts raised by this page from the live
            BLE data; rules saved on this phone. Only while the page is open and connected. -->
       <div class="card" id="nfCard" style="margin-top:12px">
@@ -260,28 +293,11 @@
         <button id="nfTestBtn" class="secondary" disabled style="margin-top:.6em">Send a test notification</button>
         <div class="sub" style="margin-top:.5em">Alerts come only while this page is open and connected to a scanner. Keep the screen on: Android pauses a screen-off or long-backgrounded tab, and then nothing fires. Connected to a fleet leader, alerts cover the whole fleet.</div>
       </div>
-
-      <!-- Switch scanner (js/features/switcher.js): jump between remembered scanners without reloading; always
-           reachable here (the app-bar button is enabled only while another remembered scanner is in range) -->
-      <div class="card" style="margin-top:12px">
-        <strong class="cardhdr">Scanners</strong>
-        <div class="sub" style="margin:.4em 0">Switch to another scanner without reloading the page, or add one. Logs, counts and lists from the previous scanner are cleared.</div>
-        <button id="switchOpenBtn" class="secondary">Switch scanner&hellip;</button>
       </div>
 
-      <!-- Scanner keys (BLE phone-link auth, docs/ble-auth.md): per-scanner keys held in this browser as
-           non-extractable CryptoKeys (IndexedDB) — see js/ble/auth.js -->
-      <div class="card" style="margin-top:12px">
-        <strong class="cardhdr">Scanner keys</strong>
-        <div id="keyLinkState" class="sub keystate" style="margin:.4em 0">Not connected.</div>
-        <div id="keyList" class="sesslist"><div class="sub" style="padding:6px;margin:0">No scanner keys stored.</div></div>
-        <div class="sub" style="margin-bottom:.4em">Add a key: scan the scanner's key sticker or its CYD Settings &rarr; Phone key QR with the phone camera, or paste the key link (or &ldquo;scanner-id key&rdquo;) here.</div>
-        <input type="text" id="keyPaste" placeholder="key link, or scanner-id + key" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <button id="keyAddBtn" class="secondary" style="margin-top:.4em">Add key</button>
-      </div>
-
+      <div class="subpage" id="set-fleet" hidden>
       <!-- Fleet (docs/fleet-mode.md): cooperating scanners over ESP-NOW; js/features/fleet.js. Members are added
-           from the Scanner keys above: the phone wraps the member's fleet key for the leader (js/ble/fleetcrypto.js). -->
+           from the stored Scanner keys (Device(s) subpage): the phone wraps the member's fleet key for the leader (js/ble/fleetcrypto.js). -->
       <div class="card" id="fleetCard" style="margin-top:12px">
         <strong class="cardhdr">Fleet</strong>
         <div id="fltState" class="sub" style="margin:.4em 0">Connect to a scanner.</div>
@@ -293,7 +309,7 @@
             <option value="3">Every unit scans everything</option>
           </select>
           <div id="fltCov" class="sub" style="margin:.4em 0" hidden></div>
-          <label class="k" for="fltAddSel" style="display:block;margin-top:.6em">Add a member (any scanner whose key is stored above)</label>
+          <label class="k" for="fltAddSel" style="display:block;margin-top:.6em">Add a member (any scanner whose key is stored in Device(s) &rarr; Scanner keys)</label>
           <select id="fltAddSel"></select>
           <button id="fltAddBtn">Add to fleet</button>
           <label class="k" for="fltChSel" style="display:block;margin-top:.6em">Fleet channel (members follow)</label>
@@ -309,7 +325,9 @@
         <button id="fltClientBtn" class="secondary" hidden>Make this scanner a fleet client…</button>
         <button id="fltLeaveBtn" class="secondary" hidden>Leave the fleet…</button>
       </div>
+      </div>
 
+      <div class="subpage" id="set-remote" hidden>
       <!-- Remote server (scan-analyzer): pair + upload scans to the user's own private server -->
       <div class="card" style="margin-top:12px">
         <strong class="cardhdr">Remote server</strong>
@@ -319,6 +337,7 @@
         <input type="text" id="rsToken" placeholder="pairing token (one-time)" autocomplete="off" style="margin-top:.3em">
         <button id="rsPairBtn" style="margin-top:.4em">Pair with server</button>
         <button id="rsUnpairBtn" class="danger" disabled style="margin-top:.4em">Forget key</button>
+      </div>
       </div>
     </section>
   </main>
@@ -606,6 +625,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261119a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261119b"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

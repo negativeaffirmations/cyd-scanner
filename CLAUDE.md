@@ -634,7 +634,11 @@ back (5 GHz included). Things that matter, learned the hard way:
       the tail (`TAIL=0@N` = unchanged, a one-packet round trip).
       Rule for stale-module safety: new exports live in NEW files (`logfetch.js`, `logcache.js`, `cacheui.js`);
       old modules only gain internals.
-    - **Settings** — Sync time & GPS, Reload signature DB, brightness, Whitelist manager, Scanners (Switch scanner…).
+    - **Settings** — a menu of four subpages (webapp 2026-11-19, `features/settingspages.js`; cards unchanged, same ids):
+      **Device(s)** (CYD brightness + lock, status LED, time & location sources, Data & sync incl. Whitelist, Switch
+      scanner, Scanner keys), **Notifications**, **Fleet**, **Remote Server**. A subpage has a back arrow; opening one
+      pushes a history entry so Android's back gesture returns to the menu instead of leaving the app (and the BLE link);
+      the bottom-nav Settings button always lands on the menu.
   **Switch scanner (webapp 2026-11-01; no firmware involved):** `ble/devices.js` remembers every `BluetoothDevice` picked
   this page session (+ `navigator.bluetooth.getDevices()` when Chrome has it; unit names kept in localStorage
   `cflo.unitNames`); `features/switcher.js` owns the app-bar swap button (`#switchBtn`, beside the Bluetooth icon), the
