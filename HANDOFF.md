@@ -1,5 +1,14 @@
 # Handoff — 2026-11-19 (working branch: `hardening`, pushed + merged to `main`; trunk `main`)
 
+## NEXT (owner request, 2026-11-19): CYD display timeout
+The CYD display is always on and drains the battery fast. Wanted: the screen **dims and then turns off by default**,
+with settings for the **mode** plus **"Dim display after:"** and **"Power off display after:"** in a settings menu (CYD
+Settings, and likely the web app's Settings → Device(s) next to brightness). Not started; design with the owner first.
+Starting points: backlight is GPIO 21 (`applyBrightness()` / `g_brightness`, web CMD `B:<pct>`, NVS-saved); the
+bag-safe touch lock and BOOT input are in `main.cpp` (`serviceTouchLock()`, `buttonEvent()`). Open questions to settle:
+what wakes it (touch, BOOT, a threat / alert, a phone command?), whether the first wake tap is swallowed so it can't
+also press a button, whether scanning / logging continue with the screen off (they should), and the default times.
+
 ## RESUME HERE — 2026-11-19 (late): web notifications + Settings subpages LIVE (webapp `?v=20261119b`)
 Both webapp-only, no firmware change, merged to `main` and deployed to Pages (footer `ui 2026-11-19 · settings pages`).
 - **Notifications** (`js/features/notify.js` + `webapp/notify-sw.js`, commit `11b6e52`): Settings → Notifications. LOCAL
