@@ -63,13 +63,16 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
   disciplineRtc();  // phone/GPS time -> RTC write-back (no-op without an RTC)
   // Phone commands are honored from any screen.
   if (phone::reloadRequested()) { sigdb::reload(); logPhoneCfg("reload"); }
-  if (phone::logRequested())    transferLog();
-  if (phone::listRequested())   sendSessionList();
+  // While a cooperative BLE transfer runs (xferBusy), every request that answers on LOGDATA stays pending (each is
+  // consume-on-read, so the && below leaves it for a later pass): its reply would land inside the transfer's bytes.
+  xferService();          // advance a running BLE download / export (<= 50 ms per pass)
+  if (!xferBusy() && phone::logRequested())    transferLog();
+  if (!xferBusy() && phone::listRequested())   sendSessionList();
   if (phone::wlReloadRequested()) { whitelist::reload(); pushStatus(); }
-  if (phone::wlListRequested())   sendWhitelist();
-  files::service();               // web file explorer: Z: ops + upload chunks
-  serviceFleetCmd();              // web Fleet card: M: ops (enrollment carries wrapped key material; never logged)
-  { char ln[96]; if (phone::wlAddRequested(ln, sizeof(ln))) {  // "A:<rule>": SD write in the loop, not mid-scan
+  if (!xferBusy() && phone::wlListRequested())   sendWhitelist();
+  if (!xferBusy()) files::service();   // web file explorer: Z: ops + upload chunks (FS= replies)
+  if (!xferBusy()) serviceFleetCmd();  // web Fleet card (FLT= replies): M: ops (enrollment carries wrapped key material; never logged)
+  { char ln[96]; if (!xferBusy() && phone::wlAddRequested(ln, sizeof(ln))) {  // "A:<rule>": SD write in the loop, not mid-scan
       bool ok = true;
       for (const char* c = ln; *c; c++) if ((unsigned char)*c < 0x20) { ok = false; break; }  // one line only
       if (ok) ok = whitelist::add(ln);
@@ -77,15 +80,15 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       Serial.printf("[CYD] whitelist add %s: %s\n", ok ? "ok" : "REJECTED", ln);
       sendWhitelist(); pushStatus();
     } }
-  { int ix; if (phone::wlRemoveRequested(&ix)) {
+  { int ix; if (!xferBusy() && phone::wlRemoveRequested(&ix)) {
       bool ok = whitelist::removeAt(ix);
       if (ok) logPhoneCfg("wlrm");
       Serial.printf("[CYD] whitelist remove %d: %s\n", ix, ok ? "ok" : "FAILED");
       sendWhitelist(); pushStatus();
     } }
-  { char fn[100]; if (phone::fileRequested(fn, sizeof(fn)))  transferFile(fn); }
-  { int m, a; char fn[48]; if (phone::exportRequested(&m, &a, fn, sizeof(fn))) transferFiltered(m, a, fn); }
-  { char fn[48]; if (phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
+  { char fn[100]; if (!xferBusy() && phone::fileRequested(fn, sizeof(fn)))  transferFile(fn); }
+  { int m, a; char fn[48]; if (!xferBusy() && phone::exportRequested(&m, &a, fn, sizeof(fn))) transferFiltered(m, a, fn); }
+  { char fn[48]; if (!xferBusy() && phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider
       f.brightnessChanged = true; f.brightnessPct = b;     // the board clamps, applies and saves it
     } }
@@ -110,7 +113,7 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       pushStatus();  // the Settings selects + source icons reflect it right away
     } }
   if (phone::newSessionRequested()) { startNewSession(); f.newSession = true; }  // web-app "New Session"
-  renameSessionOnSync();  // give each live session a date-time filename once time is known (also syncs the share path)
+  if (!xferBusy()) renameSessionOnSync();  // (waits for a transfer: an export reopens files by path) give each live session a date-time filename once time is known (also syncs the share path)
   syncSharePath();        // the screen context (fg/bg) may have changed
   {  // detect a changed session path (phone "N", or the time-sync rename) so the board can refresh its label
     static char lastSess[48] = "";
@@ -121,7 +124,7 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
   }
 
   // Phone-initiated Wi-Fi download overrides the current screen while active.
-  if (phone::downloadRequested()) { f.downloadEnter = true; return; }
+  if (!xferBusy() && phone::downloadRequested()) { f.downloadEnter = true; return; }   // after a running BLE transfer
   if (webshare::active()) {  // just left download mode: tear down AP
     webshare::stop();
     g_scanActive = g_bgScan;  // the download interrupted any running scan (bg scan resumes)

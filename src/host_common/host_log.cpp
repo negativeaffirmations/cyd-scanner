@@ -10,6 +10,7 @@
 #include "host_ui.h"
 #include "host_files.h"
 #include "logfilter.h"
+#include <new>
 #include "phone.h"
 #include "fleet.h"
 #include "webshare.h"
@@ -847,100 +848,247 @@ void logFollowEvents() {
   }
 }
 
+// ---- Cooperative phone transfers (fw 0.41.0) ----------------------------------------------------------------------
+// A BLE download / export no longer blocks loop(): it is a small state machine that xferService() (called from
+// core::servicePhoneCommands every loop pass) advances for at most AX_BUDGET_MS per call, so scanning, logging, the
+// fleet and the UI keep running while a log goes to the phone. Wire format unchanged: a "SIZE=<n>" (or "TAIL=<n>@<off>")
+// header on LOGDATA, then exactly <n> raw bytes in <= 180 B notifies, >= 15 ms apart.
+// - Every file is read only up to the size it had when the transfer started (LineReader limit / AX_RAW end), so lines
+//   appended meanwhile never change what is sent, and an export's counting and sending passes see the same bytes.
+// - One transfer at a time. While one runs, servicePhoneCommands leaves the other LOGDATA requests pending (they are
+//   consume-on-read), and the time-sync rename + log-cap sweep wait (an export reopens files by path; the cap could
+//   delete a file the all-logs export listed). g_streamingPath keeps a single-file transfer's file protected.
+// - A notify the stack refuses (out of buffers: DETS / STATUS share the link now) is retried, never skipped.
+namespace {
+enum AxKind : uint8_t { AX_RAW, AX_FILT, AX_MULTI };
+constexpr uint32_t AX_BUDGET_MS = 80;    // per xferService() call
+constexpr uint32_t AX_GAP_MS    = 8;     // between notifies (the blocking sender used 15; a refused notify is retried now)
+constexpr size_t   AX_CHUNK_MAX = 500;   // notify payload cap; the real size = the link's MTU - 3 (phone::logChunkMax)
+constexpr size_t   AX_Q         = 1024;  // staged output; a line is staged only with LINE_CAP + 16 free
+struct AXfer {
+  AxKind   kind = AX_RAW;
+  bool     sending = false;              // false = counting pass (AX_FILT / AX_MULTI)
+  bool     prodDone = false;             // nothing more to stage (padding aside)
+  bool     pad = false;                  // exports: pad a short send pass with newlines up to `total`
+  bool     padSaid = false;
+  uint32_t ep = 0;                       // the requesting phone (phone::authEpoch() at the request)
+  File     f;
+  logfilter::LineReader rd{f};
+  uint32_t pos = 0, end = 0;             // AX_RAW: send bytes [pos, end)
+  uint32_t total = 0, sent = 0, lines = 0;
+  logfilter::Cutoff cut{};
+  logfilter::MultiExport* mx = nullptr;
+  int      fi = -1;                      // AX_MULTI: current file index (-1 = open the next one)
+  int      nFiles = 0;
+  uint32_t nextMs = 0, t0 = 0;
+  size_t   qn = 0;
+  size_t   chunk = 180;                  // notify payload for this transfer (MTU - 3, <= AX_CHUNK_MAX)
+  uint8_t  q[AX_Q];
+  char     line[logfilter::LINE_CAP];
+  char     out[logfilter::LINE_CAP + 16];
+  char     what[100] = "";               // path or label, for the console line
+  char     hdr[32] = "";                 // the SIZE= / TAIL= header still to send ("" = sent)
+};
+AXfer* g_ax = nullptr;
+bool   g_capPending = false;             // a log-cap sweep was skipped while a transfer ran
+}  // namespace
+
+bool xferBusy() { return g_ax != nullptr; }
+
+static void axFinish(bool complete) {
+  AXfer* x = g_ax;
+  if (!x) return;
+  if (x->f) x->f.close();
+  delete x->mx;
+  Serial.printf("[CYD] BLE %s %s: %u/%u bytes in %lu ms (%u B chunks)%s\n", x->kind == AX_RAW ? "sent" : "export", x->what,
+                (unsigned)x->sent, (unsigned)x->total, (unsigned long)(millis() - x->t0), (unsigned)x->chunk, complete ? "" : " (phone left)");
+  g_streamingPath[0] = 0;
+  delete x;
+  g_ax = nullptr;
+  if (g_capPending) { g_capPending = false; enforceLogCap(); }
+}
+
+// A new transfer (only when none runs: callers are gated by servicePhoneCommands). nullptr = out of memory.
+static AXfer* axNew(AxKind k, const char* what) {
+  if (g_ax) return nullptr;
+  AXfer* x = new (std::nothrow) AXfer();
+  if (!x) return nullptr;
+  x->kind = k;
+  x->ep = phone::authEpoch();
+  x->t0 = millis();
+  x->chunk = phone::logChunkMax();
+  if (x->chunk > AX_CHUNK_MAX) x->chunk = AX_CHUNK_MAX;
+  snprintf(x->what, sizeof(x->what), "%s", what);
+  g_ax = x;
+  return x;
+}
+
+// Queue the header: xferService sends it (retrying while the stack is out of buffers) before any data, then waits
+// 30 ms (the blocking sender's delay(30)) before the first chunk.
+static void axHeader(AXfer& x, const char* hdr) {
+  snprintf(x.hdr, sizeof(x.hdr), "%s", hdr);
+  x.nextMs = millis();
+}
+
+// One line of the current pass: counted, or staged for sending.
+static inline void axLine(AXfer& x, const char* p, size_t n) {
+  if (!x.sending) { x.total += n; x.lines++; return; }
+  memcpy(x.q + x.qn, p, n);
+  x.qn += n;
+}
+
+// Advance the line source (single filtered file or the all-logs set) until the pass ends, the budget is spent, or (when
+// sending) the stage is too full for another line. True = the pass is complete.
+static bool axLines(AXfer& x, uint32_t t0) {
+  size_t len;
+  for (;;) {
+    if (millis() - t0 >= AX_BUDGET_MS) return false;
+    if (x.sending && AX_Q - x.qn < logfilter::LINE_CAP + 16) return false;
+    if (x.kind == AX_FILT) {
+      if (!x.rd.next(x.line, len)) return true;
+      if (logfilter::keep(x.line, x.cut)) axLine(x, x.line, len);
+      continue;
+    }
+    if (x.fi < 0 || !x.f) {                       // AX_MULTI: open the next file
+      if (x.f) x.f.close();
+      if (++x.fi >= x.mx->count()) return true;
+      x.f = SD.open(x.mx->filePath(x.fi), "r");
+      if (!x.f) continue;                         // gone: skip it (same in both passes; the cap / renames wait)
+      x.rd.reset(x.mx->fileSize(x.fi));
+    }
+    if (!x.rd.next(x.line, len)) { x.f.close(); x.f = File(); continue; }
+    const char* src; size_t slen;
+    if (x.mx->filter(x.fi, x.line, len, x.out, &src, &slen)) axLine(x, src, slen);
+  }
+}
+
+// The counting pass is over: send the header and rewind for the sending pass.
+static void axStartSend(AXfer& x) {
+  char hdr[24];
+  if (x.kind == AX_MULTI) {
+    char meta[160];
+    int metaN = sessionMetaLine(meta, sizeof(meta));
+    if (x.total) x.total += (uint32_t)metaN; else metaN = 0;   // nothing in range: SIZE=0, not a lone meta line
+    snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)x.total);
+    axHeader(x, hdr);
+    Serial.printf("[CYD] BLE multi export: %d file(s)%s, %u bytes\n", x.nFiles,
+                  x.mx->dropped() ? " (oldest beyond cap skipped)" : "", (unsigned)x.total);
+    if (x.f) { x.f.close(); x.f = File(); }
+    x.fi = -1;
+    memcpy(x.q, meta, metaN); x.qn = metaN;
+  } else {
+    snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)x.total);
+    axHeader(x, hdr);
+    x.f.seek(0);
+    x.rd.reset(x.end);
+  }
+  x.sending = true;
+  x.pad = true;
+  if (!x.total) x.prodDone = true;
+}
+
+static void axProduce(AXfer& x, uint32_t t0) {
+  if (x.prodDone) {
+    if (x.pad && x.sent + x.qn < x.total) {      // a short send pass (SD read hiccup): newline padding to SIZE=
+      if (!x.padSaid) {
+        x.padSaid = true; Serial.printf("[CYD] BLE export short by %u bytes: padding\n", (unsigned)(x.total - x.sent - x.qn)); }
+      size_t k = x.total - x.sent - x.qn;
+      if (k > AX_Q - x.qn) k = AX_Q - x.qn;
+      memset(x.q + x.qn, '\n', k);
+      x.qn += k;
+    }
+    return;
+  }
+  if (x.kind == AX_RAW) {
+    size_t want = AX_Q - x.qn;
+    if (want > x.end - x.pos) want = x.end - x.pos;
+    int r = want ? x.f.read(x.q + x.qn, want) : 0;
+    if (r > 0) { x.qn += r; x.pos += r; }
+    if (r <= 0 || x.pos >= x.end) x.prodDone = true;   // a short read ends a raw send early (the phone times out)
+    return;
+  }
+  if (axLines(x, t0)) x.prodDone = true;
+}
+
+// Advance the running transfer by up to AX_BUDGET_MS. Called every loop pass (servicePhoneCommands).
+void xferService() {
+  AXfer* px = g_ax;
+  if (!px) return;
+  AXfer& x = *px;
+  if (!phone::peerAlive(x.ep)) { axFinish(false); return; }   // the phone left / re-authenticated: never send to a new one
+  const uint32_t t0 = millis();
+  if (!x.sending) {                                  // counting pass
+    if (!axLines(x, t0)) return;                     // budget spent
+    axStartSend(x);
+  }
+  while (millis() - t0 < AX_BUDGET_MS) {
+    if (x.hdr[0]) {                                  // the header first, retried until the stack takes it
+      if ((int32_t)(millis() - x.nextMs) < 0) { delay(1); continue; }
+      if (!phone::logNotify((const uint8_t*)x.hdr, strlen(x.hdr))) { x.nextMs = millis() + 5; continue; }
+      x.hdr[0] = 0;
+      x.nextMs = millis() + 2 * AX_GAP_MS;
+      continue;
+    }
+    axProduce(x, t0);
+    if (!x.qn) {
+      if (x.prodDone) { axFinish(true); return; }
+      return;                                        // the line source spent the budget
+    }
+    if ((int32_t)(millis() - x.nextMs) < 0) { delay(1); continue; }
+    if (x.qn < x.chunk && !x.prodDone) continue;   // wait for a full chunk (the stage refills above)
+    size_t n = x.qn < x.chunk ? x.qn : x.chunk;
+    if (!phone::logNotify(x.q, n)) { x.nextMs = millis() + 5; continue; }   // stack busy: retry the same bytes
+    memmove(x.q, x.q + n, x.qn - n);
+    x.qn -= n;
+    x.sent += n;
+    x.nextMs = millis() + AX_GAP_MS;
+  }
+}
+
+// Start a raw send of [from, sz) of an open file after `hdr` (the caller validated it). Protects the path meanwhile.
+static void axStartRaw(File& f, const char* path, uint32_t from, uint32_t sz, const char* hdr) {
+  AXfer* x = axNew(AX_RAW, path);
+  if (!x) { f.close(); phone::logNotify((const uint8_t*)"SIZE=0", 6); Serial.println("[CYD] BLE dl: out of memory"); return; }
+  x->f = f;
+  x->pos = from; x->end = sz; x->total = sz - from;
+  x->sending = true;
+  if (from && !x->f.seek(from)) x->end = from;     // nothing readable: the phone times out, its cache stays intact
+  strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);   // guard: not deleted / rotated away mid-stream
+  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
+  axHeader(*x, hdr);
+  if (x->pos >= x->end) x->prodDone = true;
+}
+
 // Stream an SD file to the phone over BLE: a "SIZE=<n>" header, then the raw file in
 // chunks. The web app reassembles and saves it (no Wi-Fi needed).
 static void streamFileOverBle(const char* path) {
-  strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);  // guard: not rotated away mid-stream
-  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
   if (!g_sdOk || !SD.exists(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.printf("[CYD] BLE dl: no file %s\n", path);
-    g_streamingPath[0] = 0;
     return;
   }
   File f = SD.open(path, "r");
-  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); g_streamingPath[0] = 0; return; }
-  size_t sz = f.size();
+  if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  uint32_t sz = f.size();
   char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)sz);
-  phone::logNotify((const uint8_t*)hdr, hn);
-  delay(30);
-  uint8_t buf[180];  // chunk < MTU-3 (Android negotiates a large MTU)
-  size_t sent = 0;
-  const uint32_t ep = phone::authEpoch();   // stop if the peer leaves / re-authenticates mid-transfer
-  while (f.available() && phone::transferAlive(ep)) {
-    int n = f.read(buf, sizeof(buf));
-    if (n <= 0) break;
-    phone::logNotify(buf, n);
-    sent += n;
-    delay(15);
-  }
-  f.close();
-  Serial.printf("[CYD] BLE sent %u/%u bytes of %s\n", (unsigned)sent, (unsigned)sz, path);
-  g_streamingPath[0] = 0;
+  snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)sz);
+  axStartRaw(f, path, 0, sz, hdr);
 }
 
-// The phone reassembles until it has exactly SIZE= bytes. If a send pass came up short (an SD read
-// hiccup ended a file early), pad with newlines -- NDJSON readers skip blank lines -- so the phone's
-// transfer completes instead of hanging. (A dropped link can't be helped; the phone times out.)
-static void padToSize(uint32_t& sent, uint32_t total, uint32_t ep) {
-  if (sent >= total || !phone::transferAlive(ep)) return;
-  Serial.printf("[CYD] BLE export short by %u bytes: padding\n", (unsigned)(total - sent));
-  uint8_t nl[180];
-  memset(nl, '\n', sizeof(nl));
-  while (sent < total && phone::transferAlive(ep)) {
-    uint32_t k = total - sent > sizeof(nl) ? sizeof(nl) : total - sent;
-    phone::logNotify(nl, k);
-    sent += k;
-    delay(15);
-  }
-}
-
-// Time-filtered BLE export: filter ON the CYD, never stream the whole file. TWO passes over the
-// file -- pass 1 sums the byte length of the lines inside the window (for the SIZE= header), pass 2
-// streams only those lines. Same LineReader + predicate for both, so the totals always agree.
+// Time-filtered BLE export: filter ON the device, never stream the whole file. Two passes over the file (up to its
+// size at the request): pass 1 sums the lines inside the window (the SIZE= header), pass 2 streams only those lines.
 static void streamFilteredOverBle(const char* path, const logfilter::Cutoff& c) {
-  const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
   if (!g_sdOk || !SD.exists(path)) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
   File f = SD.open(path, "r");
   if (!f) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  AXfer* x = axNew(AX_FILT, path);
+  if (!x) { f.close(); phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
+  x->f = f;
+  x->end = f.size();
+  x->rd.reset(x->end);
+  x->cut = c;
   strncpy(g_streamingPath, path, sizeof(g_streamingPath) - 1);
   g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
-  char line[logfilter::LINE_CAP];
-  size_t len;
-  uint32_t total = 0, nlines = 0;
-  bool alive = true;
-  {
-    logfilter::LineReader rd(f);
-    while (rd.next(line, len) && (alive = xferAlive(ep))) if (logfilter::keep(line, c)) { total += len; nlines++; }
-  }
-  if (!alive) { f.close(); g_streamingPath[0] = 0; Serial.println("[CYD] BLE filtered: phone left while counting"); return; }
-  char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
-  phone::logNotify((const uint8_t*)hdr, hn);
-  if (total == 0) { f.close(); g_streamingPath[0] = 0; Serial.printf("[CYD] BLE filtered: no rows in range (%s)\n", path); return; }
-  delay(30);
-  f.seek(0);
-  uint8_t out[180];  // chunk < MTU-3
-  size_t on = 0;
-  uint32_t sent = 0;
-  logfilter::LineReader rd2(f);
-  while (rd2.next(line, len) && phone::transferAlive(ep)) {
-    if (!logfilter::keep(line, c)) continue;
-    for (size_t off = 0; off < len; ) {
-      size_t rem = len - off, avail = sizeof(out) - on;
-      size_t n = rem < avail ? rem : avail;  // (not min(): Arduino's min macro trips IntelliSense here)
-      memcpy(out + on, line + off, n);
-      on += n; off += n;
-      if (on == sizeof(out)) { phone::logNotify(out, on); sent += on; on = 0; delay(15); }
-    }
-  }
-  if (on) { phone::logNotify(out, on); sent += on; }
-  padToSize(sent, total, ep);
-  f.close();
-  g_streamingPath[0] = 0;
-  Serial.printf("[CYD] BLE filtered sent %u/%u bytes (%u lines) of %s\n", (unsigned)sent, (unsigned)total,
-                (unsigned)nlines, path);
 }
 
 // The scan-provenance meta line (same shape as writeSessionMeta) into a buffer, for exports that
@@ -951,56 +1099,27 @@ int sessionMetaLine(char* out, size_t cap) {
   return (w > 0 && (size_t)w < cap) ? w : 0;
 }
 
-// Time-window export of ALL session files ("T:<mode>[:<minutes>]:*"): one joined NDJSON stream of
-// every row in the window across every /logs/*.jsonl (fg + bg, New Session, earlier boots), dated
-// and filtered on the CYD (logfilter::MultiExport). Two passes like the single-file export: count
-// for the SIZE= header, then send. Both are deterministic, and no file grows in between (loop() is
-// blocked; fleet lines raised meanwhile wait in XferScope's buffer), so the totals agree.
+// Time-window export of ALL session files ("T:<mode>[:<minutes>]:*"): one joined NDJSON stream of every row in the
+// window across every /logs/*.jsonl (fg + bg, New Session, earlier boots), dated and filtered on the device
+// (logfilter::MultiExport). Two passes like the single-file export, each file read up to its size at the request.
 static void streamMultiOverBle(int mode, int minutes) {
-  const uint32_t ep = phone::authEpoch();   // the requesting phone: a new peer must never get this reply
   if (!g_sdOk) { phone::logNotify((const uint8_t*)"SIZE=0", 6); return; }
   const char* boot[THIS_BOOT_MAX];
   int nb = thisBootFiles(boot, THIS_BOOT_MAX);
-  logfilter::MultiExport mx(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis(), boot, nb);
-  int nf = mx.begin();
-  char meta[160];
-  int metaN = sessionMetaLine(meta, sizeof(meta));
-  uint32_t rows = mx.run([ep](const char*, size_t) { return xferAlive(ep); });
-  if (!phone::transferAlive(ep)) { Serial.println("[CYD] BLE multi export: phone left while counting"); return; }
-  uint32_t total = rows ? rows + (uint32_t)metaN : 0;
-  char hdr[24];
-  int hn = snprintf(hdr, sizeof(hdr), "SIZE=%u", (unsigned)total);
-  phone::logNotify((const uint8_t*)hdr, hn);
-  Serial.printf("[CYD] BLE multi export mode=%d: %d file(s)%s, %u bytes\n", mode, nf,
-                mx.dropped() ? " (oldest beyond cap skipped)" : "", (unsigned)total);
-  if (!total) return;
-  delay(30);
-  struct Out { uint8_t b[180]; size_t n = 0; uint32_t sent = 0; } o;  // chunk < MTU-3
-  auto put = [&o, ep](const char* p, size_t len) {
-    for (size_t off = 0; off < len; ) {
-      size_t rem = len - off, avail = sizeof(o.b) - o.n;
-      size_t k = rem < avail ? rem : avail;
-      memcpy(o.b + o.n, p + off, k);
-      o.n += k; off += k;
-      if (o.n == sizeof(o.b)) { phone::logNotify(o.b, o.n); o.sent += o.n; o.n = 0; delay(15); }
-    }
-    return phone::transferAlive(ep);
-  };
-  put(meta, metaN);
-  mx.run(put);
-  if (o.n) { phone::logNotify(o.b, o.n); o.sent += o.n; o.n = 0; }
-  padToSize(o.sent, total, ep);
-  Serial.printf("[CYD] BLE multi export sent %u/%u bytes\n", (unsigned)o.sent, (unsigned)total);
+  auto* mx = new (std::nothrow) logfilter::MultiExport(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis(), boot, nb);
+  AXfer* x = mx ? axNew(AX_MULTI, "all logs") : nullptr;
+  if (!x) { delete mx; phone::logNotify((const uint8_t*)"SIZE=0", 6); Serial.println("[CYD] BLE multi export: out of memory"); return; }
+  x->mx = mx;
+  x->nFiles = mx->begin();
 }
 
 // "L": the current session = the stream matching the current screen.
-void transferLog() { XferScope xs; streamFileOverBle(activeStream().path); }
+void transferLog() { streamFileOverBle(activeStream().path); }
 
 // "T:<mode>[:<minutes>][:<path>]": mode 0 = whole file ("since boot"), 1 = past 24 h, 2 = past
 // <minutes>. Path optional (restricted to /logs/); default = the current session; "*" = every log
 // file (the window spans all sessions -- see streamMultiOverBle).
 void transferFiltered(int mode, int minutes, const char* pathIn) {
-  XferScope xs;
   char path[48];
   if (pathIn && pathIn[0] == '*') { streamMultiOverBle(mode, minutes); return; }
   if (pathIn && pathIn[0]) {
@@ -1107,36 +1226,16 @@ static void transferTail(const char* req) {
   if (off > sz) { f.close(); tailRefuse("off"); Serial.printf("[CYD] BLE tail: offset %u > size %u (%s)\n", (unsigned)off, (unsigned)sz, p); return; }
   uint32_t haveCrc = 0;
   if (!prefixCrc(f, off, &haveCrc) || haveCrc != wantCrc) { f.close(); tailRefuse("id"); Serial.printf("[CYD] BLE tail: prefix CRC mismatch %s\n", p); return; }
-  strncpy(g_streamingPath, p, sizeof(g_streamingPath) - 1);   // guard: not rotated away mid-stream
-  g_streamingPath[sizeof(g_streamingPath) - 1] = 0;
   const uint32_t n = sz - off;
   char hdr[32];
-  int hn = snprintf(hdr, sizeof(hdr), "TAIL=%u@%u", (unsigned)n, (unsigned)off);
-  phone::logNotify((const uint8_t*)hdr, hn);
-  delay(30);
-  uint32_t sent = 0;
-  if (n && f.seek(off)) {
-    const uint32_t ep = phone::authEpoch();            // stop if the peer leaves / re-authenticates mid-transfer
-    uint8_t buf[180];
-    while (sent < n && phone::transferAlive(ep)) {
-      uint32_t want = n - sent > sizeof(buf) ? sizeof(buf) : n - sent;
-      int r = f.read(buf, want);
-      if (r <= 0) break;
-      phone::logNotify(buf, r);
-      sent += r;
-      delay(15);
-    }
-  }
-  f.close();
-  Serial.printf("[CYD] BLE tail sent %u/%u bytes of %s from %u\n", (unsigned)sent, (unsigned)n, p, (unsigned)off);
-  g_streamingPath[0] = 0;
+  snprintf(hdr, sizeof(hdr), "TAIL=%u@%u", (unsigned)n, (unsigned)off);
+  axStartRaw(f, p, off, sz, hdr);
 }
 
 // Download a file the phone requested ("F:<path>"): any file on the card (the web file explorer),
 // gated by files::safePath (absolute, no traversal or FAT-illegal characters). A folder sends SIZE=0.
 // "F:<path>@<offset>:<file_id>" is the tail form (transferTail); safePath forbids ':' so it can't be a plain path.
 void transferFile(const char* path) {
-  XferScope xs;
   if (strchr(path, ':')) { transferTail(path); return; }
   if (!files::safePath(path) || files::isDir(path)) {
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
@@ -1222,6 +1321,7 @@ bool logPathProtected(const char* full) {
 }
 void enforceLogCap() {
   if (!g_sdOk) return;
+  if (g_ax) { g_capPending = true; return; }   // after the transfer (axFinish)
   XferScope xs;                                  // up to 64 full directory scans on a full card
   int removed = 0;
   for (int pass = 0; pass < 64; pass++) {

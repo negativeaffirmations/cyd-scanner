@@ -899,6 +899,13 @@ bool transferAlive(uint32_t epoch) {
   fleet::service();   // a long BLE transfer blocks loop(): keep draining fleet frames (docs/fleet-mode.md §3.4)
   return gateHandle() != NO_CONN && g_authEpoch == epoch;
 }
+bool peerAlive(uint32_t epoch) { return gateHandle() != NO_CONN && g_authEpoch == epoch; }
+size_t logChunkMax() {   // the authed link's ATT MTU - 3 (a notify payload never exceeds it); 180 = the old fixed chunk
+  uint16_t h = gateHandle();
+  if (!g_server || h == NO_CONN) return 180;
+  uint16_t m = g_server->getPeerMTU(h);
+  return m > 23 ? (size_t)m - 3 : 20;
+}
 
 int bondCount() { return g_server ? NimBLEDevice::getNumBonds() : -1; }   // no server = a CYD fleet client (no NimBLE)
 int bondRecords() { return g_server ? ble_rpa_get_num_peer_dev_records() : -1; }
@@ -1085,10 +1092,10 @@ bool lockRequested(bool* outLock) {
 
 // Explicit-buffer notify to the authenticated connection only (no attribute write, no broadcast to a
 // stray central that merely subscribed).
-void logNotify(const uint8_t* data, size_t len) {
+bool logNotify(const uint8_t* data, size_t len) {
   uint16_t h = gateHandle();   // snapshot (NONE would broadcast)
-  if (!g_logData || h == NO_CONN || !len) return;
-  g_logData->notify(data, len, h);
+  if (!g_logData || h == NO_CONN || !len) return false;
+  return g_logData->notify(data, len, h);
 }
 
 void detsNotify(const String& line) {

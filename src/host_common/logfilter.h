@@ -68,16 +68,22 @@ inline bool keep(const char* line, const Cutoff& c) {
 // Block-buffered line reader (SD byte reads are slow). next() yields each COMPLETE line that fits
 // LINE_CAP, newline included and NUL-terminated; a torn trailing line (power loss) or an overlong
 // line is skipped. Both export passes use it, so their byte counts always agree.
+// `limit` = read at most this many bytes from the file's current position: an export reads a file up to the size it
+// had when the export started, so lines appended meanwhile (logging keeps running during a phone transfer) can't make
+// the send pass differ from the counting pass. reset() starts over (after the caller seeks / reopens the same File).
 class LineReader {
  public:
-  explicit LineReader(File& f) : f_(f) {}
+  explicit LineReader(File& f, uint32_t limit = 0xFFFFFFFFu) : f_(f), left_(limit) {}
+  void reset(uint32_t limit = 0xFFFFFFFFu) { pos_ = n_ = 0; blocks_ = 0; left_ = limit; }
   bool next(char* line, size_t& len) {
     size_t o = 0;
     bool over = false;
     for (;;) {
       if (pos_ >= n_) {
-        int r = f_.read(blk_, sizeof(blk_));
+        size_t want = left_ < sizeof(blk_) ? (size_t)left_ : sizeof(blk_);
+        int r = want ? f_.read(blk_, want) : 0;
         if (r <= 0) { n_ = pos_ = 0; return false; }
+        left_ -= (uint32_t)r;
         n_ = (size_t)r; pos_ = 0;
         if ((++blocks_ & 0x7F) == 0) delay(1);  // yield on very large files
       }
@@ -94,6 +100,7 @@ class LineReader {
   uint8_t  blk_[512];
   size_t   pos_ = 0, n_ = 0;
   uint32_t blocks_ = 0;
+  uint32_t left_;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -151,6 +158,7 @@ class MultiExport {
         int sl = nm.lastIndexOf('/');
         snprintf(en.path, sizeof(en.path), "/logs/%s", (sl >= 0 ? nm.substring(sl + 1) : nm).c_str());
         en.live = isLive(en.path);
+        en.size = (uint32_t)e.size();   // every pass reads this many bytes, however much the file grows meanwhile
         en.fleet = !strncmp(en.path, "/logs/fleet-", 12);   // forwarded member lines: foreign ms, own epochs only
         if (!nowEpoch_ && !en.live) ok = false;  // no clock: only this boot's files can be windowed
       }
@@ -211,42 +219,14 @@ class MultiExport {
     static char line[LINE_CAP];      // static: off the loop-task stack (callers are single-threaded)
     static char out[LINE_CAP + 16];
     for (int i = 0; i < n_; i++) {
-      const Ent& en = files_[i];
-      File f = SD.open(en.path, "r");
+      File f = SD.open(files_[i].path, "r");
       if (!f) continue;
-      LineReader rd(f);
+      LineReader rd(f, files_[i].size);
       size_t len;
       bool go = true;
       while (go && rd.next(line, len)) {
-        if (line[0] != '{') continue;
-        // A fleet file's forwarded member meta (it carries "ofile") is that origin's provenance (name/fw): keep it.
-        if (en.fleet && strstr(line, "\"evt\":\"meta\"") && strstr(line, "\"ofile\":")) {
-          total += len;
-          go = emit(line, len);
-          continue;
-        }
-        if (strstr(line, "\"evt\":\"meta\"") || strstr(line, "\"evt\":\"timesync\"")) continue;
-        uint32_t ep = fieldU32(line, "\"epoch\":");
-        uint32_t ms = fieldU32(line, "\"ms\":");
-        const char* src = line;
-        size_t slen = len;
-        if (ep == 0 && en.hasAnc) {
-          int64_t dms = (int64_t)ms - (int64_t)en.ancMs;  // rounded like the web app's backfillEpoch
-          int64_t e = (int64_t)en.ancEpoch + (dms + (dms >= 0 ? 500 : -500)) / 1000;
-          static const char kZero[] = "{\"epoch\":0,";
-          if (e > 0 && strncmp(line, kZero, sizeof(kZero) - 1) == 0) {
-            int w = snprintf(out, sizeof(out), "{\"epoch\":%lu,", (unsigned long)e);
-            if (w > 0 && (size_t)w + len - (sizeof(kZero) - 1) < sizeof(out)) {
-              memcpy(out + w, line + sizeof(kZero) - 1, len - (sizeof(kZero) - 1) + 1);  // + NUL
-              src = out; slen = (size_t)w + len - (sizeof(kZero) - 1);
-              ep = (uint32_t)e;
-            }
-          }
-        }
-        bool keepIt;
-        if (ep > 0) keepIt = en.fleet ? (!nowEpoch_ || ep >= cutEpoch_) : nowEpoch_ ? ep >= cutEpoch_ : (en.live && ms >= cutMs_);
-        else        keepIt = en.live && !en.fleet && !nowEpoch_ && ms >= cutMs_;  // undated: only this boot, no clock
-        if (!keepIt) continue;
+        const char* src; size_t slen;
+        if (!filter(i, line, len, out, &src, &slen)) continue;
         total += slen;
         go = emit(src, slen);
       }
@@ -256,8 +236,41 @@ class MultiExport {
     return total;
   }
 
+  // Step-by-step use (the cooperative BLE export, host_log.cpp): the caller opens file i itself, reads it with a
+  // LineReader limited to fileSize(i), and passes each line through filter().
+  int count() const { return n_; }
+  const char* filePath(int i) const { return files_[i].path; }
+  uint32_t fileSize(int i) const { return files_[i].size; }
+  // One line of file i (newline included, NUL-terminated). True = export it: *src/*slen = the bytes to emit (the line
+  // itself, or the line rewritten with its backfilled epoch into `out`, LINE_CAP + 16 bytes).
+  bool filter(int i, char* line, size_t len, char* out, const char** src, size_t* slen) const {
+    const Ent& en = files_[i];
+    if (line[0] != '{') return false;
+    *src = line; *slen = len;
+    // A fleet file's forwarded member meta (it carries "ofile") is that origin's provenance (name/fw): keep it.
+    if (en.fleet && strstr(line, "\"evt\":\"meta\"") && strstr(line, "\"ofile\":")) return true;
+    if (strstr(line, "\"evt\":\"meta\"") || strstr(line, "\"evt\":\"timesync\"")) return false;
+    uint32_t ep = fieldU32(line, "\"epoch\":");
+    uint32_t ms = fieldU32(line, "\"ms\":");
+    if (ep == 0 && en.hasAnc) {
+      int64_t dms = (int64_t)ms - (int64_t)en.ancMs;  // rounded like the web app's backfillEpoch
+      int64_t e = (int64_t)en.ancEpoch + (dms + (dms >= 0 ? 500 : -500)) / 1000;
+      static const char kZero[] = "{\"epoch\":0,";
+      if (e > 0 && strncmp(line, kZero, sizeof(kZero) - 1) == 0) {
+        int w = snprintf(out, LINE_CAP + 16, "{\"epoch\":%lu,", (unsigned long)e);
+        if (w > 0 && (size_t)w + len - (sizeof(kZero) - 1) < LINE_CAP + 16) {
+          memcpy(out + w, line + sizeof(kZero) - 1, len - (sizeof(kZero) - 1) + 1);  // + NUL
+          *src = out; *slen = (size_t)w + len - (sizeof(kZero) - 1);
+          ep = (uint32_t)e;
+        }
+      }
+    }
+    if (ep > 0) return en.fleet ? (!nowEpoch_ || ep >= cutEpoch_) : nowEpoch_ ? ep >= cutEpoch_ : (en.live && ms >= cutMs_);
+    return en.live && !en.fleet && !nowEpoch_ && ms >= cutMs_;  // undated: only this boot, no clock
+  }
+
  private:
-  struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; bool hasAnc, live, fleet; };
+  struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; uint32_t size; bool hasAnc, live, fleet; };
 
   bool isLive(const char* p) const {
     for (int i = 0; i < nBoot_; i++) if (boot_[i] && boot_[i][0] && !strcmp(p, boot_[i])) return true;

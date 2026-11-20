@@ -1,5 +1,20 @@
 # Handoff — 2026-11-20 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE — 2026-11-20 (afternoon): cooperative BLE transfers (fw 0.41.0 on all 4 hosts, merged to main)
+Phone downloads / exports no longer block loop(): scanning, logging, the fleet and the UI keep running. Design + rules
+in CLAUDE.md ("BLE transfers are cooperative"). Code: `host_log.cpp` (`AXfer`, `xferService`, `axStartRaw`,
+`streamFilteredOverBle`, `streamMultiOverBle`), `logfilter.h` (`LineReader` limit + `reset`, `MultiExport` `Ent.size` +
+`count/filePath/fileSize/filter`; `run()` kept for the mini's Wi-Fi page), `host_phone_cmds.cpp` (`!xferBusy() &&` gates),
+`phone.*` (`logNotify` returns bool, `peerAlive`). No wire-format or web change; C5s untouched.
+- Flashed: CYDs COM13 (TOLUBA, d4:e9:f4:f4:17:b8) + COM21 (b4:bf:e9:c9:2b:b0), mini S3s COM10 (10:b4:1d:eb:96:04) + COM15
+  (10:b4:1d:e9:08:20), all `xiao_s3_rgb` / `cyd`. **Owner tested on TOLUBA: downloads work.** Console: 24 h all-logs
+  export 1,311,399/1,311,399 B in 266 s (count 14 s, send 252 s), 129 scan cycles during it, new devices logged meanwhile;
+  one 6.2 s gap = `MultiExport::begin()` (still blocking). That first build ran ~5.2 KB/s (50 ms / 15 ms / 180 B).
+- **Tuned (same fw 0.41.0, all 4 hosts reflashed):** 80 ms budget, 8 ms gap, chunk = MTU − 3 (`phone::logChunkMax()`,
+  252 B on the owner's phone). Same export, 1,366,464 B / 8 files: **117 s total, ~13.3 KB/s sending** (faster than the old
+  blocking ~10–11 KB/s), 54 scan cycles, max gap 2.4 s, no retries / padding logged. Optional later: stepwise
+  `MultiExport::begin()`.
+
 ## RESUME HERE — 2026-11-20: CYD display timeout DONE (fw 0.40.0 on both CYDs, owner-tested, merged + deployed)
 Owner decisions (2026-11-20): wake = touch + BOOT only (no alert / phone wake); the waking tap/press is swallowed;
 while the touch lock is on a **double tap anywhere** (or BOOT) wakes and the lock stays on; defaults mode "Dim then off",
