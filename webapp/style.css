@@ -1982,3 +1982,89 @@ body {
   background: #0b0e13;
   margin-top: 0.7em;
 }
+
+.srvh {
+  display: block;
+  margin: 0.8em 0 0.3em;
+}
+
+.srvopts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  align-items: center;
+  margin-bottom: 0.4em;
+}
+.srvopts select {
+  width: auto;
+  margin: 0;
+  flex: 1 1 9em;
+}
+.srvopts input[type=search] {
+  flex: 1 1 12em;
+  margin: 0;
+  min-width: 0;
+}
+.srvopts button {
+  width: auto;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.srvopts label {
+  white-space: nowrap;
+}
+
+#srvNearBtn {
+  width: 100%;
+}
+
+#srvFindMsg {
+  margin: 0.6em 0 0.2em;
+}
+
+#srvFindMsg.err {
+  color: #f85149;
+}
+
+#srvFindMap {
+  height: 240px;
+  width: 100%;
+  border-radius: 8px;
+  background: #0b0e13;
+  margin: 0.4em 0;
+}
+
+.srvres {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.6em 0.3em;
+  border-bottom: 1px solid #21262d;
+  cursor: pointer;
+}
+.srvres:active {
+  background: #0b0e13;
+}
+.srvres .m {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.srvres .r1 {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  justify-content: space-between;
+}
+.srvres .nm {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.srvres .r2 {
+  font-size: 0.78rem;
+  color: #8b949e;
+  margin-top: 0.15em;
+  word-break: break-word;
+}

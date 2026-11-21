@@ -16,3 +16,21 @@
   &.clk:active { background:$color-surface-inset; } }
 .srvdays > button, #srvMapBtn { margin-top:.5em; width:100%; }
 #srvMap { height:220px; width:100%; border-radius:8px; background:$color-surface-inset; margin-top:.7em; }
+
+// Server data dialog (features/serverfind.js): devices near me + search.
+.srvh { display:block; margin:.8em 0 .3em; }
+.srvopts { display:flex; flex-wrap:wrap; gap:.5em; align-items:center; margin-bottom:.4em;
+  select { width:auto; margin:0; flex:1 1 9em; }
+  input[type=search] { flex:1 1 12em; margin:0; min-width:0; }
+  button { width:auto; margin:0; flex:0 0 auto; }
+  label { white-space:nowrap; } }
+#srvNearBtn { width:100%; }
+#srvFindMsg { margin:.6em 0 .2em; }
+#srvFindMsg.err { color:$color-bad; }
+#srvFindMap { height:240px; width:100%; border-radius:8px; background:$color-surface-inset; margin:.4em 0; }
+.srvres { display:flex; align-items:center; gap:.6em; padding:.6em .3em; border-bottom:1px solid $color-border-subtle; cursor:pointer;
+  &:active { background:$color-surface-inset; }
+  .m { flex:1 1 auto; min-width:0; }
+  .r1 { display:flex; align-items:center; gap:.5em; justify-content:space-between; }
+  .nm { font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .r2 { font-size:.78rem; color:$color-text-muted; margin-top:.15em; word-break:break-word; } }
