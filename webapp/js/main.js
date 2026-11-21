@@ -29,6 +29,7 @@ import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261119a';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
+import { initServerHistory } from './features/serverhist.js?v=20261120c';   // new module: versioned so it loads fresh with main.js
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -138,6 +139,7 @@ initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + S
 initSettingsPages();   // Settings = a menu of subpages (Device(s) / Notifications / Fleet / Remote Server)
 initNotify();    // Settings -> Notifications + the device popup's "Notify me when seen" (features/notify.js)
 initDisplayTimeout();   // Settings -> Device(s) -> Display timeout (CYD dto= / V:; features/displaytimeout.js)
+initServerHistory();    // device popup: the paired server's history of this MAC + Settings 'Reading server data' (features/serverhist.js)
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
