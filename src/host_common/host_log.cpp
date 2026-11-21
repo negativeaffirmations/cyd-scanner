@@ -867,6 +867,7 @@ constexpr size_t   AX_CHUNK_MAX = 500;   // notify payload cap; the real size = 
 constexpr size_t   AX_Q         = 1024;  // staged output; a line is staged only with LINE_CAP + 16 free
 struct AXfer {
   AxKind   kind = AX_RAW;
+  bool     preparing = false;            // AX_MULTI: still picking the files (MultiExport::beginStep)
   bool     sending = false;              // false = counting pass (AX_FILT / AX_MULTI)
   bool     prodDone = false;             // nothing more to stage (padding aside)
   bool     pad = false;                  // exports: pad a short send pass with newlines up to `total`
@@ -881,6 +882,7 @@ struct AXfer {
   int      fi = -1;                      // AX_MULTI: current file index (-1 = open the next one)
   int      nFiles = 0;
   uint32_t nextMs = 0, t0 = 0;
+  uint32_t keepMs = 0;                   // last "WAIT" keepalive (before the header; set at the request)
   size_t   qn = 0;
   size_t   chunk = 180;                  // notify payload for this transfer (MTU - 3, <= AX_CHUNK_MAX)
   uint8_t  q[AX_Q];
@@ -916,6 +918,7 @@ static AXfer* axNew(AxKind k, const char* what) {
   x->kind = k;
   x->ep = phone::authEpoch();
   x->t0 = millis();
+  x->keepMs = x->t0;
   x->chunk = phone::logChunkMax();
   if (x->chunk > AX_CHUNK_MAX) x->chunk = AX_CHUNK_MAX;
   snprintf(x->what, sizeof(x->what), "%s", what);
@@ -1017,6 +1020,19 @@ void xferService() {
   AXfer& x = *px;
   if (!phone::peerAlive(x.ep)) { axFinish(false); return; }   // the phone left / re-authenticated: never send to a new one
   const uint32_t t0 = millis();
+  // Nothing reaches the phone until the files are picked and counted (~14 s for a 24 h export on a full card), and
+  // the web app gives up after 20 s of silence. A "WAIT" notify every 5 s keeps it waiting: every listener ignores a
+  // LOGDATA payload that isn't a header it knows, but any notify counts as activity (download.js / transfer.js).
+  if ((x.preparing || !x.sending) && t0 - x.keepMs >= 5000) {
+    if (phone::logNotify((const uint8_t*)"WAIT", 4)) x.keepMs = t0;
+  }
+  if (x.preparing) {                                 // all-logs export: pick the files a step at a time
+    if (!x.mx->beginStep(AX_BUDGET_MS)) return;
+    x.preparing = false;
+    x.nFiles = x.mx->count();
+    Serial.printf("[CYD] BLE multi export: %d file(s) picked in %lu ms\n", x.nFiles, (unsigned long)(millis() - x.t0));
+    return;                                          // count from the next pass (the budget may be spent)
+  }
   if (!x.sending) {                                  // counting pass
     if (!axLines(x, t0)) return;                     // budget spent
     axStartSend(x);
@@ -1110,7 +1126,8 @@ static void streamMultiOverBle(int mode, int minutes) {
   AXfer* x = mx ? axNew(AX_MULTI, "all logs") : nullptr;
   if (!x) { delete mx; phone::logNotify((const uint8_t*)"SIZE=0", 6); Serial.println("[CYD] BLE multi export: out of memory"); return; }
   x->mx = mx;
-  x->nFiles = mx->begin();
+  x->preparing = mx->beginStart();                   // false = no /logs or no memory: count() = 0, the export sends SIZE=0
+  if (!x->preparing) Serial.println("[CYD] BLE multi export: no /logs folder, or out of memory");
 }
 
 // "L": the current session = the stream matching the current screen.

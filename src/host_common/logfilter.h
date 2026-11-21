@@ -128,7 +128,14 @@ class MultiExport {
   // mode 0 = since boot, 1 = past 24 h, 2 = past `minutes`. nowEpoch = local epoch (0 = no clock).
   // boot/nBoot = every session file written THIS boot (live fg/bg + earlier ones): their ms is valid.
   MultiExport(int mode, uint32_t minutes, uint32_t nowEpoch, uint32_t nowMs, const char* const* boot, int nBoot)
-      : nowEpoch_(nowEpoch), nowMs_(nowMs), boot_(boot), nBoot_(nBoot) {
+      : nowEpoch_(nowEpoch), nowMs_(nowMs) {
+    // Copy the boot paths: the stepwise begin runs long after the caller's array (and the stream paths it points at,
+    // which a rotation rewrites) went out of scope.
+    if (nBoot > 0 && boot) { boot_ = (char (*)[48])malloc(48 * (size_t)nBoot); bootOom_ = !boot_; }
+    for (int i = 0; boot_ && i < nBoot; i++) {
+      if (boot[i]) snprintf(boot_[nBoot_], 48, "%s", boot[i]); else boot_[nBoot_][0] = 0;
+      nBoot_++;
+    }
     if (mode == 1 || mode == 2) {
       Cutoff c = make(mode, minutes, nowEpoch, nowMs);
       cutEpoch_ = c.epoch; cutMs_ = c.ms;
@@ -138,19 +145,54 @@ class MultiExport {
       cutMs_ = 0;
     }
   }
-  ~MultiExport() { free(files_); }
+  ~MultiExport() { endScan(); free(files_); free(boot_); }
   MultiExport(const MultiExport&) = delete;             // owns files_
   MultiExport& operator=(const MultiExport&) = delete;
 
   // Pick the candidate files (cheap: reads each file's head/tail block) and sort them oldest first.
-  // Returns the number of files that will be read.
+  // Returns the number of files that will be read. Runs to the end in one call; the cooperative BLE export uses
+  // beginStart() + beginStep(budget) instead, so a big /logs folder doesn't stall loop() for seconds.
   int begin() {
-    free(files_); n_ = 0;
+    if (!beginStart()) return 0;
+    while (!beginStep(0)) {}
+    return n_;
+  }
+
+  // Stepwise begin(): beginStart() (false = out of memory / no /logs, count() = 0), then beginStep(budgetMs) until it
+  // returns true. Each step stops once budgetMs is spent (0 = no limit), between directory entries or between lines of
+  // an anchor search (a pre-sync file is read up to its timesync line, which can be deep in a big file).
+  bool beginStart() {
+    endScan();
+    free(files_); files_ = nullptr; n_ = 0; dropped_ = 0;
     files_ = (Ent*)malloc(sizeof(Ent) * MAX_FILES);
-    if (!files_) return 0;
-    File dir = SD.open("/logs");
-    if (!dir) return 0;
-    for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+    if (!files_ || bootOom_) return false;           // without the boot list every live file would look old
+    dir_ = SD.open("/logs");
+    if (!dir_) return false;
+    scanning_ = true;
+    return true;
+  }
+  bool beginStep(uint32_t budgetMs) {
+    const uint32_t t0 = millis();
+    auto spent = [&]() { return budgetMs && millis() - t0 >= budgetMs; };
+    while (scanning_) {
+      if (anc_) {                                   // resume the anchor search of cur_
+        if (!ancLine_) ancLine_ = (char*)malloc(LINE_CAP);
+        if (!ancLine_) { anc_ = false; ancF_.close(); finishEnt(); continue; }
+        size_t len;
+        for (;;) {
+          if (spent()) return false;
+          if (!ancRd_.next(ancLine_, len)) { anc_ = false; break; }
+          if (!strstr(ancLine_, "\"evt\":\"timesync\"")) continue;
+          uint32_t ep = fieldU32(ancLine_, "\"epoch\":");
+          if (ep) { cur_.hasAnc = true; cur_.ancEpoch = ep; cur_.ancMs = fieldU32(ancLine_, "\"ms\":"); anc_ = false; break; }
+        }
+        ancF_.close();
+        finishEnt();
+        continue;
+      }
+      if (spent()) return false;
+      File e = dir_.openNextFile();
+      if (!e) break;
       String nm = e.name();
       bool ok = !e.isDirectory() && nm.endsWith(".jsonl");
       Ent en{};
@@ -162,28 +204,27 @@ class MultiExport {
         en.fleet = !strncmp(en.path, "/logs/fleet-", 12);   // forwarded member lines: foreign ms, own epochs only
         if (!nowEpoch_ && !en.live) ok = false;  // no clock: only this boot's files can be windowed
       }
-      if (ok) {
-        uint32_t head = 0;
-        bool headZero = false;
-        ends(e, head, headZero, en.tail);
-        // (a fleet file holds members' lines with non-monotonic epochs: never pruned by its tail, filtered per row)
-        if (!en.live && !en.fleet && (en.tail == 0 || en.tail < cutEpoch_)) ok = false;  // undatable, or wholly older
-        else if (headZero && !en.fleet) en.hasAnc = findAnchor(e, en.ancEpoch, en.ancMs);
-        if (ok && en.live && !en.fleet && !en.hasAnc && nowEpoch_) { en.hasAnc = true; en.ancEpoch = nowEpoch_; en.ancMs = nowMs_; }
-        if (ok && en.tail == 0) en.tail = 0xFFFFFFFFUL;  // undated (this boot, no clock): sorts last
+      if (!ok) { e.close(); continue; }
+      uint32_t head = 0;
+      bool headZero = false;
+      ends(e, head, headZero, en.tail);
+      // (a fleet file holds members' lines with non-monotonic epochs: never pruned by its tail, filtered per row)
+      if (!en.live && !en.fleet && (en.tail == 0 || en.tail < cutEpoch_)) { e.close(); continue; }  // undatable, or wholly older
+      cur_ = en;
+      if (headZero && !en.fleet) {                  // pre-sync head: find its timesync anchor (resumable)
+        e.seek(0);
+        ancF_ = e;
+        ancRd_.reset(en.size);                      // up to the size at the request, like the export passes
+        anc_ = true;
+        continue;
       }
       e.close();
-      if (!ok) continue;
-      if (n_ < MAX_FILES) { files_[n_++] = en; continue; }
-      int lo = 0;  // full: replace the oldest kept file if this one is newer
-      for (int i = 1; i < n_; i++) if (files_[i].tail < files_[lo].tail) lo = i;
-      if (en.tail > files_[lo].tail) files_[lo] = en;
-      dropped_++;
+      finishEnt();
     }
-    dir.close();
+    endScan();
     for (int i = 1; i < n_; i++)  // insertion sort by tail epoch (oldest first)
       for (int j = i; j > 0 && files_[j].tail < files_[j - 1].tail; j--) { Ent t = files_[j]; files_[j] = files_[j - 1]; files_[j - 1] = t; }
-    return n_;
+    return true;
   }
   int dropped() const { return dropped_; }
 
@@ -273,7 +314,7 @@ class MultiExport {
   struct Ent { char path[48]; uint32_t tail; uint32_t ancEpoch, ancMs; uint32_t size; bool hasAnc, live, fleet; };
 
   bool isLive(const char* p) const {
-    for (int i = 0; i < nBoot_; i++) if (boot_[i] && boot_[i][0] && !strcmp(p, boot_[i])) return true;
+    for (int i = 0; i < nBoot_; i++) if (boot_[i][0] && !strcmp(p, boot_[i])) return true;
     return false;
   }
   // The epoch value after an "epoch": key, only if the number is complete (a torn last line written
@@ -366,26 +407,36 @@ class MultiExport {
     free(b);
     f.seek(0);
   }
-  static bool findAnchor(File& f, uint32_t& ep, uint32_t& ms) {
-    f.seek(0);
-    char line[LINE_CAP];
-    size_t len;
-    LineReader rd(f);
-    while (rd.next(line, len)) {
-      if (!strstr(line, "\"evt\":\"timesync\"")) continue;
-      ep = fieldU32(line, "\"epoch\":");
-      ms = fieldU32(line, "\"ms\":");
-      if (ep) { f.seek(0); return true; }
-    }
-    f.seek(0);
-    return false;
+  // cur_ is fully examined (anchor search included): give a live file with no anchor the current clock, and keep it.
+  void finishEnt() {
+    Ent& en = cur_;
+    if (en.live && !en.fleet && !en.hasAnc && nowEpoch_) { en.hasAnc = true; en.ancEpoch = nowEpoch_; en.ancMs = nowMs_; }
+    if (en.tail == 0) en.tail = 0xFFFFFFFFUL;  // undated (this boot, no clock): sorts last
+    if (n_ < MAX_FILES) { files_[n_++] = en; return; }
+    int lo = 0;  // full: replace the oldest kept file if this one is newer
+    for (int i = 1; i < n_; i++) if (files_[i].tail < files_[lo].tail) lo = i;
+    if (en.tail > files_[lo].tail) files_[lo] = en;
+    dropped_++;
+  }
+  void endScan() {
+    if (ancF_) ancF_.close();
+    if (dir_) dir_.close();
+    free(ancLine_); ancLine_ = nullptr;
+    anc_ = scanning_ = false;
   }
 
   uint32_t nowEpoch_, nowMs_, cutEpoch_ = 0, cutMs_ = 0;
-  const char* const* boot_;
-  int nBoot_;
+  char (*boot_)[48] = nullptr;   // owned copy of this boot's file paths
+  int nBoot_ = 0;
+  bool bootOom_ = false;          // the boot-list copy failed (beginStart refuses)
   Ent* files_ = nullptr;
   int n_ = 0, dropped_ = 0;
+  // beginStart()/beginStep() state
+  File dir_, ancF_;
+  LineReader ancRd_{ancF_};
+  char* ancLine_ = nullptr;
+  Ent cur_{};
+  bool scanning_ = false, anc_ = false;
 };
 
 }  // namespace logfilter

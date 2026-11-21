@@ -26,7 +26,9 @@ static_assert(DET_MEMBER_SLOTS == fleet_proto::FLEET_MAX_MEMBERS, "g_detFleetRss
 
 namespace {
 
-constexpr uint32_t PROBE_FAST_MS = 3000, PROBE_SLOW_MS = 15000, PROBE_BURST_MS = 120000;   // docs §6
+constexpr uint32_t PROBE_FAST_MS = 3000, PROBE_SLOW_MS = 7000, PROBE_BURST_MS = 120000;   // docs §6
+// PROBE_SLOW_MS stays under the client's 9 s channel dwell (fleet_client.cpp DWELL_MS), so a member that returns long after
+// it dropped hears a probe on its first dwell on the right channel (was 15 s: some returns took ~2 min to rejoin).
 constexpr uint32_t NONCE_LIFE_MS = 10000;   // a Hello may answer either of the last 2 probes for 10 s
 constexpr uint32_t JOIN_TIMEOUT_MS = 5000, ENCRYPT_FALLBACK_MS = 500, SENT_WAIT_MS = 200;
 constexpr uint32_t SYNC_MS = 2000, LOST_MS = 10000;
