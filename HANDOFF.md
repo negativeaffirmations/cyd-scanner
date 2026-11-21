@@ -1,9 +1,14 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-21: fw 0.41.1 on all 4 hosts + web live queue / sightings / Map server layer (web NOT deployed)
-Owner away; worked through the open list. Commits on `hardening`: `26a10cc` (web) + `2808b8d` (fw) + this docs commit.
-**Not merged to `main` / not pushed:** the push to `main` (= the Pages deploy) was refused by the session's permission
-check, so the owner approves the deploy. The firmware needs no web change (the `WAIT` keepalive is ignored by the live app).
+## RESUME HERE — 2026-11-21: fw 0.41.1 on all 4 hosts + web live queue / sightings / Map server layer / grouped dots (DEPLOYED)
+Owner away for the first part; worked through the open list. Merged to `main` (`18da7c8`) and pushed on the owner's OK; Pages
+serves `?v=20261121b` (footer `server map groups`). The firmware needs no web change (the `WAIT` keepalive is ignored by older apps).
+- **Owner-verified:** the 24 h all-logs export on TOLUBA (no "timed out"); the Notifications "test notification".
+- **Grouped server dots (web, new `features/cluster.js`, owner request):** both server-device maps (Server data dialog +
+  Map "Server devices") had every device stacked on one point. Copied scan-analyzer's scan-review setup (bridge 16:52):
+  Leaflet.markercluster 1.5.3 (unpkg + SRI, hashes checked), 24 px radius, a tap spiderfies in place, grey bubble + count,
+  `CAT_COL` arc per threat category + red threat-count badge. Node-checked the icon; **not yet seen on the phone.**
+- Fleet-client CYDs never show in Switch scanner ("Not seen"): by design, BT memory is released (owner asked; answered).
 - **Live-POST queue (web, `features/remote.js`):** snapshots queue while a POST is in flight instead of being dropped;
   network error / 20 s timeout / 5xx / 429 re-queue (other 4xx drop); ≤ 1000 rows per POST, queue cap 3000 rows (oldest
   dropped, count logged on recovery), cleared on a new connection. scan-analyzer confirmed (bridge 2026-11-21 15:49):
