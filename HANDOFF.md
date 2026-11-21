@@ -1,5 +1,27 @@
 # Handoff — 2026-11-20 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE — 2026-11-20 (night): web app READS the scan-analyzer server (webapp only, no firmware)
+scan-analyzer added a read API (its `docs/api-contract.md` "Read API — v1", server `6957067`, schema v14): a paired key
+may read only with the owner-granted **read** permission (admin page, Keys tab; the owner's phone key has it on).
+Cross-origin reads need `Authorization: Bearer <key>`: 401 = key not accepted (re-pair), 403 = read off. Epochs are the
+logs' LOCAL seconds (format with UTC getters); MACs come back `AA:BB:…`; `threat_cat` = our 12 categories as lowercase
+keys (null = Other).
+- **Device popup → "Server history"** (`features/serverhist.js`, deployed `7150b88`, `?v=20261120c`, owner-verified: 4
+  popup GETs all 200). One `GET /api/v1/devices/{mac}` per popup open (10 s timeout): totals, enrichment, estimate,
+  cross-day verdict, per-day timeline (7 shown, "Show all"), optional mini-map (`#srvMap`). Hooks `#detInfo` with a
+  MutationObserver like `notify.js`. Settings → Remote Server shows "Reading server data: allowed/off" from
+  `GET /api/v1/whoami` (fires when that subpage opens or the pairing line changes; verified 200).
+- **Map page → "Server data" dialog** (`features/serverfind.js`, `#srvFindBtn` `travel_explore`, `#srvDlg`,
+  `?v=20261120d`): **Devices near me** = `GET /api/v1/devices/near` around the scanner's STATUS `pos` (else the phone's
+  own fix), radius 100 m–5 km, category, "Threats only" (client-side filter, fetches up to 1000); **Search** =
+  `GET /api/v1/devices/search?q` (name or partial MAC). Results list + map; a tap opens the normal device popup (which
+  then loads its server history). Doesn't import `serverhist.js` (a second URL = a second copy with its own observer).
+- **Live-POST burst issue (same day) was SERVER-side:** `maybePostLive()` keeps ONE POST in flight and DROPS snapshots
+  meanwhile, so one slow reply (the server's ~90 s derived-table recompute holding its write lock) became ~90 s holes.
+  scan-analyzer fixed it (127/127 snapshots posted, every ~2 s). Optional web hardening still open: a per-POST timeout
+  + keep the newest snapshot instead of dropping it.
+- Next (not started): `/devices/{mac}/sightings` paging in the popup (raw rows), and a Map-page layer from the server.
+
 ## RESUME HERE — 2026-11-20 (afternoon): cooperative BLE transfers (fw 0.41.0 on all 4 hosts, merged to main)
 Phone downloads / exports no longer block loop(): scanning, logging, the fleet and the UI keep running. Design + rules
 in CLAUDE.md ("BLE transfers are cooperative"). Code: `host_log.cpp` (`AXfer`, `xferService`, `axStartRaw`,
