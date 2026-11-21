@@ -1003,9 +1003,11 @@ static void axProduce(AXfer& x, uint32_t t0) {
     return;
   }
   if (x.kind == AX_RAW) {
+    if (x.pos >= x.end) { x.prodDone = true; return; }
     size_t want = AX_Q - x.qn;
+    if (!want) return;                               // the stage is full: wait for it to drain (NOT the end of the file)
     if (want > x.end - x.pos) want = x.end - x.pos;
-    int r = want ? x.f.read(x.q + x.qn, want) : 0;
+    int r = x.f.read(x.q + x.qn, want);
     if (r > 0) { x.qn += r; x.pos += r; }
     if (r <= 0 || x.pos >= x.end) x.prodDone = true;   // a short read ends a raw send early (the phone times out)
     return;
