@@ -53,3 +53,15 @@
   color:$color-text-muted; opacity:.75;
   a { color:inherit; }
 }
+
+// Server-device bubbles (features/cluster.js, Leaflet.markercluster): grey with the count; with threats, a ring of one
+// arc per category (CAT_COL) + a red badge with the threat-device count. Same look as scan-analyzer's map.
+.marker-cluster.tc { background: rgba(107,114,128,.3); }
+.marker-cluster.tc div { background: rgba(55,65,81,.85); color: #fff; font-weight: 600; }
+.marker-cluster.tc-threat { background: transparent; overflow: visible; }
+.marker-cluster.tc-threat div { background: rgba(31,41,55,.92); }
+.tc-ring { position: absolute; inset: 0; width: 40px; height: 40px; transform: rotate(-90deg); pointer-events: none; }
+.tc-ring circle { fill: none; stroke-width: 4; }
+.tc-badge { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 999px; border: 1.5px solid #fff; background: #dc2626; color: #fff;
+  font: 700 10px/14px "Helvetica Neue", Arial, sans-serif; text-align: center; pointer-events: none; }

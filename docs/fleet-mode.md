@@ -295,7 +295,7 @@ Labels are ASCII; fields are raw bytes concatenated after the label.
 - No stable identifier is ever sent in the clear. The STA MAC is random per boot (§3.2). Probe and
   Hello carry only random nonces and HMAC tags (unlinkable across probes, because `nc` is fresh). The
   sid, name, fw, board and BLE MAC travel only in encrypted frames.
-- Probes are sent only while an enrolled member is un-joined: every 3 s for 2 min, then every 15 s.
+- Probes are sent only while an enrolled member is un-joined: every 3 s for 2 min, then every 7 s (fw 0.41.1; was 15 s, longer than the client's 9 s dwell, so a late return could take ~2 min).
   When all members are joined they stop. Clients never broadcast.
 - Residual exposure, accepted:
   - The frames are recognisably ESP-NOW (vendor action frames, OUI 18:FE:34). That is common hobby
@@ -792,7 +792,7 @@ helpers stay in `fleet_link.cpp`. Web: `js/ble/fleetcrypto.js`, `js/features/fle
     `join`, `lost`, `unjoin`, `release`, `member_add`, `member_remove`, `member_join`, `member_lost`,
     `member_release`, `client_set`, `start`, `leave`.
 - **STATUS part 2:** `flt=<role>,<joined>/<enrolled>,<ch>` (a client reports `0/1` or `1/1`).
-- **Probing:** only while an enrolled member is un-joined: every 3 s for 2 min from the first miss, then every 15 s.
+- **Probing:** only while an enrolled member is un-joined: every 3 s for 2 min from the first miss, then every 7 s (fw 0.41.1, under the client's 9 s dwell; was 15 s).
   A rebooted client waits for the leader's 10 s loss mark before probes resume (~10 s rejoin). A released member
   stays enrolled (shown "lost"), so slow probing continues until it is removed.
 - **Client search:** dwell 9 s on the saved channel, then 1 / 6 / 11. It saves the channel it joined on. A new MAC
@@ -867,7 +867,7 @@ the C5 table's 30 s TTL, past their self filters.
   - The web key store opens without a fixed version.
 - **Accepted / documented:**
   - Join's cleartext `slot` / `nMembers`.
-  - Probes continue at 15 s for a released (still enrolled) member.
+  - Probes continue at 7 s for a released (still enrolled) member.
   - Stored FKs sit in NVS like the devkey; revoking one means rekeying that member.
   - Member slot numbers go stale after a removal until rejoin — **P4 must re-send slots** (Plan).
 

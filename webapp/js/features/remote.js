@@ -229,31 +229,80 @@ function unitsOf(r){
   return (via & 1) ? [{ scanner:null, rssi:r.rssi }] : [];
 }
 
+// Snapshots wait in a queue while a POST is in flight (and are re-queued when one fails), so a slow
+// or briefly unreachable server delays rows instead of losing them. Every row carries its own epoch/ms,
+// so several snapshots can ride one POST, and a re-sent row is a duplicate the server skips (session+ms).
+// The queue belongs to one connection (connGen): another scanner's rows never go out under this one's meta.
+const LIVE_TIMEOUT_MS = 20000;   // a POST that takes longer is aborted and its rows re-queued
+const LIVE_QUEUE_MAX  = 3000;    // rows kept while the server is unreachable (~4 min of a busy fleet); oldest dropped
+const LIVE_POST_MAX   = 1000;    // rows per POST
+let liveQueue = [];              // pending NDJSON row lines (no meta)
+let liveQueueGen = -1;
+let liveDropped = 0;             // rows lost to the queue cap since the last success (reported once)
+
+function queueLive(lines, front){
+  liveQueue = front ? lines.concat(liveQueue) : liveQueue.concat(lines);
+  const over = liveQueue.length - LIVE_QUEUE_MAX;
+  if(over > 0){ liveQueue.splice(0, over); liveDropped += over; }
+}
+
+function sendLive(){
+  if(livePosting || !liveQueue.length) return;
+  if(liveQueueGen !== connGen() || !liveEnabled() || !isPaired()){ liveQueue = []; return; }
+  const lines = liveQueue.splice(0, LIVE_POST_MAX);
+  const meta = metaLine();
+  const body = (meta ? meta+"\n" : "") + lines.join("\n") + "\n";
+  const gen = liveQueueGen;
+  const ac = (typeof AbortController === "function") ? new AbortController() : null;
+  const timer = ac ? setTimeout(()=>ac.abort(), LIVE_TIMEOUT_MS) : 0;
+  livePosting = true;
+  fetch(api("/api/v1/detections"), {
+    method:"POST", headers: authHeaders({ "Content-Type":"application/x-ndjson" }), body,
+    signal: ac ? ac.signal : undefined
+  }).then(r=>{
+    if(!r.ok){
+      // 5xx / 429 = the server can't take it now: keep the rows. Any other refusal (bad key, bad body) won't
+      // get better by retrying, so those rows are dropped.
+      if(r.status >= 500 || r.status === 429){ if(gen === connGen()) queueLive(lines, true); }
+      if(!liveFailLogged){ log("Remote: live upload failed ("+r.status+")"+(r.status>=500||r.status===429 ? " — keeping rows, retrying." : " — rows dropped.")); liveFailLogged=true; }
+      return;
+    }
+    if(liveFailLogged || liveDropped){
+      log("Remote: live upload recovered"+(liveDropped ? " ("+liveDropped+" row(s) were dropped while the server was unreachable)" : "")+".");
+    }
+    liveFailLogged = false; liveDropped = 0;
+    return r.json().catch(()=>null);
+  }).catch(e=>{
+    // Network error or our timeout: the server may or may not have stored the rows; re-sending is safe.
+    if(gen === connGen()) queueLive(lines, true);
+    if(!liveFailLogged){
+      const why = (e && e.name === "AbortError") ? "no reply in "+(LIVE_TIMEOUT_MS/1000)+" s" : e.message;
+      log("Remote: live upload error — "+why+". Keeping rows and retrying."); liveFailLogged=true;
+    }
+  }).finally(()=>{
+    clearTimeout(timer);
+    livePosting = false;
+    // Drain right away after a success; after a failure wait for the next snapshot (~2 s) as the backoff.
+    if(!liveFailLogged) sendLive();
+  });
+}
+
 // Called from renderDets once per completed live snapshot. No-ops unless paired, live-upload is on,
 // and a scan is actually running.
 export function maybePostLive(rows){
   if(!liveEnabled() || !isPaired() || !state.scanning || !state.connected) return;
-  if(livePosting || !rows || !rows.length) return;
+  if(!rows || !rows.length) return;
+  if(liveQueueGen !== connGen()){ liveQueue = []; liveDropped = 0; liveQueueGen = connGen(); }
   const sess = ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "live";
   const epoch = localEpoch();
   const baseMs = Date.now();
-  const meta = metaLine();
   const fix = scannerFix();   // one position per snapshot, like the file log's per-cycle stamp
-  // One phone wall-clock ms sequence across every posted row (own + member), so ms stays unique per batch.
+  // One phone wall-clock ms sequence across every posted row (own + member), so ms stays unique per snapshot.
   const lines = [];
   for(const r of rows) for(const u of unitsOf(r)) lines.push(liveRow(r, u, sess, epoch, baseMs+lines.length, fix));
   if(!lines.length) return;
-  const body = (meta ? meta+"\n" : "") + lines.join("\n") + "\n";
-  livePosting = true;
-  fetch(api("/api/v1/detections"), {
-    method:"POST", headers: authHeaders({ "Content-Type":"application/x-ndjson" }), body
-  }).then(r=>{
-    if(!r.ok){ if(!liveFailLogged){ log("Remote: live upload failed ("+r.status+") — pausing live POSTs until it recovers."); liveFailLogged=true; } return; }
-    liveFailLogged = false;
-    return r.json().catch(()=>null);
-  }).catch(e=>{
-    if(!liveFailLogged){ log("Remote: live upload error — "+e.message+". Pausing until it recovers."); liveFailLogged=true; }
-  }).finally(()=>{ livePosting = false; });
+  queueLive(lines, false);
+  sendLive();
 }
 
 // --- Settings UI --------------------------------------------------------------------------------

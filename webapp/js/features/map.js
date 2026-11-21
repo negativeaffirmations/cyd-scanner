@@ -37,6 +37,7 @@ function ensureMap(){
   if(lmap) return;
   lmap=newMap("map");
   mapLayer=L.layerGroup().addTo(lmap);
+  state.mainMap=lmap;   // for the server-devices layer (features/servermap.js); a state hook, not an export (stale-module rule)
 }
 export function openMap(){
   showPage('map');                 // the Map is its own nav page now (not a dialog)

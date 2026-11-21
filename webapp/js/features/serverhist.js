@@ -84,7 +84,7 @@ function onPopup(){
   const el = $("detServer"); if(!el) return;
   const mac = popupMac();
   const seq = ++openSeq;
-  curMac = mac; curData = null;
+  curMac = mac; curData = null; sight = null;
   if(!mac || !/^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/.test(mac) || !isPaired()){ render(""); return; }
   render(head() + `<div class="sub">Asking the server…</div>`);
   load(mac, seq);
@@ -134,9 +134,72 @@ function renderData(d){
   const hasPos = tl.some(t => okLL(t.lat, t.lon)) || (est && okLL(est.lat, est.lon));
   render(head() + rows.join("") +
     (tl.length ? `<div class="srvsub">Days seen</div><div id="srvDays" class="srvdays"></div>` : "") +
-    (hasPos ? `<button class="secondary" id="srvMapBtn">Show server positions on a map</button><div id="srvMap" hidden></div>` : ""));
+    ((dev.sightings || 0) > 0 ? `<div id="srvSight" class="srvdays"><button class="secondary" id="srvSightBtn">Show individual sightings</button></div>` : "") +
+    (hasPos ? `<button class="secondary" id="srvMapBtn">Show server positions on a map</button>` : "") +
+    `<div id="srvMap" hidden></div>`);
   if(tl.length) renderDays(tl, false);
   const mb = $("srvMapBtn"); if(mb) mb.onclick = () => showMap(null);
+  const sb = $("srvSightBtn"); if(sb) sb.onclick = () => { sight = { rows:[], ids:new Set(), done:false, busy:false }; loadSightings(); };
+}
+
+// ---- raw sightings, newest first, paged (GET /devices/{mac}/sightings?order=desc&limit=&before=) ----
+// `before` is exclusive and many rows can share one epoch second, so the next page asks for before = oldest + 1 and
+// drops rows already shown (by id); a page that adds nothing new falls back to before = oldest.
+const SIGHT_PAGE = 50;
+const SRC_TXT = { "2.4":"Wi-Fi 2.4", "5G":"Wi-Fi 5", "BLE":"BLE", "PRB":"Wi-Fi client", "154":"802.15.4" };
+let sight = null;   // { rows, ids, done, busy, edge } for the current popup
+
+async function loadSightings(){
+  const s = sight; if(!s || s.busy || s.done) return;
+  s.busy = true;
+  const seq = openSeq, mac = curMac;
+  renderSightings("Loading…");
+  const oldest = s.rows.length ? s.rows[s.rows.length - 1].epoch : 0;
+  const pageRows = async before => {
+    const q = "?order=desc&limit=" + SIGHT_PAGE + (before ? "&before=" + before : "");
+    return getJson("/api/v1/devices/" + encodeURIComponent(mac) + "/sightings" + q);
+  };
+  let r = await pageRows(oldest ? oldest + 1 : 0);
+  let fresh = r.status === 200 && Array.isArray(r.body) ? r.body.filter(x => !s.ids.has(x.id)) : null;
+  if(fresh && !fresh.length && oldest && r.body.length >= SIGHT_PAGE){   // a whole page inside one second: step past it
+    r = await pageRows(oldest);
+    fresh = r.status === 200 && Array.isArray(r.body) ? r.body.filter(x => !s.ids.has(x.id)) : null;
+    if(fresh && fresh.length) s.edge = true;   // rows of that second beyond one page were skipped
+  }
+  if(seq !== openSeq || s !== sight) return;   // another popup now
+  s.busy = false;
+  if(!fresh){
+    renderSightings(r.status === 403 ? "This phone's key may not read server data." :
+                    "Couldn't load sightings (" + (r.err || "HTTP " + r.status) + ").", true);
+    return;
+  }
+  fresh.forEach(x => { s.ids.add(x.id); s.rows.push(x); });
+  if(!r.body.length || r.body.length < SIGHT_PAGE || !fresh.length) s.done = true;
+  renderSightings("");
+}
+
+function renderSightings(note, retry){
+  const el = $("srvSight"); const s = sight; if(!el || !s) return;
+  const rows = s.rows.map((x, i) => {
+    const pos = okLL(x.lat, x.lon);
+    const bits = [SRC_TXT[x.source] || x.source || ""];
+    if(x.rssi != null) bits.push(x.rssi + " dBm");
+    if(x.channel != null) bits.push("ch " + x.channel);
+    if(x.is_live) bits.push("live");
+    if(pos && x.fix_age != null) bits.push("fix " + x.fix_age + " s old");
+    return `<div class="srvday${pos ? " clk" : ""}" data-i="${i}">` +
+      `<span class="d">${esc(x.epoch > 0 ? dateTxt(x.epoch) + " " + hm(x.epoch) : "no time")}</span>` +
+      `<span class="n">${esc(bits.filter(Boolean).join(" · "))}</span>` +
+      (pos ? `<span class="material-symbols-outlined pin" title="Show on map">location_on</span>` : "") + `</div>`;
+  }).join("");
+  const more = !s.done && !s.busy ? `<button class="secondary" id="srvSightMore">${s.rows.length ? "Load older sightings" : "Try again"}</button>` : "";
+  el.innerHTML = `<div class="srvsub">Sightings${s.rows.length ? " (newest " + s.rows.length + ")" : ""}</div>` + rows +
+    (note ? `<div class="sub">${esc(note)}</div>` : "") +
+    (s.edge ? `<div class="sub">Some sightings that share one second were skipped.</div>` : "") +
+    (retry ? `<button class="secondary" id="srvSightMore">Try again</button>` : more) +
+    (s.done && s.rows.length ? `<div class="sub">That's all of them.</div>` : "");
+  el.querySelectorAll(".srvday.clk").forEach(r => { r.onclick = () => showMap(s.rows[+r.dataset.i]); });
+  const b = $("srvSightMore"); if(b) b.onclick = () => { if(retry) s.busy = false; loadSightings(); };
 }
 
 function renderDays(tl, all){
@@ -183,6 +246,9 @@ function showMap(focus){
         .addTo(srvLayer).bindPopup("Estimated spot" + (est.radius_m != null ? " ± " + Math.round(est.radius_m) + " m" : "") +
                                    (est.classification ? "<br>" + esc(CLASS_TXT[est.classification] || est.classification) : ""));
     }
+    if(focus && focus.id !== undefined && okLL(focus.lat, focus.lon))   // a tapped raw sighting: its own marker
+      L.circleMarker([focus.lat, focus.lon], { radius: 7, color: "#ffffff", weight: 2, fillColor: col, fillOpacity: .9 })
+        .addTo(srvLayer).bindPopup(esc(whenTxt(focus.epoch)) + (focus.rssi != null ? "<br>" + esc(focus.rssi + " dBm") : "")).openPopup();
     if(focus && okLL(focus.lat, focus.lon)) srvMap.setView([focus.lat, focus.lon], 17);
     else if(all.length > 1) srvMap.fitBounds(L.latLngBounds(all).pad(0.3));
     else if(all.length) srvMap.setView(all[0], 17);
@@ -212,7 +278,7 @@ export function initServerHistory(){
   const info = $("detInfo");
   if(info) new MutationObserver(onPopup).observe(info, { childList:true });
   const dlg = $("detDlg");
-  if(dlg) dlg.addEventListener("close", () => { openSeq++; curMac = ""; curData = null; });   // drop a late reply
+  if(dlg) dlg.addEventListener("close", () => { openSeq++; curMac = ""; curData = null; sight = null; });   // drop a late reply
   const sub = $("set-remote");
   if(sub) new MutationObserver(() => { if(!sub.hidden) renderReadAccess(); }).observe(sub, { attributes:true, attributeFilter:["hidden"] });
   const st = $("rsStatus");   // pair / unpair rewrite it (connect / upload redraw it unchanged: ignored)

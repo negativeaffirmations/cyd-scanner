@@ -1,4 +1,33 @@
-# Handoff — 2026-11-20 (working branch: `hardening`; trunk `main`)
+# Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
+
+## RESUME HERE — 2026-11-21: fw 0.41.1 on all 4 hosts + web live queue / sightings / Map server layer (web NOT deployed)
+Owner away; worked through the open list. Commits on `hardening`: `26a10cc` (web) + `2808b8d` (fw) + this docs commit.
+**Not merged to `main` / not pushed:** the push to `main` (= the Pages deploy) was refused by the session's permission
+check, so the owner approves the deploy. The firmware needs no web change (the `WAIT` keepalive is ignored by the live app).
+- **Live-POST queue (web, `features/remote.js`):** snapshots queue while a POST is in flight instead of being dropped;
+  network error / 20 s timeout / 5xx / 429 re-queue (other 4xx drop); ≤ 1000 rows per POST, queue cap 3000 rows (oldest
+  dropped, count logged on recovery), cleared on a new connection. scan-analyzer confirmed (bridge 2026-11-21 15:49):
+  resends are deduped (`INSERT OR IGNORE` on session + scanner + mac + ms [+ seq]); multi-snapshot bodies fine. Node test
+  with stubs: 8/8 (slow reply, 500, network error, 403, reconnect, cap). Needs a live check once deployed.
+- **Popup "Show individual sightings" (web, `features/serverhist.js`):** `/devices/{mac}/sightings?order=desc&limit=50`,
+  "Load older" with `before = oldest + 1` + id dedup (a full page inside one second falls back to `before = oldest` and says
+  some were skipped); tap a row with a fix -> the popup map. Node-tested against a fake server (tie handling).
+- **Map Filters → "Server devices" (web, new `features/servermap.js`):** `/devices/near` for the visible area (≤ 5 km),
+  hollow tier-coloured rings + estimate radius, "Threats only" applies, tap -> device popup; setting kept in localStorage
+  `cflo.mapServer`. Hooks: `state.mainMap` (map.js), `state.srvOpenDevice` (serverfind.js). Not yet seen in a browser.
+  Tokens `?v=20261121a` (style, main, serverhist, serverfind, servermap), footer `server map + live queue`.
+- **fw 0.41.1 (flashed: SOPAFE COM15, BEMOPU COM10, both CYDs COM13 / COM21; all rejoined, probing off):**
+  - all-logs export picks its files in steps (`MultiExport::beginStart/beginStep`, `AXfer.preparing`), removing the ~6 s
+    stall; `WAIT` notify every 5 s until the header (the web idle timeout is 20 s and the pre-header phase was already
+    ~14 s on TOLUBA). Reviewer pass: no serious findings; its 3 small points fixed (anchor read capped at size, refuse on
+    boot-list OOM, log the failure). **Owner check:** a 24 h all-logs export on TOLUBA (console "picked in N ms", no gap).
+  - fleet leader slow probe 15 s -> 7 s (under the client's 9 s dwell). The old note was slightly off: `endSession()`
+    already restarted the fast burst on every loss; the gap was a member returning > 2 min after dropping. **Tested:**
+    ZUDIMU held in reset 150 s (leader past its burst), rejoined 5.4 s after release (boot included).
+- **Owner checks closed:** CYD fleet-client screen layout OK; fleet-client LEDs breathe; mini #3 AP in the live server's
+  `EXCLUDED_MACS` (scan-analyzer: `.env` changed 11-20 21:23, service restarted 22:27; proof = owner's `sudo grep`).
+- **Still open:** phone-notification checks (real alerts, tap-through, background life); BLE pause during the AP scan
+  (owner decision, ~28 s -> ~12 s scan vs. BLE airtime).
 
 ## RESUME HERE — 2026-11-20 (night): web app READS the scan-analyzer server (webapp only, no firmware)
 scan-analyzer added a read API (its `docs/api-contract.md` "Read API — v1", server `6957067`, schema v14): a paired key
