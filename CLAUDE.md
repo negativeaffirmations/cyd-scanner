@@ -692,7 +692,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   `followers`,`explore`,`sessions`,`whitelist`,`map`,`detail`), `main.js` (**all** DOM wiring via
   `addEventListener` — no inline `onclick=`, since module scope isn't global). Module-private state
   stays local; imports form a DAG.
-- **BLE transfers are cooperative (fw 0.41.0):** `L` / `F:` (full + tail) / `T:` (one file or `*`) start a state machine in `host_log.cpp` (`AXfer`, `xferService()` from `servicePhoneCommands`, <= 80 ms per loop pass, notifies of the link's MTU − 3 (`phone::logChunkMax()`, 252 B on Android, cap 500) >= 8 ms apart, a refused notify — header included — is retried), so scanning + logging continue during a download. Each file is read only up to its size at the request (`LineReader` limit, `MultiExport` `Ent.size`), so appends can't change what is sent. While `xferBusy()`, every other LOGDATA reply (Q, Y, Z, M, A/E, D, another F/L/T), the time-sync rename, the Wi-Fi download switch and `enforceLogCap` wait. Still blocking: `MultiExport::begin()` (~6 s for 7 files), the session list, wipe / cap sweeps (`XferScope`). Measured 2026-11-20 on TOLUBA (24 h all-logs export, 1.37 MB): 117 s total, ~13.3 KB/s sending (old blocking ~10–11 KB/s; the first 50 ms / 15 ms / 180 B build did 5.2), scan cycles every ~2 s throughout (max gap 2.4 s).
+- **BLE transfers are cooperative (fw 0.41.0):** `L` / `F:` (full + tail) / `T:` (one file or `*`) start a state machine in `host_log.cpp` (`AXfer`, `xferService()` from `servicePhoneCommands`, <= 80 ms per loop pass, notifies of the link's MTU − 3 (`phone::logChunkMax()`, 252 B on Android, cap 500) >= 8 ms apart, a refused notify — header included — is retried), so scanning + logging continue during a download. Each file is read only up to its size at the request (`LineReader` limit, `MultiExport` `Ent.size`), so appends can't change what is sent. While `xferBusy()`, every other LOGDATA reply (Q, Y, Z, M, A/E, D, another F/L/T), the time-sync rename, the Wi-Fi download switch and `enforceLogCap` wait. From fw 0.41.1 the all-logs export picks its files in steps too (`MultiExport::beginStart()` / `beginStep()`, an `AXfer.preparing` phase; `begin()` stays for the mini's Wi-Fi page), and until the header a `WAIT` LOGDATA notify every 5 s keeps the web app's 20 s idle timer alive (every listener ignores unknown payloads before a header). Still blocking: the session list, wipe / cap sweeps (`XferScope`). Measured 2026-11-20 on TOLUBA (24 h all-logs export, 1.37 MB): 117 s total, ~13.3 KB/s sending (old blocking ~10–11 KB/s; the first 50 ms / 15 ms / 180 B build did 5.2), scan cycles every ~2 s throughout (max gap 2.4 s).
 - **Log download — BLE (default):** `L` → the CYD streams `/scanlog.jsonl` over the LOGDATA
   characteristic; the app reassembles and saves the file. One button, stays in-app.
 - **Log download — Wi-Fi (optional, for bulk):** `src/cyd/webshare.*` raises a SoftAP +
@@ -754,9 +754,13 @@ transfer to the new repo), not in version control.
   private server must be exposed over HTTPS (Tailscale / Cloudflare Tunnel / LAN cert).
 - Near-term, uploading is just **downloading a session log and uploading the file** to the
   scan-analyzer web app (no THIS-repo change); the pairing + live-POST work above is the later phase.
-- **Live-POST gotcha:** `maybePostLive()` (`features/remote.js`) keeps ONE POST in flight and DROPS every snapshot
-  while it waits, so a slow server reply shows up as a hole in the live data (2026-11-20: ~90 s gaps from a server-side
-  recompute; fixed on the server). Check reply times before blaming DETS / the firmware.
+- **Live-POST queue (webapp 2026-11-21):** `maybePostLive()` (`features/remote.js`) keeps ONE POST in flight; snapshots
+  taken meanwhile wait in a queue (≤ 3000 rows, oldest dropped and reported) and ride the next POST (≤ 1000 rows, one
+  meta line). A network error, a 20 s timeout, 5xx or 429 re-queues the batch (other 4xx drop it); the queue is cleared
+  on a new connection (`connGen`). Resends are identical lines and the server dedups them (session + scanner + mac + ms;
+  a row's `seq`, if one is ever added, must not change on resend). Before this, a slow reply was a hole in the live data
+  (2026-11-20: ~90 s gaps from a server-side recompute, fixed there); now it is a delay. Check reply times before blaming
+  DETS / the firmware.
 - **Reading the server (webapp 2026-11-20, scan-analyzer `docs/api-contract.md` "Read API — v1"):** the paired key may
   also READ once the owner ticks **read** for it (admin page, Keys tab). Bearer on every read; 401 = re-pair, 403 = read
   off; epochs are LOCAL seconds (UTC getters), MACs `AA:BB:…`, `threat_cat` = our 12 categories lowercase (null =
@@ -765,7 +769,11 @@ transfer to the new repo), not in version control.
   Settings → Remote Server shows "Reading server data" from `GET /api/v1/whoami`. **Map page "Server data" dialog**
   (`features/serverfind.js`, `#srvDlg`): devices near the scanner's STATUS `pos` (else the phone's fix,
   `GET /api/v1/devices/near`) and search by name / partial MAC (`/devices/search`); a result opens the device popup.
-  Read keys see the whole DB (bystander identifiers + GPS), so never log the key or response bodies.
+  (2026-11-21) The popup also pages the raw rows ("Show individual sightings", `/devices/{mac}/sightings?order=desc&
+  limit=50&before=`, `before` exclusive: the next page asks `oldest + 1` and drops seen `id`s), and Map Filters →
+  **Server devices** (`features/servermap.js`) plots `/devices/near` for the visible area (radius = centre to corner,
+  ≤ 5 km) as hollow rings, refreshed on `moveend`, through the hooks `state.mainMap` (map.js) / `state.srvOpenDevice`
+  (serverfind.js). Read keys see the whole DB (bystander identifiers + GPS), so never log the key or response bodies.
 
 **Hardware / modality expansion (exploratory, beyond RF).** The device is RF-only today, but the
 intent is to gather **other signals** — either by **adding boards** to the current rig or building
