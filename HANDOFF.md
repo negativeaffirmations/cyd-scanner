@@ -1,25 +1,38 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-21: fw 0.41.1 on all 4 hosts + web live queue / sightings / Map server layer / grouped dots (DEPLOYED)
-Owner away for the first part; worked through the open list. Merged to `main` (`18da7c8`) and pushed on the owner's OK; Pages
-serves `?v=20261121b` (footer `server map groups`). The firmware needs no web change (the `WAIT` keepalive is ignored by older apps).
-- **Owner-verified:** the 24 h all-logs export on TOLUBA (no "timed out"); the Notifications "test notification".
+## RESUME HERE — 2026-11-21: fw 0.41.2 on all 4 hosts + web live queue / sightings / Map server layer / grouped dots / popups (DEPLOYED)
+Owner away for the first part; worked through the open list. Everything is merged to `main` and pushed (last `d533b2b`);
+Pages serves `?v=20261121c` (footer `map popups fit`). `hardening` = `main` content. Nothing pending.
+- **Owner-verified:** the 24 h all-logs export on TOLUBA (no "timed out"); the Notifications "test notification"; Map
+  "current session" loads again (after 0.41.2); the grouped server dots; big map popups now fit.
+- **fw 0.41.2 — download bug from 0.41.0 (fixed, all 4 hosts flashed):** every plain file transfer (`F:` full / `L`:
+  Map current session, Download / Upload current session, single files from the list) stopped after 1024 bytes, so the
+  phone sat on "Loading…". `axProduce` (AX_RAW) asked the file for 0 bytes whenever its 1 KB stage was still full and
+  took the 0 as end of file (`1024/21405 bytes` on the console). Now a full stage just waits. Exports (`T:`) were fine
+  (line path), which is why the 0.41.0 bench test missed it. Verified: `21955/21955 bytes in 1972 ms`. Lesson: test a
+  plain `F:` of a file > 1 KB after any change to the transfer machine.
+- **Map popups fit (web, `features/map.js` `popOpts()`):** a big group popup on the phone was taller than the map, its
+  top panned under the zoom control, close button unreachable. Main-map popups get `maxHeight` = map height − 110 (scrolls),
+  autoPan padding 50×60 top-left; `.plist` caps at `min(200px, 30dvh)`.
 - **Grouped server dots (web, new `features/cluster.js`, owner request):** both server-device maps (Server data dialog +
   Map "Server devices") had every device stacked on one point. Copied scan-analyzer's scan-review setup (bridge 16:52):
   Leaflet.markercluster 1.5.3 (unpkg + SRI, hashes checked), 24 px radius, a tap spiderfies in place, grey bubble + count,
-  `CAT_COL` arc per threat category + red threat-count badge. Node-checked the icon; **not yet seen on the phone.**
+  `CAT_COL` arc per threat category + red threat-count badge.
+- **TOLUBA left the fleet** (owner, to connect the phone to it): SOPAFE now leads ZUDIMU + BEMOPU; TOLUBA stays enrolled.
+- Bench note: opening ZUDIMU's CH340 port (COM21) reset it even with DTR/RTS false before open (TOLUBA's COM13 didn't);
+  it rejoined in seconds. Holding RTS True keeps a CYD in reset (used for the rejoin test).
 - Fleet-client CYDs never show in Switch scanner ("Not seen"): by design, BT memory is released (owner asked; answered).
 - **Live-POST queue (web, `features/remote.js`):** snapshots queue while a POST is in flight instead of being dropped;
   network error / 20 s timeout / 5xx / 429 re-queue (other 4xx drop); ≤ 1000 rows per POST, queue cap 3000 rows (oldest
   dropped, count logged on recovery), cleared on a new connection. scan-analyzer confirmed (bridge 2026-11-21 15:49):
   resends are deduped (`INSERT OR IGNORE` on session + scanner + mac + ms [+ seq]); multi-snapshot bodies fine. Node test
-  with stubs: 8/8 (slow reply, 500, network error, 403, reconnect, cap). Needs a live check once deployed.
+  with stubs: 8/8 (slow reply, 500, network error, 403, reconnect, cap). Deployed; not yet watched on a live scan (the server log would show multi-snapshot POSTs after a slow reply).
 - **Popup "Show individual sightings" (web, `features/serverhist.js`):** `/devices/{mac}/sightings?order=desc&limit=50`,
   "Load older" with `before = oldest + 1` + id dedup (a full page inside one second falls back to `before = oldest` and says
   some were skipped); tap a row with a fix -> the popup map. Node-tested against a fake server (tie handling).
 - **Map Filters → "Server devices" (web, new `features/servermap.js`):** `/devices/near` for the visible area (≤ 5 km),
   hollow tier-coloured rings + estimate radius, "Threats only" applies, tap -> device popup; setting kept in localStorage
-  `cflo.mapServer`. Hooks: `state.mainMap` (map.js), `state.srvOpenDevice` (serverfind.js). Not yet seen in a browser.
+  `cflo.mapServer`. Hooks: `state.mainMap` (map.js), `state.srvOpenDevice` (serverfind.js). Deployed; the layer itself not yet checked by the owner (the dialog map was).
   Tokens `?v=20261121a` (style, main, serverhist, serverfind, servermap), footer `server map + live queue`.
 - **fw 0.41.1 (flashed: SOPAFE COM15, BEMOPU COM10, both CYDs COM13 / COM21; all rejoined, probing off):**
   - all-logs export picks its files in steps (`MultiExport::beginStart/beginStep`, `AXfer.preparing`), removing the ~6 s
