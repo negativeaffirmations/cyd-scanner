@@ -6,8 +6,10 @@
 //   _detections detection table, tiers, source tints, pills, chips, flag badges, kv rows
 //   _banners    follower + deauth/evil alert banners
 //   _map        wardriving map dialog, Leaflet overrides, mini-maps
+//   _serverhist device popup's server-history section
 @use 'base';
 @use 'nav';
 @use 'detections';
 @use 'banners';
 @use 'map';
+@use 'serverhist';

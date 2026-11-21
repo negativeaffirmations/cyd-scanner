@@ -1898,3 +1898,87 @@ body {
 .leaflet-container .leaflet-control-attribution a {
   color: inherit;
 }
+
+#detServer:not(:empty) {
+  margin-top: 0.8em;
+  padding-top: 0.5em;
+  border-top: 1px solid #30363d;
+}
+
+.srvhead {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  margin-bottom: 0.3em;
+}
+.srvhead .material-symbols-outlined {
+  font-size: 1.15rem;
+  color: #8b949e;
+}
+
+.srvretry {
+  margin-top: 0.4em;
+}
+
+.srvcat {
+  display: inline-block;
+  padding: 0 0.45em;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.srvsub {
+  margin: 0.7em 0 0.2em;
+  font-size: 0.8rem;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.srvdays {
+  display: flex;
+  flex-direction: column;
+}
+
+.srvday {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.45em 0.2em;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.86rem;
+}
+.srvday .d {
+  flex: 0 0 6.2em;
+  font-weight: 600;
+}
+.srvday .n {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #c9d1d9;
+}
+.srvday .pin {
+  font-size: 1.1rem;
+  color: #8b949e;
+}
+.srvday.clk {
+  cursor: pointer;
+}
+.srvday.clk:active {
+  background: #0b0e13;
+}
+
+.srvdays > button, #srvMapBtn {
+  margin-top: 0.5em;
+  width: 100%;
+}
+
+#srvMap {
+  height: 220px;
+  width: 100%;
+  border-radius: 8px;
+  background: #0b0e13;
+  margin-top: 0.7em;
+}

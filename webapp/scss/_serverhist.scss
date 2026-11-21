@@ -1,0 +1,18 @@
+// _serverhist.scss — the device popup's "Server history" section (features/serverhist.js).
+@use 'variables' as *;
+
+#detServer:not(:empty) { margin-top:.8em; padding-top:.5em; border-top:1px solid $color-border; }
+.srvhead { display:flex; align-items:center; gap:.35em; margin-bottom:.3em;
+  .material-symbols-outlined { font-size:1.15rem; color:$color-text-muted; } }
+.srvretry { margin-top:.4em; }
+.srvcat { display:inline-block; padding:0 .45em; border:1px solid; border-radius:6px; font-size:.8rem; font-weight:600; }
+.srvsub { margin:.7em 0 .2em; font-size:.8rem; color:$color-text-muted; text-transform:uppercase; letter-spacing:.04em; }
+.srvdays { display:flex; flex-direction:column; }
+.srvday { display:flex; align-items:center; gap:.5em; padding:.45em .2em; border-bottom:1px solid $color-border-subtle; font-size:.86rem;
+  .d { flex:0 0 6.2em; font-weight:600; }
+  .n { flex:1 1 auto; min-width:0; color:$color-text-dim; }
+  .pin { font-size:1.1rem; color:$color-text-muted; }
+  &.clk { cursor:pointer; }
+  &.clk:active { background:$color-surface-inset; } }
+.srvdays > button, #srvMapBtn { margin-top:.5em; width:100%; }
+#srvMap { height:220px; width:100%; border-radius:8px; background:$color-surface-inset; margin-top:.7em; }
