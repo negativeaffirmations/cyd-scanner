@@ -20,7 +20,7 @@
 
 .leaflet-popup-content { font-size:.8rem; }
 .leaflet-popup-content .plist {
-  max-height:200px; overflow:auto; margin-top:.3em;
+  max-height:min(200px, 30dvh); overflow:auto; margin-top:.3em;   // short phone screens: the popup must fit the map
   font-family:ui-monospace,monospace; white-space:pre;
 }
 

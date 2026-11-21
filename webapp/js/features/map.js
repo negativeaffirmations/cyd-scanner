@@ -78,6 +78,14 @@ function plotRid(r,pts){
   if(d&&o) L.polyline([d,o],{color:col,weight:2,opacity:.8}).addTo(mapLayer);
 }
 
+// Popup options for the main map: never taller than the map (Leaflet scrolls the content past maxHeight), and opened
+// clear of the zoom buttons (top left) so the close button stays reachable on a phone. Read at bind time, so it
+// follows the map's current size.
+function popOpts(maxWidth){
+  const h=lmap ? lmap.getSize().y : 400;
+  return { maxWidth, maxHeight:Math.max(120, h-110), autoPanPaddingTopLeft:L.point(50,60), autoPanPaddingBottomRight:L.point(10,10) };
+}
+
 // Group filtered detections by GPS fix and draw one marker per location.
 export function renderMap(){
   if(!lmap) return;
@@ -105,7 +113,7 @@ export function renderMap(){
     }).join("\n");
     const more=g.items.length>60?"\n… +"+(g.items.length-60)+" more":"";
     m.bindPopup("<b>"+g.items.length+" device(s)</b><br>"+g.lat.toFixed(5)+", "+g.lon.toFixed(5)+
-      '<div class="plist">'+esc(shown+more)+"</div>",{maxWidth:320});
+      '<div class="plist">'+esc(shown+more)+"</div>",popOpts(320));
     m.addTo(mapLayer); pts.push([g.lat,g.lon]);
   });
   if($("fEvents").checked) for(const e of mapEvents){   // event pins (deauth / eviltwin / droneid)
@@ -133,7 +141,7 @@ export function renderMap(){
       if(e.name) html+="<br><b>"+esc(e.name)+"</b>";
       html+="<br>"+esc(e.mac)+(e.src?" · "+esc(e.src):"")+(e.flags?"<br>"+esc(e.flags):"");
     }
-    m.bindPopup(html,{maxWidth:280});
+    m.bindPopup(html,popOpts(280));
     if(hasMacs) m.on('popupopen', ev=>{   // wire clicks directly on the popup DOM (Leaflet stops click
       ev.popup.getElement().querySelectorAll('.evmac').forEach(el=>{   // propagation, so delegation won't reach)
         el.addEventListener('click', ()=>{
