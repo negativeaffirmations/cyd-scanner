@@ -15,6 +15,7 @@ import { scannerFix } from '../gps.js';
 import { newMap } from './map.js';
 import { renderDetailMap } from './detail.js';
 import { fillDetailWhitelist } from './whitelist.js';
+import { deviceClusterLayer, addDots } from './cluster.js?v=20261121b';
 
 const TIMEOUT_MS = 15000;
 const CAT_KEYS = ["", "flock", "axon", "alpr", "cam", "ring", "raven", "glass", "tracker", "drone", "deauth", "flipper", "skim"];
@@ -26,7 +27,7 @@ const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","
 let seq = 0;              // bumps per request; an older reply is dropped
 let rows = [];            // current results
 let here = null;          // {lat,lon} the near search ran from (null for a name search)
-let fmap = null, flayer = null;
+let fmap = null, flayer = null, fdots = null;   // flayer = you-are-here + estimate circles, fdots = the grouped device dots
 
 function key(){ try{ return localStorage.getItem("rs.key") || ""; }catch(e){ return ""; } }
 async function getJson(path){
@@ -135,24 +136,26 @@ function renderMapView(){
   const pts = rows.filter(r => okLL(r.lat, r.lon));
   box.hidden = !(here || pts.length);
   if(box.hidden) return;
-  if(!fmap){ fmap = newMap("srvFindMap"); flayer = L.layerGroup().addTo(fmap); }
+  if(!fmap){ fmap = newMap("srvFindMap"); flayer = L.layerGroup().addTo(fmap); fdots = deviceClusterLayer(fmap); }
   setTimeout(() => {
-    fmap.invalidateSize(); flayer.clearLayers();
-    const all = [];
+    fmap.invalidateSize(); flayer.clearLayers(); fdots.clearLayers();
+    const all = [], dots = [];
     if(here){
       all.push([here.lat, here.lon]);
       L.circleMarker([here.lat, here.lon], { radius:7, color:"#ffffff", weight:3, fillColor:"#388bfd", fillOpacity:1 })
         .addTo(flayer).bindPopup("You are here");
     }
-    pts.slice().reverse().forEach(r => {   // farthest / oldest first, so the nearest draws on top
+    pts.forEach(r => {   // overlapping dots are grouped (features/cluster.js); a tap on the bubble fans them out
       const col = TIER_COL[TIER_IDX[r.tier] || 0], p = [r.lat, r.lon];
       all.push(p);
       if(r.position === "estimate" && r.radius_m > 0)
-        L.circle(p, { radius:r.radius_m, color:col, weight:1, dashArray:"3 4", fillOpacity:.05 }).addTo(flayer);
-      const m = L.circleMarker(p, { radius:6, color:col, weight:2, fillColor:col, fillOpacity:.75 }).addTo(flayer);
+        L.circle(p, { radius:r.radius_m, color:col, weight:1, dashArray:"3 4", fillOpacity:.05, interactive:false }).addTo(flayer);
+      const m = L.circleMarker(p, { radius:6, color:col, weight:2, fillColor:col, fillOpacity:.75, mac:r.mac, cat:catIdx(r.threat_cat) });
       m.bindTooltip(esc(label(r)));
       m.on("click", () => openDevice(r));
+      dots.push(m);
     });
+    addDots(fdots, dots);
     if(all.length > 1) fmap.fitBounds(L.latLngBounds(all).pad(0.2));
     else if(all.length) fmap.setView(all[0], 16);
   }, 80);

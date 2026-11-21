@@ -13,12 +13,15 @@ import { state } from '../state.js';
 import { $, esc, toast } from '../util/dom.js';
 import { TIER_COL } from '../config.js';
 import { isPaired, serverUrl } from './remote.js';
+import { deviceClusterLayer, addDots } from './cluster.js?v=20261121b';
 
 const TIMEOUT_MS = 15000;
 const MAX_RADIUS = 5000;     // the server's /devices/near limit
 const LS_KEY = "cflo.mapServer";
 const TIER_IDX = { none:0, suspect:1, likely:2, confirmed:3 };
+const CAT_KEYS = ["", "flock", "axon", "alpr", "cam", "ring", "raven", "glass", "tracker", "drone", "deauth", "flipper", "skim"];   // server threat_cat -> CAT_COL index
 
+let dotLayer = null;   // grouped device dots (layer = the estimate circles)
 let layer = null, hooked = null, seq = 0, timer = 0, wideSaid = false;
 
 function key(){ try{ return localStorage.getItem("rs.key") || ""; }catch(e){ return ""; } }
@@ -43,7 +46,7 @@ function label(r){
 }
 const on = () => { const c = $("fServer"); return !!(c && c.checked); };
 
-function clear(){ if(layer) layer.clearLayers(); }
+function clear(){ if(layer) layer.clearLayers(); if(dotLayer) dotLayer.clearLayers(); }
 
 async function refresh(){
   const m = state.mainMap;
@@ -70,16 +73,20 @@ async function refresh(){
   }
   let list = r.body.filter(d => okLL(d.lat, d.lon));
   if(threats) list = list.filter(d => (TIER_IDX[d.tier] || 0) > 0);
-  if(!layer) layer = L.layerGroup().addTo(m);
-  layer.clearLayers();
-  list.slice().reverse().forEach(d => {   // farthest first, so the nearest draws on top
+  if(!layer){ layer = L.layerGroup().addTo(m); dotLayer = deviceClusterLayer(m); }
+  layer.clearLayers(); dotLayer.clearLayers();
+  const dots = [];
+  list.forEach(d => {   // overlapping dots are grouped (features/cluster.js); a tap on the bubble fans them out
     const col = TIER_COL[TIER_IDX[d.tier] || 0], p = [d.lat, d.lon];
     if(d.position === "estimate" && d.radius_m > 0)
       L.circle(p, { radius:d.radius_m, color:col, weight:1, dashArray:"3 4", fill:false, interactive:false }).addTo(layer);
-    const mk = L.circleMarker(p, { radius:7, color:col, weight:3, fillColor:"#000000", fillOpacity:.15 }).addTo(layer);
+    const mk = L.circleMarker(p, { radius:7, color:col, weight:3, fillColor:"#000000", fillOpacity:.15,
+                                   mac:d.mac, cat:Math.max(0, CAT_KEYS.indexOf(d.threat_cat || "")) });
     mk.bindTooltip(esc(label(d)) + " <span style='opacity:.7'>(server)</span>");
     mk.on("click", () => { if(state.srvOpenDevice) state.srvOpenDevice(Object.assign({}, d, { distance_m:null })); });   // no "Distance" row: it is from the map centre
+    dots.push(mk);
   });
+  addDots(dotLayer, dots);
 }
 
 function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 700); }
@@ -88,7 +95,7 @@ function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 700); }
 function hook(){
   const m = state.mainMap;
   if(!m || hooked === m) return;
-  hooked = m; layer = null;
+  hooked = m; layer = null; dotLayer = null;
   m.on("moveend", () => { if(on()) schedule(); });
   if(on()) schedule();
 }

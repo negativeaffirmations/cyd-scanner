@@ -773,7 +773,10 @@ transfer to the new repo), not in version control.
   limit=50&before=`, `before` exclusive: the next page asks `oldest + 1` and drops seen `id`s), and Map Filters →
   **Server devices** (`features/servermap.js`) plots `/devices/near` for the visible area (radius = centre to corner,
   ≤ 5 km) as hollow rings, refreshed on `moveend`, through the hooks `state.mainMap` (map.js) / `state.srvOpenDevice`
-  (serverfind.js). Read keys see the whole DB (bystander identifiers + GPS), so never log the key or response bodies.
+  (serverfind.js). Both server-device maps group overlapping dots (`features/cluster.js`, Leaflet.markercluster 1.5.3
+  from unpkg with SRI, scan-analyzer's scan-review setup: 24 px radius, a tap spiderfies in place; grey bubble + count,
+  a `CAT_COL` arc per threat category + red threat-count badge; markers carry `options.mac`/`options.cat` before
+  `addLayers`; falls back to a plain layer if the CDN is blocked). Read keys see the whole DB (bystander identifiers + GPS), so never log the key or response bodies.
 
 **Hardware / modality expansion (exploratory, beyond RF).** The device is RF-only today, but the
 intent is to gather **other signals** — either by **adding boards** to the current rig or building
