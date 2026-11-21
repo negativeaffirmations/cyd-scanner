@@ -8,6 +8,7 @@
 // NEW file (stale-module rule): only main.js imports it. It does NOT import serverhist.js (a second, differently
 // keyed URL would load a second copy with its own popup observer).
 import { $, esc } from '../util/dom.js';
+import { state } from '../state.js';
 import { TIER_COL, CAT_COL } from '../config.js';
 import { isPaired, serverUrl } from './remote.js';
 import { scannerFix } from '../gps.js';
@@ -182,6 +183,7 @@ function openDialog(){
 }
 
 export function initServerFind(){
+  state.srvOpenDevice = openDevice;   // the Map page's server layer (servermap.js) opens its markers through this
   const btn = $("srvFindBtn"); if(!btn) return;
   btn.onclick = openDialog;
   $("srvClose").onclick = () => $("srvDlg").close();
