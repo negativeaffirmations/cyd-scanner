@@ -754,6 +754,18 @@ transfer to the new repo), not in version control.
   private server must be exposed over HTTPS (Tailscale / Cloudflare Tunnel / LAN cert).
 - Near-term, uploading is just **downloading a session log and uploading the file** to the
   scan-analyzer web app (no THIS-repo change); the pairing + live-POST work above is the later phase.
+- **Live-POST gotcha:** `maybePostLive()` (`features/remote.js`) keeps ONE POST in flight and DROPS every snapshot
+  while it waits, so a slow server reply shows up as a hole in the live data (2026-11-20: ~90 s gaps from a server-side
+  recompute; fixed on the server). Check reply times before blaming DETS / the firmware.
+- **Reading the server (webapp 2026-11-20, scan-analyzer `docs/api-contract.md` "Read API — v1"):** the paired key may
+  also READ once the owner ticks **read** for it (admin page, Keys tab). Bearer on every read; 401 = re-pair, 403 = read
+  off; epochs are LOCAL seconds (UTC getters), MACs `AA:BB:…`, `threat_cat` = our 12 categories lowercase (null =
+  Other). **Device popup "Server history"** (`features/serverhist.js`): one `GET /api/v1/devices/{mac}` per popup open
+  (totals, enrichment, estimate, cross-day verdict, per-day timeline + mini-map), hooked on `#detInfo` like `notify.js`;
+  Settings → Remote Server shows "Reading server data" from `GET /api/v1/whoami`. **Map page "Server data" dialog**
+  (`features/serverfind.js`, `#srvDlg`): devices near the scanner's STATUS `pos` (else the phone's fix,
+  `GET /api/v1/devices/near`) and search by name / partial MAC (`/devices/search`); a result opens the device popup.
+  Read keys see the whole DB (bystander identifiers + GPS), so never log the key or response bodies.
 
 **Hardware / modality expansion (exploratory, beyond RF).** The device is RF-only today, but the
 intent is to gather **other signals** — either by **adding boards** to the current rig or building
