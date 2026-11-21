@@ -1833,7 +1833,7 @@ body {
 }
 
 .leaflet-popup-content .plist {
-  max-height: 200px;
+  max-height: min(200px, 30dvh);
   overflow: auto;
   margin-top: 0.3em;
   font-family: ui-monospace, monospace;
