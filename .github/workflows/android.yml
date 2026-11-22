@@ -1,5 +1,5 @@
 # Builds the COINTEL-FLO Android app (android-app/, docs/android-app.md), signs it with the release key held in the
-# repo's secrets, and publishes it as a GitHub release tagged app-<n>. Obtainium on the phone watches those releases.
+# repo's secrets, and publishes it as a GitHub release tagged app-0.1.<n>. Obtainium on the phone watches those releases.
 name: Android app
 
 on:
@@ -81,5 +81,5 @@ jobs:
             echo
             echo "Install and update with Obtainium (docs/android-app.md)."
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "app-$N" "$RUNNER_TEMP/cointel-flo-$N.apk" \
+          gh release create "app-0.1.$N" "$RUNNER_TEMP/cointel-flo-$N.apk" \
             --target "$GITHUB_SHA" --title "COINTEL-FLO build $N" --notes-file "$RUNNER_TEMP/notes.md"
