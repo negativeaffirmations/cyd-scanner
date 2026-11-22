@@ -1,3 +1,4 @@
+# Actions are pinned to commit SHAs (tag in the comment); update them deliberately.
 # Builds the COINTEL-FLO Android app (android-app/, docs/android-app.md), signs it with the release key held in the
 # repo's secrets, and publishes it as a GitHub release tagged app-0.1.<n>. Obtainium on the phone watches those releases.
 name: Android app
@@ -26,14 +27,17 @@ jobs:
       # renaming this workflow restarts run_number, hence the offset you can raise if that ever happens.
       APP_VERSION_CODE: ${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
 
-      - uses: actions/setup-java@v5
+      # The committed gradle-wrapper.jar runs with the signing secrets around: check it is a genuine Gradle release.
+      - uses: gradle/actions/wrapper-validation@0723195856401067f7a2779048b490ace7a47d7c   # v5
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961   # v5
         with:
           distribution: temurin
           java-version: "21"
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444   # v5
         with:
           node-version: "22"
           cache: npm
@@ -62,8 +66,8 @@ jobs:
           export CFLO_KEYSTORE="$RUNNER_TEMP/release.jks"
           echo "$CFLO_KEYSTORE_B64" | base64 -d > "$CFLO_KEYSTORE"
           chmod +x gradlew
+          trap 'rm -f "$CFLO_KEYSTORE"' EXIT   # remove the key even when the build fails
           ./gradlew assembleRelease --no-daemon
-          rm -f "$CFLO_KEYSTORE"
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/cointel-flo-$APP_VERSION_CODE.apk"
 
       - name: Check the signature

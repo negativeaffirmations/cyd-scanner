@@ -18,11 +18,12 @@ globalThis.document = { readyState:"complete", getElementById: id => id === "toa
 globalThis.location = { href:"https://localhost/", host:"localhost" };
 globalThis.localStorage = { m:{}, getItem(k){ return this.m[k] ?? null; }, setItem(k, v){ this.m[k] = String(v); } };
 globalThis.open = () => null;
-const lnListeners = {}; const scheduled = []; let lnPerm = "prompt";
+const lnListeners = {}; const scheduled = []; const channels = []; let lnPerm = "prompt";
 const LocalNotifications = {
   checkPermissions: async () => ({ display: lnPerm }),
   requestPermissions: async () => { lnPerm = "granted"; return { display: lnPerm }; },
   schedule: async o => { scheduled.push(...o.notifications); },
+  createChannel: async c => { channels.push(c); },
 };
 globalThis.Capacitor = { isNativePlatform: () => true, Plugins: { CfloFiles, LocalNotifications },
   addListener: (p, ev, cb) => { lnListeners[ev] = cb; return { remove(){} }; } };
@@ -47,6 +48,7 @@ const reg = await navigator.serviceWorker.register("notify-sw.js");
 await reg.showNotification("Flock nearby", { body:"AA:BB", tag:"mac-AA", data:{ mac:"AA:BB:CC:DD:EE:FF" } });
 await reg.showNotification("Flock nearby", { body:"again", tag:"mac-AA", data:{ mac:"AA:BB:CC:DD:EE:FF" } });
 ok(scheduled.length === 2 && scheduled[0].id === scheduled[1].id && scheduled[0].smallIcon === "ic_stat_cflo", "same tag -> same id (replaces), small icon set");
+ok(channels.length === 1 && channels[0].visibility === -1 && scheduled.every(n => n.channelId === channels[0].id), "alerts on a channel kept off the lock screen");
 let msg = null; navigator.serviceWorker.addEventListener("message", e => { msg = e.data; });
 lnListeners.localNotificationActionPerformed({ notification: scheduled[1] });
 ok(msg && msg.type === "cflo-notify-click" && msg.mac === "AA:BB:CC:DD:EE:FF", "tap -> cflo-notify-click message with the mac");
