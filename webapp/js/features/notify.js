@@ -15,12 +15,14 @@
 // Hooks: none in the old modules. This polls state.lastDetRows (replaced on every DETS snapshot) and state.status
 // (merged STATUS keys) once a second, and watches #detInfo for the device popup. So a phone holding stale cached
 // copies of detections.js / status.js / categories.js still gets notifications (the stale-module rule).
+// Alert style (details / lock screen / sound / vibration, for all alerts and per type): notifystyle.js.
 // Limit: only while this page runs. Android freezes a screen-off / long-backgrounded tab, and then nothing fires.
 import { state } from '../state.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { CAT_COL, TIER_NAMES, DEAUTH_ALERT } from '../config.js';
 import { openLiveDetail } from './categories.js';
 import { showPage } from '../nav.js';
+import { cleanStyle, styleFor, plainTitle, PLAIN_BODY, initStyleUI } from './notifystyle.js';
 
 // DETS `cat` id -> name (CYD Category enum order). Local copy on purpose: categories.js keeps its own private.
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -40,9 +42,9 @@ let evState = { deauth:false, evil:false, deauthAt:0, evilAt:0 };
 function load(){
   try{
     const o = JSON.parse(localStorage.getItem(KEY) || "null");
-    if(o && typeof o === "object") return { ...DEFAULTS, ...o, watch: Array.isArray(o.watch) ? o.watch : [] };
+    if(o && typeof o === "object") return cleanStyle({ ...DEFAULTS, ...o, watch: Array.isArray(o.watch) ? o.watch : [] });
   }catch(_){}
-  return { ...DEFAULTS, watch:[] };
+  return cleanStyle({ ...DEFAULTS, watch:[] });
 }
 function save(){ try{ localStorage.setItem(KEY, JSON.stringify(cfg)); }catch(_){} }
 const supported = () => "Notification" in window;
@@ -58,10 +60,14 @@ async function ensureSw(){
   }catch(e){ log("Notifications: service worker failed ("+e.message+")."); swReg = null; }
   return swReg;
 }
-async function show(title, body, data, tag){
+// kind: a notifystyle.js KINDS id, "many" (kinds = the folded types) or "general"; picks the alert style.
+async function show(title, body, data, tag, kind, kinds){
   if(!supported() || Notification.permission !== "granted") return false;
-  const opts = { body, tag: tag || "cflo", renotify: true, data: data || {} };
-  if(cfg.vibrate) opts.vibrate = [200, 100, 200];
+  const st = styleFor(cfg, kind || "general", kinds);
+  if(!st.details){ title = plainTitle(kind || "general"); body = PLAIN_BODY; }   // nothing about the device in the text
+  const opts = { body, tag: tag || "cflo", renotify: true, data: data || {}, cfloStyle: st };
+  if(st.vibration && st.vibration.length) opts.vibrate = st.vibration;
+  if(st.sound === "") opts.silent = true;
   const reg = await ensureSw();
   try{
     if(reg) await reg.showNotification(title, opts);
@@ -86,6 +92,7 @@ function devLine(r){
   const nm = r.name && normMac(r.name) !== normMac(r.mac) ? r.name : "";
   return [CAT_NAMES[r.cat || 0] && r.cat ? CAT_NAMES[r.cat] : "", nm || r.mac, r.rssi + " dBm"].filter(Boolean).join(" · ");
 }
+const styleKind = k => k === "cat" || k === "tier" ? "threat" : k;   // reasons() kinds -> alert types
 function titleFor(r, kinds){
   if(kinds.includes("watch")){ const w = cfg.watch.find(x => x.mac === normMac(r.mac)); return "Watched device: " + (w && w.label || r.mac); }
   if(kinds.includes("follow")) return "Possible follower";
@@ -112,12 +119,14 @@ function evalSnapshot(rows){
   fresh.forEach(f => log("Alert: " + titleFor(f.r, f.kinds) + " - " + devLine(f.r)));
   if(fresh.length === 1){
     const { r, kinds } = fresh[0];
+    const sk = [...new Set(kinds.map(styleKind))];
     show(titleFor(r, kinds), devLine(r) + (r.mac && devLine(r).indexOf(r.mac) < 0 ? "\n" + r.mac : ""),
-         { mac:r.mac, kind:kinds[0] }, "cflo-" + normMac(r.mac));
+         { mac:r.mac, kind:kinds[0] }, "cflo-" + normMac(r.mac), sk.length > 1 ? "many" : sk[0], sk);
   } else {
     const tagOf = k => k.includes("watch") ? "Watched: " : k.includes("follow") ? "Follower: " : k.includes("rid") ? "Drone: " : "";
     show(fresh.length + " new alerts", fresh.slice(0, 5).map(f => tagOf(f.kinds) + devLine(f.r)).join("\n") +
-         (fresh.length > 5 ? "\n+" + (fresh.length - 5) + " more" : ""), { kind:"many" }, "cflo-many");
+         (fresh.length > 5 ? "\n+" + (fresh.length - 5) + " more" : ""), { kind:"many" }, "cflo-many",
+         "many", [...new Set(fresh.flatMap(f => f.kinds.map(styleKind)))]);
   }
 }
 function evalStatus(){
@@ -126,11 +135,11 @@ function evalStatus(){
   const daOn = da >= DEAUTH_ALERT, evOn = ev > 0;
   if(cfg.deauth && daOn && !evState.deauth && now - evState.deauthAt > q){
     evState.deauthAt = now; log("Alert: deauth flood " + da + " frames/s");
-    show("Deauth flood", da + " deauth / disassoc frames per second nearby", { kind:"deauth" }, "cflo-deauth");
+    show("Deauth flood", da + " deauth / disassoc frames per second nearby", { kind:"deauth" }, "cflo-deauth", "deauth");
   }
   if(cfg.evil && evOn && !evState.evil && now - evState.evilAt > q){
     evState.evilAt = now; log("Alert: evil twin " + ev + " SSID(s)");
-    show("Evil-twin access point", ev + " SSID" + (ev > 1 ? "s" : "") + " broadcast by APs with different security", { kind:"evil" }, "cflo-evil");
+    show("Evil-twin access point", ev + " SSID" + (ev > 1 ? "s" : "") + " broadcast by APs with different security", { kind:"evil" }, "cflo-evil", "evil");
   }
   evState.deauth = daOn; evState.evil = evOn;
 }
@@ -173,7 +182,7 @@ function renderCard(){
   $("nfTier").value = String(cfg.tierMin);
   $("nfQuiet").value = String(cfg.quietMin);
   $("nfFol").checked = !!cfg.follow; $("nfRid").checked = !!cfg.rid;
-  $("nfDeauth").checked = !!cfg.deauth; $("nfEvil").checked = !!cfg.evil; $("nfVib").checked = !!cfg.vibrate;
+  $("nfDeauth").checked = !!cfg.deauth; $("nfEvil").checked = !!cfg.evil;
   $("nfWatch").innerHTML = cfg.watch.length ? cfg.watch.map(w =>
     `<div class="sessrow keyrow"><span class="material-symbols-outlined">notifications_active</span>` +
     `<div class="sessmain"><span class="sessdate">${esc(w.label || w.mac)}</span><span class="sesssub">${esc(w.mac)}</span></div>` +
@@ -196,7 +205,7 @@ function onCardChange(){
   cfg.tierMin = +$("nfTier").value || 0;
   cfg.quietMin = +$("nfQuiet").value || 15;
   cfg.follow = $("nfFol").checked; cfg.rid = $("nfRid").checked;
-  cfg.deauth = $("nfDeauth").checked; cfg.evil = $("nfEvil").checked; cfg.vibrate = $("nfVib").checked;
+  cfg.deauth = $("nfDeauth").checked; cfg.evil = $("nfEvil").checked;
   save();
 }
 
@@ -232,6 +241,17 @@ function renderPopupButton(){
   };
 }
 
+// A test with one alert type's style (Alert style -> a type -> Send a test).
+const TEST_TEXT = { threat:["Flock nearby (Likely)", "Flock · Example camera · -62 dBm\nAA:BB:CC:00:11:22"],
+  watch:["Watched device: Example", "Example · -70 dBm\nAA:BB:CC:00:11:22"], follow:["Possible follower", "Example tracker · -58 dBm"],
+  rid:["Drone Remote-ID nearby", "Drone · -75 dBm"], deauth:["Deauth flood", "40 deauth / disassoc frames per second nearby"],
+  evil:["Evil-twin access point", "1 SSID broadcast by APs with different security"] };
+async function testKind(kind){
+  if(!cfg.on || !supported() || Notification.permission !== "granted"){ toast("Turn notifications on first.", { err:true }); return; }
+  const [t, b] = TEST_TEXT[kind] || ["Test notification", "Scanner alerts will look like this."];
+  if(await show("Test: " + t, b + "\n(This is only a test.)", { kind:"test" }, "cflo-test-" + kind, kind)) toast("Test sent.");
+}
+
 // ---- tapping a notification ----
 function onSwMessage(e){
   const m = e.data || {};
@@ -248,7 +268,7 @@ export function initNotify(){
   const card = $("nfCard"); if(!card) return;
   $("nfEnableBtn").onclick = toggleOn;
   $("nfTestBtn").onclick = async () => {
-    if(await show("Test notification", "Scanner alerts will look like this.", { kind:"test" }, "cflo-test")) toast("Test sent.");
+    if(await show("Test notification", "Scanner alerts will look like this.", { kind:"test" }, "cflo-test", "general")) toast("Test sent.");
   };
   $("nfCats").addEventListener("click", e => {
     const b = e.target.closest(".tcard"); if(!b) return;
@@ -256,7 +276,8 @@ export function initNotify(){
     cfg.cats = cfg.cats.includes(c) ? cfg.cats.filter(x => x !== c) : cfg.cats.concat(c);
     save(); renderCard();
   });
-  ["nfTier","nfQuiet","nfFol","nfRid","nfDeauth","nfEvil","nfVib"].forEach(id => $(id).addEventListener("change", onCardChange));
+  ["nfTier","nfQuiet","nfFol","nfRid","nfDeauth","nfEvil"].forEach(id => $(id).addEventListener("change", onCardChange));
+  initStyleUI(cfg, save, testKind);
   $("nfWatch").addEventListener("click", e => {
     const b = e.target.closest(".keyforget"); if(!b) return;
     cfg.watch = cfg.watch.filter(w => w.mac !== b.dataset.mac); save(); renderCard();

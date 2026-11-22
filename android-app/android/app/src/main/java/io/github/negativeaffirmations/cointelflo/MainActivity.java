@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(CfloFilesPlugin.class);   // app's own plugin: saves downloads to Download/COINTEL-FLO/
+        registerPlugin(CfloNotifyPlugin.class);  // alert sounds, vibration patterns, lock-screen visibility
         super.onCreate(savedInstanceState);
     }
 }

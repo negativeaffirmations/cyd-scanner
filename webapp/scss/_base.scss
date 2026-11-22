@@ -144,6 +144,22 @@ details {
 }
 summary { cursor:pointer; font-weight:600; }
 
+// --- Notifications -> Alert style (js/features/notifystyle.js) ---
+.nfstyle { margin-top:.9em; padding-top:.7em; border-top:1px solid $color-border; }
+.nfhdr { display:block; margin-bottom:.2em; }
+.nfl { display:block; margin:.6em 0 .2em; }
+.nfchk { display:flex; align-items:center; gap:.5em; }
+.nfrow { display:flex; flex-wrap:wrap; align-items:center; gap:.5em; }
+.nfrow input[type=text] { flex:1 1 10em; min-width:0; }
+.nfkind .nfsum { font-weight:400; margin-left:.4em; }
+.nftest { margin-top:.7em; }
+.nfrec { margin-top:.5em; }
+.nfpad {
+  display:block; width:100%; min-height:5.5em; margin-bottom:.5em; font-size:1rem;
+  user-select:none; -webkit-user-select:none; touch-action:none;
+  &.on { background:$color-accent; color:#fff; }
+}
+
 // --- Session logs: multi-select list of scans (a scan = one or more joined part files) ---
 .sessbar { display:flex; align-items:center; justify-content:space-between; gap:.6em; margin:.5em 0 .2em; font-size:.9rem; }
 .sessbar label { display:flex; align-items:center; gap:.4em; cursor:pointer; }

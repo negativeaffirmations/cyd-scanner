@@ -671,6 +671,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   flood / evil twin (the banner thresholds). A device alerts when it appears (first seen, or back after the quiet time,
   default 15 min); one snapshot = one notification (several folded). No hooks in old modules: it polls
   `state.lastDetRows` / `state.status` each second and watches `#detInfo`. Fires only while the page runs.
+  **Alert style (2026-11-22, `features/notifystyle.js`):** one style for all alerts + per-type overrides (threat / watch /
+  follow / rid / deauth / evil) of details (default shown; hidden = plain text, keeps MACs out of Android's notification
+  history), lock screen (app, default off), sound (app, phone picker) and vibration (presets / custom / recorder). The app
+  makes one Android channel per style, `cflo-<kind>-<hash>` (`CfloNotifyPlugin.java`); docs/android-app.md "Alert style".
   Also present: a magenta **follower UI** (banner from STATUS `fol` + per-row follow markers + a
   follower-detail modal with a Leaflet track map) and a **red deauth/evil-twin alert banner** (STATUS
   `deauth`/`evil`) + behavioral-flag badges on rows. On connect it takes a **Screen Wake Lock**
@@ -740,7 +744,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   serialized; own chooser; `getDevices()` = units this app connected to; presence via one shared LE scan, stop debounced
   10 s, renewed every 25 min); `shim-platform.js` = Scan QR buttons (keys / server pairing), `<a download>` blob saves ->
   the app's `CfloFilesPlugin.java` (MediaStore `Download/COINTEL-FLO/`), `Notification` + `navigator.serviceWorker`
-  stand-ins over local-notifications (channel `cflo-alerts`, kept off the lock screen), back gesture, `window.open` ->
+  stand-ins over local-notifications (one channel per alert style, `CfloNotifyPlugin.java`), back gesture, `window.open` ->
   browser; `app.css` = status-bar inset. CDN libraries + fonts are downloaded at build time (SHA-256 pinned) so it
   starts offline. **When the web app starts using another browser API, check it works in the app or add a stand-in
   here** — never fork web app code for the app.

@@ -1,6 +1,13 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-22: Android app STAGE 1 BUILT (build 6), waiting for the owner's phone test
+## RESUME HERE — 2026-11-22 (later): notification Alert style
+- Owner tested build 6: it works, notifications arrive (a greyed switch on a Samsung settings page was cosmetic).
+- Built on request: Settings -> Notifications -> **Alert style** (details shown/hidden, lock screen, sound, vibration;
+  all alerts + per type). Details: docs/android-app.md "Alert style". Web `?v=20261122a`, footer `alert styles`.
+- **Owner to check on the phone:** pick a sound per type, a custom / recorded vibration, Send a test per type, hidden
+  details (plain text, nothing in notification history), lock screen on/off.
+
+## 2026-11-22: Android app STAGE 1 BUILT (build 6), owner phone test PASSED (see above)
 Plan, decisions, progress and review results: **[docs/android-app.md](docs/android-app.md)**; CLAUDE.md "Android app" has the
 rules. Everything is merged to `main` and pushed; the latest release is `app-0.1.6` (Obtainium). Built while the owner
 was away; nothing below has run on a phone yet except builds 2-3 (install + update path).

@@ -18,14 +18,17 @@ globalThis.document = { readyState:"complete", getElementById: id => id === "toa
 globalThis.location = { href:"https://localhost/", host:"localhost" };
 globalThis.localStorage = { m:{}, getItem(k){ return this.m[k] ?? null; }, setItem(k, v){ this.m[k] = String(v); } };
 globalThis.open = () => null;
-const lnListeners = {}; const scheduled = []; const channels = []; let lnPerm = "prompt";
+const lnListeners = {}; const removed = []; const scheduled = []; const channels = []; let lnPerm = "prompt";
 const LocalNotifications = {
   checkPermissions: async () => ({ display: lnPerm }),
   requestPermissions: async () => { lnPerm = "granted"; return { display: lnPerm }; },
   schedule: async o => { scheduled.push(...o.notifications); },
-  createChannel: async c => { channels.push(c); },
+  removeDeliveredNotifications: async o => { removed.push(...o.notifications.map(n => n.id)); },
 };
-globalThis.Capacitor = { isNativePlatform: () => true, Plugins: { CfloFiles, LocalNotifications },
+const CfloNotify = { ensureChannel: async c => { channels.push(c); return { id:c.id }; },
+  pickSound: async () => ({ uri:"content://media/internal/audio/media/7", title:"Chime" }), soundTitle: async () => ({ title:"Chime" }),
+  vibrate: async () => {}, stopVibrate: async () => {} };
+globalThis.Capacitor = { isNativePlatform: () => true, Plugins: { CfloFiles, LocalNotifications, CfloNotify },
   addListener: (p, ev, cb) => { lnListeners[ev] = cb; return { remove(){} }; } };
 eval(src);
 const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if(!c) process.exitCode = 1; };
@@ -45,10 +48,23 @@ ok(/Saved to Downloads\/COINTEL-FLO: small\.jsonl/.test(toast.textContent), "toa
 ok(Notification.permission === "default", "permission starts as default");
 ok(await Notification.requestPermission() === "granted" && Notification.permission === "granted", "requestPermission -> granted");
 const reg = await navigator.serviceWorker.register("notify-sw.js");
-await reg.showNotification("Flock nearby", { body:"AA:BB", tag:"mac-AA", data:{ mac:"AA:BB:CC:DD:EE:FF" } });
-await reg.showNotification("Flock nearby", { body:"again", tag:"mac-AA", data:{ mac:"AA:BB:CC:DD:EE:FF" } });
+await reg.showNotification("Flock nearby", { body:"AA:BB", tag:"mac-AA", renotify:true, data:{ mac:"AA:BB:CC:DD:EE:FF" } });
+await reg.showNotification("Flock nearby", { body:"again", tag:"mac-AA", renotify:true, data:{ mac:"AA:BB:CC:DD:EE:FF" } });
 ok(scheduled.length === 2 && scheduled[0].id === scheduled[1].id && scheduled[0].smallIcon === "ic_stat_cflo", "same tag -> same id (replaces), small icon set");
-ok(channels.length === 1 && channels[0].visibility === -1 && scheduled.every(n => n.channelId === channels[0].id), "alerts on a channel kept off the lock screen");
+ok(channels.length === 2 && channels.every(c => c.id === channels[0].id && c.lockscreen === false && c.kind === "general") &&
+   scheduled.every(n => n.channelId === channels[0].id), "no style -> the general channel, off the lock screen");
+ok(removed.length === 2 && removed[0] === scheduled[0].id, "a renotify takes the shown one away first (so it alerts again)");
+await reg.showNotification("Watched", { body:"x", tag:"w", cfloStyle:{ kind:"watch", sound:"", vibration:[100,50,100], lockscreen:true } });
+await reg.showNotification("Watched", { body:"y", tag:"w", cfloStyle:{ kind:"watch", sound:"", vibration:[100,50,100], lockscreen:true } });
+await reg.showNotification("Watched", { body:"z", tag:"w", cfloStyle:{ kind:"watch", sound:"", vibration:[300], lockscreen:true } });
+await reg.showNotification("Watched", { body:"back", tag:"w", cfloStyle:{ kind:"watch", sound:"", vibration:[100,50,100], lockscreen:true } });
+const w = channels.filter(c => c.kind === "watch");
+ok(w.length === 4 && w[0].id === w[1].id && w[0].id !== w[2].id && w[3].id === w[0].id && /^cflo-watch-[0-9a-z]+$/.test(w[0].id) &&
+   w[0].sound === "" && w[0].lockscreen === true && w[0].vibration.join() === "100,50,100" &&
+   scheduled[4].channelId === w[2].id && scheduled[5].channelId === w[0].id,
+   "a style -> its own cflo-<kind>-<hash> channel, re-ensured on every alert (A -> B -> A asks for A again)");
+const ns = window.__cfloApp && window.__cfloApp.notifyStyle;
+ok(ns && (await ns.pickSound("default")).title === "Chime" && await ns.soundTitle("x") === "Chime", "notifyStyle helpers exposed");
 let msg = null; navigator.serviceWorker.addEventListener("message", e => { msg = e.data; });
 lnListeners.localNotificationActionPerformed({ notification: scheduled[1] });
 ok(msg && msg.type === "cflo-notify-click" && msg.mac === "AA:BB:CC:DD:EE:FF", "tap -> cflo-notify-click message with the mac");
