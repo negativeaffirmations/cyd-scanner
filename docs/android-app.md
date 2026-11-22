@@ -169,6 +169,17 @@ Each step ends with something you can check on the phone.
   - Manifest: `allowBackup=false` + data-extraction rules excluding everything (keys + cached logs never go to Google
     backup or a phone transfer).
   - Plugins for later steps are already in (`filesystem`, `share`, `local-notifications`, `app`).
+- **Steps 3-4 (part) BUILT, not yet phone-tested (2026-11-22):**
+  - Downloads: `shim-platform.js` remembers each blob behind `URL.createObjectURL`, catches `<a download>` clicks
+    (`util/dom.js` saveBlob) and streams the blob in base64 chunks (768 KB) to the app's own plugin
+    `CfloFilesPlugin.java` (registered in `MainActivity`), which writes `Download/COINTEL-FLO/<name>` through
+    MediaStore (no storage permission; minSdk raised 24 -> 29 = Android 10). Saves run one after another; the toast
+    says where the file went.
+  - Notifications: `window.Notification` + `navigator.serviceWorker` stand-ins backed by
+    `@capacitor/local-notifications` (a tag maps to a stable id, so a newer alert replaces the older like the web);
+    a tap posts the same `cflo-notify-click` message `notify-sw.js` sends, so `notify.js` opens the device as before.
+    Status-bar icon `res/drawable/ic_stat_cflo.xml` (radar mark), tint `#AA00AA`.
+  - Mock tests: `npm test` = 26 checks (Bluetooth 16, saving 6, notifications 4), run in CI before each build.
   - The debug APK is ~28 MB, mostly the ML Kit / camera libraries the QR plugin brings. Fine for now; revisit if size matters.
 
 ## Known issues
