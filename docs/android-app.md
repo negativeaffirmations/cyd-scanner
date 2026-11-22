@@ -77,7 +77,7 @@ lock, clipboard. Each is still on the test list below.
   from github.io, so the scan-analyzer server has to allow that origin (CORS). I'll ask its session; it is a
   one-line config there. (The fallback, routing requests through native code, would lose the 20 s upload
   timeout handling, so I'd rather not.)
-- **The web app stays.** Use either while stage 1 settles. Whether Pages freezes later is a separate decision.
+- **The web app stays** (owner, 2026-11-22: Pages is kept, not frozen; both stay working).
 
 ## Steps
 
@@ -187,7 +187,7 @@ Each step ends with something you can check on the phone.
     REV-004 `disconnect()` during a connect rejects it at once (switch "not found" in 8 s, not 15); REV-005 a GATT op
     refused at once (stack still busy after a timed-out op) is retried once after 400 ms.
   - SEC-A1 alerts go to channel `cflo-alerts` with lock-screen visibility SECRET (bystander MACs / names stay off the
-    lock screen; sound + vibration remain) — **owner may prefer them visible; it's one setting**. SEC-A2 a server QR
+    lock screen; sound + vibration remain) — **owner confirmed 2026-11-22: keep details off the lock screen**. SEC-A2 a server QR
     that would replace a paired server asks first, naming the new host; that button only takes server links.
   - Unused `SCHEDULE_EXACT_ALARM` / `RECEIVE_BOOT_COMPLETED` removed from the manifest; workflow actions pinned to
     commit SHAs, Gradle wrapper validated, keystore removed by `trap` even on a failed build.
