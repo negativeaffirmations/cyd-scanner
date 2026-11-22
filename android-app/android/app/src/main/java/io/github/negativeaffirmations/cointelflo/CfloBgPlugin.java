@@ -57,9 +57,23 @@ public class CfloBgPlugin extends Plugin {
 
     private final Runnable onDisconnect = () -> main.post(() -> notifyListeners("disconnectRequested", new JSObject()));
 
+    private final Runnable onServiceStopped = () -> main.post(() -> {
+        try {
+            if (getBridge() != null && getBridge().getWebView() instanceof CfloWebView)
+                ((CfloWebView) getBridge().getWebView()).serviceStopped();
+        } catch (Exception e) { Log.w(TAG, "serviceStopped: " + e); }
+    });
+
     @Override
     public void load() {
         CfloBgService.onDisconnectRequest = onDisconnect;
+        CfloBgService.onStopped = onServiceStopped;
+    }
+
+    private void appState(boolean fg) {
+        JSObject o = new JSObject();
+        o.put("fg", fg);
+        notifyListeners("appState", o);
     }
 
     // ---------- foreground service ----------
@@ -76,6 +90,7 @@ public class CfloBgPlugin extends Plugin {
             ContextCompat.startForegroundService(ctx, i);
         } catch (Exception e) {   // Android 12+: refused when the app is in the background
             CfloBgService.startPending = false;
+            CfloDiag.log(ctx, "service start refused: " + e.getClass().getSimpleName());
             call.reject("Could not start the background service: " + e.getMessage());
             return;
         }
@@ -91,6 +106,7 @@ public class CfloBgPlugin extends Plugin {
 
     /** stopService only once a pending start reached startForeground (else Android kills the app); waits up to ~6 s. */
     private void stopWhenSafe(String lost, int tries) {
+        if (tries == 0 && CfloBgService.running) CfloDiag.log(getContext(), "service stop requested" + (lost != null && !lost.isEmpty() ? " (link lost)" : ""));
         if (CfloBgService.startPending && tries < 30) {
             main.postDelayed(() -> stopWhenSafe(lost, tries + 1), 200);
             return;
@@ -109,6 +125,7 @@ public class CfloBgPlugin extends Plugin {
     private JSObject statusObj() {
         JSObject r = new JSObject();
         r.put("running", CfloBgService.running);
+        r.put("fg", !inBackground);
         PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         r.put("batteryExempt", pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName()));
         r.put("location", hasLocation());
@@ -117,6 +134,40 @@ public class CfloBgPlugin extends Plugin {
 
     @PluginMethod
     public void status(PluginCall call) { call.resolve(statusObj()); }
+
+    // ---------- diagnostics (CfloDiag) ----------
+    /** The page answers each background tick: proves its JavaScript runs, and carries its own counters. */
+    @PluginMethod
+    public void ack(PluginCall call) {
+        CfloDiag.acks++;
+        CfloDiag.lastAckAt = SystemClock.elapsedRealtime();
+        String c = call.getString("c", "");
+        CfloDiag.js = c.length() > 200 ? c.substring(0, 200) : c;
+        call.resolve();
+    }
+
+    /** A line from the page (connect / disconnect / alert errors); counts and states only. */
+    @PluginMethod
+    public void diagNote(PluginCall call) {
+        String m = call.getString("m", "");
+        CfloDiag.log(getContext(), "page " + (m.length() > 200 ? m.substring(0, 200) : m));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void diagLog(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("text", CfloDiag.read(getContext(), 400 * 1024));
+        r.put("state", CfloDiag.phoneState(getContext()));
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void diagClear(PluginCall call) {
+        CfloDiag.clear(getContext());
+        CfloDiag.log(getContext(), "log cleared " + CfloDiag.phoneState(getContext()));
+        call.resolve();
+    }
 
     @PluginMethod
     public void requestBatteryExemption(PluginCall call) {
@@ -143,13 +194,15 @@ public class CfloBgPlugin extends Plugin {
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!inBackground || !(CfloBgService.running || CfloBgService.startPending)) return;   // start() restarts it
-            if (CfloBgService.running) notifyListeners("tick", new JSObject());
+            if (CfloBgService.running) { CfloDiag.ticksSent++; notifyListeners("tick", new JSObject()); }
             main.postDelayed(this, TICK_MS);
         }
     };
 
     @Override
     protected void handleOnStop() {
+        CfloDiag.log(getContext(), "app -> background (service " + (CfloBgService.running ? "on" : "off") + ") " + CfloDiag.phoneState(getContext()));
+        appState(false);
         inBackground = true;
         main.removeCallbacks(tick);
         main.postDelayed(tick, TICK_MS);
@@ -157,6 +210,8 @@ public class CfloBgPlugin extends Plugin {
 
     @Override
     protected void handleOnStart() {
+        if (inBackground) CfloDiag.log(getContext(), "app -> foreground");
+        appState(true);
         inBackground = false;
         main.removeCallbacks(tick);
     }
@@ -169,6 +224,7 @@ public class CfloBgPlugin extends Plugin {
         // outlive it (wake lock + a "Connected" notification with nothing behind it).
         stopWhenSafe(null, 0);
         if (CfloBgService.onDisconnectRequest == onDisconnect) CfloBgService.onDisconnectRequest = null;
+        if (CfloBgService.onStopped == onServiceStopped) CfloBgService.onStopped = null;
     }
 
     // ---------- native location ----------
@@ -208,6 +264,7 @@ public class CfloBgPlugin extends Plugin {
         if (l.hasSpeed()) o.put("spd", l.getSpeed());
         if (l.hasBearing()) o.put("hdg", l.getBearing());
         o.put("time", now - Math.max(0, ageMs));
+        CfloDiag.fixes++;
         notifyListeners("location", o);
     }
 
@@ -230,6 +287,7 @@ public class CfloBgPlugin extends Plugin {
             catch (Exception e) { Log.w(TAG, "network provider: " + e); }
         }
         if (gpsL == null && netL == null) { call.reject("Location permission denied", "denied"); return; }
+        CfloDiag.log(getContext(), "gps on (gps=" + (gpsL != null ? 1 : 0) + " net=" + (netL != null ? 1 : 0) + ")");
         Location last = null;   // a recent cached fix gets the page going at once (it drops ones > 10 s old)
         boolean lastGps = gpsL != null;
         try { last = lm.getLastKnownLocation(lastGps ? LocationManager.GPS_PROVIDER : LocationManager.NETWORK_PROVIDER); } catch (Exception e) {}

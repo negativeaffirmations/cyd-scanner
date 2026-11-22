@@ -25,7 +25,7 @@ globalThis.Capacitor = { isNativePlatform: () => true, Plugins: { CfloBg },
 const els = {};
 function el(id){ return els[id] || (els[id] = { id, hidden:false, textContent:"", className:"", style:{}, classList:{ remove(){} },
   _click:null, addEventListener(t, f){ if(t === "click") this._click = f; } }); }
-const nfCard = { insertAdjacentElement(pos, card){ els.bgCard = card; el("bgState"); el("bgAllowBtn"); } };
+const nfCard = { insertAdjacentElement(pos, card){ els.bgCard = card; el("bgState"); el("bgAllowBtn"); el("bgLogBtn"); } };
 globalThis.document = { readyState:"complete", visibilityState:"visible", addEventListener(){},
   getElementById: id => id === "nfCard" ? nfCard : (id === "toast" || els[id]) ? el(id) : null,
   createElement: () => ({ style:{}, set innerHTML(v){} }) };
@@ -62,6 +62,11 @@ let ticks = 0; window.addEventListener("cflo-bg-tick", () => ticks++);
 listeners["CfloBg:tick"](); document.visibilityState = "hidden"; listeners["CfloBg:tick"](); listeners["CfloBg:tick"]();
 ok(ticks === 2, "native tick -> cflo-bg-tick only while hidden");
 document.visibilityState = "visible";
+// The page stays "visible" in the background now (CfloWebView): the app state comes from appState.
+listeners["CfloBg:appState"]({ fg:false }); listeners["CfloBg:tick"]();
+ok(ticks === 3, "app in background but page still 'visible' -> ticks forwarded (appState)");
+listeners["CfloBg:appState"]({ fg:true }); listeners["CfloBg:tick"]();
+ok(ticks === 3, "app back on screen -> ticks not forwarded");
 listeners["CfloBg:disconnectRequested"]();
 ok(disconnectAllCalls === 1, "notification Disconnect -> every scanner disconnected");
 

@@ -17,7 +17,7 @@ const BLE = {
 };
 globalThis.window = globalThis;
 globalThis.localStorage = { m:{}, getItem(k){return this.m[k]??null}, setItem(k,v){this.m[k]=String(v)} };
-globalThis.Capacitor = { Plugins:{BluetoothLe:BLE}, addListener:(p,ev,cb)=>{ if(!listeners.has(ev)) listeners.set(ev,[]); listeners.get(ev).push(cb); return {remove(){ const a=listeners.get(ev); a.splice(a.indexOf(cb),1);} }; } };
+globalThis.Capacitor = { Plugins:{BluetoothLe:BLE, CfloBg:{}}, addListener:(p,ev,cb)=>{ if(!listeners.has(ev)) listeners.set(ev,[]); listeners.get(ev).push(cb); return {remove(){ const a=listeners.get(ev); a.splice(a.indexOf(cb),1);} }; } };
 Object.defineProperty(globalThis,"navigator",{value:{},configurable:true,writable:true});
 eval(src);
 const ok = (c,m)=>{ console.log((c?"PASS ":"FAIL ")+m); if(!c) process.exitCode=1; };
@@ -64,3 +64,20 @@ hangConnect = false;
 // REV-005: an op refused at once is retried once
 await dev.gatt.connect(); const svc2 = await dev.gatt.getPrimaryService(SVC); const st2 = await svc2.getCharacteristic(ST);
 refuseOnce = true; const v2 = await st2.readValue(); ok(new TextDecoder().decode(v2)==="hi", "refused read retried once and succeeds");
+// Stage 2: presence scanning pauses while the app is in the background, resumes for the same watcher on return
+{
+  const before = calls.length;
+  const c3 = new AbortController(); await dev.watchAdvertisements({signal:c3.signal});
+  ok(calls.slice(before).includes("scan"), "watch starts the scan");
+  emit("appState", { fg:false }); await new Promise(r=>setTimeout(r,20));
+  ok(calls.at(-1)==="stopscan", "app in background -> presence scan stopped at once");
+  let got=0; dev.addEventListener("advertisementreceived", ()=>got++);
+  emit("appState", { fg:true }); await new Promise(r=>setTimeout(r,20));
+  ok(calls.at(-1)==="scan", "app back on screen -> scan restarted");
+  emit("onScanResult",{device:{deviceId:dev.id},rssi:-60});
+  ok(got===1, "the same watcher still gets advertisements");
+  c3.abort();
+}
+// diag counters
+ok(window.__cfloApp.diag && window.__cfloApp.diag.ble > 0, "BLE notifications counted for the background log");
+process.exit();

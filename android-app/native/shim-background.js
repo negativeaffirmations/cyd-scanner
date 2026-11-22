@@ -15,7 +15,14 @@
   const app = window.__cfloApp || {};
   const NAMES_KEY = "cflo.unitNames";          // unit names by device id (webapp/js/ble/devices.js)
   const STOP_DELAY_MS = +window.__cfloTestStopDelay || 10000;                // Switch scanner = disconnect + connect (up to 8 s): don't flap the service
-  const visible = () => document.visibilityState === "visible";
+  // While the service runs, CfloWebView keeps the page "visible" to Chromium so it keeps running in the background;
+  // the real app state comes from the plugin's appState event.
+  let appFg = true;
+  C.addListener("CfloBg", "appState", ev => {
+    appFg = !!(ev && ev.fg);
+    if(appFg && typeof refresh === "function") refresh();   // back from the battery prompt etc.: repaint the card
+  });
+  const visible = () => appFg && document.visibilityState === "visible";
   function nameOf(id){ try{ return (JSON.parse(localStorage.getItem(NAMES_KEY) || "{}") || {})[id] || ""; }catch(e){ return ""; } }
 
   // ---------- the foreground service follows the scanner link ----------
@@ -34,7 +41,7 @@
     const key = t.title + t.text + (locOn ? "|L" : "");
     if(running && key === shownText) return;
     try{ await BG.start(t); running = true; shownText = key; }
-    catch(e){ console.warn("background service:", (e && e.message) || e); }
+    catch(e){ console.warn("background service:", (e && e.message) || e); note("service start failed (" + (visible() ? "open" : "background") + ")"); }
   }
   function stopSoon(){
     clearTimeout(stopTimer);
@@ -52,6 +59,8 @@
   const link = app.bleLink;
   if(link && link.events){
     link.events.addEventListener("link", ev => {
+      note("scanner " + (ev.connected ? "connected" : ev.lost ? "link lost" : "disconnected") + " (links " +
+        (live.size + (ev.connected ? 1 : -1)) + ", " + (visible() ? "app open" : "app in background") + ")");
       if(ev.connected){
         live.add(ev.id); lastLostId = "";
         clearTimeout(stopTimer); stopTimer = 0;
@@ -76,7 +85,15 @@
   // REV-002: a page that starts has no link yet, so a service left by an earlier page (activity recreated) must go.
   BG.stop({}).catch(() => {});
   C.addListener("CfloBg", "disconnectRequested", () => { if(link && link.disconnectAll) link.disconnectAll(); });
-  C.addListener("CfloBg", "tick", () => { if(!visible()) window.dispatchEvent(new Event("cflo-bg-tick")); });
+  // Background log: every tick is answered with the page's counters, proving its JavaScript still runs.
+  const diag = () => (window.__cfloApp && window.__cfloApp.diag) || {};
+  const note = m => { try{ BG.diagNote({ m }).catch(() => {}); }catch(e){} };
+  C.addListener("CfloBg", "tick", () => {
+    if(!visible()) window.dispatchEvent(new Event("cflo-bg-tick"));
+    const d = diag();
+    try{ BG.ack({ c: "ble=" + (d.ble || 0) + " dets=" + (d.dets || 0) + " shown=" + (d.shown || 0) + " failed=" + (d.failed || 0) +
+      " links=" + live.size + " vis=" + (visible() ? 1 : 0) }).catch(() => {}); }catch(e){}
+  });
 
   // ---------- navigator.geolocation on native GPS ----------
   const PERMISSION_DENIED = 1, POSITION_UNAVAILABLE = 2, TIMEOUT = 3;
@@ -165,13 +182,43 @@
     card.className = "card"; card.id = "bgCard"; card.style.marginTop = "12px";
     card.innerHTML = '<strong class="cardhdr">Run in the background</strong>' +
       '<div id="bgState" class="sub keystate" style="margin:.4em 0">Checking…</div>' +
-      '<button id="bgAllowBtn" hidden>Allow background running</button>';
+      '<button id="bgAllowBtn" hidden>Allow background running</button>' +
+      '<div class="sub" style="margin-top:.6em">The background log records what the app did with the screen off (counts and phone state only, no devices or places).</div>' +
+      '<button id="bgLogBtn" class="secondary" style="margin-top:.4em">Background log</button>';
     anchor.insertAdjacentElement("beforebegin", card);
+    document.getElementById("bgLogBtn").addEventListener("click", showLog);
     document.getElementById("bgAllowBtn").addEventListener("click", async () => {
       try{ exempt = !!(await BG.requestBatteryExemption()).batteryExempt; render(); }
       catch(e){ refresh(); }
     });
     refresh();
+  }
+  // The log viewer: newest last, Save writes it to Downloads/COINTEL-FLO (through shim-platform.js's download path).
+  async function showLog(){
+    let text = "", state = "";
+    try{ const r = await BG.diagLog(); text = r.text || ""; state = r.state || ""; }catch(e){ text = "Could not read the log: " + ((e && e.message) || e); }
+    const d = document.createElement("dialog");
+    d.innerHTML = '<div class="modalhdr"><strong>Background log</strong></div>' +
+      '<div class="sub" data-r="state" style="margin:.3em 0"></div>' +
+      '<pre data-r="log" style="max-height:55vh;overflow:auto;font-size:.68rem;white-space:pre-wrap;margin:0"></pre>' +
+      '<div class="fsactions dlgactions"><button class="secondary" data-r="clear">Clear</button> ' +
+      '<button class="secondary" data-r="save">Save</button> <button data-r="close">Close</button></div>';
+    const $r = k => d.querySelector('[data-r="' + k + '"]');
+    $r("state").textContent = "Now: " + state;
+    $r("log").textContent = text || "(empty)";
+    const end = () => { try{ d.close(); }catch(e){} d.remove(); };
+    $r("close").addEventListener("click", end);
+    d.addEventListener("cancel", e => { e.preventDefault(); end(); });
+    $r("clear").addEventListener("click", async () => { try{ await BG.diagClear(); }catch(e){} end(); showLog(); });
+    $r("save").addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+      a.download = "cflo-background-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "") + ".txt";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    });
+    document.body.append(d); d.showModal();
+    const pre = $r("log"); pre.scrollTop = pre.scrollHeight;
   }
   // Once per app start, on the first connection while the app is not exempt: point at the card.
   let tipped = false;

@@ -55,6 +55,24 @@ public class CfloBgService extends Service {
             handler.postDelayed(this, WAKE_RENEW_MS);
         }
     };
+    // Diagnostics heartbeat (CfloDiag): a line every 30 s while running. A gap = the process was frozen; ticks without
+    // acks = the page's JavaScript stopped; the page's counters show whether scanner data and alerts kept coming.
+    private static final long HB_MS = 30000;
+    private long hbTicks = 0, hbAcks = 0, hbFixes = 0;
+    private final Runnable heartbeat = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            long t = CfloDiag.ticksSent, a = CfloDiag.acks, f = CfloDiag.fixes, la = CfloDiag.lastAckAt;
+            String ack = la == 0 ? "never" : ((android.os.SystemClock.elapsedRealtime() - la) / 1000) + "s";
+            CfloDiag.log(CfloBgService.this, "hb ticks+" + (t - hbTicks) + " acks+" + (a - hbAcks) + " lastAck=" + ack
+                    + " fixes+" + (f - hbFixes) + " wake=" + (wake != null && wake.isHeld() ? 1 : 0) + " fg=" + types
+                    + " page{" + CfloDiag.js + "} " + CfloDiag.phoneState(CfloBgService.this));
+            hbTicks = t; hbAcks = a; hbFixes = f;
+            handler.postDelayed(this, HB_MS);
+        }
+    };
+    /** Set by CfloBgPlugin: run on the main thread whenever the service ends (CfloWebView stops keeping the page visible). */
+    static volatile Runnable onStopped = null;
     /** Set by CfloBgPlugin: run on the main thread when the notification's Disconnect is tapped. */
     static volatile Runnable onDisconnectRequest = null;
 
@@ -148,6 +166,7 @@ public class CfloBgService extends Service {
                 return true;
             } catch (Exception e) {   // SecurityException / ForegroundServiceStartNotAllowedException: never crash the app
                 Log.w(TAG, "startForeground(" + t + ") refused: " + e);
+                CfloDiag.log(this, "service startForeground(" + t + ") refused: " + e.getClass().getSimpleName());
             }
         }
         return types != 0;
@@ -185,6 +204,12 @@ public class CfloBgService extends Service {
         if (wake != null) {
             try { wake.acquire(WAKE_MAX_MS); } catch (Exception e) { Log.w(TAG, "wake lock: " + e); }
         }
+        if (!running) {
+            CfloDiag.log(this, "service started fg=" + types + " " + CfloDiag.phoneState(this));
+            hbTicks = CfloDiag.ticksSent; hbAcks = CfloDiag.acks; hbFixes = CfloDiag.fixes;
+            handler.removeCallbacks(heartbeat);
+            handler.postDelayed(heartbeat, HB_MS);
+        }
         running = true;
         handler.removeCallbacks(renewWake);
         handler.postDelayed(renewWake, WAKE_RENEW_MS);
@@ -209,6 +234,13 @@ public class CfloBgService extends Service {
 
     @Override
     public void onDestroy() {
+        handler.removeCallbacks(heartbeat);
+        CfloDiag.log(this, "service stopped");
+        running = false;
+        Runnable r = onStopped;
+        if (r != null) {
+            try { r.run(); } catch (Exception e) { Log.w(TAG, "onStopped: " + e); }
+        }
         running = false;
         releaseWake();
         super.onDestroy();
