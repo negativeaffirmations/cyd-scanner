@@ -292,3 +292,29 @@ froze the app process, and with it the web view. Nothing was lost on the scanner
   Confirmed by reading Capacitor 8.6.0: `Bridge.onPause` pauses the web view only when the `KeepRunning` preference is
   false (default true, not set here), so JavaScript keeps running in the background. A renderer crash kills the app
   (Capacitor returns false from onRenderProcessGone); keep the web view's default renderer priority.
+- **Owner walk 1 (build 8, 2026-11-22, fleet of 3):** alerts kept coming for ~1-2 min after the screen went off or the
+  app went to the background, then stopped. Cause not known yet; candidates: the page's JavaScript freezes, the whole
+  process is frozen (Samsung), the scanner link stalls, or simply nothing new to alert on (a device alerts once per
+  quiet time).
+- **Background log (build 9):** `CfloDiag.java` keeps a private text log (2 × 256 KB) the owner reads in Settings →
+  Notifications → Background log (Save → Downloads). The service writes a heartbeat line every 30 s: ticks sent / answered
+  by the page (+ seconds since the last answer), GPS fixes, wake lock, foreground types, the page's cumulative counters
+  (BLE notifications, DETS packets, alerts shown / failed, links, visible) and the phone state (screen, Doze, light Doze,
+  battery saver, exemption, background-restricted). Plus app foreground / background switches, service start / stop,
+  scanner connect / disconnect / lost, alert failures. Counts and states only: no MACs, names or positions. Reading it: a
+  gap between heartbeats = the process was frozen; `ticks+` without `acks+` = the page's JavaScript stopped; `dets`
+  not growing = the scanner link stalled; `dets` growing but `shown` not = nothing new to alert on (or check `failed`).
+- **Owner report on walk 1:** service allowed + notifications on; on reopening the app a BURST of alerts arrived at once.
+  So the data and rules were fine and the page's JavaScript was paused in the background (its queued plugin events
+  ran on return). Chromium pauses a web view whose window is not visible (and lowers its renderer's priority), even with
+  the app process kept alive by the service.
+- **Fix (build 9): `CfloWebView.java`** (a `CapacitorWebView` subclass, used through the app's own
+  `res/layout/capacitor_bridge_layout_main.xml`, which overrides Capacitor's layout of the same name; id `webview`
+  kept). While the service runs, `onWindowVisibilityChanged` passes VISIBLE to Chromium, so the page keeps running; when
+  the service stops (`CfloBgService.onStopped`), the real visibility is handed over. Because the page now stays
+  `visibilityState === "visible"` in the background, the shims take the app state from the plugin's new `appState`
+  event (`{fg}`, also `status().fg`): shim-background's `visible()` uses it (ticks, the lost note, the repaint), and
+  shim-bluetooth pauses the Switch-scanner presence scan while the app is in the background (resumed for the same
+  watchers on return). Web app code that checks `document.visibilityState` now sees "visible" in the background while
+  a scanner is connected (wake lock attempt, log-cache reload, Switch scanner): all harmless. Tests 59/59.
+- adb on this PC: port 5037 sits in a Windows reserved range (Hyper-V); use `ANDROID_ADB_SERVER_PORT=15037`.

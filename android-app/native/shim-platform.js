@@ -212,6 +212,17 @@
         lockscreen: true,
       } });
     }
+    // Counted for the background log (native/shim-background.js).
+    const diag = (window.__cfloApp = window.__cfloApp || {}).diag = Object.assign({ ble:0, dets:0, shown:0, failed:0 }, window.__cfloApp.diag);
+    const origNotify = notify;
+    notify = async (title, opts) => {
+      try{ const r = await origNotify(title, opts); diag.shown++; return r; }
+      catch(e){
+        diag.failed++;
+        try{ if(P.CfloBg) P.CfloBg.diagNote({ m: "alert failed: " + String((e && e.message) || e).slice(0, 80) }); }catch(x){}
+        throw e;
+      }
+    };
     class AppNotification {
       constructor(title, opts){ notify(title, opts).catch(e => console.warn("notification:", e.message)); }
       static get permission(){ return perm; }

@@ -83,9 +83,31 @@
   const scanSubs = new Set();
   let scanning = false, scanHandle = null, scanStarting = null, stopTimer = 0, renewTimer = 0;
   const STOP_DELAY_MS = 10000, RENEW_MS = 25 * 60000;
+  // In the background (app not on screen) the presence scan pauses: the page keeps running there now (CfloWebView), and
+  // Switch scanner's presence watch would otherwise scan the whole walk. It resumes for the same subscribers on return.
+  let appBg = false, bgPaused = false;
+  if(C.Plugins.CfloBg) C.addListener("CfloBg", "appState", ev => {
+    appBg = !(ev && ev.fg);
+    if(appBg){
+      if(scanning || scanStarting){
+        bgPaused = true;
+        if(stopTimer){ clearTimeout(stopTimer); stopTimer = 0; }
+        (scanStarting || Promise.resolve()).catch(() => {}).then(() => {
+          if(!appBg || !scanning) return;
+          scanning = false; clearInterval(renewTimer); renewTimer = 0;
+          BLE.stopLEScan().catch(() => {});
+        });
+      }
+    }else if(bgPaused){
+      bgPaused = false;
+      const subs = [...scanSubs]; scanSubs.clear();
+      subs.forEach(f => scanSub(f).catch(() => {}));
+    }
+  });
   async function scanSub(fn){
     scanSubs.add(fn);
     if(stopTimer){ clearTimeout(stopTimer); stopTimer = 0; }
+    if(appBg){ bgPaused = true; return; }   // starts when the app is back on screen
     if(scanning) return;
     if(!scanStarting) scanStarting = (async () => {
       await init();
@@ -117,6 +139,8 @@
   // ---------- link events for the app layer (native/shim-background.js: the background service) ----------
   // "link" events carry {id, connected, lost}: lost = the scanner went away on its own (not a disconnect() call).
   const linkEvents = new EventTarget();
+  // Counters for the background log (native/shim-background.js): BLE notifications, DETS packets (cumulative).
+  const diag = (window.__cfloApp = window.__cfloApp || {}).diag = Object.assign({ ble:0, dets:0, shown:0, failed:0 }, (window.__cfloApp || {}).diag);
   function linkEvent(id, connected, lost){
     const ev = new Event("link"); ev.id = id; ev.connected = connected; ev.lost = !!lost;
     try{ linkEvents.dispatchEvent(ev); }catch(e){}
@@ -275,7 +299,9 @@
       this._live();
       if(this._notif) return this;
       const ids = this._ids();
+      const isDets = this.uuid.startsWith("9a1e0006");   // the live detection stream (background diagnostics)
       this._notif = C.addListener("BluetoothLe", "notification|" + ids.deviceId + "|" + ids.service + "|" + ids.characteristic, ev => {
+        diag.ble++; if(isDets) diag.dets++;
         this.value = fromHex(ev && ev.value);
         this.dispatchEvent(new Event("characteristicvaluechanged"));
       });
