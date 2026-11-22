@@ -20,7 +20,7 @@ was away; nothing below has run on a phone yet except builds 2-3 (install + upda
   7. Notifications: allow, Test notification, tap -> device popup. Lock screen shows no details (SEC-A1; one setting if
      the owner prefers details there).
   8. Turn off mobile data + Wi-Fi, reopen the app: icons and the map page frame still load.
-- **Open owner decisions:** lock-screen alert details (hidden now); whether the Pages web app freezes once the app works.
+- **Owner decisions (2026-11-22):** lock-screen alerts stay hidden (no details on the lock screen); the Pages web app stays (not frozen; both are kept working).
 - **After the test:** fix what the phone shows, then stage 2 (foreground service + screen-off drive test).
 - Resume alarm: a one-shot session cron at 2:27 AM 11-22 re-reads this entry (owner asked: usage resets 2:20 EST).
 
