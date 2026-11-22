@@ -757,13 +757,18 @@ back (5 GHz included). Things that matter, learned the hard way:
   `npm run sync` then `android/gradlew assembleDebug`.
 - `allowBackup=false` + data-extraction rules exclude everything: scanner keys and cached logs (bystander data) never go to
   Google backup. scan-analyzer allows the app's origin `https://localhost` (CORS).
-- **Stage 2 (background, built 2026-11-22, awaiting the screen-off drive test):** `CfloBgService.java` (foreground service
+- **Stage 2 (background, DONE 2026-11-22: screen-off walk passed on build 9; build 10 = log fixes):** `CfloBgService.java` (foreground service
   connectedDevice + location, wake lock, "Connected to …" notification with Disconnect) runs while a scanner is connected;
   `native/shim-background.js` starts / stops it from `shim-bluetooth.js` link events (`__cfloApp.bleLink`), replaces
   `navigator.geolocation` with native GPS (`CfloBgPlugin.java`; Chromium stops geolocation in a hidden page), and turns the
   plugin's 1 s background `tick` into a window `cflo-bg-tick` event that `notify.js` also runs its check on (hidden-page
   timers are throttled). Settings → Notifications "Run in the background" card = battery-optimization exemption.
-  docs/android-app.md "Stage 2".
+  **`CfloWebView.java`** (via the app's own `res/layout/capacitor_bridge_layout_main.xml`) keeps telling Chromium the
+  window is visible while the service runs; without it the page's JS paused ~1-2 min after screen-off (walk 1). So the
+  page reports `visibilityState` "visible" in the background: app-only code takes the real state from the plugin's
+  `appState` event. **Background log** (`CfloDiag.java`, counts + phone state only, no MACs / positions): Settings →
+  Notifications → Background log (Save -> Downloads). A shim toast draws behind an open modal dialog: show results in
+  the dialog. adb on this PC: `ANDROID_ADB_SERVER_PORT=15037` (5037 is Hyper-V reserved). docs/android-app.md "Stage 2".
 
 ## Companion project + remote-server upload (PLANNED — new direction)
 

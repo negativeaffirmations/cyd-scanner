@@ -10,8 +10,9 @@ The app is built in two stages (owner-approved 2026-11-21):
    native shell (Capacitor), bundled into the APK. Bluetooth moves from Web Bluetooth (which Android's web
    view does not have) to a native BLE plugin. Builds are published on GitHub and installed / updated on the
    phone with Obtainium. When stage 1 is done the app does everything the web app does, no browser flags needed.
-2. **Stage 2 (later): background.** A foreground service, then a screen-off drive test. If the web code keeps
+2. **Stage 2: background (DONE, build 10).** A foreground service, then a screen-off drive test. If the web code keeps
    running, stop there; if not, move the BLE link, GPS / time push, live upload and notifications into native code.
+   Result: the web code keeps running (with `CfloWebView`, see "Stage 2"), so nothing moved into native code.
 
 Stage 1 deliberately changes **nothing** for the scanners (no firmware work) and **nothing** for the web app on
 GitHub Pages, which keeps working as it does today.
@@ -244,7 +245,7 @@ patterns, as one style for all alerts plus overrides per alert type.
   **To verify on the phone:** a sound the owner ADDED to the phone (content://media/external/...) may play as the phone
   default, since the app holds no read grant for it; the built-in sounds are fine.
 
-## Stage 2: background (BUILT 2026-11-22, not yet phone-tested)
+## Stage 2: background (DONE 2026-11-22: walk 2 passed on build 9, build 10 checked)
 Owner bug (build 6): left in the background or with the screen off, alerts only arrived on returning to the app. Android
 froze the app process, and with it the web view. Nothing was lost on the scanner.
 - **Foreground service** `CfloBgService.java` (types `connectedDevice`, + `location` when the app holds a location
@@ -325,3 +326,12 @@ froze the app process, and with it the web view. Nothing was lost on the scanner
   took a reference; both now fill in the one object), and Save looked like it did nothing (the file was written, but
   the toast draws behind the modal log dialog; the dialog now shows "Saving..." then the result, through
   `__cfloApp.saveFile`, which returns a promise).
+- **Build 10 check (2026-11-22, owner, short at home):** Save reported its result and the file arrived; counters now
+  real (ble=372 dets=312 over ~30 s), 8/8 background ticks answered, 30 fixes per 30 s. A longer screen-off walk on
+  build 10 would give a full log with the counters; not required.
+- **Reading the log:** a heartbeat gap = the process was frozen; `ticks+` without `acks+` = the page's JS paused;
+  `dets` flat while `links=1` = the scanner link stalled; `dets` growing with `shown` flat = nothing new to alert on.
+  `vis` and `page{}` are the page's last answer (sent only in the background), so a heartbeat just after returning
+  to the app can still say `vis=0`.
+- **UI gotcha:** the shims' toast draws BEHIND an open modal `<dialog>` (top layer). Anything triggered from inside a
+  dialog must show its result in the dialog.

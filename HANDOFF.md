@@ -1,6 +1,6 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) BUILT + published, awaiting the drive test
+## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) DONE (walk 2 passed, build 10 published + checked)
 - Gradle: the VS Code Android extension's "update" moved the wrapper to Gradle 9.7.1 (breaks AGP 8.13 / Capacitor 8 and
   `rootProject.buildDir`). Restored to 8.14.3 (owner closed VS Code + ran git checkout). Refuse further Gradle/AGP
   upgrade prompts from the extension.
@@ -11,8 +11,10 @@
 - Build 8 walk 1 FAILED (alerts ~1-2 min after screen-off, then a burst on reopening = the page's JS paused in the
   background). Build 9 (published 2026-11-22, owner OK): `CfloWebView` keeps Chromium seeing a visible window while the
   service runs, + the **background log** (Settings -> Notifications -> Background log, Save). Docs "Stage 2".
-  **Walk 2 on build 9 PASSED** (alerts live screen-off, 21 min log clean). Build 10: the log's `ble`/`dets` counters
-  (read 0, shared-object bug) + Save shows its result in the dialog. Docs "Stage 2". adb works here with
+  **Walk 2 on build 9 PASSED** (alerts live screen-off, 21 min log clean). Build 10 (published, short check OK): the
+  log's `ble`/`dets` counters (read 0, shared-object bug) + Save shows its result in the dialog.
+  **Next (optional):** a longer screen-off walk on build 10 for a full log with the counters; otherwise stage 2 is
+  closed and nothing needs to move into native code. Docs "Stage 2". adb works here with
   `ANDROID_ADB_SERVER_PORT=15037` (5037 is Hyper-V reserved). TOLUBA: battery dead or wiring (owner to check).
 
 ## 2026-11-22 (later): notification Alert style DONE; NEXT = stage 2 (background alerts)
