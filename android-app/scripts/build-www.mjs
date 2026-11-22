@@ -54,6 +54,7 @@ html = html.slice(0, cssEnd) + '\n<link rel="stylesheet" href="native/app.css">'
 const js2 = html.search(/<script\s+type="module"[^>]*src="js\/main\.js/);
 html = html.slice(0, js2) +
   '<script src="native/shim-bluetooth.js"></script>\n<script src="native/shim-platform.js"></script>\n' +
+  '<script src="native/shim-background.js"></script>\n' +
   html.slice(js2);
 // Bundle the CDN files: download (hash-checked), save under www/vendor/, point index.html at the local copies.
 const vend = join(out, "vendor");

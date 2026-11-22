@@ -26,7 +26,7 @@ import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeCl
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
 import { initSwitcher } from './features/switcher.js';
-import { initNotify } from './features/notify.js?v=20261119a';   // new module: versioned so it loads fresh with main.js
+import { initNotify } from './features/notify.js?v=20261122b';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
 import { initServerHistory } from './features/serverhist.js?v=20261121a';   // new module: versioned so it loads fresh with main.js

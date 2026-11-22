@@ -1,11 +1,31 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-22 (later): notification Alert style
+## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) BUILT + published, awaiting the drive test
+- Gradle: the VS Code Android extension's "update" moved the wrapper to Gradle 9.7.1 (breaks AGP 8.13 / Capacitor 8 and
+  `rootProject.buildDir`). Restored to 8.14.3 (owner closed VS Code + ran git checkout). Refuse further Gradle/AGP
+  upgrade prompts from the extension.
+- Stage 2 built: `CfloBgService.java` + `CfloBgPlugin.java` + `native/shim-background.js` (+ link events in
+  shim-bluetooth.js, a `cflo-bg-tick` listener and status line in notify.js, web `?v=20261122b`, footer `background alerts`).
+  Design + review fixes: docs/android-app.md "Stage 2". `npm test` 52/52, `gradlew assembleDebug` OK. Reviewer pass done,
+  REV-001..016 fixed (P2s all).
+- Merged to `main` + pushed 2026-11-22 (owner OK). **Waiting on the owner's screen-off drive test** (steps in the doc). If the web code still stops in the background -> move BLE / GPS /
+  upload / alerts native (the plan's fallback).
+
+## 2026-11-22 (later): notification Alert style DONE; NEXT = stage 2 (background alerts)
 - Owner tested build 6: it works, notifications arrive (a greyed switch on a Samsung settings page was cosmetic).
 - Built on request: Settings -> Notifications -> **Alert style** (details shown/hidden, lock screen, sound, vibration;
   all alerts + per type). Details: docs/android-app.md "Alert style". Web `?v=20261122a`, footer `alert styles`.
 - **Owner to check on the phone:** pick a sound per type, a custom / recorded vibration, Send a test per type, hidden
-  details (plain text, nothing in notification history), lock screen on/off.
+  details (plain text, nothing in notification history), lock screen on/off, and whether a sound the owner ADDED to the
+  phone plays (it may fall back to the default: no read grant). Reviewer pass done, findings fixed. Merged + pushed to
+  `main` (`4af86d5`), so the Pages site and a new Obtainium build carry it.
+- **Owner-found bug -> NEXT = stage 2:** left running, alerts don't arrive until the owner comes back to the app (they
+  showed up on returning from the phone's notification settings). Cause: Android / Samsung freezes the backgrounded
+  web view (and the screen-off phone), so notify.js's 1 s tick stops; nothing is lost on the scanner. Fix = stage 2
+  foreground service (keeps BLE link + GPS + alert checks running screen-off; plan in docs/android-app.md). Owner said
+  they'll come back to it later; start stage 2 when they do (confirm first), then a screen-off drive test.
+  A system permission popup that "did nothing" on the phone's settings page = a Samsung settings quirk (permission is
+  already granted; the greyed switch earlier was the same kind of thing), not an app bug.
 
 ## 2026-11-22: Android app STAGE 1 BUILT (build 6), owner phone test PASSED (see above)
 Plan, decisions, progress and review results: **[docs/android-app.md](docs/android-app.md)**; CLAUDE.md "Android app" has the

@@ -114,6 +114,14 @@
     }, STOP_DELAY_MS);
   }
 
+  // ---------- link events for the app layer (native/shim-background.js: the background service) ----------
+  // "link" events carry {id, connected, lost}: lost = the scanner went away on its own (not a disconnect() call).
+  const linkEvents = new EventTarget();
+  function linkEvent(id, connected, lost){
+    const ev = new Event("link"); ev.id = id; ev.connected = connected; ev.lost = !!lost;
+    try{ linkEvents.dispatchEvent(ev); }catch(e){}
+  }
+
   // ---------- device objects (one per id, so identity comparisons in the web app hold) ----------
   const devices = new Map();
   function deviceFor(id, name){
@@ -186,6 +194,7 @@
       this._chars = new Map();
       this.connected = true;
       remember(d);
+      linkEvent(d.id, true);
       return this;
     }
     // Like Web Bluetooth: `connected` is false at once and gattserverdisconnected follows. The event waits for the
@@ -196,6 +205,7 @@
       this._gen++;
       if(this._cancel) this._cancel();
       this._teardown();
+      if(was) linkEvent(this.device.id, false, false);
       let fired = !was;
       const fire = () => { if(fired) return; fired = true; this.device.dispatchEvent(new Event("gattserverdisconnected")); };
       BLE.disconnect({ deviceId:this.device.id }).catch(() => {}).then(fire);
@@ -204,6 +214,7 @@
     _lost(){                          // the scanner went away (plugin notice); ignored once we're already down
       if(!this.connected) return;
       this._teardown();
+      linkEvent(this.device.id, false, true);
       setTimeout(() => this.device.dispatchEvent(new Event("gattserverdisconnected")), 0);
     }
     _teardown(){
@@ -349,5 +360,9 @@
   try{ Object.defineProperty(navigator, "bluetooth", { value:bluetooth, configurable:true }); }
   catch(e){ navigator.bluetooth = bluetooth; }
   window.BluetoothDevice = ShimDevice;
-  window.__cfloApp = Object.assign(window.__cfloApp || {}, { ble:true });
+  window.__cfloApp = Object.assign(window.__cfloApp || {}, { ble:true, bleLink: {
+    events: linkEvents,
+    // Every scanner this app holds a link to, disconnected the normal way (the web app sees gattserverdisconnected).
+    disconnectAll(){ devices.forEach(d => { if(d.gatt.connected) d.gatt.disconnect(); }); },
+  } });
 })();

@@ -30,6 +30,14 @@
         <!-- Google code scanner (QR) module: let Play services fetch it at install time -->
         <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
 
+        <!-- Stage 2 (CfloBgService): keeps the scanner link, GPS and alerts running while the app is in the
+             background. Runs only while a scanner is connected; swiping the app away ends it. -->
+        <service
+            android:name=".CfloBgService"
+            android:exported="false"
+            android:stopWithTask="true"
+            android:foregroundServiceType="connectedDevice|location" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -45,6 +53,16 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Stage 2 background service (CfloBgService / CfloBgPlugin) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- A normal permission that satisfies Android 14's connectedDevice prerequisite on its own, so that type can't be
+         refused for a missing runtime grant (a refused start after startForegroundService crashes the app). -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Brought in by @capacitor/local-notifications for timed / reboot-restored alerts, which this app never
          schedules (it only shows alerts live): removed so the app doesn't hold them. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" tools:node="remove" />
