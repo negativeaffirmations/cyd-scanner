@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <!-- Development builds (applicationIdSuffix .dev) show a different name beside the released app. -->
+    <string name="app_name">COINTEL-FLO dev</string>
+    <string name="title_activity_main">COINTEL-FLO dev</string>
+</resources>

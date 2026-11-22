@@ -1,0 +1,17 @@
+{
+  "name": "cointel-flo-app",
+  "private": true,
+  "description": "COINTEL-FLO Android app: the cyd-scanner web app in a Capacitor shell (see docs/android-app.md)",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "build:www": "node scripts/build-www.mjs",
+    "sync": "node scripts/build-www.mjs && cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0"
+  }
+}

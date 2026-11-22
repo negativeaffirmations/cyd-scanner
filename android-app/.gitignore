@@ -1,0 +1,7 @@
+node_modules/
+www/
+# Signing keys and machine paths: NEVER commit (docs/android-app.md)
+*.jks
+*.keystore
+keystore.properties
+local.properties
