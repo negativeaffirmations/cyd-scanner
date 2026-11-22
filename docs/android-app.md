@@ -153,6 +153,23 @@ Each step ends with something you can check on the phone.
 
 - **Step 1 DONE (2026-11-21):** builds 2 and 3 published; the owner installed build 2 with Obtainium and
   received build 3 (new icon) as an update. Icons come from `android-app/scripts/make-icons.py`.
+- **Step 2 BUILT, not yet phone-tested (2026-11-22):**
+  - `native/shim-bluetooth.js`: `navigator.bluetooth` + `BluetoothDevice` over `@capacitor-community/bluetooth-le`
+    8.3.0 (raw `Capacitor.Plugins.BluetoothLe`, values as hex). Every GATT operation runs one at a time (the plugin
+    doesn't queue). Our own chooser dialog (scan filtered on the service UUID; known units by name from
+    `cflo.unitNames`, others "CFLO (new)"); `getDevices()` = units this app connected to (`cflo.app.devices`);
+    `watchAdvertisements` shares one LE scan. A local `disconnect()` fires `gattserverdisconnected` only after the
+    plugin confirms, so the plugin's late notice can't drop a quick reconnect. Mock test: `npm test` (16 checks, also
+    in CI before every build).
+  - `native/shim-platform.js`: "Scan QR" buttons (Google code scanner via `@capacitor-mlkit/barcode-scanning` 8.2.2)
+    beside the Scanner keys / key-needed / Remote server boxes; a key QR goes through the existing paste + button, a
+    server QR's `#server=` fragment through the existing hash handler. `window.open` of an outside page -> the phone's
+    browser (`@capacitor/browser`).
+  - `native/app.css`: app bar padded by the status-bar inset; SystemBars style `DARK` (light icons).
+  - Manifest: `allowBackup=false` + data-extraction rules excluding everything (keys + cached logs never go to Google
+    backup or a phone transfer).
+  - Plugins for later steps are already in (`filesystem`, `share`, `local-notifications`, `app`).
+  - The debug APK is ~28 MB, mostly the ML Kit / camera libraries the QR plugin brings. Fine for now; revisit if size matters.
 
 ## Known issues
 
