@@ -187,7 +187,8 @@ Each step ends with something you can check on the phone.
     REV-004 `disconnect()` during a connect rejects it at once (switch "not found" in 8 s, not 15); REV-005 a GATT op
     refused at once (stack still busy after a timed-out op) is retried once after 400 ms.
   - SEC-A1 alerts go to channel `cflo-alerts` with lock-screen visibility SECRET (bystander MACs / names stay off the
-    lock screen; sound + vibration remain) — **owner confirmed 2026-11-22: keep details off the lock screen**. SEC-A2 a server QR
+    lock screen; sound + vibration remain) — **owner confirmed 2026-11-22: keep details off the lock screen**. Superseded
+    by Alert style (below): lock screen is now a setting, still off by default. SEC-A2 a server QR
     that would replace a paired server asks first, naming the new host; that button only takes server links.
   - Unused `SCHEDULE_EXACT_ALARM` / `RECEIVE_BOOT_COMPLETED` removed from the manifest; workflow actions pinned to
     commit SHAs, Gradle wrapper validated, keystore removed by `trap` even on a failed build.
@@ -217,3 +218,28 @@ Each step ends with something you can check on the phone.
 - `npm run sync` (in `android-app/`) = copy `webapp/` into `www/` + `cap sync android`. Then
   `android/gradlew assembleDebug` (dev) or let CI build the release.
 - Debug builds allow `chrome://inspect`; release builds don't (Capacitor's default).
+
+## Alert style (2026-11-22, after the owner's stage-1 test)
+Owner request: show / hide notification details (Android's notification history keeps what a notification said, so
+hiding details keeps bystanders' identifiers out of it; **details shown by default**), and custom sounds + vibration
+patterns, as one style for all alerts plus overrides per alert type.
+- **Web app:** `webapp/js/features/notifystyle.js` (new file; notify.js only gains internals) renders "Alert style" into
+  `#nfStyle` in Settings -> Notifications: All alerts = details / lock screen / sound / vibration; each type (Threats,
+  Watched devices, Possible followers, Drones, Deauth floods, Evil-twin APs) overrides only the parts set, with its own
+  "Send a test". Vibration = presets, or Custom (typed ms "on, off, on...", max 24 steps / 15 s) with a hold-to-vibrate
+  recorder. Saved in `cflo.notify` (`style`, `kinds`); the old Vibrate checkbox migrates (off -> None). Hidden details =
+  a plain title ("Threat alert") + "Open COINTEL-FLO to see it."; a folded notification hides details if ANY of its
+  types does, and takes the style of its top type (watch > follow > rid > threat). In a browser only details and
+  vibration apply; sound / lock screen rows show only in the app (`window.__cfloApp.notifyStyle`).
+- **App:** Android fixes a channel's sound / vibration / lock-screen visibility at creation, so `shim-platform.js` maps
+  each distinct style to channel `cflo-<kind>-<hash>`; `CfloNotifyPlugin.java` creates it (lock screen PRIVATE when on =
+  the phone's own lock-screen setting decides, else SECRET; IMPORTANCE_HIGH) and deletes that kind's older channels and
+  build 6's `cflo-alerts`. Sounds come from the phone's notification-sound picker (`RingtoneManager`, Default / Silent /
+  the phone's sounds / ones the owner added), vibration preview + recorder through `Vibrator` (`VIBRATE` permission
+  added). Changing a style replaces that type's channel, which also drops edits made to it in Android's settings.
+- Review (2026-11-22) fixed: no JS channel cache (a style A -> B -> A reused a deleted channel and Android dropped every
+  alert silently); a channel still showing a notification is not deleted until later (deleting it clears the shade);
+  renotify removes the shown notification first (the plugin's alert-only-once made repeat tests silent); every Android call
+  guarded (a plugin throw crashes the app); typed `getParcelableExtra` only on API 34+; recorder / pattern-box edge cases.
+  **To verify on the phone:** a sound the owner ADDED to the phone (content://media/external/...) may play as the phone
+  default, since the app holds no read grant for it; the built-in sounds are fine.

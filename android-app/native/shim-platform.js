@@ -165,20 +165,52 @@
     document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible") refreshPerm(); });
 
     // A tag (notify.js: one per kind / device) maps to a stable id, so a newer one replaces the older like the web.
-    // Alerts name bystanders' devices (MAC, name), so they get their own channel that keeps them OFF the lock
-    // screen (visibility SECRET; SEC-A1): the phone still sounds / vibrates, the text shows once unlocked.
-    const CHANNEL = "cflo-alerts";
-    const channelReady = LN.createChannel({ id: CHANNEL, name: "Scanner alerts", description: "Threats, followers, drones and Wi-Fi attacks seen by your scanner",
-      importance: 4, visibility: -1, vibration: true }).catch(() => {});
+    // Style: notify.js passes opts.cfloStyle = {kind, name, sound, vibration, lockscreen} (Settings -> Notifications,
+    // "Alert style"). Android fixes a channel's sound / vibration / lock-screen visibility when it is created, so each
+    // distinct style is its own channel "cflo-<kind>-<hash>" (CfloNotifyPlugin.java makes it and deletes the kind's
+    // older ones). Lock screen is off unless the style turns it on (bystanders' MACs / names; SEC-A1).
+    const NP = P.CfloNotify;
+    const hashOf = s => { let h = 5381; for(const ch of s) h = (h * 33 + ch.charCodeAt(0)) | 0; return (h >>> 0).toString(36); };
     const idOf = tag => { let h = 7; for(const ch of String(tag || "cflo")) h = (h * 31 + ch.charCodeAt(0)) | 0; return Math.abs(h) % 2000000000 || 1; };
+    const KIND_NAME = { threat:"Threats", watch:"Watched devices", follow:"Possible followers", rid:"Drones (Remote-ID)",
+      deauth:"Deauth floods", evil:"Evil-twin access points", general:"Scanner alerts" };
+    // No cache on purpose: making a style deletes the kind's other channels, so a remembered id could point at a
+    // deleted channel (Android then drops the notification without an error). ensureChannel is cheap when it exists.
+    function channelFor(st){
+      st = st || {};
+      const kind = /^[a-z]{1,16}$/.test(st.kind || "") ? st.kind : "general";
+      const sound = typeof st.sound === "string" ? st.sound : "default";
+      const vibration = Array.isArray(st.vibration) ? st.vibration.slice(0, 48).map(v => Math.max(0, Math.min(10000, Math.round(+v) || 0))) : null;
+      const lockscreen = !!st.lockscreen;
+      const id = "cflo-" + kind + "-" + hashOf(JSON.stringify([sound, vibration, lockscreen]));
+      if(!NP) return Promise.resolve(id);
+      return NP.ensureChannel({ id, kind, name: st.name || KIND_NAME[kind] || "Scanner alerts",
+        description: "COINTEL-FLO scanner alerts", sound, vibration, lockscreen }).then(() => id);
+    }
     async function notify(title, opts){
       opts = opts || {};
       if(perm !== "granted") throw new Error("notifications not allowed");
-      await channelReady;
+      const channelId = await channelFor(opts.cfloStyle);
+      const id = idOf(opts.tag);
+      // The plugin posts with "alert only once": an update of a notification still in the shade is silent. renotify
+      // (notify.js always asks for it) = take the old one away first, so the new one sounds / vibrates again.
+      if(opts.renotify && LN.removeDeliveredNotifications){
+        try{ await LN.removeDeliveredNotifications({ notifications: [{ id, title: "", body: "" }] }); }catch(e){}
+      }
       await LN.schedule({ notifications: [{
-        id: idOf(opts.tag), title: String(title || "COINTEL-FLO"), body: String(opts.body || ""),
-        extra: opts.data || {}, smallIcon: "ic_stat_cflo", iconColor: "#AA00AA", channelId: CHANNEL,
+        id, title: String(title || "COINTEL-FLO"), body: String(opts.body || ""),
+        extra: opts.data || {}, smallIcon: "ic_stat_cflo", iconColor: "#AA00AA", channelId,
       }] });
+    }
+    // For notify.js's Alert style controls: the phone's sound picker and a vibration preview (app only).
+    if(NP){
+      window.__cfloApp = Object.assign(window.__cfloApp || {}, { notifyStyle: {
+        pickSound: (current, title) => NP.pickSound({ current: current == null ? "default" : String(current), title: title || "Alert sound" }),
+        soundTitle: uri => NP.soundTitle({ uri: uri == null ? "default" : String(uri) }).then(r => r.title),
+        vibrate: pattern => NP.vibrate({ pattern: Array.isArray(pattern) ? pattern : [] }).catch(() => {}),
+        stopVibrate: () => NP.stopVibrate().catch(() => {}),
+        lockscreen: true,
+      } });
     }
     class AppNotification {
       constructor(title, opts){ notify(title, opts).catch(e => console.warn("notification:", e.message)); }

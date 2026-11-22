@@ -473,6 +473,68 @@ summary {
   font-weight: 600;
 }
 
+.nfstyle {
+  margin-top: 0.9em;
+  padding-top: 0.7em;
+  border-top: 1px solid #30363d;
+}
+
+.nfhdr {
+  display: block;
+  margin-bottom: 0.2em;
+}
+
+.nfl {
+  display: block;
+  margin: 0.6em 0 0.2em;
+}
+
+.nfchk {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.nfrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.nfrow input[type=text] {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+
+.nfkind .nfsum {
+  font-weight: 400;
+  margin-left: 0.4em;
+}
+
+.nftest {
+  margin-top: 0.7em;
+}
+
+.nfrec {
+  margin-top: 0.5em;
+}
+
+.nfpad {
+  display: block;
+  width: 100%;
+  min-height: 5.5em;
+  margin-bottom: 0.5em;
+  font-size: 1rem;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.nfpad.on {
+  background: #aa00aa;
+  color: #fff;
+}
+
 .sessbar {
   display: flex;
   align-items: center;
