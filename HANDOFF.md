@@ -1,5 +1,16 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE — 2026-11-21 (late): Android app STAGE 1, step 1 DONE; next = step 2 (Bluetooth)
+Plan + all decisions + build notes: **[docs/android-app.md](docs/android-app.md)**. COINTEL-FLO = Capacitor 8.6.0 shell in
+`android-app/` bundling `webapp/` unchanged; `.github/workflows/android.yml` builds, signs (repo secrets) and publishes
+`app-0.1.<n>` releases on pushes to `main` touching `webapp/` / `android-app/`; the owner installs + updates with Obtainium
+(verified: build 2 installed, build 3 arrived as an update, new CF icon). Signing key in the owner's home folder
+`cointel-flo-signing\` (owner to back up). Local builds need Java 21 (`~/.jdks/jdk-21.0.13.1+2`), not Android Studio's 25.
+scan-analyzer allows `https://localhost` CORS (live, its `ab415fc`).
+- **Known issue (owner, build 3):** the app's top bar sits on the phone's status-bar line (edge-to-edge); fix in step 2
+  with system-bar insets, app build only. See the doc's "Known issues".
+- **Next:** step 2 = native BLE plugin + `navigator.bluetooth` shim + in-app scanner list + key entry (QR / paste).
+
 ## RESUME HERE — 2026-11-21: fw 0.41.2 on all 4 hosts + web live queue / sightings / Map server layer / grouped dots / popups (DEPLOYED)
 Owner away for the first part; worked through the open list. Everything is merged to `main` and pushed (last `d533b2b`);
 Pages serves `?v=20261121c` (footer `map popups fit`). `hardening` = `main` content. Nothing pending.

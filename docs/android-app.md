@@ -149,6 +149,19 @@ Each step ends with something you can check on the phone.
 - scan-analyzer asked (bridge, 2026-11-21) to allow `https://localhost`: done in its code, live after the owner
   OKs its push + a server restart. LIVE 2026-11-21 (scan-analyzer `ab415fc`, preflight checked by the owner).
 
+## Progress
+
+- **Step 1 DONE (2026-11-21):** builds 2 and 3 published; the owner installed build 2 with Obtainium and
+  received build 3 (new icon) as an update. Icons come from `android-app/scripts/make-icons.py`.
+
+## Known issues
+
+- **App bar under the phone's status bar (owner, build 3).** The app draws edge to edge (Android 15+ with
+  targetSdk 36), so the web app's top app bar sits on the same line as the phone's clock / battery row.
+  Fix in step 2: pad the page by the system-bar insets (Capacitor 8's system-bars inset handling or
+  `env(safe-area-inset-*)` with `viewport-fit=cover`), app build only, so the Pages site is unchanged.
+  Check the bottom navbar against the gesture bar at the same time.
+
 ## Build notes
 
 - **Java 21, not Android Studio's bundled Java 25.** Gradle 8.14.3 (Capacitor 8.6.0) fails on Java 25 with
