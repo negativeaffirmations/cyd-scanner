@@ -6,7 +6,7 @@
   "scripts": {
     "build:www": "node scripts/build-www.mjs",
     "sync": "node scripts/build-www.mjs && cap sync android",
-    "test": "node test/shim-bluetooth.test.mjs"
+    "test": "node test/shim-bluetooth.test.mjs && node test/shim-platform.test.mjs"
   },
   "dependencies": {
     "@capacitor-community/bluetooth-le": "8.3.0",
