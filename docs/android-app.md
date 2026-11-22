@@ -140,14 +140,14 @@ Each step ends with something you can check on the phone.
 - Package ID **`io.github.negativeaffirmations.cointelflo`** (permanent). Development builds use
   `….cointelflo.dev` and show as "COINTEL-FLO dev", so they install beside the released app.
 - A build is published automatically on every push to `main` that touches `webapp/`, `android-app/` or the
-  workflow (`.github/workflows/android.yml`), plus a manual "Run workflow" button. Release tag `app-<n>`,
+  workflow (`.github/workflows/android.yml`), plus a manual "Run workflow" button. Release tag `app-0.1.<n>` (Obtainium reads the version from it; build 1 was tagged `app-1`),
   asset `cointel-flo-<n>.apk`, version `0.1.<n>`, versionCode = the workflow run number (never reset it).
 - Signing key uploaded to the repo secrets with `gh` (`CFLO_KEYSTORE_B64`, `CFLO_KEYSTORE_PASSWORD`,
   `CFLO_KEY_ALIAS`). The key lives OUTSIDE the repo in the owner's home folder `cointel-flo-signing\`
   (keystore + a README with the password) — **back that folder up**. Certificate: `CN=COINTEL-FLO`, SHA-256
   `f759eb7af7bfc89eac414986386eb77b6bca96917bb7ecec969eafd811658f31`.
 - scan-analyzer asked (bridge, 2026-11-21) to allow `https://localhost`: done in its code, live after the owner
-  OKs its push + a server restart.
+  OKs its push + a server restart. LIVE 2026-11-21 (scan-analyzer `ab415fc`, preflight checked by the owner).
 
 ## Build notes
 
