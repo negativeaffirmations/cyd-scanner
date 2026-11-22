@@ -157,7 +157,10 @@ function stateText(){
   if(p === "denied") return ["Notifications are blocked for this site. Allow them in the browser's site settings, then turn them on here.", "warn"];
   if(!cfg.on) return ["Off.", ""];
   if(p !== "granted") return ["Waiting for permission.", "warn"];
-  return [state.connected ? "On: alerting while this page is open." : "On: alerts start when a scanner is connected.", "ok"];
+  const a = window.__cfloApp;   // the Android app keeps alerting in the background while its service runs
+  const bg = !!(a && a.background && (!a.bgRunning || a.bgRunning()));
+  return [state.connected ? (bg ? "On: alerting while a scanner is connected, also with the screen off." : "On: alerting while this page is open.")
+                          : "On: alerts start when a scanner is connected.", "ok"];
 }
 function renderState(){   // the status line + the two buttons (safe to repaint any time)
   const st = $("nfState"); if(!st) return;
@@ -289,5 +292,8 @@ export function initNotify(){
   document.addEventListener("visibilitychange", renderState);   // permission may have changed in site settings
   renderCard();
   setInterval(tick, 1000);
+  // The Android app (android-app/native/shim-background.js) sends this every second while it runs in the background,
+  // where the hidden page's own timers are throttled; tick() is safe to run twice.
+  window.addEventListener("cflo-bg-tick", tick);
   setInterval(renderState, 5000);   // the connected / not-connected line only (never the selects mid-edit)
 }

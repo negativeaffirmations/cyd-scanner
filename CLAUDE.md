@@ -757,7 +757,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   `npm run sync` then `android/gradlew assembleDebug`.
 - `allowBackup=false` + data-extraction rules exclude everything: scanner keys and cached logs (bystander data) never go to
   Google backup. scan-analyzer allows the app's origin `https://localhost` (CORS).
-- Stage 2 (background: foreground service, screen-off drive test) comes after the owner tests stage 1 on the phone.
+- **Stage 2 (background, built 2026-11-22, awaiting the screen-off drive test):** `CfloBgService.java` (foreground service
+  connectedDevice + location, wake lock, "Connected to …" notification with Disconnect) runs while a scanner is connected;
+  `native/shim-background.js` starts / stops it from `shim-bluetooth.js` link events (`__cfloApp.bleLink`), replaces
+  `navigator.geolocation` with native GPS (`CfloBgPlugin.java`; Chromium stops geolocation in a hidden page), and turns the
+  plugin's 1 s background `tick` into a window `cflo-bg-tick` event that `notify.js` also runs its check on (hidden-page
+  timers are throttled). Settings → Notifications "Run in the background" card = battery-optimization exemption.
+  docs/android-app.md "Stage 2".
 
 ## Companion project + remote-server upload (PLANNED — new direction)
 

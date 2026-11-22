@@ -1,6 +1,17 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-22 (later): notification Alert style DONE; NEXT = stage 2 (background alerts)
+## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) BUILT + published, awaiting the drive test
+- Gradle: the VS Code Android extension's "update" moved the wrapper to Gradle 9.7.1 (breaks AGP 8.13 / Capacitor 8 and
+  `rootProject.buildDir`). Restored to 8.14.3 (owner closed VS Code + ran git checkout). Refuse further Gradle/AGP
+  upgrade prompts from the extension.
+- Stage 2 built: `CfloBgService.java` + `CfloBgPlugin.java` + `native/shim-background.js` (+ link events in
+  shim-bluetooth.js, a `cflo-bg-tick` listener and status line in notify.js, web `?v=20261122b`, footer `background alerts`).
+  Design + review fixes: docs/android-app.md "Stage 2". `npm test` 52/52, `gradlew assembleDebug` OK. Reviewer pass done,
+  REV-001..016 fixed (P2s all).
+- Merged to `main` + pushed 2026-11-22 (owner OK). **Waiting on the owner's screen-off drive test** (steps in the doc). If the web code still stops in the background -> move BLE / GPS /
+  upload / alerts native (the plan's fallback).
+
+## 2026-11-22 (later): notification Alert style DONE; NEXT = stage 2 (background alerts)
 - Owner tested build 6: it works, notifications arrive (a greyed switch on a Samsung settings page was cosmetic).
 - Built on request: Settings -> Notifications -> **Alert style** (details shown/hidden, lock screen, sound, vibration;
   all alerts + per type). Details: docs/android-app.md "Alert style". Web `?v=20261122a`, footer `alert styles`.

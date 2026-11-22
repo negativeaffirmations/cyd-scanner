@@ -243,3 +243,52 @@ patterns, as one style for all alerts plus overrides per alert type.
   guarded (a plugin throw crashes the app); typed `getParcelableExtra` only on API 34+; recorder / pattern-box edge cases.
   **To verify on the phone:** a sound the owner ADDED to the phone (content://media/external/...) may play as the phone
   default, since the app holds no read grant for it; the built-in sounds are fine.
+
+## Stage 2: background (BUILT 2026-11-22, not yet phone-tested)
+Owner bug (build 6): left in the background or with the screen off, alerts only arrived on returning to the app. Android
+froze the app process, and with it the web view. Nothing was lost on the scanner.
+- **Foreground service** `CfloBgService.java` (types `connectedDevice`, + `location` when the app holds a location
+  permission; partial wake lock, non-counted, 12 h cap renewed every hour while it runs; `stopWithTask`). It runs while a scanner is
+  connected: one low-importance "Connected to TOLUBA" notification (tap = open, **Disconnect** button = the page
+  disconnects every scanner the normal way). Started / stopped by `native/shim-background.js` from link events that
+  `shim-bluetooth.js` now emits (`__cfloApp.bleLink`); a stop waits 10 s so Switch scanner (up to 8 s) doesn't flap it. A link lost
+  while the app is in the background leaves a dismissible "Lost the link to X" note (own id, `LOST_ID`). Android refuses
+  a service start from the background, so the notification text is only repainted while the app is visible, and a
+  `startForeground` refused with `location` retries without it.
+- **Why the page keeps running:** Capacitor never calls `WebView.onPause()` / `pauseTimers()`, so with the process
+  kept alive the page's JavaScript runs on; BLE notifications reach it as plugin events. Two things still stop in a
+  hidden page and have stand-ins:
+  - **GPS:** Chromium stops geolocation while the page is hidden. `shim-background.js` replaces `navigator.geolocation`
+    (watchPosition / clearWatch / getCurrentPosition) with `CfloBgPlugin`'s LocationManager feed (GPS 1 s, network
+    2 s used only while GPS has been quiet 5 s; fix time = now − the fix's age, so a skewed phone clock can't make
+    it look stale to gps.js's 10 s check). Permission denied → error code 1, location off → 2, timeout → 3.
+  - **Timers:** a hidden page's timers are throttled (to once a minute after ~5 min). The plugin sends a 1 s `tick`
+    while the activity is stopped and the service runs; the shim turns it into a window `cflo-bg-tick` event and
+    `notify.js` runs its alert check on it (tick() is safe to run twice).
+- **Battery:** Settings → Notifications gets a "Run in the background" card (app only): Android's "let the app run
+  in the background" prompt (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, falls back to the app-info page). A toast points
+  at it on the first connection of an app start while not allowed. Samsung also lists the app under Battery →
+  "Unrestricted" once allowed.
+- notify.js's status line in the app says "also with the screen off".
+- Mock test `test/shim-background.test.mjs` (20 checks: service follows the link, switch doesn't stop it, lost note,
+  tick only while hidden, Disconnect button, geolocation fixes / maximumAge / timeout / denied, battery card).
+- **Owner test (screen-off drive):** update in Obtainium; connect (Android may ask for notifications + location
+  again); Settings → Notifications → Allow background running; check the "Connected to …" notification; lock the
+  phone and walk / drive 10+ min; alerts should arrive with the screen off, the scanner's STATUS should keep a
+  phone GPS source (blue) the whole time, and live upload rows should have no gap. Then the Disconnect button in the
+  notification, and walking out of range (the "Lost the link" note).
+- **If the web code still stops in the background** (the plan's fallback): move the BLE link, GPS / time push, live
+  upload and alert checks into native code.
+- **Review (2026-11-22, reviewer agent), fixed before the first phone build:** REV-001 a location grant after the start
+  never added the service's location type (the repaint key now includes it); REV-002 a service left by a destroyed /
+  recreated page (the plugin's `handleOnDestroy` stops it, and every page start stops a leftover); REV-003 a stop that
+  lands before `onStartCommand` crashes the app (`startPending`: the plugin waits for it; `CHANGE_NETWORK_STATE`
+  declared so the connectedDevice type can't be refused for a missing grant); REV-004 the page follows a service that
+  ended on its own (status every 5 s while visible, restarted while still connected); REV-005 a one-shot started from
+  a failed watch's error callback got a 30 s timeout instead of the real error; minor: no-default getCurrentPosition
+  timeout, hourly wake-lock renewal, callback owner check, tick only beside the service, a cached GPS fix no longer
+  mutes network fixes, coarse-only grant keeps network fixes, the "link lost" note on its own default-importance
+  channel `cflo-link-lost`, 10 s stop delay, tip toast hides only its own text, notify.js's line checks the service.
+  Confirmed by reading Capacitor 8.6.0: `Bridge.onPause` pauses the web view only when the `KeepRunning` preference is
+  false (default true, not set here), so JavaScript keeps running in the background. A renderer crash kills the app
+  (Capacitor returns false from onRenderProcessGone); keep the web view's default renderer priority.
