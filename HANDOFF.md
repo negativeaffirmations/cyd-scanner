@@ -44,8 +44,14 @@ Pages serves `?v=20261121c` (footer `map popups fit`). `hardening` = `main` cont
     ZUDIMU held in reset 150 s (leader past its burst), rejoined 5.4 s after release (boot included).
 - **Owner checks closed:** CYD fleet-client screen layout OK; fleet-client LEDs breathe; mini #3 AP in the live server's
   `EXCLUDED_MACS` (scan-analyzer: `.env` changed 11-20 21:23, service restarted 22:27; proof = owner's `sudo grep`).
-- **Still open:** phone-notification checks (real alerts, tap-through, background life); BLE pause during the AP scan
-  (owner decision, ~28 s -> ~12 s scan vs. BLE airtime).
+- **Still open:** phone-notification checks (real alerts, tap-through, background life).
+- **C5: BLE paused during the AP scan (owner: keep it on by default; all 4 C5s flashed).** Full time-slice only
+  (`pauseBleForAp()`; fleet BLE role keeps BLE alongside, Wi-Fi roles have BLE off). BLE gets an 8 s slot before each AP
+  scan. A/B on TOLUBA's C5 (COM18, 5 min each): AP scan 28.5 -> 12.3 s, cycle 40.1 -> 29.0 s, BLE on 32 -> 8 s per cycle,
+  BLE devices heard per cycle 22 -> 22.6, APs/probes unchanged. Cost not visible at the bench: BLE blind ~21 s/cycle
+  (was 8.5 s), so a fast pass-by can be missed; a drive comparison would show it. 29 s is close to the 30 s table TTL;
+  `blewin 7000` would add margin if APs flicker. Console `blepause on|off`, `blewin <ms>` (RAM only).
+  C5 MACs: TOLUBA `d0:cf:13:e4:6a:74`, ZUDIMU `d0:cf:13:e4:6c:84`, BEMOPU `10:bd:a3:cf:a3:c8`, SOPAFE `10:bd:a3:ca:22:ac`.
 
 ## RESUME HERE — 2026-11-20 (night): web app READS the scan-analyzer server (webapp only, no firmware)
 scan-analyzer added a read API (its `docs/api-contract.md` "Read API — v1", server `6957067`, schema v14): a paired key
