@@ -43,6 +43,10 @@ jobs:
         working-directory: android-app
         run: npm ci --no-fund --no-audit
 
+      - name: Test the Bluetooth stand-in (mock plugin)
+        working-directory: android-app
+        run: npm test
+
       - name: Bundle the web app
         working-directory: android-app
         run: npm run sync

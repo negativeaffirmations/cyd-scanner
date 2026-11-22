@@ -1,0 +1,12 @@
+/* COINTEL-FLO app only (docs/android-app.md). The app draws edge to edge (Android 15+), so the page runs under the
+   phone's status bar; the web app already pads the bottom navbar for the gesture bar (env(safe-area-inset-bottom)),
+   this does the same for the top. Capacitor's SystemBars plugin also publishes the insets as --safe-area-inset-*. */
+.appbar {
+  padding-top: calc(12px + max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)));
+}
+/* The in-app scanner chooser (native/shim-bluetooth.js) */
+dialog.appchooser { width: min(92vw, 420px); }
+dialog.appchooser .appchoice { width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;
+  background: none; border: 0; color: inherit; padding: 10px 6px; margin: 0; cursor: pointer; }
+dialog.appchooser .appchoice .grow { flex: 1; font-weight: 600; }
+button.appqr { display: inline-flex; align-items: center; gap: 4px; }
