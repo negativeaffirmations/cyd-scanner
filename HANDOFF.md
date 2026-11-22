@@ -1,15 +1,28 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-21 (late): Android app STAGE 1, step 1 DONE; next = step 2 (Bluetooth)
-Plan + all decisions + build notes: **[docs/android-app.md](docs/android-app.md)**. COINTEL-FLO = Capacitor 8.6.0 shell in
-`android-app/` bundling `webapp/` unchanged; `.github/workflows/android.yml` builds, signs (repo secrets) and publishes
-`app-0.1.<n>` releases on pushes to `main` touching `webapp/` / `android-app/`; the owner installs + updates with Obtainium
-(verified: build 2 installed, build 3 arrived as an update, new CF icon). Signing key in the owner's home folder
-`cointel-flo-signing\` (owner to back up). Local builds need Java 21 (`~/.jdks/jdk-21.0.13.1+2`), not Android Studio's 25.
-scan-analyzer allows `https://localhost` CORS (live, its `ab415fc`).
-- **Known issue (owner, build 3):** the app's top bar sits on the phone's status-bar line (edge-to-edge); fix in step 2
-  with system-bar insets, app build only. See the doc's "Known issues".
-- **Next:** step 2 = native BLE plugin + `navigator.bluetooth` shim + in-app scanner list + key entry (QR / paste).
+## RESUME HERE — 2026-11-22: Android app STAGE 1 BUILT (build 6), waiting for the owner's phone test
+Plan, decisions, progress and review results: **[docs/android-app.md](docs/android-app.md)**; CLAUDE.md "Android app" has the
+rules. Everything is merged to `main` and pushed; the latest release is `app-0.1.6` (Obtainium). Built without the owner
+(he was away); nothing below has run on a phone yet except builds 2-3 (install + update path).
+- **Built:** Web Bluetooth stand-in (`android-app/native/shim-bluetooth.js`), in-app chooser, Switch-scanner presence, Scan
+  QR for keys / server pairing, downloads to `Download/COINTEL-FLO/`, native notifications (off the lock screen), status-bar
+  inset, back gesture, offline-bundled Leaflet / fonts, no cloud backup. Reviewer + security passes done, every finding
+  fixed (REV-001..005, SEC-A1/A2). Mock tests: 32 (`cd android-app && npm test`, also in CI).
+- **Owner phone test (stage 1 acceptance), in order:**
+  1. Update to build 6 in Obtainium; the app bar should sit below the phone's status bar.
+  2. Connect: Android asks for Nearby devices + location; the chooser lists scanners (TOLUBA is not in the fleet).
+  3. Each scanner needs its key ONCE in the app (browser keys can't be exported): CYD Settings -> Phone key, then the app's
+     **Scan QR** under Settings -> Device(s) -> Scanner keys (or in the "key needed" dialog); minis: paste the key.
+     Bluetooth pairing should NOT be asked again (Android keeps it per phone).
+  4. Live list / STATUS / Start-Stop / brightness; Switch scanner between two units (should show "In range").
+  5. Download current session + a 24 h export -> files in Download/COINTEL-FLO; compare speed with the browser (MTU 512).
+  6. Upload a scan + live upload to scan-analyzer (CORS for https://localhost is live); Map current session.
+  7. Notifications: allow, Test notification, tap -> device popup. Lock screen shows no details (SEC-A1; one setting if
+     the owner prefers details there).
+  8. Turn off mobile data + Wi-Fi, reopen the app: icons and the map page frame still load.
+- **Open owner decisions:** lock-screen alert details (hidden now); whether the Pages web app freezes once the app works.
+- **After the test:** fix what the phone shows, then stage 2 (foreground service + screen-off drive test).
+- Resume alarm: a one-shot session cron at 2:27 AM 11-22 re-reads this entry (owner asked: usage resets 2:20 EST).
 
 ## RESUME HERE — 2026-11-21: fw 0.41.2 on all 4 hosts + web live queue / sightings / Map server layer / grouped dots / popups (DEPLOYED)
 Owner away for the first part; worked through the open list. Everything is merged to `main` and pushed (last `d533b2b`);

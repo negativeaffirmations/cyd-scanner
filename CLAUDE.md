@@ -730,6 +730,31 @@ back (5 GHz included). Things that matter, learned the hard way:
   the default.
 - Needs `board_build.partitions = huge_app.csv` (BLE + Wi-Fi + web server + TFT).
 
+## Android app — COINTEL-FLO (stage 1 built 2026-11-22; plan + progress: [docs/android-app.md](docs/android-app.md))
+
+- **What it is:** `android-app/` = a Capacitor 8.6.0 shell that bundles `webapp/` **unchanged** (`scripts/build-www.mjs`
+  copies it into `www/` and injects the app-only layer). Package `io.github.negativeaffirmations.cointelflo` (permanent);
+  debug builds are `….dev` ("COINTEL-FLO dev") so they install beside the release. minSdk 29.
+- **App-only layer (`android-app/native/`), injected before `js/main.js`:** `shim-bluetooth.js` = `navigator.bluetooth` +
+  `BluetoothDevice` over `@capacitor-community/bluetooth-le` (raw `Capacitor.Plugins.BluetoothLe`, hex values; every GATT op
+  serialized; own chooser; `getDevices()` = units this app connected to; presence via one shared LE scan, stop debounced
+  10 s, renewed every 25 min); `shim-platform.js` = Scan QR buttons (keys / server pairing), `<a download>` blob saves ->
+  the app's `CfloFilesPlugin.java` (MediaStore `Download/COINTEL-FLO/`), `Notification` + `navigator.serviceWorker`
+  stand-ins over local-notifications (channel `cflo-alerts`, kept off the lock screen), back gesture, `window.open` ->
+  browser; `app.css` = status-bar inset. CDN libraries + fonts are downloaded at build time (SHA-256 pinned) so it
+  starts offline. **When the web app starts using another browser API, check it works in the app or add a stand-in
+  here** — never fork web app code for the app.
+- **Tests:** `cd android-app && npm test` (mock plugins, no phone; runs in CI before every build).
+- **Release:** `.github/workflows/android.yml` on pushes to `main` touching `webapp/` / `android-app/`: test, build,
+  sign (repo secrets `CFLO_KEYSTORE_B64`/`_PASSWORD`/`CFLO_KEY_ALIAS`), publish `app-0.1.<n>`; the owner installs and
+  updates with Obtainium. The signing key lives only in the owner's home folder `cointel-flo-signing\` and the secrets
+  — never in the repo. Every webapp deploy therefore also ships an app build.
+- **Local builds need Java 21** (`~/.jdks/jdk-21.0.13.1+2`); Android Studio's bundled Java 25 breaks Gradle 8.14.3.
+  `npm run sync` then `android/gradlew assembleDebug`.
+- `allowBackup=false` + data-extraction rules exclude everything: scanner keys and cached logs (bystander data) never go to
+  Google backup. scan-analyzer allows the app's origin `https://localhost` (CORS).
+- Stage 2 (background: foreground service, screen-off drive test) comes after the owner tests stage 1 on the phone.
+
 ## Companion project + remote-server upload (PLANNED — new direction)
 
 A separate, **private** companion project — **scan-analyzer** — is being built to be the long-term

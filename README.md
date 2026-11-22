@@ -114,6 +114,24 @@ lib/link_protocol/  -> shared UART message protocol (compiled into both)
 Both use the pioarduino espressif32 platform + Arduino framework (see
 [platformio.ini](platformio.ini)).
 
+## Android app (COINTEL-FLO)
+
+The phone web app is also built as an Android app: the same web app in a native shell ([Capacitor](https://capacitorjs.com/)),
+with native Bluetooth instead of Web Bluetooth, so it needs no browser flags and opens without signal. Every push
+that changes the app builds a signed APK and publishes it as a [GitHub release](../../releases) tagged
+`app-0.1.<n>`.
+
+**Install and update with [Obtainium](https://obtainium.imranr.dev/)** (in F-Droid):
+
+1. In Obtainium, tap **Add App** and enter this repository's URL.
+2. Set **Filter release titles by regular expression** to `^COINTEL-FLO build` and **Filter APKs by regular
+   expression** to `cointel-flo-.*\.apk`.
+3. Tap **Add**, then **Install**, and allow Obtainium to install apps when Android asks.
+
+Later builds show up as updates in Obtainium. Each scanner's phone key has to be entered in the app once (CYD:
+Settings → Phone key, then **Scan QR** in the app), because the browser stores keys in a form that can't be exported.
+Details, design and progress: [docs/android-app.md](docs/android-app.md). The code is in [android-app/](android-app/).
+
 ## Status
 
 Working end to end on hardware:
@@ -146,6 +164,7 @@ cyd-scanner/
 ├── src/cyd/           # CYD host firmware (main, pins, phone, webshare, sigdb, whitelist, logfilter, touch)
 ├── src/c5/            # ESP32-C5 scanner firmware (main, promisc, ieee154)
 ├── lib/link_protocol/ # shared UART message protocol
+├── android-app/       # the web app as an Android app (Capacitor shell + native Bluetooth stand-in), see docs/android-app.md
 ├── webapp/            # phone control web app (Web Bluetooth, GitHub Pages); JS in webapp/js/ (ES modules, no build), styles in webapp/scss/ (SCSS → style.css)
 ├── docs/              # signature-matching research + design
 ├── hardware/          # datasheets, pinouts, PINOUT.md
