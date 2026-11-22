@@ -89,7 +89,11 @@ static volatile WifiPhase g_phase = PH_SCAN;
 // a continuous BLE scan runs at ~99% duty and starves the passive RX of airtime (measured: only ~2
 // mgmt frames / 0 data per promiscuous window with BLE live). Active AP scan (PH_SCAN) gets coex
 // priority so BLE can run alongside it. Every BLE (re)start path checks this.
-static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_PROMISC5 || g_phase == PH_154; }
+// BLE also gives way during the active AP scan (2026-11-21, owner decision): sharing the radio with a ~99% duty BLE scan
+// stretched the dual-band AP scan from ~12 s to ~28.5 s. BLE then gets the inter-scan gap to itself instead
+// (g_bleWinMs, see pauseBleForAp()). g_apBleHold is set only while such an AP scan runs.
+static volatile bool g_apBleHold = false;
+static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_PROMISC5 || g_phase == PH_154 || g_apBleHold; }
 
 // Active scan-source mask (SourceMask bits), set by the CYD's StartScan payload.
 // Disabled sources are only skipped/dropped here - never transmitted around.
@@ -101,6 +105,14 @@ static ScanPlan g_plan = {};
 static volatile uint8_t g_planPhases = 0;   // copy of g_plan.phases: the only plan field the NimBLE task reads
 static inline bool planAllows(uint8_t bits) { const uint8_t p = g_planPhases; return !(p & PLAN_VALID) || (p & bits); }
 static inline bool bleWanted() { return (g_srcMask & MASK_BLE) && planAllows(PLAN_BLE); }
+
+// Pause BLE for the AP scan only in the legacy full time-slice: a fleet BLE role keeps BLE alongside its AP scan (BLE is
+// that unit's job) and the Wi-Fi roles have BLE off anyway. USB console `blepause on|off`, `blewin <ms>` (A/B testing;
+// not saved). The BLE window is the gap before each AP scan: 8 s keeps the cycle (~8 + 12 + 8.5 s) inside the 30 s
+// table TTL, so AP rows no longer age out between refreshes.
+static bool     g_bleApPause = true;
+static uint32_t g_bleWinMs   = 8000;
+static inline bool pauseBleForAp() { return g_bleApPause && bleWanted() && !(g_planPhases & PLAN_VALID); }
 
 // Is this table entry's source currently enabled? Wi-Fi AP-scan detections are
 // filtered per band by channel.
@@ -494,15 +506,60 @@ static void afterScanPhase() {
   else after154Slot();
 }
 
+// (Re)start BLE when nothing holds the radio (watchdog is the backstop).
+static void bleResume() {
+  if (!bleWanted() || blePaused()) return;
+  NimBLEScan* bs = NimBLEDevice::getScan();
+  if (bs && !bs->isScanning()) bs->start(0, false);
+}
+
+// Field diagnostic: one line per AP-scan cycle (cycle length, AP-scan length, BLE scanning time, BLE devices heard).
+static uint32_t g_cycleStart = 0, g_cycleApMs = 0;
+static volatile uint32_t g_bleOnMs = 0;   // accumulated in loop() while the BLE scan runs
+static void cycleReport(uint32_t now) {
+  if (g_cycleStart) {
+    int ble = 0, wifi = 0, prb = 0;
+    xSemaphoreTake(g_mux, portMAX_DELAY);
+    for (int i = 0; i < MAX_ENTRIES; i++) {
+      if (!g_table[i].used || (int32_t)(g_table[i].lastSeen - g_cycleStart) < 0) continue;   // heard this cycle
+      switch ((Source)g_table[i].d.source) {
+        case Source::BleScan:   ble++; break;
+        case Source::WifiProbe: prb++; break;
+        case Source::WifiScan:  wifi++; break;
+        default: break;
+      }
+    }
+    xSemaphoreGive(g_mux);
+    Serial.printf("[C5] cycle %lu ms: ap %lu ms, ble on %lu ms, heard ble=%d ap=%d prb=%d (blepause %s, win %lu)\n",
+                  (unsigned long)(now - g_cycleStart), (unsigned long)g_cycleApMs, (unsigned long)g_bleOnMs, ble, wifi, prb,
+                  pauseBleForAp() ? "on" : "off", (unsigned long)g_bleWinMs);
+  }
+  g_cycleStart = now; g_cycleApMs = 0; g_bleOnMs = 0;
+}
+
+static void endApScan() {
+  g_cycleApMs    = millis() - g_scanStartMs;
+  g_wifiScanning = false;
+  g_apBleHold    = false;
+  afterScanPhase();               // hand the radio to promiscuous capture (BLE stays paused there)
+  if (g_phase == PH_SCAN) bleResume();   // no passive window followed: BLE gets the gap
+}
+
 static void wifiTick() {
   if (g_phase == PH_SCAN) {
     if (!g_wifiScanning) {
-      if (millis() - g_lastWifiDone < g_gapMs) return;
+      const uint32_t gap = pauseBleForAp() && g_bleWinMs > g_gapMs ? g_bleWinMs : g_gapMs;
+      if (millis() - g_lastWifiDone < gap) return;
       if (!(g_srcMask & (MASK_WIFI24 | MASK_WIFI5)) || !planAllows(PLAN_AP24 | PLAN_AP5)) {  // AP scan disabled / not in the plan
         afterScanPhase();
         return;
       }
       setBand(wantedBand());          // single-band role: scan (and capture) one band only
+      cycleReport(millis());
+      if (pauseBleForAp()) {
+        g_apBleHold = true;           // publish first: no restart path can re-arm BLE now
+        NimBLEScan* bs = NimBLEDevice::getScan(); if (bs && bs->isScanning()) bs->stop();
+      }
       g_scanStartMs = millis();
       WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);  // 2.4 + 5 GHz (or the role's one band)
       g_wifiScanning = true;
@@ -530,11 +587,9 @@ static void wifiTick() {
           ssidObserve(d.name, d.mac, am == WIFI_AUTH_OPEN ? 0 : am == WIFI_AUTH_WEP ? 1 : 2, d.channel);
       }
       WiFi.scanDelete();
-      g_wifiScanning = false;
-      afterScanPhase();               // hand the radio to promiscuous capture
+      endApScan();
     } else if (n == WIFI_SCAN_FAILED) {
-      g_wifiScanning = false;
-      afterScanPhase();
+      endApScan();
     }
     return;
   }
@@ -763,10 +818,37 @@ void setup() {
   Serial.println("[C5] scanning in background; waiting for commands");
 }
 
+// USB console (A/B testing of the AP-scan BLE pause; settings are not saved): `blepause on|off`, `blewin <ms>`.
+static void serviceConsole() {
+  static char buf[32]; static uint8_t n = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c != '\n' && c != '\r') { if (n < sizeof(buf) - 1) buf[n++] = c; continue; }
+    buf[n] = 0;
+    if (!n) continue;
+    n = 0;
+    if (!strcmp(buf, "blepause on"))       g_bleApPause = true;
+    else if (!strcmp(buf, "blepause off")) g_bleApPause = false;
+    else if (!strncmp(buf, "blewin ", 7)) { long v = atol(buf + 7); if (v >= 0 && v <= 60000) g_bleWinMs = (uint32_t)v; }
+    else { Serial.println("[C5] commands: blepause on|off, blewin <ms>"); continue; }
+    Serial.printf("[C5] blepause %s, ble window %lu ms (takes effect next cycle)\n", g_bleApPause ? "on" : "off",
+                  (unsigned long)g_bleWinMs);
+  }
+}
+
 void loop() {
   wifiTick();
   ieee154::tick();
   gps::poll();  // drain NMEA (non-blocking)
+  serviceConsole();
+
+  { // BLE scanning time for the cycle report
+    static uint32_t lastT = 0;
+    const uint32_t t = millis();
+    NimBLEScan* bs = NimBLEDevice::getScan();
+    if (lastT && bs && bs->isScanning()) g_bleOnMs += t - lastT;
+    lastT = t;
+  }
 
   // BLE watchdog: if the scan ever stops (stall, error, or an onScanEnd we missed),
   // restart it. Belt-and-suspenders alongside setMaxResults(0).

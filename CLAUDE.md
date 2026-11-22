@@ -181,8 +181,14 @@ back (5 GHz included). Things that matter, learned the hard way:
   client behavior `scanNetworks()` can't see.
   **BLE is PAUSED for both promiscuous windows** (and the 802.15.4 window) — a
   continuous NimBLE scan runs at ~99% radio duty and *starves* the passive promiscuous RX to near-zero
-  (measured ~2 mgmt frames/window with BLE live vs ~100+ paused); it runs alongside the active AP scan
-  only, which gets coex priority. The `blePaused()` helper gates every BLE (re)start path.
+  (measured ~2 mgmt frames/window with BLE live vs ~100+ paused). **From 2026-11-21 BLE is also paused
+  during the active AP scan** in the full (legacy) time-slice (`g_apBleHold`, `pauseBleForAp()`): sharing
+  the radio stretched the dual-band AP scan 12.3 s → 28.5 s. BLE gets its own 8 s slot instead (the gap
+  before each AP scan, `g_bleWinMs`): cycle 40 s → 29 s (just under the 30 s table TTL), BLE devices per
+  cycle unchanged at the bench (22 vs 22.6), but BLE is now blind ~21 s per cycle (was 8.5 s). A fleet BLE
+  role keeps BLE alongside its AP scan; Wi-Fi roles have BLE off. C5 USB console: `blepause on|off`,
+  `blewin <ms>` (not saved) and a per-cycle `[C5] cycle …` line (AP-scan ms, BLE-on ms, devices heard).
+  The `blePaused()` helper gates every BLE (re)start path.
   All sources merge into a shared **detection table** (dedup by source+MAC, 30 s TTL,
   mutex-guarded because the BLE + promiscuous callbacks run in separate tasks; a captured
   IE fingerprint is preserved across scan refreshes). Scanning never blocks the link.
