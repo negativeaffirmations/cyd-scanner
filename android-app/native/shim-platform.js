@@ -24,14 +24,6 @@
     return b ? (b.rawValue || b.displayValue || "") : "";
   }
 
-  // A key or server link scanned from a QR: its #fragment goes to the web app's own hash handlers
-  // (handleDevKeyHash / handlePairHash run on hashchange). Returns true if it was such a link.
-  function routeLink(text){
-    const i = text.indexOf("#");
-    const frag = i >= 0 ? text.slice(i + 1) : "";
-    if(/(^|&)(devkey|server)=/.test(frag)){ location.hash = frag; return true; }
-    return false;
-  }
 
   function addScanButton(afterId, onText){
     const anchor = document.getElementById(afterId);
@@ -61,6 +53,22 @@
   }
   const alertMsg = msg => showToast(msg, true);
   const okMsg = msg => showToast(msg, false);
+  // A small yes/no dialog in the web app's dialog style.
+  function confirmDlg(title, msg, yes){
+    return new Promise(resolve => {
+      const d = document.createElement("dialog");
+      d.innerHTML = '<div class="modalhdr"><strong></strong></div><div class="sub" style="margin:.4em 0 .8em"></div>' +
+        '<div class="fsactions dlgactions"><button class="secondary" data-a="no">Cancel</button> <button class="danger" data-a="yes"></button></div>';
+      d.querySelector("strong").textContent = title;
+      d.querySelector(".sub").textContent = msg;
+      d.querySelector('[data-a="yes"]').textContent = yes || "OK";
+      const end = v => { try{ d.close(); }catch(e){} d.remove(); resolve(v); };
+      d.querySelector('[data-a="no"]').addEventListener("click", () => end(false));
+      d.querySelector('[data-a="yes"]').addEventListener("click", () => end(true));
+      d.addEventListener("cancel", e => { e.preventDefault(); end(false); });
+      document.body.append(d); d.showModal();
+    });
+  }
   const fillAndClick = (inputId, btnId) => text => {
     const inp = document.getElementById(inputId), btn = document.getElementById(btnId);
     if(!inp || !btn) return;
@@ -73,8 +81,25 @@
     // Settings -> Scanner keys, and the "Scanner key needed" dialog: the paste box + its own button do the rest.
     addScanButton("keyAddBtn", fillAndClick("keyPaste", "keyAddBtn"));
     addScanButton("authSaveBtn", fillAndClick("authPaste", "authSaveBtn"));
-    // Settings -> Remote Server: the scan-analyzer pairing QR is a link carrying #server=…&token=….
-    addScanButton("rsPairBtn", text => { if(!routeLink(text)) alertMsg("That QR is not a server pairing link."); });
+    // Settings -> Remote Server: the scan-analyzer pairing QR is a link carrying #server=…&token=…. Only that
+    // kind is accepted here, and replacing a server that is already paired asks first (SEC-A2: a QR shown by
+    // someone else would otherwise send every later upload to their server).
+    addScanButton("rsPairBtn", async text => {
+      const frag = text.indexOf("#") >= 0 ? text.slice(text.indexOf("#") + 1) : "";
+      const m = /(?:^|&)server=([^&]*)/.exec(frag);
+      if(!m){ alertMsg("That QR is not a server pairing link."); return; }
+      let host = "";
+      try{ host = new URL(decodeURIComponent(m[1])).host; }catch(e){ alertMsg("That QR has a bad server address."); return; }
+      let cur = "";
+      try{ cur = new URL(localStorage.getItem("rs.server") || "").host; }catch(e){}
+      const paired = (() => { try{ return !!localStorage.getItem("rs.key"); }catch(e){ return false; } })();
+      if(paired && cur && cur !== host &&
+         !(await confirmDlg("Replace the paired server?", "You are paired with " + cur + ". This QR pairs the app with " + host +
+            " instead, and every later upload goes there. Only continue if " + host + " is your own server.", "Replace"))) return;
+      // Same link scanned twice: an unchanged hash fires no hashchange, so clear it first.
+      if(location.hash.replace(/^#/, "") === frag){ location.hash = ""; setTimeout(() => { location.hash = frag; }, 0); }
+      else location.hash = frag;
+    });
   }
 
   // ---------- downloads -> Download/COINTEL-FLO/ (CfloFilesPlugin, android/app/src/main/java/...) ----------
@@ -140,13 +165,19 @@
     document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible") refreshPerm(); });
 
     // A tag (notify.js: one per kind / device) maps to a stable id, so a newer one replaces the older like the web.
+    // Alerts name bystanders' devices (MAC, name), so they get their own channel that keeps them OFF the lock
+    // screen (visibility SECRET; SEC-A1): the phone still sounds / vibrates, the text shows once unlocked.
+    const CHANNEL = "cflo-alerts";
+    const channelReady = LN.createChannel({ id: CHANNEL, name: "Scanner alerts", description: "Threats, followers, drones and Wi-Fi attacks seen by your scanner",
+      importance: 4, visibility: -1, vibration: true }).catch(() => {});
     const idOf = tag => { let h = 7; for(const ch of String(tag || "cflo")) h = (h * 31 + ch.charCodeAt(0)) | 0; return Math.abs(h) % 2000000000 || 1; };
     async function notify(title, opts){
       opts = opts || {};
       if(perm !== "granted") throw new Error("notifications not allowed");
+      await channelReady;
       await LN.schedule({ notifications: [{
         id: idOf(opts.tag), title: String(title || "COINTEL-FLO"), body: String(opts.body || ""),
-        extra: opts.data || {}, smallIcon: "ic_stat_cflo", iconColor: "#AA00AA",
+        extra: opts.data || {}, smallIcon: "ic_stat_cflo", iconColor: "#AA00AA", channelId: CHANNEL,
       }] });
     }
     class AppNotification {
@@ -170,6 +201,24 @@
       const x = (a && a.notification && a.notification.extra) || {};
       const fire = () => sw.dispatchEvent(new MessageEvent("message", { data: { type: "cflo-notify-click", mac: x.mac || "", kind: x.kind || "" } }));
       if(document.readyState === "complete") fire(); else window.addEventListener("load", fire, { once: true });
+    });
+  }
+
+  // ---------- Android back gesture ----------
+  // An open dialog closes first (its own "cancel" handling runs, like Esc in a browser); otherwise back walks the
+  // page history (Settings subpages push entries); at the top the app goes to the background instead of closing,
+  // so the scanner link stays up.
+  if(P.App){
+    C.addListener("App", "backButton", ev => {
+      const open = [...document.querySelectorAll("dialog[open]")];
+      const top = open[open.length - 1];
+      if(top){
+        const c = new Event("cancel", { cancelable: true });
+        if(top.dispatchEvent(c)) top.close();
+        return;
+      }
+      if(ev && ev.canGoBack) history.back();
+      else P.App.minimizeApp().catch(() => {});
     });
   }
 

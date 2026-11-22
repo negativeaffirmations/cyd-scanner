@@ -41,9 +41,16 @@
 
   // Android runs one GATT operation per connection at a time and the plugin does not queue them: serialize every
   // read / write / notification change here (Chrome queued internally; the web app's own gattq covers only writes).
+  // When the plugin gives up on an operation (its 5 s timeout) Android's GATT can still be busy with it, and the next
+  // one is refused at once ("Reading/Writing characteristic failed."): retry such a refusal once, a moment later.
+  // A refused operation never reached the scanner, so a retried write is not sent twice.
   let tail = Promise.resolve();
+  const refused = e => /characteristic failed|descriptor failed|notifications failed/i.test((e && (e.message || e.errorMessage)) || String(e));
   function gattOp(fn){
-    const run = tail.then(fn);
+    const run = tail.then(async () => {
+      try{ return await fn(); }
+      catch(e){ if(!refused(e)) throw e; await new Promise(r => setTimeout(r, 400)); return fn(); }
+    });
     tail = run.catch(() => {});
     return run;
   }
@@ -70,26 +77,41 @@
   const unitName = id => readJson(NAMES_KEY, {})[id] || "";
 
   // ---------- one shared LE scan (chooser + presence) ----------
+  // Android ignores a scan that starts more than 5 times in 30 s (no results, no error) and throttles one that runs
+  // over 30 min: so a stop waits 10 s for the next user (the switcher re-subscribes after every transfer), and a long
+  // scan is restarted every 25 min.
   const scanSubs = new Set();
-  let scanning = false, scanHandle = null, scanStarting = null;
+  let scanning = false, scanHandle = null, scanStarting = null, stopTimer = 0, renewTimer = 0;
+  const STOP_DELAY_MS = 10000, RENEW_MS = 25 * 60000;
   async function scanSub(fn){
     scanSubs.add(fn);
+    if(stopTimer){ clearTimeout(stopTimer); stopTimer = 0; }
     if(scanning) return;
     if(!scanStarting) scanStarting = (async () => {
       await init();
       if(!scanHandle) scanHandle = C.addListener("BluetoothLe", "onScanResult", r => { scanSubs.forEach(f => { try{ f(r); }catch(e){} }); });
       await BLE.requestLEScan({ services:[SVC], allowDuplicates:true, scanMode:2 });
       scanning = true;
+      clearInterval(renewTimer);
+      renewTimer = setInterval(() => {
+        if(!scanning) return;
+        BLE.stopLEScan().catch(() => {}).then(() => scanning ? BLE.requestLEScan({ services:[SVC], allowDuplicates:true, scanMode:2 }) : 0).catch(() => {});
+      }, RENEW_MS);
     })().finally(() => { scanStarting = null; });
     try{ await scanStarting; }
     catch(e){ scanSubs.delete(fn); throw e; }
-    if(!scanSubs.size) scanStop();   // everyone left while it was starting
+    if(!scanSubs.size) scanStopSoon();   // everyone left while it was starting
   }
-  function scanUnsub(fn){ scanSubs.delete(fn); if(!scanSubs.size) scanStop(); }
-  function scanStop(){
-    if(!scanning) return;
-    scanning = false;
-    BLE.stopLEScan().catch(() => {});
+  function scanUnsub(fn){ scanSubs.delete(fn); if(!scanSubs.size) scanStopSoon(); }
+  function scanStopSoon(){
+    if(stopTimer) return;
+    stopTimer = setTimeout(() => {
+      stopTimer = 0;
+      if(scanSubs.size || !scanning) return;
+      scanning = false;
+      clearInterval(renewTimer); renewTimer = 0;
+      BLE.stopLEScan().catch(() => {});
+    }, STOP_DELAY_MS);
   }
 
   // ---------- device objects (one per id, so identity comparisons in the web app hold) ----------
@@ -113,6 +135,9 @@
     async watchAdvertisements(opts){
       const signal = opts && opts.signal;
       if(signal && signal.aborted) throw domErr("aborted", "AbortError");
+      // Hook the abort FIRST: it can come while the scan is still starting (permission prompts), and a listener
+      // added to an already-aborted signal never runs (that left a scan running for the whole session).
+      if(signal) signal.addEventListener("abort", () => this._unwatch(), { once:true });
       if(this._adv) return;
       const fn = r => {
         if(!r || !r.device || r.device.deviceId !== this.id) return;
@@ -122,9 +147,9 @@
       };
       this._adv = fn;
       try{ await scanSub(fn); }
-      catch(e){ this._adv = null; throw errOf(e, "NotAllowedError"); }
+      catch(e){ if(this._adv === fn) this._adv = null; scanUnsub(fn); throw errOf(e, "NotAllowedError"); }
+      if(this._adv !== fn || (signal && signal.aborted)){ this._unwatch(); throw domErr("aborted", "AbortError"); }
       this.watchingAdvertisements = true;
-      if(signal) signal.addEventListener("abort", () => this._unwatch(), { once:true });
     }
     _unwatch(){ if(this._adv){ scanUnsub(this._adv); this._adv = null; } this.watchingAdvertisements = false; }
     forget(){ return Promise.resolve(); }
@@ -134,7 +159,8 @@
     constructor(device){
       this.device = device;
       this.connected = false;
-      this._gen = 0;            // bumps per connection: a late event from an old one is ignored
+      this._gen = 0;            // bumps on every connect / disconnect: a connect that was cancelled can't come alive
+      this._cancel = null;      // rejects the connect() in flight (disconnect() during a connect)
       this._discHandle = null;
       this._services = [];
       this._chars = new Map();  // uuid -> ShimCharacteristic (this connection)
@@ -142,10 +168,18 @@
     async connect(){
       await init();
       const d = this.device, gen = ++this._gen;
-      if(!this._discHandle) this._discHandle = C.addListener("BluetoothLe", "disconnected|" + d.id, () => this._lost(this._gen));
-      try{ await BLE.connect({ deviceId:d.id, timeout:15000 }); }
-      catch(e){ throw errOf(e, "NetworkError"); }
-      if(gen !== this._gen) throw domErr("connection cancelled", "AbortError");   // disconnect() ran meanwhile
+      if(!this._discHandle) this._discHandle = C.addListener("BluetoothLe", "disconnected|" + d.id, () => this._lost());
+      // Android often never reports a cancelled pending connect, so the plugin's connect() would wait out its own
+      // 15 s: disconnect() rejects this one at once instead (the web app's switch gives up after 8 s).
+      const cancelled = new Promise((_, rej) => { this._cancel = () => rej(domErr("connection cancelled", "AbortError")); });
+      const attempt = BLE.connect({ deviceId:d.id, timeout:15000 });
+      try{ await Promise.race([attempt, cancelled]); }
+      catch(e){
+        attempt.then(() => { if(gen !== this._gen || !this.connected) BLE.disconnect({ deviceId:d.id }).catch(() => {}); }, () => {});
+        throw e instanceof DOMException ? e : errOf(e, "NetworkError");
+      }
+      finally{ this._cancel = null; }
+      if(gen !== this._gen){ BLE.disconnect({ deviceId:d.id }).catch(() => {}); throw domErr("connection cancelled", "AbortError"); }
       let svcs = [];
       try{ svcs = (await BLE.getServices({ deviceId:d.id })).services || []; }catch(e){}
       this._services = svcs;
@@ -160,14 +194,15 @@
     disconnect(){
       const was = this.connected;
       this._gen++;
+      if(this._cancel) this._cancel();
       this._teardown();
       let fired = !was;
       const fire = () => { if(fired) return; fired = true; this.device.dispatchEvent(new Event("gattserverdisconnected")); };
       BLE.disconnect({ deviceId:this.device.id }).catch(() => {}).then(fire);
       if(was) setTimeout(fire, 3000);
     }
-    _lost(gen){                       // the scanner went away (plugin notice)
-      if(gen !== this._gen || !this.connected) return;
+    _lost(){                          // the scanner went away (plugin notice); ignored once we're already down
+      if(!this.connected) return;
       this._teardown();
       setTimeout(() => this.device.dispatchEvent(new Event("gattserverdisconnected")), 0);
     }
@@ -266,23 +301,31 @@
         if(err) reject(err); else resolve(val);
       };
       const label = s => unitName(s.id) || (known().find(k => k.id === s.id) || {}).name || s.name || "CFLO";
+      // One row per scanner, kept in place and updated in place (REV-003): rebuilding and re-sorting by signal every
+      // tick swapped rows under the finger. A row is placed once (used-before units first) and leaves after 10 s quiet.
+      const rowEls = new Map();
       function render(){
-        const now = Date.now();
-        const rows = [...seen.values()].filter(s => now - s.at < 10000)
-          .sort((a, b) => (!!unitName(b.id) - !!unitName(a.id)) || (b.rssi - a.rssi));
-        $r("msg").textContent = rows.length ? "Tap a scanner. Ones you have used before show their name." : "Looking for scanners… Make sure the scanner is on and nearby.";
-        $r("list").innerHTML = "";
-        rows.forEach(s => {
-          const row = document.createElement("button");
-          row.className = "sessrow keyrow appchoice";
-          row.type = "button";
+        const now = Date.now(), list = $r("list");
+        for(const [id, el] of rowEls) if(!seen.has(id) || now - seen.get(id).at >= 10000){ el.remove(); rowEls.delete(id); }
+        for(const s of seen.values()){
+          if(now - s.at >= 10000) continue;
+          let row = rowEls.get(s.id);
           const usedBefore = !!unitName(s.id) || known().some(k => k.id === s.id);
-          row.innerHTML = '<span class="material-symbols-outlined">bluetooth</span><span class="grow"></span><span class="sub"></span>';
+          if(!row){
+            row = document.createElement("button");
+            row.className = "sessrow keyrow appchoice";
+            row.type = "button";
+            row.innerHTML = '<span class="material-symbols-outlined">bluetooth</span><span class="grow"></span><span class="sub"></span>';
+            row.addEventListener("click", () => finish(deviceFor(s.id, s.name)));
+            row.dataset.used = usedBefore ? "1" : "";
+            const firstNew = usedBefore ? [...list.children].find(c => !c.dataset.used) : null;
+            list.insertBefore(row, firstNew || null);
+            rowEls.set(s.id, row);
+          }
           row.children[1].textContent = label(s) + (usedBefore ? "" : " (new)");
           row.children[2].textContent = s.rssi + " dBm";
-          row.addEventListener("click", () => finish(deviceFor(s.id, s.name)));
-          $r("list").append(row);
-        });
+        }
+        $r("msg").textContent = rowEls.size ? "Tap a scanner. Ones you have used before show their name." : "Looking for scanners… Make sure the scanner is on and nearby.";
       }
       function onResult(r){
         if(!r || !r.device) return;

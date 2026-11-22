@@ -2,18 +2,18 @@
 import { readFileSync } from "node:fs";
 const src = readFileSync(new URL("../native/shim-bluetooth.js", import.meta.url), "utf8");
 const listeners = new Map(); const calls = [];
-let inFlight = 0, maxInFlight = 0;
+let inFlight = 0, maxInFlight = 0, scanDelay = 0, hangConnect = false, refuseOnce = false;
 const SVC="9a1e0000-2b7e-4c1a-9b00-1a2b3c4d5e6f", CH="9a1e0003-2b7e-4c1a-9b00-1a2b3c4d5e6f", ST="9a1e0004-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 const emit = (ev, d) => (listeners.get(ev)||[]).forEach(f=>f(d));
 const slow = async (name, ret) => { calls.push(name); inFlight++; maxInFlight=Math.max(maxInFlight,inFlight); await new Promise(r=>setTimeout(r,20)); inFlight--; return ret; };
 const BLE = {
   initialize: async()=>{ calls.push("init"); }, isEnabled: async()=>({value:true}),
-  connect: async(o)=>{ calls.push("connect "+o.deviceId); },
+  connect: (o)=>{ calls.push("connect "+o.deviceId); return hangConnect ? new Promise(r=>setTimeout(r, 15000)) : Promise.resolve(); },
   disconnect: async(o)=>{ calls.push("disconnect"); emit("disconnected|"+o.deviceId); },
   getServices: async()=>({services:[{uuid:SVC,characteristics:[{uuid:CH,properties:{write:true}},{uuid:ST,properties:{read:true,notify:true}}]}]}),
-  read: (o)=>slow("read",{value:"6869"}), write:(o)=>slow("write "+o.value), writeWithoutResponse:(o)=>slow("wnr "+o.value),
+  read: (o)=>{ if(refuseOnce){ refuseOnce=false; return Promise.reject(new Error("Reading characteristic failed.")); } return slow("read",{value:"6869"}); }, write:(o)=>slow("write "+o.value), writeWithoutResponse:(o)=>slow("wnr "+o.value),
   startNotifications:(o)=>slow("startN"), stopNotifications:(o)=>slow("stopN"),
-  requestLEScan: async()=>{ calls.push("scan"); }, stopLEScan: async()=>{ calls.push("stopscan"); },
+  requestLEScan: async()=>{ calls.push("scan"); await new Promise(r=>setTimeout(r, scanDelay)); }, stopLEScan: async()=>{ calls.push("stopscan"); },
 };
 globalThis.window = globalThis;
 globalThis.localStorage = { m:{}, getItem(k){return this.m[k]??null}, setItem(k,v){this.m[k]=String(v)} };
@@ -49,4 +49,18 @@ let ne; try{ await cmd.writeValue(new Uint8Array([1])); }catch(e){ ne=e.name; } 
 let adv=0; dev.addEventListener("advertisementreceived", e=>{ if(e.rssi===-50) adv++; });
 const ctl = new AbortController(); await dev.watchAdvertisements({signal:ctl.signal});
 emit("onScanResult",{device:{deviceId:dev.id},rssi:-50}); emit("onScanResult",{device:{deviceId:"other"},rssi:-50});
-ok(adv===1, "advertisementreceived only for its own id"); ctl.abort(); ok(calls.at(-1)==="stopscan","scan stops when last watcher leaves");
+ok(adv===1, "advertisementreceived only for its own id"); ctl.abort();
+ok(calls.at(-1)!=="stopscan", "scan keeps running for a while after the last watcher leaves");
+await new Promise(r=>setTimeout(r,10200)); ok(calls.at(-1)==="stopscan","then stops (10 s later)");
+// REV-001: an abort while the scan is still starting stops it again
+scanDelay = 300; const c2 = new AbortController(); const w = dev.watchAdvertisements({signal:c2.signal}); c2.abort();
+let ab; try{ await w; }catch(e){ ab=e.name; } ok(ab==="AbortError" && !dev.watchingAdvertisements, "abort during start -> AbortError, not watching");
+await new Promise(r=>setTimeout(r,10500)); ok(calls.filter(c=>c==="scan").length===calls.filter(c=>c==="stopscan").length, "every scan start has its stop (none left running)");
+scanDelay = 0;
+// REV-004: disconnect() during a pending connect rejects it at once
+hangConnect = true; const t0 = Date.now(); const pc = dev.gatt.connect(); setTimeout(()=>dev.gatt.disconnect(), 50);
+let ce; try{ await pc; }catch(e){ ce=e.name; } ok(ce==="AbortError" && Date.now()-t0 < 1000, "cancelled connect rejects at once ("+(Date.now()-t0)+" ms)");
+hangConnect = false;
+// REV-005: an op refused at once is retried once
+await dev.gatt.connect(); const svc2 = await dev.gatt.getPrimaryService(SVC); const st2 = await svc2.getCharacteristic(ST);
+refuseOnce = true; const v2 = await st2.readValue(); ok(new TextDecoder().decode(v2)==="hi", "refused read retried once and succeeds");

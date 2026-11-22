@@ -179,7 +179,24 @@ Each step ends with something you can check on the phone.
     `@capacitor/local-notifications` (a tag maps to a stable id, so a newer alert replaces the older like the web);
     a tap posts the same `cflo-notify-click` message `notify-sw.js` sends, so `notify.js` opens the device as before.
     Status-bar icon `res/drawable/ic_stat_cflo.xml` (radar mark), tint `#AA00AA`.
-  - Mock tests: `npm test` = 26 checks (Bluetooth 16, saving 6, notifications 4), run in CI before each build.
+  - Mock tests: `npm test`, run in CI before each build.
+- **Review pass (2026-11-22, reviewer + security agents), all fixed in build 6:**
+  - REV-001 a presence watch aborted while its scan was still starting left a low-latency scan running all session
+    (abort now hooked before the await); REV-002 scan stop debounced 10 s (Android ignores > 5 starts / 30 s) + a
+    restart every 25 min (Android throttles > 30 min); REV-003 chooser rows stay in place (no re-sort under the finger);
+    REV-004 `disconnect()` during a connect rejects it at once (switch "not found" in 8 s, not 15); REV-005 a GATT op
+    refused at once (stack still busy after a timed-out op) is retried once after 400 ms.
+  - SEC-A1 alerts go to channel `cflo-alerts` with lock-screen visibility SECRET (bystander MACs / names stay off the
+    lock screen; sound + vibration remain) — **owner may prefer them visible; it's one setting**. SEC-A2 a server QR
+    that would replace a paired server asks first, naming the new host; that button only takes server links.
+  - Unused `SCHEDULE_EXACT_ALARM` / `RECEIVE_BOOT_COMPLETED` removed from the manifest; workflow actions pinned to
+    commit SHAs, Gradle wrapper validated, keystore removed by `trap` even on a failed build.
+  - Back gesture: closes an open dialog, else page history back, at the top the app goes to the background (keeps the
+    scanner link) instead of closing. Scanning the same server QR twice works.
+- **Offline start (build 6):** `build-www.mjs` downloads Leaflet 1.9.4, markercluster 1.5.3 (SHA-256 pinned; a changed
+  file fails the build) and the two Google font sheets + woff2 files (~600 KB) into `www/vendor/` and rewrites
+  index.html; the build fails if any CDN URL is left. Map tiles still need signal.
+- Mock tests: 32 checks (Bluetooth 21, platform 11).
   - The debug APK is ~28 MB, mostly the ML Kit / camera libraries the QR plugin brings. Fine for now; revisit if size matters.
 
 ## Known issues
