@@ -11,9 +11,9 @@
 - Build 8 walk 1 FAILED (alerts ~1-2 min after screen-off, then a burst on reopening = the page's JS paused in the
   background). Build 9 (published 2026-11-22, owner OK): `CfloWebView` keeps Chromium seeing a visible window while the
   service runs, + the **background log** (Settings -> Notifications -> Background log, Save). Docs "Stage 2".
-  **Next:** owner walk 2 on build 9; if alerts still stop, read the saved log (gaps = process frozen, ticks without acks
-  = JS paused, dets flat = link stalled). adb works here with `ANDROID_ADB_SERVER_PORT=15037` (5037 is Hyper-V reserved);
-  no phone attached yet. TOLUBA: battery dead or wiring (owner to check).
+  **Walk 2 on build 9 PASSED** (alerts live screen-off, 21 min log clean). Build 10: the log's `ble`/`dets` counters
+  (read 0, shared-object bug) + Save shows its result in the dialog. Docs "Stage 2". adb works here with
+  `ANDROID_ADB_SERVER_PORT=15037` (5037 is Hyper-V reserved). TOLUBA: battery dead or wiring (owner to check).
 
 ## 2026-11-22 (later): notification Alert style DONE; NEXT = stage 2 (background alerts)
 - Owner tested build 6: it works, notifications arrive (a greyed switch on a Samsung settings page was cosmetic).
