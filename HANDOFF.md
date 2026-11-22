@@ -2,8 +2,8 @@
 
 ## RESUME HERE — 2026-11-22: Android app STAGE 1 BUILT (build 6), waiting for the owner's phone test
 Plan, decisions, progress and review results: **[docs/android-app.md](docs/android-app.md)**; CLAUDE.md "Android app" has the
-rules. Everything is merged to `main` and pushed; the latest release is `app-0.1.6` (Obtainium). Built without the owner
-(he was away); nothing below has run on a phone yet except builds 2-3 (install + update path).
+rules. Everything is merged to `main` and pushed; the latest release is `app-0.1.6` (Obtainium). Built while the owner
+was away; nothing below has run on a phone yet except builds 2-3 (install + update path).
 - **Built:** Web Bluetooth stand-in (`android-app/native/shim-bluetooth.js`), in-app chooser, Switch-scanner presence, Scan
   QR for keys / server pairing, downloads to `Download/COINTEL-FLO/`, native notifications (off the lock screen), status-bar
   inset, back gesture, offline-bundled Leaflet / fonts, no cloud backup. Reviewer + security passes done, every finding
