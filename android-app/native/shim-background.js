@@ -210,12 +210,16 @@
     $r("close").addEventListener("click", end);
     d.addEventListener("cancel", e => { e.preventDefault(); end(); });
     $r("clear").addEventListener("click", async () => { try{ await BG.diagClear(); }catch(e){} end(); showLog(); });
-    $r("save").addEventListener("click", () => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-      a.download = "cflo-background-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "") + ".txt";
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    // The result goes in the dialog: the toast draws behind a modal dialog, so a save looked like nothing happened.
+    $r("save").addEventListener("click", async () => {
+      const btn = $r("save"), st = $r("state");
+      const name = "cflo-background-" + new Date().toISOString().slice(0, 16).replace(/[:T]/g, "") + ".txt";
+      const save = window.__cfloApp && window.__cfloApp.saveFile;
+      if(!save){ st.textContent = "Saving files is missing from this build."; return; }
+      btn.disabled = true; st.textContent = "Saving...";
+      try{ st.textContent = await save(new Blob([text], { type: "text/plain" }), name); }
+      catch(e){ st.textContent = "Could not save: " + ((e && e.message) || e); }
+      btn.disabled = false;
     });
     document.body.append(d); d.showModal();
     const pre = $r("log"); pre.scrollTop = pre.scrollHeight;

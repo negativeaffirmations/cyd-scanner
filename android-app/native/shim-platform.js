@@ -121,16 +121,19 @@
   let saveTail = Promise.resolve();
   function saveFile(blob, name){
     const F = P.CfloFiles;
-    if(!F){ alertMsg("Saving files is missing from this build."); return; }
+    if(!F){ alertMsg("Saving files is missing from this build."); return Promise.reject(new Error("Saving files is missing from this build.")); }
+    let saved = "";
     const run = saveTail.then(async () => {
       const { id } = await F.begin({ name, mime: blob.type || "application/octet-stream" });
       try{
         for(let off = 0; off < blob.size; off += CHUNK) await F.append({ id, data: await b64Of(blob.slice(off, off + CHUNK)) });
         const r = await F.finish({ id });
-        okMsg("Saved to Downloads/COINTEL-FLO: " + name + " (" + Math.round(((r && r.bytes) || blob.size) / 1024) + " KB)");
+        saved = "Saved to Downloads/COINTEL-FLO: " + name + " (" + Math.round(((r && r.bytes) || blob.size) / 1024) + " KB)";
+        okMsg(saved);
       }catch(e){ F.abort({ id }).catch(() => {}); throw e; }
-    }).catch(e => alertMsg("Could not save " + name + ": " + ((e && e.message) || e)));
-    saveTail = run;
+    });
+    saveTail = run.catch(e => alertMsg("Could not save " + name + ": " + ((e && e.message) || e)));
+    return run.then(() => saved);   // for callers that show their own result (a modal dialog hides the toast)
   }
   function downloadOf(a){
     if(!a || !a.hasAttribute || !a.hasAttribute("download")) return null;
@@ -140,13 +143,13 @@
   const origClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function(){
     const d = downloadOf(this);
-    if(d){ saveFile(d.blob, d.name); return; }
+    if(d){ saveFile(d.blob, d.name).catch(() => {}); return; }
     return origClick.call(this);
   };
   document.addEventListener("click", ev => {   // a download link the user taps (none today, but cheap to cover)
     const a = ev.target && ev.target.closest && ev.target.closest("a[download]");
     const d = downloadOf(a);
-    if(d){ ev.preventDefault(); saveFile(d.blob, d.name); }
+    if(d){ ev.preventDefault(); saveFile(d.blob, d.name).catch(() => {}); }
   }, true);
 
   // ---------- notifications (features/notify.js) -> native local notifications ----------
@@ -213,7 +216,7 @@
       } });
     }
     // Counted for the background log (native/shim-background.js).
-    const diag = (window.__cfloApp = window.__cfloApp || {}).diag = Object.assign({ ble:0, dets:0, shown:0, failed:0 }, window.__cfloApp.diag);
+    const diag = Object.assign((window.__cfloApp = window.__cfloApp || {}).diag || (window.__cfloApp.diag = {}), Object.assign({ ble:0, dets:0, shown:0, failed:0 }, window.__cfloApp.diag));
     const origNotify = notify;
     notify = async (title, opts) => {
       try{ const r = await origNotify(title, opts); diag.shown++; return r; }
@@ -280,5 +283,5 @@
 
   if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", wireQr);
   else wireQr();
-  window.__cfloApp = Object.assign(window.__cfloApp || {}, { platform:true });
+  window.__cfloApp = Object.assign(window.__cfloApp || {}, { platform:true, saveFile });
 })();

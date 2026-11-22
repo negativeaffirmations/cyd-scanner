@@ -318,3 +318,10 @@ froze the app process, and with it the web view. Nothing was lost on the scanner
   watchers on return). Web app code that checks `document.visibilityState` now sees "visible" in the background while
   a scanner is connected (wake lock attempt, log-cache reload, Switch scanner): all harmless. Tests 59/59.
 - adb on this PC: port 5037 sits in a Windows reserved range (Hyper-V); use `ANDROID_ADB_SERVER_PORT=15037`.
+- **Owner walk 2 (build 9, 2026-11-22): PASSED.** Alerts arrived live with the screen off / app in the background. The
+  saved log covered 21 min in the background: ticks 28-30 per 30 s all answered by the page, 30 GPS fixes per 30 s,
+  shown 2 -> 41, failed 0, light doze from 2 min in without effect (exempt=1). Two bugs found, fixed in build 10:
+  `ble`/`dets` read 0 throughout (shim-platform.js replaced the shared `__cfloApp.diag` object after shim-bluetooth.js
+  took a reference; both now fill in the one object), and Save looked like it did nothing (the file was written, but
+  the toast draws behind the modal log dialog; the dialog now shows "Saving..." then the result, through
+  `__cfloApp.saveFile`, which returns a promise).

@@ -140,7 +140,7 @@
   // "link" events carry {id, connected, lost}: lost = the scanner went away on its own (not a disconnect() call).
   const linkEvents = new EventTarget();
   // Counters for the background log (native/shim-background.js): BLE notifications, DETS packets (cumulative).
-  const diag = (window.__cfloApp = window.__cfloApp || {}).diag = Object.assign({ ble:0, dets:0, shown:0, failed:0 }, (window.__cfloApp || {}).diag);
+  const diag = Object.assign((window.__cfloApp = window.__cfloApp || {}).diag || (window.__cfloApp.diag = {}), Object.assign({ ble:0, dets:0, shown:0, failed:0 }, window.__cfloApp.diag));
   function linkEvent(id, connected, lost){
     const ev = new Event("link"); ev.id = id; ev.connected = connected; ev.lost = !!lost;
     try{ linkEvents.dispatchEvent(ev); }catch(e){}
