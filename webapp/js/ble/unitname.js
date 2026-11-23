@@ -29,11 +29,16 @@ function db(){
 export function validUnitName(n){ return typeof n === "string" && n.length >= 3 && n.length <= 32 && /^[\x21-\x7e]+$/.test(n); }
 
 // Name the stored key for `sid`, if one exists and its name differs. Resolves true when a record changed.
-const learned = new Map();   // sid -> name already checked this page session (STATUS repeats it on every push)
+// STATUS repeats the name on every push, so a check is skipped for RECHECK_MS after the last one. Not for the whole
+// page session: a key forgotten and re-added from its QR while connected is a new, nameless record (owner, 2026-11-22).
+const learned = new Map();   // sid -> { name, at } of the last check
+const RECHECK_MS = 30000;
 export async function learnKeyName(sid, name){
   sid = (sid || "").toLowerCase();
-  if(!HEX12.test(sid) || !validUnitName(name) || learned.get(sid) === name) return false;
-  learned.set(sid, name);
+  if(!HEX12.test(sid) || !validUnitName(name)) return false;
+  const last = learned.get(sid), now = Date.now();
+  if(last && last.name === name && now - last.at < RECHECK_MS) return false;
+  learned.set(sid, { name, at:now });
   let changed = false;
   try{
     const d = await db();

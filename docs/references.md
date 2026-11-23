@@ -148,3 +148,17 @@ used, where it landed (file/function), the license, and the attribution added.*
   (https://github.com/kazuhikoarase/qrcode-generator, https://www.d-project.com/).
 - **License:** MIT (header retained in the file) — GPL-3.0-compatible. "QR Code" is a registered
   trademark of DENSO WAVE INCORPORATED.
+
+### t50-windows-driver — USB driver for the label-printer tool (2026-11-22)
+
+- **What was used:** the `t50` package's printer modules (`__init__`, `hidwin`, `protocol`, `printer`, `bitmap`,
+  `buffer`, `compress`), **vendored unmodified**, so `tools/label-printer/label.py` can print device labels on a
+  Supvan / Katasymbol T50M Pro over USB (Windows HID via ctypes, no install). The label layout and the pairing-QR SVG
+  reader are cyd-scanner's own.
+- **Where it landed:** `tools/label-printer/t50/` (its `LICENSE` copied beside it).
+- **Source:** *t50-windows-driver* by **zpan45** ("T50 Label contributors"),
+  https://github.com/zpan45/t50-windows-driver, commit `729e3c72fc8b65b663eeb2c16503a226308686d6`. Its protocol
+  work credits *supvan-cups* by **heeen** (https://github.com/heeen/supvan-cups, MIT), reverse-engineered from the
+  Katasymbol Android app.
+- **License:** MIT — GPL-3.0-compatible.
+- **Read, not used:** *thermal-printer-py* (tmpk13) and *supvan-katasymbol-printer-web-ui* (khromov) have no license.

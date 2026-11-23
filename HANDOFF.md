@@ -13,6 +13,12 @@
 - **Flashed** all 4 hosts (BEMOPU COM10, SOPAFE COM15, TOLUBA COM13, ZUDIMU COM21); SOPAFE leads BEMOPU + ZUDIMU, both
   report fw 0.42.0. TOLUBA scans, still a fleet client not joined (as before). **Next:** watch the next real burst:
   a router burst should log a deauth line but raise no banner / notification.
+- **Label printer tool (`tools/label-printer/`, owner request):** prints a scanner label (pairing QR + name + sid,
+  portrait) on the owner's Supvan/Katasymbol T50M Pro over USB, 40x30 mm tape. `t50/` vendored unchanged from
+  zpan45/t50-windows-driver (MIT, docs/references.md). The printer mirrors across the head, so label.py flips the page
+  (`--mirror` skips). SOPAFE label printed, QR scans in the app. `out/` previews git-ignored (secret-key QR).
+- **Web `key names again` (`?v=20261122c`):** a key forgotten + re-added from its QR while connected stayed "Scanner":
+  `unitname.js` skipped the name for the whole page session once learned. Now it re-checks every 30 s.
 - **ON HOLD (owner): car audio stutter / YouTube not loading during the drive** (phone on the car's BT, app connected,
   live upload on). Owner first rules out their 5G connection; fix nothing until then. Notes: docs/android-app.md
   "Known issues". Suspect for the AUDIO: the presence scan (`shim-bluetooth.js` `requestLEScan` scanMode 2 =
