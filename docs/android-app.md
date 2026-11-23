@@ -203,6 +203,18 @@ Each step ends with something you can check on the phone.
 
 ## Known issues
 
+- **Car Bluetooth audio stutters / YouTube won't load while driving (owner, 2026-11-22 drive; ON HOLD).** Phone on the
+  car's Bluetooth (Spotify), app connected to a scanner, live upload on. The owner is first checking whether their 5G
+  connection was the cause; no fix until then.
+  - Data use is not the cause: live upload is a few KB/s (~10 MB/h), and the scanner link uses no internet.
+  - Likely cause of the audio stutter: Switch scanner's presence check. While the app is on screen and other scanners
+    are remembered, `shim-bluetooth.js` keeps an LE scan running in `scanMode: 2` (LOW_LATENCY, allowDuplicates). That
+    shares the phone's one Bluetooth radio with the car's audio (A2DP), and Android phones are known to stutter audio
+    during low-latency scans. It pauses in the background; the scanner link itself (~7 notifications/s) stays.
+  - YouTube not loading is probably not the app: weak coverage, or a Tailscale exit node sending all traffic home.
+  - Test: music with the app closed / connected in the background / on screen. Fix if it is the app: run the presence
+    scan in a low-power mode and stop it while a scanner is connected (Switch then tries to connect, with no "In range").
+
 - **App bar under the phone's status bar (owner, build 3).** The app draws edge to edge (Android 15+ with
   targetSdk 36), so the web app's top app bar sits on the same line as the phone's clock / battery row.
   Fix in step 2: pad the page by the system-bar insets (Capacitor 8's system-bars inset handling or
