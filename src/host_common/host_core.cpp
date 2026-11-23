@@ -368,15 +368,62 @@ bool deauthAlertActive() { return g_deauthUntil && (int32_t)(g_deauthUntil - mil
 bool evilAlertActive()   { return g_evilUntil   && (int32_t)(g_evilUntil   - millis()) > 0; }
 bool eventAlertActive()  { return deauthAlertActive() || evilAlertActive(); }
 
+// --- Deauth alert filter (fw 0.42.0). The first real burst on hardware (2026-11-22 drive) was 21 unicast reason-7
+// frames from a NETGEAR AP's own BSSID to one client: a router telling a client it is no longer associated with to
+// stop sending. That shape is ordinary, so it is logged but raises no alert on its own. It still alerts when:
+//  - any frame went to broadcast, or another sender is in the burst (a tool deauthing both ways shows the client as
+//    a second sender), or the sender's address isn't the BSSID it names;
+//  - the C5 sent no detail for the burst (alert as before);
+//  - the same sender is still deauthing DEAUTH_SUSTAIN_MS after it was first seen. The C5 hears a channel ~160 ms
+//    per sweep and starts a new burst after ~10 s quiet, so a continuous attack shows up as the same sender in the
+//    next cycle (~30 s later); a one-off router burst doesn't.
+// Limit: the C5 keeps only each sender's LATEST target, so several unicast targets from one sender look like one.
+// Receive-side only, like everything here.
+static bool s_deauthQuiet = false;   // this poll's burst is the benign shape and not sustained
+
+static bool deauthBenignShape(const link_protocol::DeauthInfo& di) {
+  if (!di.total || di.bcast || di.n != 1) return false;
+  const link_protocol::DeauthSender& s = di.senders[0];
+  if (s.count != di.total) return false;                 // frames from senders that no longer fit the table
+  if (memcmp(s.src, s.bssid, 6) != 0) return false;      // not from the BSSID it names
+  static const uint8_t kBcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  return memcmp(s.dst, kBcast, 6) != 0;
+}
+
+// Track benign-shaped senders across polls; returns true while `src` has been at it for DEAUTH_SUSTAIN_MS.
+static bool deauthSustained(const uint8_t src[6], uint32_t now) {
+  struct Seen { uint8_t mac[6]; uint32_t first, last; };
+  static Seen seen[4] = {};
+  static constexpr uint32_t FORGET_MS = 120000;          // quiet this long: the next burst counts as new
+  Seen* hit = nullptr; Seen* oldest = &seen[0];
+  for (Seen& e : seen) {
+    if (e.last && now - e.last > FORGET_MS) e.last = 0;
+    if (e.last && !memcmp(e.mac, src, 6)) hit = &e;
+    if (!e.last || (oldest->last && e.last < oldest->last)) oldest = &e;
+  }
+  if (!hit) { hit = oldest; memcpy(hit->mac, src, 6); hit->first = now; }
+  hit->last = now ? now : 1;
+  return now - hit->first >= DEAUTH_SUSTAIN_MS;
+}
+
+uint16_t deauthAlertRate() {
+  return (g_deauthRecent >= DEAUTH_ALERT && !s_deauthQuiet) ? g_deauthRecent : 0;
+}
+
 // Raise/hold the deauth + evil-twin alerts from the latest C5 Status and log an event line for each
-// type at most once per EVENT_LOG_GAP_MS (never per cycle).
+// type at most once per EVENT_LOG_GAP_MS (never per cycle). Every burst over DEAUTH_ALERT is logged,
+// alerting or not (deauthAlertRate()).
 void updateEvents() {
   uint32_t now = millis();
   static uint32_t lastLog[2] = {0, 0};
   static bool     logged[2]  = {false, false};
+  s_deauthQuiet = g_deauthRecent >= DEAUTH_ALERT && deauthBenignShape(g_deauthInfo) &&
+                  !deauthSustained(g_deauthInfo.senders[0].src, now);
   if (g_deauthRecent >= DEAUTH_ALERT) {
-    g_deauthUntil = now + EVENT_HOLD_MS; if (!g_deauthUntil) g_deauthUntil = 1;
-    g_deauthShown = g_deauthRecent;
+    if (!s_deauthQuiet) {
+      g_deauthUntil = now + EVENT_HOLD_MS; if (!g_deauthUntil) g_deauthUntil = 1;
+      g_deauthShown = g_deauthRecent;
+    }
     if (!logged[0] || now - lastLog[0] >= EVENT_LOG_GAP_MS) {
       logged[0] = true; lastLog[0] = now; logEvent("deauth", g_deauthRecent);
     }
@@ -607,7 +654,7 @@ void applyFleetAlerts() {
   const uint32_t now = millis();
   if (dUp) {
     raiseUntil(g_deauthUntil, now);
-    const uint16_t own = g_deauthRecent >= DEAUTH_ALERT ? g_deauthRecent : 0;
+    const uint16_t own = deauthAlertRate();
     g_deauthShown = own > dN ? own : dN;
   }
   if (eUp) {
