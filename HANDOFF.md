@@ -1,5 +1,19 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE — 2026-11-22 (night): fw 0.42.0 deauth alert filter on all 4 hosts (merged to main)
+- Drive 2026-11-22 19:17-19:43: one "Deauth flood" notification at 19:35:26 = the first real deauth burst on hardware
+  (BEMOPU only): 21 unicast reason-7 frames from a NETGEAR AP's own BSSID to one client, -87 dBm, ch 10. Benign (a
+  router telling a non-associated client to stop). Found via scan-analyzer (bridge entry 2026-11-22 20:05). The
+  standalone app's server pairing works (key `cyd-bfa9441e`, read on).
+- Owner asked for a smarter alert: `updateEvents()` (host_core.cpp) still logs every burst >= 20/s, but a benign shape
+  (1 sender, bcast 0, src == bssid, count == total) raises no alert unless the same sender is at it 20 s later
+  (`deauthSustained`, 4 slots, forgotten after 2 min quiet). `deauthAlertRate()` -> STATUS `deauth=`, fleet MStat,
+  applyFleetAlerts. No link / log-schema / web change. Builds: cyd, xiao_s3, xiao_s3_rgb OK. Python copy of the logic:
+  10/10 cases. Limit: the C5 keeps only each sender's latest target, and a one-way targeted attack < 20 s is missed.
+- **Flashed** all 4 hosts (BEMOPU COM10, SOPAFE COM15, TOLUBA COM13, ZUDIMU COM21); SOPAFE leads BEMOPU + ZUDIMU, both
+  report fw 0.42.0. TOLUBA scans, still a fleet client not joined (as before). **Next:** watch the next real burst:
+  a router burst should log a deauth line but raise no banner / notification.
+
 ## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) DONE (walk 2 passed, build 10 published + checked)
 - Gradle: the VS Code Android extension's "update" moved the wrapper to Gradle 9.7.1 (breaks AGP 8.13 / Capacitor 8 and
   `rootProject.buildDir`). Restored to 8.14.3 (owner closed VS Code + ran git checkout). Refuse further Gradle/AGP

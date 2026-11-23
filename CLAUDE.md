@@ -390,7 +390,12 @@ back (5 GHz included). Things that matter, learned the hard way:
 - **Behavioral-flag tiers.** The C5's `DetFlags` (iBeacon/FindMy/Pwnagotchi/EvilTwin/ODID) raise a
   detection's **tier floor** on the CYD (`computeScores`): Find-My/Drone-RID → suspect,
   Pwnagotchi/Evil-twin → likely, iBeacon → label only. Deauth-flood + evil-twin also surface as
-  live **alerts** (red banner + LED) and `evt` log lines.
+  live **alerts** (red banner + LED) and `evt` log lines. **Deauth alert filter (fw 0.42.0, `updateEvents()`):** every
+  burst ≥ `DEAUTH_ALERT` (20/s) is still logged, but one shaped like a router dropping its own client (one sender, no
+  broadcast, sender = the BSSID it names, `count == total`) raises no alert unless the same sender is still at it
+  `DEAUTH_SUSTAIN_MS` (20 s) later; `deauthAlertRate()` feeds STATUS `deauth=` + fleet `MStat.deauth`, so the web
+  banner / notification follow without a web change. First real burst (2026-11-22 drive): 21 reason-7 frames from a
+  NETGEAR AP to one client.
 - The DB **self-seeds** to the card on first boot and is editable on the card or
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
 - Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,

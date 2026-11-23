@@ -128,6 +128,10 @@ extern uint8_t  g_evilCount, g_ridCount;
 extern uint16_t g_deauthShown;   // values captured when the alert was last raised (banner text)
 extern uint8_t  g_evilShown;
 extern uint32_t g_deauthUntil, g_evilUntil;
+// A burst that looks like a router dropping one of its own clients (one sender, unicast, sent from its own BSSID, no
+// other sender in the table) is logged but raises no alert unless the same sender is still at it this long later.
+#define DEAUTH_SUSTAIN_MS 20000UL
+uint16_t deauthAlertRate();   // g_deauthRecent when it should raise the alert, else 0 (STATUS deauth=, fleet MStat)
 bool deauthAlertActive();
 bool evilAlertActive();
 bool eventAlertActive();

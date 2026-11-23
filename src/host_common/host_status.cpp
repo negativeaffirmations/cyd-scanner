@@ -34,7 +34,7 @@ void pushStatus() {
            susp, lk, conf, sigdb::loaded() ? 1 : 0,
            g_scanActive ? 1 : 0, (int)hostboard::brightness(), (int)g_srcMask,
            whitelist::count(), countMuted(), followAlertN(), sb, g_bgScan ? 1 : 0,
-           (int)max(g_deauthRecent, fDeauth), (int)max(g_evilCount, fEvil), (int)max(g_ridCount, fRid), g_touchLocked ? 1 : 0,
+           (int)max(deauthAlertRate(), fDeauth), (int)max(g_evilCount, fEvil), (int)max(g_ridCount, fRid), g_touchLocked ? 1 : 0,
            hostboard::batteryPercent(), posSource(), (int)g_onbSats, timeSource());
   // gav/tav = per-source availability (bit0 phone, bit1 device) for the web status dots. In part 2:
   // part 1's worst case already sits near the notify limit.
