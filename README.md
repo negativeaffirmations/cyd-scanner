@@ -95,12 +95,18 @@ The tables below are a quick summary of what this project wires; PINOUT.md is au
 | USB console / flashing | native USB port (USB-Serial/JTAG, 13/14) |
 
 **Power:** 5000 mAh 3.7 V LiPo → TP4056 Type-C charger → master switch **SW1** → 1.5 A boost
-(3.7→5 V). The 5 V output feeds the **CYD VIN** directly and the **C5 5V through SW2**, so the C5
-can be isolated while flashing.
+(3.7→5 V). The 5 V output feeds the **CYD VIN** and the **C5 5V**.
 
 > ⚠️ **Feed 5 V only, one source at a time.** Each board keeps its own 3.3 V regulator — never
-> tie the two 3.3 V rails together. **Flashing the C5:** open **SW2**. **Flashing the CYD:** turn
-> **SW1** off. (SW1 off before plugging any programming USB is always safe.)
+> tie the two 3.3 V rails together. The two boards share one 5 V rail, so a USB cable plugged into
+> either board also powers the other: turn **SW1** off before plugging in any programming USB, and
+> plug in only one board's USB at a time.
+>
+> **Optional, handy for development: a second switch (SW2) between the CYD's 5 V and the C5's 5V pin.**
+> Opening it disconnects the two boards' 5 V, so you can plug USB into **both** boards and flash or
+> monitor them at the same time. Close it again for battery use. It isn't needed for normal use and
+> isn't drawn in the wiring diagram; both CYD builds have one.
+> [hardware/PINOUT.md §4](hardware/PINOUT.md#4-power-subsystem--on-board-battery-current-rig) has its wiring.
 
 **Full pinout + diagrams:**
 - Pin tables: [hardware/PINOUT.md §1–5](hardware/PINOUT.md#1-esp32-2432s028r-cyd-cheap-yellow-display)
