@@ -16,7 +16,9 @@
 - **Label printer tool (`tools/label-printer/`, owner request):** prints a scanner label (pairing QR + name + sid,
   portrait) on the owner's Supvan/Katasymbol T50M Pro over USB, 40x30 mm tape. `t50/` vendored unchanged from
   zpan45/t50-windows-driver (MIT, docs/references.md). The printer mirrors across the head, so label.py flips the page
-  (`--mirror` skips). SOPAFE label printed, QR scans in the app. `out/` previews git-ignored (secret-key QR).
+  (`--mirror` skips). SOPAFE, BEMOPU + ZUDIMU labels printed, QR scans in the app. `out/` previews git-ignored (secret-key QR).
+  ZUDIMU had no QR file: `qr-codes/CFLO-CYD-ZUDIMU-pairing-qr.svg` (gen 1) was written by a one-off script that read
+  the console `key` output and never printed it (deleted after). TOLUBA still has none.
 - **Web `key names again` (`?v=20261122c`):** a key forgotten + re-added from its QR while connected stayed "Scanner":
   `unitname.js` skipped the name for the whole page session once learned. Now it re-checks every 30 s. Owner verified
   on app build 11 (names show).
