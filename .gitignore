@@ -42,3 +42,9 @@ webapp/*.css.map
 *.tmp
 # Device pairing QR codes -- each encodes a scanner's secret phone-link key. Never commit.
 qr-codes/
+
+# Added automatically: contains a machine-specific absolute path (sensitive / would break on another machine)
+tools/label-printer/label.py
+
+# label printer previews: they show a scanner's pairing QR (its secret key)
+tools/label-printer/out/
