@@ -13,6 +13,12 @@
 - **Flashed** all 4 hosts (BEMOPU COM10, SOPAFE COM15, TOLUBA COM13, ZUDIMU COM21); SOPAFE leads BEMOPU + ZUDIMU, both
   report fw 0.42.0. TOLUBA scans, still a fleet client not joined (as before). **Next:** watch the next real burst:
   a router burst should log a deauth line but raise no banner / notification.
+- **ON HOLD (owner): car audio stutter / YouTube not loading during the drive** (phone on the car's BT, app connected,
+  live upload on). Owner first rules out their 5G connection; fix nothing until then. Notes: docs/android-app.md
+  "Known issues". Suspect for the AUDIO: the presence scan (`shim-bluetooth.js` `requestLEScan` scanMode 2 =
+  LOW_LATENCY, allowDuplicates) runs whenever the app is on screen and other scanners are remembered (4 are); known to
+  stutter A2DP. Not the data: live upload is a few KB/s. YouTube: likely coverage, or a Tailscale exit node.
+  Proposed fix if it is the app: presence scan in a low-power mode and off while connected.
 
 ## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) DONE (walk 2 passed, build 10 published + checked)
 - Gradle: the VS Code Android extension's "update" moved the wrapper to Gradle 9.7.1 (breaks AGP 8.13 / Capacitor 8 and
