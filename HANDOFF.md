@@ -18,7 +18,8 @@
   zpan45/t50-windows-driver (MIT, docs/references.md). The printer mirrors across the head, so label.py flips the page
   (`--mirror` skips). SOPAFE label printed, QR scans in the app. `out/` previews git-ignored (secret-key QR).
 - **Web `key names again` (`?v=20261122c`):** a key forgotten + re-added from its QR while connected stayed "Scanner":
-  `unitname.js` skipped the name for the whole page session once learned. Now it re-checks every 30 s.
+  `unitname.js` skipped the name for the whole page session once learned. Now it re-checks every 30 s. Owner verified
+  on app build 11 (names show).
 - **ON HOLD (owner): car audio stutter / YouTube not loading during the drive** (phone on the car's BT, app connected,
   live upload on). Owner first rules out their 5G connection; fix nothing until then. Notes: docs/android-app.md
   "Known issues". Suspect for the AUDIO: the presence scan (`shim-bluetooth.js` `requestLEScan` scanMode 2 =
