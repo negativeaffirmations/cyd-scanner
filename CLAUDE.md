@@ -1022,6 +1022,12 @@ the full directive in [docs/references.md](docs/references.md).
 
 ## Conventions
 
+- **Project name:** use **COINTEL-FLO** as the project title in public-facing text (README, app); the repo stays
+  `cyd-scanner`. Just use the name; never write this rule itself into a public document.
+- **Public docs are for readers, not for Claude.** README (and other docs people read) never mention the owner's own
+  units (names like TOLUBA/SOPAFE, "both of my CYDs", counts of builds in use), the private scan-analyzer server, or
+  instructions given to Claude. Those belong here, in HANDOFF.md, or in memory.
+
 - Keep pin definitions centralized (a `pins.h` / config header per board), sourced
   from [hardware/PINOUT.md](hardware/PINOUT.md) — do not scatter magic GPIO numbers.
 - Match the surrounding code's style; this is embedded C++/Arduino.

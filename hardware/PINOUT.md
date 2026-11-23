@@ -16,7 +16,7 @@ in sync when wiring changes.
   (labeled source: [cyd-scanner_diagram_v2_labeled.svg](diagrams/cyd-scanner_diagram_v2_labeled.svg)).
   The earlier [cyd-scanner_wiring_diagram_labeled.png](diagrams/cyd-scanner_wiring_diagram_labeled.png)
   predates the GPS and the battery-sense divider. Neither diagram shows the optional C5-5V switch
-  (**SW2**, below), which both built CYDs have.
+  (**SW2**, below).
 
 ---
 
@@ -192,8 +192,7 @@ The scanner runs from a **self-contained LiPo battery pack**, making it fully po
 - **SW1 — master on/off**, inline on the charger's positive output (TP4056 `OUT+` → boost `+in`).
   Cuts the whole rig. The battery-sense divider (§5a) taps the *switched* side, so it only draws
   when SW1 is on.
-- **SW2 — C5 5 V isolation (OPTIONAL, a development convenience; not in the wiring diagram, fitted on both
-  built CYDs)**, inline on the boost `OUT+` → **C5 5V** leg only. Open, it lets both boards be on USB at
+- **SW2 — C5 5 V isolation (OPTIONAL, a development convenience; not in the wiring diagram)**, inline on the boost `OUT+` → **C5 5V** leg only. Open, it lets both boards be on USB at
   once (flash / monitor both); closed for battery use. Without it, the two boards share one 5 V node. The CYD's VIN is
   fed directly from boost `OUT+` (not through SW2). Opening SW2 isolates the C5 from the shared 5 V
   node, so when the CYD is powered from its own USB (e.g. while flashing it) that 5 V **cannot

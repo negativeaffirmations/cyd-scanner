@@ -1,8 +1,7 @@
 # COINTEL-FLO
 
 Counter-surveillance scanners that detect **Flock Safety cameras** and similar surveillance hardware (ALPR cameras,
-covert wireless cameras, tracking beacons, drones) by their RF signatures. COINTEL-FLO is the project's unofficial
-title; the repository is `cyd-scanner`.
+covert wireless cameras, tracking beacons, drones) by their RF signatures.
 
 There are two hardware builds that run the same scanning firmware and phone app:
 
@@ -54,7 +53,7 @@ the Android app below. An optional Wi-Fi SoftAP handles bulk download.
 
 Several scanners can work as a **fleet** over ESP-NOW: one leader splits the bands between the units,
 merges what they all see, and collects their logs. Logs can also be uploaded, or streamed live, to a
-private analysis server (*scan-analyzer*, a separate project).
+self-hosted analysis server that the phone app pairs with by QR code.
 
 ## Hardware
 
@@ -105,7 +104,7 @@ The tables below are a quick summary of what this project wires; PINOUT.md is au
 > **Optional, handy for development: a second switch (SW2) between the CYD's 5 V and the C5's 5V pin.**
 > Opening it disconnects the two boards' 5 V, so you can plug USB into **both** boards and flash or
 > monitor them at the same time. Close it again for battery use. It isn't needed for normal use and
-> isn't drawn in the wiring diagram; both CYD builds have one.
+> isn't drawn in the wiring diagram.
 > [hardware/PINOUT.md §4](hardware/PINOUT.md#4-power-subsystem--on-board-battery-current-rig) has its wiring.
 
 **Full pinout + diagrams:**
@@ -229,7 +228,7 @@ that can't be exported. Details, design and progress: [docs/android-app.md](docs
 
 ## Status
 
-Working end to end on hardware (two CYD builds and two mini builds in use):
+Working end to end on hardware, on both builds:
 
 - ✅ Inter-board UART link; C5 continuous scanning (Wi-Fi 2.4 + 5 GHz AP scan, promiscuous capture,
   active BLE, opt-in 802.15.4) streamed to the host.
@@ -243,7 +242,7 @@ Working end to end on hardware (two CYD builds and two mini builds in use):
   notifications (also in the background on Android), SD file explorer, log download with a phone-side cache,
   `.cflo` scan archives, wardriving map.
 - ✅ **Fleet mode:** scanners share the work over ESP-NOW, merge detections and forward their logs to the leader.
-- ✅ Upload and live streaming to the private scan-analyzer server, and reading its device history back.
+- ✅ Upload and live streaming to a self-hosted analysis server, and reading its device history back.
 
 Current state and next steps: [HANDOFF.md](HANDOFF.md). Signature design: [docs/signature-matching.md](docs/signature-matching.md).
 
