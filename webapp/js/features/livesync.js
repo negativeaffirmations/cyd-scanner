@@ -137,6 +137,12 @@ async function save(sid, path, blob, fid){
   cur.hadCopy.add(fid);
 }
 
+// Every new piece of a mirrored file, however it arrived (pushed, a tail update, a whole copy), is announced as a
+// window "cflo-livelog" event {sid, path, fid, off, bytes} so live analysis (analysis/engine.js) sees the whole file.
+function announce(path, fid, off, bytes){
+  try{ window.dispatchEvent(new CustomEvent("cflo-livelog", { detail:{ sid:cur.sid, path, fid, off, bytes } })); }catch(e){}
+}
+
 // Bring one file's copy up to date. Returns the number of new bytes.
 async function syncFile(label, t, gen, sid){
   const meta = find(sid, t.path, t.fid);
@@ -154,6 +160,7 @@ async function syncFile(label, t, gen, sid){
       if(await fileIdOf(merged) !== t.fid) throw new Error("the copy no longer matches the file");
       gate(gen, sid);
       await save(sid, t.path, merged, t.fid);
+      announce(t.path, t.fid, meta.size, new Uint8Array(await r.blob.arrayBuffer()));
     }
     cur.files[label] = { ...t, size:meta.size + r.n, at:Date.now() };
     return r.n;
@@ -189,6 +196,7 @@ async function syncFile(label, t, gen, sid){
   if(await fileIdOf(r.blob) !== t.fid){ cur.relist = true; throw new Error("the file changed on the scanner"); }
   gate(gen, sid);
   await save(sid, t.path, r.blob, t.fid);
+  announce(t.path, t.fid, 0, new Uint8Array(await r.blob.arrayBuffer()));
   cur.tried.delete(t.fid);
   cur.files[label] = { ...t, size:r.blob.size, at:Date.now() };
   return r.blob.size;
@@ -230,7 +238,7 @@ function onLiveLog(v){
   s.chunks.push(add); s.bytes += add.length; s.end += add.length; s.lastAt = Date.now();
   const f = cur.files[s.label];
   if(f && f.fid === s.fid){ f.size = s.end; f.at = s.lastAt; }
-  try{ window.dispatchEvent(new CustomEvent("cflo-livelog", { detail:{ sid:cur.sid, path:s.path, fid:s.fid, off:s.end - add.length, bytes:add } })); }catch(e){}
+  announce(s.path, s.fid, s.end - add.length, add);
   if(s.bytes >= FLUSH_BYTES) nextAt = 0;
 }
 
