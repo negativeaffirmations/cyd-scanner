@@ -2011,10 +2011,15 @@ body {
   pointer-events: none;
 }
 
-#detServer:not(:empty) {
+#detServer:not(:empty), #detPhone:not(:empty) {
   margin-top: 0.8em;
   padding-top: 0.5em;
   border-top: 1px solid #30363d;
+}
+
+#detPhone .vv.warn {
+  color: #d29922;
+  font-weight: 600;
 }
 
 .srvhead {
