@@ -214,6 +214,7 @@ export function analysisFor(macIn){
     mac, n:d.n, first:d.first, last:d.last, span, places:pl.length, spreadM:spread, youMovedM:youMoved,
     names:[...d.names], src:[...d.src], scanners:[...d.scanners], ownSid:sid, tier:d.tier, sig:d.sig, score:d.score,
     flags:[...d.flags], rssiMax:d.rssiMax, verdict, level,
+    lastPos:d.sight.length ? { lat:d.sight[d.sight.length - 1].lat, lon:d.sight[d.sight.length - 1].lon } : null,
     rotating:d.src.has("BLE") && isRpa(mac),
     randomWifi:!d.src.has("BLE") && !d.src.has("154") && isLocal(mac),
   };
