@@ -134,6 +134,11 @@ extern uint32_t g_deauthUntil, g_evilUntil;
 uint16_t deauthAlertRate();   // g_deauthRecent when it should raise the alert, else 0 (STATUS deauth=, fleet MStat)
 bool deauthAlertActive();
 bool evilAlertActive();
+// Evil-twin quiet filter (fw 0.43.0, host_core.cpp classifyEvilTwins): an SSID whose flagged BSSIDs are all weak,
+// real vendor addresses, no signature OUI, two or more makers each at one encryption class is logged but not alerted.
+#define EVIL_WEAK_RSSI    (-80)     // dBm; a flagged BSSID stronger than this always alerts
+uint8_t evilAlertCount();     // g_evilCount minus the quiet SSIDs (STATUS evil=, fleet MStat, banner)
+bool evilQuiet(int i);        // detection i belongs to a quiet evil-twin SSID
 bool eventAlertActive();
 void updateEvents();
 

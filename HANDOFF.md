@@ -22,12 +22,16 @@
 - **Web `key names again` (`?v=20261122c`):** a key forgotten + re-added from its QR while connected stayed "Scanner":
   `unitname.js` skipped the name for the whole page session once learned. Now it re-checks every 30 s. Owner verified
   on app build 11 (names show).
-- **ON HOLD (owner): car audio stutter / YouTube not loading during the drive** (phone on the car's BT, app connected,
-  live upload on). Owner first rules out their 5G connection; fix nothing until then. Notes: docs/android-app.md
-  "Known issues". Suspect for the AUDIO: the presence scan (`shim-bluetooth.js` `requestLEScan` scanMode 2 =
-  LOW_LATENCY, allowDuplicates) runs whenever the app is on screen and other scanners are remembered (4 are); known to
-  stutter A2DP. Not the data: live upload is a few KB/s. YouTube: likely coverage, or a Tailscale exit node.
-  Proposed fix if it is the app: presence scan in a low-power mode and off while connected.
+- **Evil-twin alert, 2026-11-23 fleet drive: benign (scan-analyzer, bridge 2026-11-23 19:50).** One event, BEMOPU only:
+  one SSID on an old Actiontec (Verizon Fios) router + an eero that reused its name, both weak (-84..-91); the same pair
+  fired at the same spot on 2026-10-22. Detector worked as designed (legacy vs modern encryption).
+- **fw 0.43.0 (built, NOT flashed yet): evil-twin enc on the log + quiet filter.** C5 tags AP rows with the enc class
+  (flag bits 10-12, no link bump); `eviltwin` lines gain `enc` / `rssis` / `alert:0`; a weak, real-vendor, multi-maker
+  SSID is logged but not alerted (CLAUDE.md "Evil-twin quiet filter"). Flash all 3 hosts + all 3 C5s. scan-analyzer told
+  of the new keys on the bridge. Check on the next drive past that spot: the line has `"alert":0`, no banner.
+- **RESOLVED 2026-11-23: car audio stutter / YouTube not loading (2026-11-22 drive).** On the 2026-11-23 fleet drive
+  the phone streamed Spotify over the car's BT with the app connected + live upload on, no problem. Owner: not the app;
+  closed. If it comes back, start from docs/android-app.md "Known issues" (the presence-scan suspect is noted there).
 
 ## RESUME HERE — 2026-11-22 (evening): stage 2 (background alerts) DONE (walk 2 passed, build 10 published + checked)
 - Gradle: the VS Code Android extension's "update" moved the wrapper to Gradle 9.7.1 (breaks AGP 8.13 / Capacitor 8 and

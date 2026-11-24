@@ -250,7 +250,7 @@ void sendMStat() {
   m->planGen = C->planGen;
   m->dets = C->lastDets;                                           // P5: scan counters (the leader shows them)
   m->deauth = deauthAlertRate();   // fw 0.42.0: 0 for a benign-shaped burst (see updateEvents)
-  m->evil = g_evilCount; m->rid = g_ridCount;
+  m->evil = evilAlertCount(); m->rid = g_ridCount;
   m->srcMask = g_srcMask;                                          // the leader only assigns roles this unit can run
   m->c5Link = g_linkOk ? 1 : 0;
   // This unit's OWN live GPS fix (not the fleet position it stamps): the leader may use it as the fleet position
