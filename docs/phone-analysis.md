@@ -117,7 +117,15 @@ first / last seen, names, and the evil-twin / deauth events that named it. The p
 days seen, first seen, places, whether it was seen at its current place before ("seen here on 9 days"), and its past
 alerts (both XNVV4 routers list the 2026-10-22 and 2026-11-23 evil-twin events). Reached through `state.history`.
 
-Next increments: alerts from the phone's verdicts, the full OUI / company-ID lists, fleet-wide correlation views.
+**Increment 3c (built):** `webapp/js/analysis/alerts.js` raises the phone's own alerts every 15 s, through the existing
+notification settings (`features/notify.js` exposes `state.notifyShow`: same switches, permission, style, quiet time):
+- **Following you (phone analysis):** a device the whole-scan analysis calls following. Skipped when whitelisted, when it
+  is a rotating BLE address with no signature or detector flag (phones / watches), or when the saved scans show it on
+  3+ earlier days with no signature (it travels with you every day: your own car or phone).
+- **Evil-twin / deauth alert seen here before:** a new alert line in this scan whose devices set off the same alert on
+  an earlier day, "probably a fixed setup, not an attack". The scanner's own alert still fires as before.
+
+Next increments: the full OUI / company-ID lists, fleet-wide correlation views.
 
 
 `webapp/js/analysis/` (new). Runs over the mirrored lines as they arrive (and over any loaded scan):
