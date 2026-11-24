@@ -30,8 +30,9 @@ import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261122b';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
-import { initEngine } from './analysis/engine.js?v=20261123e';   // phone analysis engine (docs/phone-analysis.md phase 3)
-import { initPhoneView } from './features/phoneview.js?v=20261123e';   // device popup: Phone analysis section
+import { initEngine } from './analysis/engine.js?v=20261123f';   // phone analysis engine (docs/phone-analysis.md phase 3)
+import { initHistory } from './analysis/history.js?v=20261123f';   // phone analysis: saved-scan history (phase 3b)
+import { initPhoneView } from './features/phoneview.js?v=20261123f';   // device popup: Phone analysis section
 import { initServerHistory } from './features/serverhist.js?v=20261121a';   // new module: versioned so it loads fresh with main.js
 import { initServerFind } from './features/serverfind.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initServerMap } from './features/servermap.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
@@ -146,6 +147,7 @@ initSettingsPages();   // Settings = a menu of subpages (Device(s) / Notificatio
 initNotify();    // Settings -> Notifications + the device popup's "Notify me when seen" (features/notify.js)
 initDisplayTimeout();   // Settings -> Device(s) -> Display timeout (CYD dto= / V:; features/displaytimeout.js)
 initEngine();          // phone analysis: per-device records of the whole scan from the live copy (analysis/engine.js)
+initHistory();         // phone analysis: per-device history from every saved log (analysis/history.js)
 initPhoneView();       // device popup: the phone's analysis of this device (features/phoneview.js)
 initServerHistory();    // device popup: the paired server's history of this MAC + Settings 'Reading server data' (features/serverhist.js)
 initServerFind();       // Map page 'Server data' dialog: devices near me + search on the paired server (features/serverfind.js)
