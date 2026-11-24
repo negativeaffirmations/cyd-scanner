@@ -14,7 +14,7 @@ async function loadTsv(url){
   const m = new Map();
   for(const ln of (await r.text()).split("\n")){
     const i = ln.indexOf("\t");
-    if(i > 0) m.set(ln.slice(0, i), ln.slice(i + 1));
+    if(i > 0) m.set(ln.slice(0, i), ln.slice(i + 1).replace(/\r$/, ""));   // CRLF-safe
   }
   return m;
 }
