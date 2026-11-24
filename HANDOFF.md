@@ -1,6 +1,31 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-24: phase 3c phone alerts deployed (`098325a`)
+## RESUME HERE — 2026-11-24: phone-side recording + analysis, phases 1-3d deployed (main `1531d0f`)
+State at the end of the 2026-11-23/24 session (one long conversation; start a fresh one from here):
+- **fw 0.44.0 on all 4 hosts** (SOPAFE COM15, BEMOPU COM10, TOLUBA COM17, ZUDIMU COM21); C5s on 0.43.0 (link
+  unchanged). 0.43.0 = evil-twin enc/rssis/alert:0 + quiet filter; 0.44.0 = live-log push (CMD `J:`, `LL=` frames).
+- **Web app** (ui `2026-11-24a · maker lists`), all in docs/phone-analysis.md: phase 1 live copy (`livesync.js`,
+  `syncwait.js`), phase 2 push, 3a engine + popup "Phone analysis" (`analysis/engine.js`, `features/phoneview.js`),
+  3b saved-scan history (`analysis/history.js`), 3c phone alerts (`analysis/alerts.js`, via notify.js
+  `state.notifyShow`), 3d maker lists (`analysis/vendors.js`, `webapp/data/*.tsv`, `tools/vendordb/build.py`).
+- **Checked on the phone:** 1, 2, 3a, 3b (live via wireless adb + DevTools). **Not yet on the phone:** 3c alerts
+  firing (needs a real follower / repeat alert), 3d maker lines (deployed after the last reconnect).
+- **Analysis modules are reached through `state.engine` / `state.history` / `state.vendors`, never imported**:
+  main.js loads them under `?v=` tokens and a plain import elsewhere = a second, empty instance (bit us in 3a).
+- **Offline test harnesses** live in the session scratchpad (gone after cleanup): engine/history/alerts copies with
+  imports stubbed, fed the bridge's drive-2026112{2,3} files + a synthetic tracker. Rebuild the same way if needed.
+- **Deploy checks:** after a webapp push run `gh run list -L 3`; a Pages deploy failed once on a GitHub OIDC timeout
+  ("Failed to get ID Token") and `gh run rerun <id>` fixed it. The auto-mode classifier blocks a push it wasn't told
+  about: ask the owner ("publish") first. It also blocks editing .claude/settings.local.json (owner may add
+  `Bash(git merge:*)` themselves).
+- **Phone debugging:** wireless adb paired (phone 192.168.1.168, connect port changes each time Wireless debugging is
+  toggled); `adb forward tcp:9222 localabstract:chrome_devtools_remote`; page must be on screen; reloading the page
+  drops BLE -> the owner reconnects. Never paste captured device data into the repo.
+- **Next ideas:** fleet-wide correlation views; use the maker list in follow / own-device decisions; phase 2 leftovers
+  (chunked cache storage instead of whole-Blob re-save; a STATUS key for the leader's fleet file, blocked by the
+  part-2 size limit).
+
+## 2026-11-24: phase 3c phone alerts deployed (`098325a`)
 - `analysis/alerts.js`: whole-drive follower + "alert seen here before", via `state.notifyShow` (notify.js hook, uses the
   Notifications switches). Checked offline (synthetic tracker; today's XNVV4 line with the October one in the saved
   logs). Not yet seen firing on the phone (needs a real follower / a repeat alert on a drive).
