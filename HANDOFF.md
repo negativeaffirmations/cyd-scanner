@@ -1,6 +1,11 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-23 (night): phase 3a phone analysis deployed (`dfe0fbf`)
+## RESUME HERE — 2026-11-23 (night): phase 3b saved-scan history deployed (`2d6df33`), checked on the phone
+- `analysis/history.js` + popup "Saved scans on this phone". On the phone: 65 files / 17 MB / 76k lines -> 4,804
+  devices, read within ~1 min of page load; a neighbour device showed "10 days, first 2026-11-01, seen here on 9 days".
+  The 3a jitter / address-note fixes are live with it. Next: 3c alerts from the phone's verdicts (docs/phone-analysis.md).
+
+## 2026-11-23 (night): phase 3a phone analysis deployed (`dfe0fbf`)
 - `analysis/engine.js` + device popup "Phone analysis" (`features/phoneview.js`), docs/phone-analysis.md "Increment 3a".
   On the phone (SOPAFE): 191 devices from 2 files within 20 s; the popup showed the summary after the fix below.
 - Bug found live: phoneview imported engine.js without main.js's ?v= token -> a second, empty module instance. Now via

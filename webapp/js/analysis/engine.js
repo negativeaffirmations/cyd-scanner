@@ -90,7 +90,7 @@ function line(text, f){
   let d = devices.get(mac);
   if(!d){
     d = { mac, first:t || 0, last:t || 0, n:0, src:new Set(), names:new Set(), scanners:new Set(), sight:[],
-          tier:"", score:0, sig:"", flags:new Set(), rssiMax:-999 };
+          tier:"", score:0, sig:"", flags:new Set(), rssiMax:-999, wl:false };
     devices.set(mac, d);
   }
   d.n++;
@@ -101,6 +101,7 @@ function line(text, f){
   if(o.tier && tierRank(o.tier) >= tierRank(d.tier)){ d.tier = o.tier; d.sig = o.sig || d.sig; }
   if(typeof o.score === "number" && o.score > d.score) d.score = o.score;
   if(o.flags) String(o.flags).split("+").forEach(x=>x && d.flags.add(x));
+  d.wl = o.wl === 1;   // the scanner's whitelist verdict on its latest row
   if(typeof o.rssi === "number" && o.rssi > d.rssiMax) d.rssiMax = o.rssi;
   if(t && okLL(o.lat, o.lon)){
     d.sight.push({ t, lat:o.lat, lon:o.lon, rssi:o.rssi, sc:o.scanner || sid, aged:typeof o.fix_age === "number" });
@@ -214,6 +215,7 @@ export function analysisFor(macIn){
     mac, n:d.n, first:d.first, last:d.last, span, places:pl.length, spreadM:spread, youMovedM:youMoved,
     names:[...d.names], src:[...d.src], scanners:[...d.scanners], ownSid:sid, tier:d.tier, sig:d.sig, score:d.score,
     flags:[...d.flags], rssiMax:d.rssiMax, verdict, level,
+    wl:d.wl,
     lastPos:d.sight.length ? { lat:d.sight[d.sight.length - 1].lat, lon:d.sight[d.sight.length - 1].lon } : null,
     rotating:d.src.has("BLE") && isRpa(mac),
     randomWifi:!d.src.has("BLE") && !d.src.has("154") && isLocal(mac),
@@ -221,6 +223,16 @@ export function analysisFor(macIn){
 }
 const km = m=>m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m";
 const mins = s=>s >= 3600 ? (s / 3600).toFixed(1) + " h" : Math.max(1, Math.round(s / 60)) + " min";
+
+// MACs the whole-scan analysis currently calls following (analysis/alerts.js).
+export function followers(){
+  const out = [];
+  for(const mac of devices.keys()){ const a = analysisFor(mac); if(a && a.level === 2) out.push(a); }
+  return out;
+}
+// Alert lines (deauth / eviltwin / rid / follow) of this scan from index i on: {next, list}.
+export function eventsFrom(i){ return { next:events.length, list:events.slice(i) }; }
+export const engineGen = ()=>gen;
 
 export function engineStats(){
   let following = 0;
@@ -233,5 +245,5 @@ export function initEngine(){
   onUnitReset(reset);
   // The one way other modules reach the engine (features/phoneview.js): importing engine.js under a different URL
   // than main.js's ?v= one would load a second, empty instance. Also handy over DevTools.
-  state.engine = { analysisFor, engineStats, onEngineChange };
+  state.engine = { analysisFor, engineStats, onEngineChange, followers, eventsFrom, engineGen };
 }
