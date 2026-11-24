@@ -30,8 +30,8 @@ import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261122b';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
-import { initEngine } from './analysis/engine.js?v=20261123c';   // phone analysis engine (docs/phone-analysis.md phase 3)
-import { initPhoneView } from './features/phoneview.js?v=20261123c';   // device popup: Phone analysis section
+import { initEngine } from './analysis/engine.js?v=20261123d';   // phone analysis engine (docs/phone-analysis.md phase 3)
+import { initPhoneView } from './features/phoneview.js?v=20261123d';   // device popup: Phone analysis section
 import { initServerHistory } from './features/serverhist.js?v=20261121a';   // new module: versioned so it loads fresh with main.js
 import { initServerFind } from './features/serverfind.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initServerMap } from './features/servermap.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
