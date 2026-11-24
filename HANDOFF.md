@@ -1,6 +1,15 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-23 (late): phase 2 live push DONE (fw 0.44.0 on all 4 hosts, web deployed `7cedf35`)
+## RESUME HERE — 2026-11-23 (night): phase 3a phone analysis deployed (`dfe0fbf`)
+- `analysis/engine.js` + device popup "Phone analysis" (`features/phoneview.js`), docs/phone-analysis.md "Increment 3a".
+  On the phone (SOPAFE): 191 devices from 2 files within 20 s; the popup showed the summary after the fix below.
+- Bug found live: phoneview imported engine.js without main.js's ?v= token -> a second, empty module instance. Now via
+  `state.engine`. Same trap as connection.js: never import a ?v=-loaded module under another URL.
+- Fixed after: parked GPS jitter counted as "you moved 715 m" (now 60 m steps); the rotating-BLE note showed on a Wi-Fi
+  probe client (now by source; Wi-Fi local-bit address gets its own note). Not re-checked on the phone after this deploy.
+- Offline harness (scratchpad, not in repo): engine.js with imports stubbed, fed the 2026-11-22 bridge drive files.
+
+## 2026-11-23 (late): phase 2 live push DONE (fw 0.44.0 on all 4 hosts, web deployed `7cedf35`)
 - Phone test passed (Vivaldi, SOPAFE leader): in 40 s 35 pushed pieces (5.2 KB, own + fleet file), 0 page requests;
   a whole-file `F:` of the current scan during the push = the saved copy is an exact byte prefix (50,830 of 61,888 B;
   the rest still in RAM until the next save) and the push carried on. Untested: a time-sync rename mid-push, the 60 s

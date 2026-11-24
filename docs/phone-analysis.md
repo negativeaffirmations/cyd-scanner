@@ -102,6 +102,19 @@ session list still finds it, asked only on a real change).
 
 ### Phase 3: phone analysis engine
 
+**Increment 3a (built):** `webapp/js/analysis/engine.js` keeps one record per device for the whole current scan and
+every fleet unit, fed by the live copy's `cflo-livelog` pieces (pushed, tail updates and whole copies alike; the start
+of a file is read from the saved copy). Whole-scan follow: sightings grouped into places 300 m apart; 3+ places spread
+over 1+ km across 10+ min = "following"; "stayed in one place while you moved N km" when it didn't move with you
+(movement counts only past 60 m steps, so GPS jitter while parked adds nothing). The device popup shows it as "Phone
+analysis" (`features/phoneview.js`, reaching the engine through `state.engine`: a plain import would load a second,
+empty instance next to main.js's `?v=` one). Checked offline on a real fleet drive (no follower, matching the scanners)
+and a synthetic tracker (found).
+
+Next increments: history from past scans saved on the phone, alerts from the phone's verdicts, the full OUI / company-ID
+lists, fleet-wide correlation views.
+
+
 `webapp/js/analysis/` (new). Runs over the mirrored lines as they arrive (and over any loaded scan):
 
 - **Same rules, bigger tables.** A JavaScript port of `sigdb` scoring that reads the scanner's own
