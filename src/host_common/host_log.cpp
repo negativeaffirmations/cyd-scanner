@@ -599,7 +599,7 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all) {
 }
 
 // Append one event line to the current session log:
-//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N[,"ssid":..,"macs":".."]}
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"deauth"|"eviltwin","count":N[,"macs":"..","enc":"..","rssis":"..","ssid":..[,"alert":0]]}
 // For "eviltwin" we also name the suspect SSID + its BSSIDs (comma-joined, up to EVIL_MAX_BSSID),
 // pulled from the live detections that currently carry FLAG_WIFI_EVILTWIN, so the map/log identifies
 // the culprit APs instead of a bare count. "deauth" names its sender (appendDeauth). No "mac" key, so the Explore row parser skips it; the web Map renders it as a pin.
@@ -629,34 +629,80 @@ static void appendDeauth(char* ln, int& n, const link_protocol::DeauthInfo& di) 
   if (emitted) lnAppend(ln, n, "]");
 }
 
+// "eviltwin" (fw 0.43.0): one line per flagged SSID among this unit's own rows, so "ssid", "macs", "enc", "rssis" and
+// "alert" all describe the same network. With no flagged own row (the C5 counted one we never received), one bare line.
+static void logEvilTwin(File& f, int count) {
+  static constexpr int EVIL_MAX_BSSID = 8, EVIL_MAX_SSID = 4;
+  bool done[MAX_DET] = {};
+  int lines = 0;
+  for (int i = 0; i < g_detCount && lines < EVIL_MAX_SSID; i++) {
+    if (done[i] || !(g_detVia[i] & 1) || !(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) continue;   // own BSSIDs only
+    char ln[LOG_LINE];
+    int n = 0;
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
+    appendPos(ln, n);
+    lnAppend(ln, n, ",\"evt\":\"eviltwin\",\"count\":%d", count);
+    int idx[EVIL_MAX_BSSID], k = 0;
+    for (int j = i; j < g_detCount; j++) {
+      if (done[j] || !(g_detVia[j] & 1) || !(g_dets[j].flags & FLAG_WIFI_EVILTWIN) ||
+          strncmp(g_dets[j].name, g_dets[i].name, sizeof(g_dets[i].name)) != 0) continue;
+      done[j] = true;
+      if (k < EVIL_MAX_BSSID) idx[k++] = j;
+    }
+    lnAppend(ln, n, ",\"macs\":\"");
+    for (int a = 0; a < k; a++) {
+      const uint8_t* m = g_dets[idx[a]].mac;
+      lnAppend(ln, n, "%s%02X:%02X:%02X:%02X:%02X:%02X", a ? "," : "", m[0], m[1], m[2], m[3], m[4], m[5]);
+    }
+    lnAppend(ln, n, "\"");
+    // Each BSSID's encryption class in "macs" order: open / wep / wpa (WPA, WPA2, WPA3, OWE), "/"-joined if several,
+    // "?" from an older C5; then its RSSI. Both are extras: dropped if the line wouldn't fit (the SSID is the AP
+    // owner's choice and can escape to 96 bytes), never the line itself.
+    char enc[8 * 14 + 1], rs[8 * 5 + 1];
+    int en = 0, rn = 0;
+    for (int a = 0; a < k; a++) {
+      const uint16_t fl = g_dets[idx[a]].flags;
+      if (a) en += snprintf(enc + en, sizeof(enc) - en, ",");
+      int start = en;
+      if (fl & FLAG_WIFI_ENC_OPEN) en += snprintf(enc + en, sizeof(enc) - en, "%sopen", en > start ? "/" : "");
+      if (fl & FLAG_WIFI_ENC_WEP)  en += snprintf(enc + en, sizeof(enc) - en, "%swep",  en > start ? "/" : "");
+      if (fl & FLAG_WIFI_ENC_SEC)  en += snprintf(enc + en, sizeof(enc) - en, "%swpa",  en > start ? "/" : "");
+      if (en == start) en += snprintf(enc + en, sizeof(enc) - en, "?");
+      rn += snprintf(rs + rn, sizeof(rs) - rn, "%s%d", a ? "," : "", (int)g_dets[idx[a]].rssi);
+    }
+    char ssid[97] = {0};
+    if (g_dets[i].name[0]) jsonEscape(ssid, sizeof(ssid), g_dets[i].name);
+    const int tail = (ssid[0] ? (int)strlen(ssid) + 10 : 0) + 10 + 3;   // ssid + "alert":0 + the close
+    if (n + en + 9 + tail <= (int)LOG_LINE) lnAppend(ln, n, ",\"enc\":\"%s\"", enc);
+    if (n + rn + 11 + tail <= (int)LOG_LINE) lnAppend(ln, n, ",\"rssis\":\"%s\"", rs);
+    if (ssid[0]) lnAppend(ln, n, ",\"ssid\":\"%s\"", ssid);
+    if (evilQuiet(i)) lnAppend(ln, n, ",\"alert\":0");   // logged, but the quiet filter held this SSID's alert back
+    lnAppend(ln, n, "}\n");
+    if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+    lines++;
+  }
+  if (!lines) {
+    char ln[LOG_LINE];
+    int n = 0;
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
+    appendPos(ln, n);
+    lnAppend(ln, n, ",\"evt\":\"eviltwin\",\"count\":%d}\n", count);
+    if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);
+  }
+}
+
 void logEvent(const char* evt, int count) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!ensureLogFile(st)) return;
   File f = SD.open(st.path, FILE_APPEND);
   if (!f) return;
+  if (!strcmp(evt, "eviltwin")) { logEvilTwin(f, count); f.close(); return; }
   char ln[LOG_LINE];
   int n = 0;
   lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
   appendPos(ln, n);
   lnAppend(ln, n, ",\"evt\":\"%s\",\"count\":%d", evt, count);
-  if (!strcmp(evt, "eviltwin")) {
-    static constexpr int EVIL_MAX_BSSID = 8;
-    char ssid[97] = {0};
-    int emitted = 0;
-    for (int i = 0; i < g_detCount; i++) {
-      if (!(g_detVia[i] & 1) || !(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) continue;   // this unit's own BSSIDs only
-      if (!ssid[0] && g_dets[i].name[0]) jsonEscape(ssid, sizeof(ssid), g_dets[i].name);
-      if (emitted >= EVIL_MAX_BSSID) continue;
-      const uint8_t* m = g_dets[i].mac;
-      if (emitted == 0) lnAppend(ln, n, ",\"macs\":\"");
-      lnAppend(ln, n, "%s%02X:%02X:%02X:%02X:%02X:%02X", emitted ? "," : "",
-               m[0], m[1], m[2], m[3], m[4], m[5]);
-      emitted++;
-    }
-    if (emitted) lnAppend(ln, n, "\"");
-    if (ssid[0]) lnAppend(ln, n, ",\"ssid\":\"%s\"", ssid);
-  }
   if (!strcmp(evt, "deauth") && g_deauthInfo.total) appendDeauth(ln, n, g_deauthInfo);
   lnAppend(ln, n, "}\n");
   if (n <= (int)LOG_LINE) f.write((const uint8_t*)ln, n);

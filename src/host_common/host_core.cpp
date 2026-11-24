@@ -188,13 +188,70 @@ Category categoryOf(int i) {
 
 // Score every current detection against the signature DB (aligned into g_score[]), then raise
 // the tier to at least each set flag's floor and record the flag label.
-void computeScores() {
+// --- Evil-twin quiet filter (fw 0.43.0). The first two evil-twin alerts on hardware (2026-10-22 and 2026-11-23, the
+// same spot) were one SSID on an old Actiontec Fios router and an eero that reused its name: legacy vs modern
+// encryption, both weak, different makers. A real evil twin has to be close to win its victims, and often sits on an
+// ESP/Pi-type or random address, or copies the real AP's vendor. So an SSID whose flagged BSSIDs are ALL
+//  - at or below EVIL_WEAK_RSSI,
+//  - globally administered (not random / locally set),
+//  - unmatched by any signature OUI rule (Espressif, Raspberry Pi, Hak5, ... are in the DB),
+//  - from at least two makers (OUIs), none of which shows up at two different encryption classes,
+// is logged (with "alert":0) but raises no alert, and its rows get a Suspect floor instead of Likely.
+// Anything we can't judge (one row, an older C5 with no encryption bits) alerts as before. Receive-side only.
+static_assert(MAX_DET <= 255, "classifyEvilTwins keeps row indices in uint8_t");
+static bool    g_evilQuiet[MAX_DET];   // aligned with g_dets
+static uint8_t g_evilLoud = 0;         // SSIDs among this unit's own flagged rows that should alert
+static uint8_t g_evilOwnSsids = 0;     // SSIDs among this unit's own flagged rows
+
+static void classifyEvilTwins() {
+  bool done[MAX_DET] = {};
+  g_evilLoud = 0; g_evilOwnSsids = 0;
   for (int i = 0; i < g_detCount; i++) {
-    sigdb::score(g_dets[i], g_score[i]);
+    g_evilQuiet[i] = false;
+    if (!(g_dets[i].flags & FLAG_WIFI_EVILTWIN)) done[i] = true;
+  }
+  for (int i = 0; i < g_detCount; i++) {
+    if (done[i]) continue;
+    uint8_t members[MAX_DET]; int m = 0;   // MAX_DET <= 255
+    for (int j = i; j < g_detCount; j++)
+      if (!done[j] && strncmp(g_dets[j].name, g_dets[i].name, sizeof(g_dets[i].name)) == 0) { members[m++] = j; done[j] = true; }
+    bool quiet = m >= 2, own = false, twoOuis = false;
+    for (int a = 0; a < m; a++) {
+      const Detection& d = g_dets[members[a]];
+      if (g_detVia[members[a]] & 1) own = true;
+      const uint16_t enc = d.flags & (FLAG_WIFI_ENC_OPEN | FLAG_WIFI_ENC_WEP | FLAG_WIFI_ENC_SEC);
+      if (d.rssi > EVIL_WEAK_RSSI || (d.mac[0] & 0x02) || g_score[members[a]].bestOui >= 0 || !enc) quiet = false;
+      for (int b = 0; b < a; b++) {
+        const Detection& e = g_dets[members[b]];
+        if (memcmp(d.mac, e.mac, 3) != 0) { twoOuis = true; continue; }
+        if (enc != (e.flags & (FLAG_WIFI_ENC_OPEN | FLAG_WIFI_ENC_WEP | FLAG_WIFI_ENC_SEC))) quiet = false;  // one maker, two classes
+      }
+    }
+    if (!twoOuis) quiet = false;
+    for (int a = 0; a < m; a++) g_evilQuiet[members[a]] = quiet;
+    if (own) { g_evilOwnSsids++; if (!quiet) g_evilLoud++; }
+  }
+}
+
+bool evilQuiet(int i) { return i >= 0 && i < g_detCount && g_evilQuiet[i]; }
+
+// The C5's count minus only the SSIDs this host can show are quiet: an evil SSID whose rows never reached us (C5 table
+// eviction, a disabled source, MAX_DET) still alerts.
+uint8_t evilAlertCount() {
+  const uint8_t quiet = g_evilOwnSsids - g_evilLoud;
+  return g_evilCount > quiet ? g_evilCount - quiet : 0;
+}
+
+void computeScores() {
+  for (int i = 0; i < g_detCount; i++) sigdb::score(g_dets[i], g_score[i]);
+  classifyEvilTwins();                        // needs every row's sigdb OUI match
+  for (int i = 0; i < g_detCount; i++) {
     g_flagLabel[i][0] = 0;
     for (const FlagRule& r : kFlagRules) {
       if (!(g_dets[i].flags & r.bit)) continue;
-      if (r.floor > g_score[i].tier) g_score[i].tier = r.floor;
+      sigdb::Tier floor = r.floor;
+      if (r.bit == FLAG_WIFI_EVILTWIN && g_evilQuiet[i]) floor = sigdb::Tier::Suspect;
+      if (floor > g_score[i].tier) g_score[i].tier = floor;
       if (!g_flagLabel[i][0]) snprintf(g_flagLabel[i], sizeof(g_flagLabel[i]), "%s", r.label);
     }
     g_category[i] = (uint8_t)categoryOf(i);  // after score+flags so detLabel() is final
@@ -429,8 +486,11 @@ void updateEvents() {
     }
   }
   if (g_evilCount > 0) {
-    g_evilUntil = now + EVENT_HOLD_MS; if (!g_evilUntil) g_evilUntil = 1;
-    g_evilShown = g_evilCount;
+    const uint8_t loud = evilAlertCount();
+    if (loud) {
+      g_evilUntil = now + EVENT_HOLD_MS; if (!g_evilUntil) g_evilUntil = 1;
+      g_evilShown = loud;
+    }
     if (!logged[1] || now - lastLog[1] >= EVENT_LOG_GAP_MS) {
       logged[1] = true; lastLog[1] = now; logEvent("eviltwin", g_evilCount);
     }
@@ -659,7 +719,8 @@ void applyFleetAlerts() {
   }
   if (eUp) {
     raiseUntil(g_evilUntil, now);
-    g_evilShown = g_evilCount > eN ? g_evilCount : eN;
+    const uint8_t own = evilAlertCount();
+    g_evilShown = own > eN ? own : eN;
   }
 }
 

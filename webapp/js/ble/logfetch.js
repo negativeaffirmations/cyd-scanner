@@ -18,6 +18,8 @@ import { enc } from '../config.js';
 import { log } from '../util/dom.js';
 import { resetDl } from './transfer.js';
 import { connGen, reqBusy } from './xfer.js';
+import { gattWrite } from './gattq.js';
+import { syncWait } from './syncwait.js';   // the live mirror (features/livesync.js) yields to us
 import { ready, cacheUsable, find, getBlob, put, fileIdOf } from '../data/logcache.js';
 
 const IDLE_MS = 20000;
@@ -41,7 +43,8 @@ function crc32hex(bytes){
   return ((c ^ 0xFFFFFFFF) >>> 0).toString(16).padStart(8, "0");
 }
 
-function rawFetch(cmd, name, progress){
+async function rawFetch(cmd, name, progress){
+  await syncWait();
   return new Promise((resolve, reject)=>{
     if(!state.connected || !state.chars.cmd){ reject(new Error("not connected")); return; }
     if(reqBusy()){ reject(new Error("another transfer is in progress")); return; }
@@ -54,7 +57,7 @@ function rawFetch(cmd, name, progress){
       if(state.dl!==mine){ if(!mine.completing) finish(reject, new Error("transfer superseded")); return; }
       if(Date.now()-mine.lastRx > IDLE_MS){ resetDl(); finish(reject, new Error("transfer timed out")); }
     }, 1000);
-    state.chars.cmd.writeValue(enc.encode(cmd)).catch(e=>{ if(state.dl===mine) resetDl(); finish(reject, e); });
+    gattWrite(state.chars.cmd, enc.encode(cmd)).catch(e=>{ if(state.dl===mine) resetDl(); finish(reject, e); });   // one GATT op at a time (gattq.js)
   });
 }
 async function waitIdle(){   // after a failed request: let the device's late bytes drain before the next request
@@ -128,6 +131,7 @@ async function fetchLogInner(path, o){
           }
         }
         log("Tail of "+name+" not available ("+(t && t.why ? t.why : "unexpected reply")+") — fetching the whole file.");
+        if(!t || !t.kind) await waitIdle();   // someone else's reply answered us: let the real one drain first
       }catch(err){
         if(connGen() !== gen) throw err;
         log("Tail of "+name+" failed ("+err.message+") — fetching the whole file.");

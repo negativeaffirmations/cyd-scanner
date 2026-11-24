@@ -10,6 +10,7 @@ import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
 import { onUnitReset } from '../unitreset.js';
 import { reqBusy } from '../ble/xfer.js';
+import { syncWait } from '../ble/syncwait.js';
 import { askConfirm } from '../ble/auth.js';
 
 const REPLY_MS = 25000;   // the device may be mid scan cycle before it services the request
@@ -58,7 +59,8 @@ function settle(text){
 // `build(seq)` returns the bytes to write; every request carries a fresh 1-255 tag the device echoes in
 // its "FS=<n>:<seq>" header, so a reply that arrives after a timeout can't answer the next request.
 let seqCounter = 0;
-function fsReq(build){
+async function fsReq(build){
+  await syncWait();   // features/livesync.js pass
   return new Promise((resolve, reject)=>{
     if (!state.connected || !state.chars.cmd || !state.chars.log) { reject(new Error("not connected")); return; }
     if (pending) { reject(new Error("busy")); return; }
@@ -208,6 +210,7 @@ export async function fsDelete(){
 // Download through download.js's existing "save" sink ("F:<path>" -> SIZE= + raw bytes -> saved file).
 export async function fsDownload(){
   const e = entries[picked]; if (!e || e.dir) return;
+  await syncWait();   // features/livesync.js pass
   if (pending || reqBusy()) { msg("Another transfer is in progress.", true); return; }
   const p = join(cwd, e.name);
   const mine = { mode:null, expect:0, got:0, chunks:[], name:e.name, sink:"save", waiting:true };   // no lastRx: this loop times the reply itself

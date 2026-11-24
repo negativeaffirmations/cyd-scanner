@@ -203,7 +203,9 @@ Each step ends with something you can check on the phone.
 
 ## Known issues
 
-- **Car Bluetooth audio stutters / YouTube won't load while driving (owner, 2026-11-22 drive; ON HOLD).** Phone on the
+- **Car Bluetooth audio stutters / YouTube won't load while driving (owner, 2026-11-22 drive; RESOLVED 2026-11-23).** Not
+  reproduced on the 2026-11-23 drive: Spotify over the car's Bluetooth played fine with the app connected and live upload
+  on, so it was not the app. Kept for reference if it returns. Phone on the
   car's Bluetooth (Spotify), app connected to a scanner, live upload on. The owner is first checking whether their 5G
   connection was the cause; no fix until then.
   - Data use is not the cause: live upload is a few KB/s (~10 MB/h), and the scanner link uses no internet.

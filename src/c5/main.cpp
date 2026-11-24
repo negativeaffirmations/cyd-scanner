@@ -581,8 +581,9 @@ static void wifiTick() {
         d.rssi    = (int8_t)WiFi.RSSI(i);
         memcpy(d.mac, WiFi.BSSID(i), 6);
         strncpy(d.name, WiFi.SSID(i).c_str(), sizeof(d.name) - 1);
-        mergeDetection(d);
         wifi_auth_mode_t am = WiFi.encryptionType(i);
+        d.flags |= am == WIFI_AUTH_OPEN ? FLAG_WIFI_ENC_OPEN : am == WIFI_AUTH_WEP ? FLAG_WIFI_ENC_WEP : FLAG_WIFI_ENC_SEC;
+        mergeDetection(d);
         if (am != WIFI_AUTH_OWE)  // enhanced-open legitimately pairs with open (transition mode)
           ssidObserve(d.name, d.mac, am == WIFI_AUTH_OPEN ? 0 : am == WIFI_AUTH_WEP ? 1 : 2, d.channel);
       }

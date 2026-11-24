@@ -16,6 +16,8 @@ import { exportSpec, exportCmd, rangeFileName } from '../features/timerange.js';
 import { resetDl } from './transfer.js';
 import { fetchCurrent } from './logfetch.js';
 import { reqBusy, connGen } from './xfer.js';
+import { syncWait } from './syncwait.js';
+import { gattWrite } from './gattq.js';
 
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
 // hiccup, a short send), give up after IDLE_MS instead of leaving state.dl stuck in "file" mode, which
@@ -24,6 +26,7 @@ const IDLE_MS = 20000;
 setInterval(()=>{
   const d = state.dl;
   if ((d.mode===null && !d.waiting) || d.sink==="promise" || !d.lastRx || Date.now()-d.lastRx < IDLE_MS) return;
+  if (d.holdUntil && Date.now() < d.holdUntil) return;   // a claimed list reply (ble/syncwait.js) may take a while
   log("Transfer stalled ("+d.got+" of "+d.expect+" bytes) — cancelled. Try again.");
   toast("Transfer stalled — cancelled. Try again.", {err:true});
   if (d.sink==="upload") uploadSessionText("", d.name);   // clears the upload busy state
@@ -72,7 +75,7 @@ export function onLogData(ev){
     }
     if (txt.startsWith("SESS=")) {
       state.dl.mode="list"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[];
-      if (state.dl.expect===0){ populateSessions(""); if(isPromise) settlePromise(""); else { state.dl.mode=null; state.dl.waiting=false; } }
+      if (state.dl.expect===0){ if(!state.dl.quiet) populateSessions(""); if(isPromise) settlePromise(""); else { state.dl.mode=null; state.dl.waiting=false; } }
       return;
     }
     if (txt.startsWith("WL=")) {
@@ -96,10 +99,10 @@ export function onLogData(ev){
       return;
     }
     if (isPromise) {
-      const res = state.dl.resolve;
+      const res = state.dl.resolve, quiet = state.dl.quiet;   // quiet = features/livesync.js's own list: leave the Data/Explore UI alone
       state.dl.completing = true;   // bleFetch's watchdog must not call this "superseded" while the text is decoded
       resetDl();
-      blob.text().then(t=>{ if(mode==="list") populateSessions(t); else if(mode==="wl") populateWhitelist(t); if(res) res(t); });
+      blob.text().then(t=>{ if(mode==="list"){ if(!quiet) populateSessions(t); } else if(mode==="wl") populateWhitelist(t); if(res) res(t); });
       return;
     }
     if (mode==="file") {
@@ -134,9 +137,10 @@ export async function downloadLog(){
       if(state.fleetRole==="leader" && state.saveCurrentFleet) await state.saveCurrentFleet(fname);   // (features/sessions.js)
       return;
     }
+    await syncWait();   // features/livesync.js pass
     if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
     state.dl={mode:null,expect:0,got:0,chunks:[],name:fname,sink:"save",waiting:true,lastRx:Date.now()};
-    await state.chars.cmd.writeValue(enc.encode("L")); log("Requesting current session ("+fname+")…"); }
+    await gattWrite(state.chars.cmd, enc.encode("L")); log("Requesting current session ("+fname+")…"); }
   catch(e){ log("Download failed: "+e.message); toast("Download failed: "+e.message, {err:true}); }
 }
 // --- Time-filtered export of ALL logs. The CYD filters on the device across EVERY session file
@@ -145,6 +149,7 @@ export async function downloadLog(){
 // (A single selected session's range export lives in sessions.js.)
 export async function downloadFilteredAll(){
   const sp=exportSpec(); if(!sp) return;
+  await syncWait();   // features/livesync.js pass
   if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
   try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true,waiting:true,lastRx:Date.now()};  // saved as <first>-<last>.jsonl
     toast("Collecting "+sp.tag+" from all logs on the device…", {work:true, sticky:true});

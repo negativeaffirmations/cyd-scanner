@@ -295,7 +295,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   agreed with scan-analyzer 2026-10-23. Behavioral **EVENTS** are their own line shape with an `"evt"` discriminator,
   rate-limited to ~once/30 s per type: `{"epoch":…,"ms":…,"lat":…,"lon":…,"evt":"deauth","count":N[,"total":…,"bcast":…,"from":"…","to":"…","bssid":"…","from_n":…,"ch":…,"reason":…,"kind":"deauth|disassoc","rssi":…,"others":[{"mac":"…","frames":N},…]]}`
   (`count` = 1 s peak; the optional keys, fw 0.30.0, describe the burst: `from` the busiest sender, `from_n` its frames, `total` all frames; addresses are as received and can be forged)
-  and `{…,"evt":"eviltwin","count":N[,"ssid":"…","macs":"aa:bb:…,cc:dd:…"]}` (eviltwin also names the
+  and `{…,"evt":"eviltwin","count":N[,"macs":"aa:bb:…,cc:dd:…","enc":"wep,wpa","rssis":"-84,-86","ssid":"…","alert":0]}`
+  (fw 0.43.0: `enc` = each BSSID's class in `macs` order, `open`/`wep`/`wpa`, `/`-joined if several, `?` from an older C5;
+  `rssis` the same order, both dropped rather than the line if it would pass `LOG_LINE`; `alert:0` only when the quiet
+  filter held that SSID's alert back; ONE line per flagged SSID (up to 4), a bare line when no flagged row reached the host) (eviltwin also names the
   suspect SSID + its BSSIDs — up to 8, comma-joined — from the live detections carrying
   `FLAG_WIFI_EVILTWIN`, so the web Map's event-pin popup lists them and each BSSID opens that device's
   detail; deauth names its sender from fw 0.30.0, see above). **Remote-ID** gets its own `"evt":"rid"` line (rate-limited
@@ -396,6 +399,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   `DEAUTH_SUSTAIN_MS` (20 s) later; `deauthAlertRate()` feeds STATUS `deauth=` + fleet `MStat.deauth`, so the web
   banner / notification follow without a web change. First real burst (2026-11-22 drive): 21 reason-7 frames from a
   NETGEAR AP to one client.
+  **Evil-twin quiet filter (fw 0.43.0, `classifyEvilTwins()` in host_core.cpp):** the C5 tags every AP row with its
+  encryption class in reserved flag bits 10-12 (`FLAG_WIFI_ENC_OPEN/_WEP/_SEC`, no link bump; none = older C5). An SSID
+  whose flagged BSSIDs are ALL <= `EVIL_WEAK_RSSI` (-80), globally administered, unmatched by any sigdb OUI rule, and from
+  >= 2 OUIs with no OUI at two classes is logged (`"alert":0`) but raises no alert and floors at Suspect, not Likely;
+  `evilAlertCount()` (= the C5's count minus only the SSIDs shown quiet) feeds STATUS `evil=`, fleet `MStat.evil` and
+  the banner. Quiet rows still count on the Deauth tile / DETS `cat` (a web notification rule on that category still fires). First real alert (2026-11-23 drive, also
+  2026-10-22 at the same spot): an old Actiontec Fios router + an eero sharing one SSID.
 - The DB **self-seeds** to the card on first boot and is editable on the card or
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
 - Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,
@@ -634,6 +644,15 @@ back (5 GHz included). Things that matter, learned the hard way:
       instead of `L`): a saved copy at least as big as the device's listed size (equal size when no file_id) costs
       no transfer; the whole file always goes to uploads. Session rows show `saved` / `+N KB new` / `partly saved`;
       Data has "Clear saved logs (size)" (`features/cacheui.js`). Filtered (`T:`) exports are never cached.
+      **Live copy (webapp 2026-11-23, `features/livesync.js` + `ble/syncwait.js`; design [docs/phone-analysis.md](docs/phone-analysis.md)
+      phase 1, no firmware change):** while connected, the current session file (STATUS `sess`) and a leader's live
+      fleet file are kept in that cache by tail requests only (20 s / 1 min / 5 min by size); paths + file_ids come
+      from a QUIET `Q` (`state.dl.quiet`: download.js skips populateSessions) asked only on a real change; a whole copy
+      only <= 1 MB automatically, else Data page "Copy now" (a running whole copy can't be aborted on the scanner, so
+      `syncWait()` waits it out with a toast); > 20 MB not kept live. It yields: `syncWait()` (waiters
+      counted, the pass stops at its next request) in rawFetch / bleFetch / downloads / files / fleet; list-answered
+      commands (Q, wipe-all, whitelist A / E / Y) go through `claimWrite()` (refuse when busy, claim state.dl, gattWrite).
+      Data page switch "Keep a live copy of the current scan on this phone" (localStorage `cflo.livesync`).
       **Tail fetch (fw >= 0.26.0, STATUS `fw`):** a saved prefix of a file that grew is topped up with `F:<path>@<size>:<file_id>`
       (only the new bytes cross BLE; verified to be exactly `n` bytes and that the merged file keeps its `file_id`, then
       appended to the cached Blob and re-saved); any refusal/mismatch/failed request falls back to the full `F:<path>`.

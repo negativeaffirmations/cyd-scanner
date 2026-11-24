@@ -90,7 +90,13 @@ enum DetFlags : uint16_t {
   FLAG_WIFI_DATA_CLIENT = 1 << 8, // v11: Wi-Fi client heard in an associated DATA frame (bssid[] = its AP)
   FLAG_WIFI_DATA_UPLINK = 1 << 9, // v11: ...at least one of them an uplink (ToDS) frame, so rssi is the
                                   //      client's own; DATA_CLIENT without it = downlink-only (AP's rssi)
-  // bits 10..15 reserved for future detectors
+  // AP rows (Source::WifiScan) only: the encryption class(es) the BSSID advertised (fw 0.43.0). Separate bits so the
+  // C5's sticky flag OR keeps a union; none set = unknown (older C5). Not notable: no tier, never shown as a threat.
+  // Additive in reserved bits, so no PROTOCOL_VERSION bump: an older host ignores them.
+  FLAG_WIFI_ENC_OPEN  = 1 << 10,
+  FLAG_WIFI_ENC_WEP   = 1 << 11,
+  FLAG_WIFI_ENC_SEC   = 1 << 12,  // WPA / WPA2 / WPA3 / OWE
+  // bits 13..15 reserved for future detectors
 };
 
 #pragma pack(push, 1)

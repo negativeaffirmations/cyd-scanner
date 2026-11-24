@@ -8,6 +8,7 @@ import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
+import { syncWait } from '../ble/syncwait.js';
 import { onUnitReset } from '../unitreset.js';
 import { askConfirm, listKeys } from '../ble/auth.js';
 import { learnKeyNames } from '../ble/unitname.js';
@@ -43,7 +44,8 @@ function onFltData(ev){
 function settle(text){ const p = pending; pending = null; clearTimeout(p.timer); p.resolve(text); }
 
 // One "M<seq>:<body>" write -> its reply body. Rejects on "ERR\t…", a timeout, or no link.
-function fltReq(body){
+async function fltReq(body){
+  await syncWait();   // features/livesync.js pass
   return new Promise((resolve, reject) => {
     if (!state.connected || !state.chars.cmd || !state.chars.log) { reject(new Error("not connected")); return; }
     if (pending) { reject(new Error("busy")); return; }

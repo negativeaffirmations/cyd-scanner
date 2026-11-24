@@ -250,11 +250,11 @@ void rxCb(void* buf, wifi_promiscuous_pkt_type_t type) {
       off += 2 + ln;
     }
     if ((d.flags & FLAG_WIFI_PWNAGOTCHI) && jname[0] && !d.name[0]) strncpy(d.name, jname, sizeof(d.name) - 1);
+    const bool priv = f[34] & 0x10;  // capability: Privacy
+    const uint8_t enc = rsn ? 2 : (priv ? 1 : 0);
+    d.flags |= enc == 2 ? FLAG_WIFI_ENC_SEC : enc == 1 ? FLAG_WIFI_ENC_WEP : FLAG_WIFI_ENC_OPEN;
     g_cb(d);
-    if (g_apCb && ssid[0]) {
-      bool priv = f[34] & 0x10;  // capability: Privacy
-      g_apCb(ssid, d.mac, rsn ? 2 : (priv ? 1 : 0), d.channel);
-    }
+    if (g_apCb && ssid[0]) g_apCb(ssid, d.mac, enc, d.channel);
     return;
   }
 
