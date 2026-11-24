@@ -1,6 +1,13 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-23 (night): phase 3b saved-scan history deployed (`2d6df33`), checked on the phone
+## RESUME HERE — 2026-11-24: phase 3c phone alerts deployed (`098325a`)
+- `analysis/alerts.js`: whole-drive follower + "alert seen here before", via `state.notifyShow` (notify.js hook, uses the
+  Notifications switches). Checked offline (synthetic tracker; today's XNVV4 line with the October one in the saved
+  logs). Not yet seen firing on the phone (needs a real follower / a repeat alert on a drive).
+- The Pages deploy failed once on a GitHub OIDC timeout ("Failed to get ID Token"); `gh run rerun <id>` fixed it. Check
+  `gh run list` after a webapp push.
+
+## 2026-11-23 (night): phase 3b saved-scan history deployed (`2d6df33`), checked on the phone
 - `analysis/history.js` + popup "Saved scans on this phone". On the phone: 65 files / 17 MB / 76k lines -> 4,804
   devices, read within ~1 min of page load; a neighbour device showed "10 days, first 2026-11-01, seen here on 9 days".
   The 3a jitter / address-note fixes are live with it. Next: 3c alerts from the phone's verdicts (docs/phone-analysis.md).
