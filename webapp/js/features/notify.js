@@ -269,6 +269,15 @@ function onSwMessage(e){
 
 export function initNotify(){
   const card = $("nfCard"); if(!card) return;
+  // For the phone's own analysis alerts (analysis/alerts.js): the same switches, permission, style and tap handling.
+  // A state hook, not an export (stale-module rule). rule = a cfg switch ("follow" / "evil" / "deauth") or "".
+  state.notifyShow = (rule, title, body, data, tag, kind) => {
+    if(!cfg.on || !supported() || Notification.permission !== "granted" || !state.connected) return Promise.resolve(false);
+    if(rule && !cfg[rule]) return Promise.resolve(false);
+    log("Alert: " + title + " - " + String(body).split("\n")[0]);
+    return show(title, body, data, tag, kind);
+  };
+  state.notifyQuietMs = quietMs;
   $("nfEnableBtn").onclick = toggleOn;
   $("nfTestBtn").onclick = async () => {
     if(await show("Test notification", "Scanner alerts will look like this.", { kind:"test" }, "cflo-test", "general")) toast("Test sent.");
