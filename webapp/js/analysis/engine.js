@@ -225,5 +225,7 @@ export function engineStats(){
 export function initEngine(){
   window.addEventListener("cflo-livelog", onPiece);
   onUnitReset(reset);
-  state.engine = { analysisFor, engineStats };   // for debugging over DevTools
+  // The one way other modules reach the engine (features/phoneview.js): importing engine.js under a different URL
+  // than main.js's ?v= one would load a second, empty instance. Also handy over DevTools.
+  state.engine = { analysisFor, engineStats, onEngineChange };
 }

@@ -3,8 +3,11 @@
 // Like serverhist.js / notify.js it hooks nothing in older modules: it watches #detInfo (rewritten on every popup
 // open) and reads the MAC from its rows. NEW file (stale-module rule).
 // Epochs are the logs' LOCAL seconds, so they are shown with UTC getters (the clock time the scanner showed).
+// The engine is reached through state.engine (set by initEngine), never imported here: main.js loads engine.js under a
+// ?v= token, and a plain import here would be a SECOND module instance that never receives any log lines.
 import { $, esc } from '../util/dom.js';
-import { analysisFor, onEngineChange } from '../analysis/engine.js';
+import { state } from '../state.js';
+const analysisFor = mac=>state.engine ? state.engine.analysisFor(mac) : null;
 
 let curMac = "";
 
@@ -49,5 +52,5 @@ export function initPhoneView(){
   if(info) new MutationObserver(onPopup).observe(info, { childList:true });
   const dlg = $("detDlg");
   if(dlg) dlg.addEventListener("close", ()=>{ curMac = ""; });
-  onEngineChange(()=>{ const dlg2 = $("detDlg"); if(curMac && dlg2 && dlg2.open) render(); });
+  if(state.engine) state.engine.onEngineChange(()=>{ const dlg2 = $("detDlg"); if(curMac && dlg2 && dlg2.open) render(); });
 }
