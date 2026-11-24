@@ -117,6 +117,9 @@ bool listRequested();
 // True once if the app asked to download a specific file ("F:<path>"); fills `out`.
 bool fileRequested(char* out, size_t cap);
 
+// True once if the app sent "J:<sub>[|<sub>]" (live-log push subscribe, fw 0.44.0) or a bare "J" (stop: `out` = "").
+bool liveRequested(char* out, size_t cap);
+
 // True once if the app asked to delete a session file ("D:<path>"); fills `out`.
 bool deleteRequested(char* out, size_t cap);
 

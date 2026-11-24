@@ -87,6 +87,8 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       sendWhitelist(); pushStatus();
     } }
   { char fn[100]; if (!xferBusy() && phone::fileRequested(fn, sizeof(fn)))  transferFile(fn); }
+  { char a[210]; if (!xferBusy() && phone::liveRequested(a, sizeof(a))) liveSubscribe(a); }   // "J:" live-log push
+  liveService();          // push newly appended log bytes to a subscribed phone (no-op while a transfer runs)
   { int m, a; char fn[48]; if (!xferBusy() && phone::exportRequested(&m, &a, fn, sizeof(fn))) transferFiltered(m, a, fn); }
   { char fn[48]; if (!xferBusy() && phone::deleteRequested(fn, sizeof(fn))) deleteSession(fn); }
   { int b; if (phone::brightnessRequested(&b)) {           // web-app brightness slider

@@ -91,6 +91,8 @@ bool     g_newSess    = false;
 bool     g_listReq    = false;
 bool     g_fileReq    = false;
 char     g_dlFile[100] = {0};   // any SD path (file explorer), not just /logs/
+bool     g_liveReq    = false;  // "J:<path>@<off>:<fid>:<crc>[|…]" live-log subscribe / "J" stop (fw 0.44.0)
+char     g_liveArg[210] = {0};  // up to 2 subscriptions ("" = stop)
 bool     g_delReq     = false;
 char     g_delFile[48]= {0};
 bool     g_briReq     = false;
@@ -343,7 +345,7 @@ class ServerCB : public NimBLEServerCallbacks {
       g_havePeer   = false;  // stop filtering the (now gone) phone
       g_authEpoch  = g_authEpoch + 1;   // in-flight transfers to this peer must stop
       // Nothing queued by this peer may stream to the NEXT one: drop pending transfer requests.
-      g_logReq = g_fileReq = g_expReq = g_listReq = g_wlList = false;
+      g_logReq = g_fileReq = g_expReq = g_listReq = g_wlList = g_liveReq = false;
       g_fsReq = false; g_upReq = false; g_upOverrun = false;
       g_fltReq = false;
     }
@@ -544,6 +546,14 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_fileReq = true;
           Serial.printf("[phone] cmd download file %s\n", g_dlFile);
         }
+      } else if (c0 == 'J' || c0 == 'j') {           // "J:<sub>[|<sub>]" live-log push subscribe, "J" = stop
+        size_t colon = val.find(':');
+        if (colon != std::string::npos) {
+          strncpy(g_liveArg, val.c_str() + colon + 1, sizeof(g_liveArg) - 1);
+          g_liveArg[sizeof(g_liveArg) - 1] = 0;
+        } else g_liveArg[0] = 0;
+        g_liveReq = true;
+        Serial.printf("[phone] cmd live log %s\n", g_liveArg[0] ? "subscribe" : "stop");
       } else if (c0 == 'D' || c0 == 'd') {           // "D:<path>" delete a session file
         size_t colon = val.find(':');
         if (colon != std::string::npos) {
@@ -969,6 +979,14 @@ bool fileRequested(char* out, size_t cap) {
   if (!g_fileReq) return false;
   g_fileReq = false;
   strncpy(out, g_dlFile, cap - 1);
+  out[cap - 1] = 0;
+  return true;
+}
+
+bool liveRequested(char* out, size_t cap) {
+  if (!g_liveReq) return false;
+  g_liveReq = false;
+  strncpy(out, g_liveArg, cap - 1);
   out[cap - 1] = 0;
   return true;
 }

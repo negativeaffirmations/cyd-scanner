@@ -43,6 +43,13 @@ function settlePromise(text){
 export function onLogData(ev){
   const dv = ev.target.value;
   const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  // fw >= 0.44.0 live-log push (features/livesync.js): "LL=<file_id>:<offset>:<bytes>", "LLOK=<n>", "LLERR=<why>". Single
+  // notifies sent only between replies, so only looked for outside a payload (mode null); never touches state.dl.
+  if (state.dl.mode === null && v.length >= 5 && v[0] === 76 && v[1] === 76 && state.onLiveLog &&
+      (v[2] === 61 || (v[2] === 79 && v[3] === 75) || (v[2] === 69 && v[3] === 82))) {   // "LL=" / "LLOK" / "LLER"
+    state.onLiveLog(v);
+    return;
+  }
   state.dl.lastRx = Date.now();               // bleFetch idle watchdog
   const isPromise = state.dl.sink==="promise";
   if (state.dl.mode === null) {               // expecting a header

@@ -909,6 +909,7 @@ namespace {
 enum AxKind : uint8_t { AX_RAW, AX_FILT, AX_MULTI };
 constexpr uint32_t AX_BUDGET_MS = 80;    // per xferService() call
 constexpr uint32_t AX_GAP_MS    = 8;     // between notifies (the blocking sender used 15; a refused notify is retried now)
+static uint32_t g_liveHoldUntil = 0;     // live-log push held after a raw send ended short (see liveService)
 constexpr size_t   AX_CHUNK_MAX = 500;   // notify payload cap; the real size = the link's MTU - 3 (phone::logChunkMax)
 constexpr size_t   AX_Q         = 1024;  // staged output; a line is staged only with LINE_CAP + 16 free
 struct AXfer {
@@ -1056,6 +1057,7 @@ static void axProduce(AXfer& x, uint32_t t0) {
     int r = x.f.read(x.q + x.qn, want);
     if (r > 0) { x.qn += r; x.pos += r; }
     if (r <= 0 || x.pos >= x.end) x.prodDone = true;   // a short read ends a raw send early (the phone times out)
+    if (r <= 0) g_liveHoldUntil = millis() + 25000;     // ...meanwhile it still expects file bytes: no live-log push frames
     return;
   }
   if (axLines(x, t0)) x.prodDone = true;
@@ -1246,16 +1248,16 @@ static void tailRefuse(const char* why) {
   int n = snprintf(h, sizeof(h), "TAILERR=%s", why);
   phone::logNotify((const uint8_t*)h, n);
 }
-static void transferTail(const char* req) {
-  char p[100];
-  strncpy(p, req, sizeof(p) - 1);
-  p[sizeof(p) - 1] = 0;
+// "<path>@<offset>:<file_id>:<crc>" -> its parts (p gets the path). False when it doesn't parse.
+static bool parseTailReq(const char* req, char* p, size_t cap, uint32_t* offOut, char id[9], uint32_t* crcOut) {
+  strncpy(p, req, cap - 1);
+  p[cap - 1] = 0;
   char* c2 = strrchr(p, ':');                        // ":<crc>"
   char* c1 = nullptr;                                // ":<file_id>"
   char* at = nullptr;
   if (c2) { *c2 = 0; c1 = strrchr(p, ':'); }
   if (c1) { *c1 = 0; at = strrchr(p, '@'); }
-  char id[9] = "";
+  id[0] = 0;
   uint32_t off = 0, wantCrc = 0;
   bool ok = c2 && c1 && at && strlen(c1 + 1) == 8 && strlen(c2 + 1) == 8;
   if (ok) {
@@ -1273,24 +1275,39 @@ static void transferTail(const char* req) {
     if (!*d || strlen(d) > 9) ok = false;            // <= 9 digits: files stay far below 1 GB (512 MB log cap)
     else for (; *d; d++) { if (*d < '0' || *d > '9') { ok = false; break; } off = off * 10 + (uint32_t)(*d - '0'); }
   }
-  if (!ok) {                                         // does not parse (e.g. an older phone's 3-field form): plain empty reply
+  *offOut = off; *crcOut = wantCrc;
+  return ok;
+}
+// The phone holds the first `off` bytes of `p` (line 1's file_id `id`, CRC of the 64 bytes before `off`)? Returns
+// nullptr and leaves `f` open with *sz = its size, or the TAILERR reason ("path" / "id" / "off") with `f` closed.
+static const char* checkTail(const char* p, uint32_t off, const char* id, uint32_t wantCrc, File& f, uint32_t* sz) {
+  if (!files::safePath(p) || files::isDir(p) || !g_sdOk || !SD.exists(p)) return "path";
+  f = SD.open(p, "r");
+  if (!f) return "path";
+  *sz = f.size();
+  char cur[9];
+  if (!readFileId(f, cur) || strcmp(cur, id) != 0) { f.close(); return "id"; }
+  if (off > *sz) { f.close(); return "off"; }
+  uint32_t haveCrc = 0;
+  if (!prefixCrc(f, off, &haveCrc) || haveCrc != wantCrc) { f.close(); return "id"; }
+  return nullptr;
+}
+
+static void transferTail(const char* req) {
+  char p[100], id[9];
+  uint32_t off = 0, wantCrc = 0;
+  if (!parseTailReq(req, p, sizeof(p), &off, id, &wantCrc)) {   // e.g. an older phone's 3-field form: plain empty reply
     phone::logNotify((const uint8_t*)"SIZE=0", 6);
     Serial.printf("[CYD] BLE tail: malformed request %s\n", req);
     return;
   }
-  if (!files::safePath(p) || files::isDir(p) || !g_sdOk || !SD.exists(p)) {
-    tailRefuse("path");
-    Serial.printf("[CYD] BLE tail: rejected %s\n", req);
+  File f;
+  uint32_t sz = 0;
+  if (const char* why = checkTail(p, off, id, wantCrc, f, &sz)) {
+    tailRefuse(why);
+    Serial.printf("[CYD] BLE tail: refused (%s) %s\n", why, p);
     return;
   }
-  File f = SD.open(p, "r");
-  if (!f) { tailRefuse("path"); return; }
-  const uint32_t sz = f.size();
-  char cur[9];
-  if (!readFileId(f, cur) || strcmp(cur, id) != 0) { f.close(); tailRefuse("id"); Serial.printf("[CYD] BLE tail: file_id mismatch %s\n", p); return; }
-  if (off > sz) { f.close(); tailRefuse("off"); Serial.printf("[CYD] BLE tail: offset %u > size %u (%s)\n", (unsigned)off, (unsigned)sz, p); return; }
-  uint32_t haveCrc = 0;
-  if (!prefixCrc(f, off, &haveCrc) || haveCrc != wantCrc) { f.close(); tailRefuse("id"); Serial.printf("[CYD] BLE tail: prefix CRC mismatch %s\n", p); return; }
   const uint32_t n = sz - off;
   char hdr[32];
   snprintf(hdr, sizeof(hdr), "TAIL=%u@%u", (unsigned)n, (unsigned)off);
@@ -1308,6 +1325,136 @@ void transferFile(const char* path) {
     return;
   }
   streamFileOverBle(path);
+}
+
+// --- Live-log push (fw 0.44.0, docs/phone-analysis.md phase 2) ---
+// "J:<path>@<off>:<file_id>:<crc>[|<path>@<off>:<file_id>:<crc>]" (at most 2): the phone holds the first <off> bytes of
+// each file, checked exactly like a tail request. From then on every byte appended to them is pushed as single LOGDATA
+// notifies, only while no BLE transfer runs (never inside another reply):
+//   "LL=<file_id>:<offset>:" + raw bytes
+// Answer: "LLOK=<n>", or "LLERR=parse|path|id|off|many|none" with nothing subscribed. A bare "J" stops. The bytes are read
+// from the card each time, never queued in RAM, so a busy link or a full notify buffer just delays them: the push
+// resumes from the last offset sent. A file renamed on time sync is followed by its file_id through the live streams.
+// Subscriptions end with the authenticated session (authEpoch); a new J replaces them all.
+// Pacing: ONE frame per LIVE_GAP_MS across all files (~8 KB/s at a 252 B MTU, far above a log's rate), so a backlog
+// (after a transfer, a leader's member catch-up) never floods the notify buffers DETS / STATUS also need. Each file's
+// size is looked up at most every LIVE_CHECK_MS; the card is only searched (rename) when the file can't be opened, and
+// a file that stays missing for LIVE_MISS_MAX checks is dropped (the phone notices the silence and re-subscribes).
+struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs; uint8_t miss; };
+static LiveSub g_live[2];
+static int g_liveN = 0, g_liveNext = 0;
+static uint32_t g_liveEpoch = 0, g_liveSendMs = 0;
+static constexpr uint32_t LIVE_GAP_MS = 30, LIVE_CHECK_MS = 250;
+static constexpr uint8_t LIVE_MISS_MAX = 40;   // ~10 s
+
+static void liveReply(const char* s) { phone::logNotify((const uint8_t*)s, strlen(s)); }
+
+void liveSubscribe(const char* arg) {
+  g_liveN = 0;
+  if (!arg || !arg[0]) { Serial.println("[CYD] live log: stopped"); return; }
+  if (phone::logChunkMax() < 64) { liveReply("LLERR=mtu"); Serial.println("[CYD] live log: refused (MTU too small)"); return; }
+  char buf[210];
+  strncpy(buf, arg, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = 0;
+  LiveSub tmp[2];
+  int n = 0;
+  const char* why = nullptr;
+  char* save = nullptr;
+  for (char* tok = strtok_r(buf, "|", &save); tok; tok = strtok_r(nullptr, "|", &save)) {
+    if (n >= 2) { why = "many"; break; }
+    char p[100], id[9];
+    uint32_t off = 0, crc = 0;
+    if (!parseTailReq(tok, p, sizeof(p), &off, id, &crc) || strlen(p) >= sizeof(tmp[0].path)) { why = "parse"; break; }
+    File f;
+    uint32_t sz = 0;
+    if ((why = checkTail(p, off, id, crc, f, &sz))) break;
+    f.close();
+    strcpy(tmp[n].path, p);
+    strcpy(tmp[n].fid, id);
+    tmp[n].off = off;
+    tmp[n].size = sz;
+    tmp[n].checkMs = millis();
+    tmp[n].miss = 0;
+    n++;
+  }
+  char h[24];
+  if (why || !n) {
+    snprintf(h, sizeof(h), "LLERR=%s", why ? why : "none");
+    liveReply(h);
+    Serial.printf("[CYD] live log: refused (%s)\n", why ? why : "none");
+    return;
+  }
+  memcpy(g_live, tmp, sizeof(tmp));
+  g_liveN = n;
+  g_liveNext = 0;
+  g_liveEpoch = phone::authEpoch();
+  g_liveSendMs = 0;
+  snprintf(h, sizeof(h), "LLOK=%d", n);
+  liveReply(h);
+  for (int i = 0; i < n; i++) Serial.printf("[CYD] live log: %s from %u\n", g_live[i].path, (unsigned)g_live[i].off);
+}
+
+// Open a subscribed file; a time-sync rename is followed by file_id through the live streams (only searched when the
+// old name fails to open).
+static File liveOpen(LiveSub& s) {
+  File f = SD.open(s.path, "r");
+  if (f) return f;
+  LogStream* sts[3] = { &g_fg, &g_bg, &g_fleetLog };
+  for (LogStream* st : sts)
+    if (st->path[0] && !strcmp(st->fileId, s.fid) && strlen(st->path) < sizeof(s.path) && strcmp(st->path, s.path)) {
+      strcpy(s.path, st->path);
+      return SD.open(s.path, "r");
+    }
+  return File();
+}
+
+void liveService() {
+  if (!g_liveN || xferBusy() || !g_sdOk) return;
+  if (!phone::peerAlive(g_liveEpoch)) { g_liveN = 0; return; }   // the phone that subscribed is gone
+  const uint32_t now = millis();
+  if ((int32_t)(g_liveHoldUntil - now) > 0) return;               // a short raw send: the phone still expects file bytes
+  if (now - g_liveSendMs < LIVE_GAP_MS) return;
+  // Refresh the sizes that are due (open + size + close; a FAT read handle doesn't see later appends).
+  for (int i = 0; i < g_liveN; i++) {
+    LiveSub& s = g_live[i];
+    if (s.off < s.size || now - s.checkMs < LIVE_CHECK_MS) continue;
+    s.checkMs = now;
+    File f = liveOpen(s);
+    if (!f) {
+      if (++s.miss >= LIVE_MISS_MAX) {                            // gone for good: drop it
+        Serial.printf("[CYD] live log: %s gone, dropped\n", s.path);
+        for (int k = i; k + 1 < g_liveN; k++) g_live[k] = g_live[k + 1];
+        g_liveN--; i--;
+      }
+      continue;
+    }
+    s.miss = 0;
+    s.size = f.size();
+    f.close();
+  }
+  // One frame from the next file with a backlog (round-robin).
+  for (int k = 0; k < g_liveN; k++) {
+    const int i = (g_liveNext + k) % g_liveN;
+    LiveSub& s = g_live[i];
+    if (s.off >= s.size) continue;
+    uint8_t buf[512];
+    size_t chunk = phone::logChunkMax();
+    if (chunk > sizeof(buf)) chunk = sizeof(buf);
+    int hn = snprintf((char*)buf, 40, "LL=%s:%u:", s.fid, (unsigned)s.off);
+    if (hn <= 0 || (size_t)hn + 16 > chunk) return;
+    size_t want = chunk - (size_t)hn;
+    if (want > s.size - s.off) want = s.size - s.off;
+    File f = liveOpen(s);
+    if (!f) return;
+    int got = (f.seek(s.off) ? f.read(buf + hn, want) : -1);
+    f.close();
+    if (got <= 0) { s.size = s.off; return; }                     // re-check the size next time
+    g_liveSendMs = now;
+    if (!phone::logNotify(buf, (size_t)hn + (size_t)got)) return;  // notify buffer full: the same bytes next time
+    s.off += (uint32_t)got;
+    g_liveNext = (i + 1) % g_liveN;
+    return;
+  }
 }
 
 
