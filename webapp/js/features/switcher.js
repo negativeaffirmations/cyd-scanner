@@ -64,7 +64,8 @@ function stopWatch(e){
   e.watching = false;
 }
 function tick(){
-  const want = document.visibilityState === "visible" && !anyBusy() && !switching && presenceSupported();
+  const syncOnly = !!state.liveSyncP && !state.liveSyncFull && !(state.xferBusy > 0);   // a live-sync pass (features/livesync.js) is brief: keep watching
+  const want = document.visibilityState === "visible" && (!anyBusy() || syncOnly) && !switching && presenceSupported();
   for(const e of allDevices()){
     if(want && !isCurrent(e)) startWatch(e); else stopWatch(e);
   }

@@ -644,6 +644,15 @@ back (5 GHz included). Things that matter, learned the hard way:
       instead of `L`): a saved copy at least as big as the device's listed size (equal size when no file_id) costs
       no transfer; the whole file always goes to uploads. Session rows show `saved` / `+N KB new` / `partly saved`;
       Data has "Clear saved logs (size)" (`features/cacheui.js`). Filtered (`T:`) exports are never cached.
+      **Live copy (webapp 2026-11-23, `features/livesync.js` + `ble/syncwait.js`; design [docs/phone-analysis.md](docs/phone-analysis.md)
+      phase 1, no firmware change):** while connected, the current session file (STATUS `sess`) and a leader's live
+      fleet file are kept in that cache by tail requests only (20 s / 1 min / 5 min by size); paths + file_ids come
+      from a QUIET `Q` (`state.dl.quiet`: download.js skips populateSessions) asked only on a real change; a whole copy
+      only <= 1 MB automatically, else Data page "Copy now" (a running whole copy can't be aborted on the scanner, so
+      `syncWait()` waits it out with a toast); > 20 MB not kept live. It yields: `syncWait()` (waiters
+      counted, the pass stops at its next request) in rawFetch / bleFetch / downloads / files / fleet; list-answered
+      commands (Q, wipe-all, whitelist A / E / Y) go through `claimWrite()` (refuse when busy, claim state.dl, gattWrite).
+      Data page switch "Keep a live copy of the current scan on this phone" (localStorage `cflo.livesync`).
       **Tail fetch (fw >= 0.26.0, STATUS `fw`):** a saved prefix of a file that grew is topped up with `F:<path>@<size>:<file_id>`
       (only the new bytes cross BLE; verified to be exactly `n` bytes and that the merged file keeps its `file_id`, then
       appended to the cached Blob and re-saved); any refusal/mismatch/failed request falls back to the full `F:<path>`.

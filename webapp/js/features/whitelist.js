@@ -3,16 +3,25 @@ import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $, log, esc } from '../util/dom.js';
 import { onUnitReset } from '../unitreset.js';
-import { reqBusy } from '../ble/xfer.js';
+import { claimWrite } from '../ble/syncwait.js';
+import { gattWrite } from '../ble/gattq.js';
 
 onUnitReset(()=>{ $("wlList").innerHTML=""; });   // the whitelist belongs to the scanner it was read from
+// "Y" / "A:" / "E:" are answered with a WL= list: claim LOGDATA for it (ble/syncwait.js). While LOGDATA is busy an add or
+// remove is still sent as a plain queued write (the scanner applies it after the transfer, and the default state.dl
+// still takes its WL= reply); a list refresh just waits for the next open.
 export async function wlCmd(c, msg){
-  try{ await state.chars.cmd.writeValue(enc.encode(c)); if(msg) log(msg); }
-  catch(e){ log("Whitelist command failed: "+e.message); }
+  try{
+    if(/^[AEY]/.test(c)){
+      if(!await claimWrite(c)){
+        if(c === "Y") return;
+        await gattWrite(state.chars.cmd, enc.encode(c));
+      }
+    } else await gattWrite(state.chars.cmd, enc.encode(c));
+    if(msg) log(msg);
+  }catch(e){ log("Whitelist command failed: "+e.message); }
 }
-export function refreshWhitelist(){
-  if(reqBusy()) return;   // a transfer is in flight; the list refreshes on the next open
-  state.dl={mode:null,expect:0,got:0,chunks:[],name:"",sink:"save",waiting:true,lastRx:Date.now()}; return wlCmd("Y"); }
+export async function refreshWhitelist(){ return wlCmd("Y"); }
 export function populateWhitelist(text){
   const rows=(text||"").split("\n").filter(l=>l.trim());
   $("wlHdr").textContent=rows.length;
@@ -25,7 +34,7 @@ export function populateWhitelist(text){
       ' <span class="sub">['+esc(mask)+'] '+esc(label)+'</span></span>';
     const b=document.createElement("button"); b.className="danger"; b.textContent="Remove";
     b.style.cssText="width:auto;padding:.3em .7em;margin:0 0 0 .5em";
-    b.onclick=async()=>{ await wlCmd("E:"+i, "Removing rule "+(i+1)+"…"); setTimeout(refreshWhitelist,300); };
+    b.onclick=async()=>{ await wlCmd("E:"+i, "Removing rule "+(i+1)+"…"); };   // its WL= reply refreshes the list
     d.appendChild(b); box.appendChild(d);
   });
 }
@@ -39,8 +48,7 @@ export async function addWhitelistRule(){
   if(kind==="blecid" && !/^[0-9a-fA-F]{1,4}$/.test(pat)){ log("Whitelist: company ID is up to 4 hex digits."); return; }
   const line=[kind,pat,mask,label].join(",");
   await wlCmd("A:"+line, "Adding rule: "+line);
-  $("wlPat").value=""; $("wlLabel").value="";
-  setTimeout(refreshWhitelist,300);
+  $("wlPat").value=""; $("wlLabel").value="";   // the A: reply (WL=) refreshes the list
 }
 export function wlKindChanged(){   // name rules match only the first 23 chars on the device
   const nm=/^n(exact|contains)$/.test($("wlKind").value);
@@ -71,7 +79,7 @@ export function fillDetailWhitelist(mac, muted){
     el.innerHTML = '<button class="secondary" id="detWlBtn">+ Add to whitelist</button>';
     $("detWlBtn").onclick = async ()=>{
       await wlCmd("A:mac," + mac + ",A,", "Whitelisting " + mac + "…");
-      $("detDlg").close(); setTimeout(refreshWhitelist, 300);
+      $("detDlg").close();   // the A: reply (WL=) refreshes the whitelist
     };
   }
 }

@@ -25,6 +25,7 @@ import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined,
 import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261107a';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
+import { initLiveSync } from './features/livesync.js?v=20261123a';   // live copy of the current scan (docs/phone-analysis.md)
 import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261122b';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
@@ -137,6 +138,7 @@ $("fltMembers").addEventListener("change", onMemberChange);
 $("fltPlanSel")?.addEventListener("change", fleetPlanMode);
 initFleet();
 initCacheUI();   // Data page: saved-log cache readout + Clear button
+initLiveSync();  // Data page: keep the current scan (+ a leader's fleet file) mirrored into that cache
 initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + Settings card (features/switcher.js)
 initSettingsPages();   // Settings = a menu of subpages (Device(s) / Notifications / Fleet / Remote Server)
 initNotify();    // Settings -> Notifications + the device popup's "Notify me when seen" (features/notify.js)

@@ -1,5 +1,16 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE — 2026-11-23: phone-side recording + analysis (design) / phase 1 live copy (web app, NOT deployed)
+- Owner idea: the phone (which can see every unit's data through the leader) does the heavy threat analysis and
+  records live, the units keep their own detection. Design + phases: docs/phone-analysis.md (1 live mirror, phone
+  only; 2 firmware push stream; 3 phone analysis engine; 4 denser sightings). scan-analyzer told (bridge): no server
+  change for phase 1; asked to think about live upload carrying the mirrored log lines later (contract change).
+- Phase 1 built (`features/livesync.js`, `ble/syncwait.js`, CLAUDE.md "Live copy"), reviewed 3x. Not yet tried on a
+  phone. Test: connect, Data page line shows the copy growing; Download current session = no transfer; New Session /
+  CYD screen switch = a new file picked up without a whole-file re-download; a leader shows its fleet file too.
+- The project hook `gitignore-sensitive.py` ignored syncwait.js once (a comment said `D:*`); reworded, reverted.
+
+
 ## RESUME HERE — 2026-11-22 (night): fw 0.42.0 deauth alert filter on all 4 hosts (merged to main)
 - Drive 2026-11-22 19:17-19:43: one "Deauth flood" notification at 19:35:26 = the first real deauth burst on hardware
   (BEMOPU only): 21 unicast reason-7 frames from a NETGEAR AP's own BSSID to one client, -87 dBm, ch 10. Benign (a

@@ -6,12 +6,15 @@
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { reqBusy } from './xfer.js';
+import { gattWrite } from './gattq.js';
+import { syncWait } from './syncwait.js';   // the live mirror (features/livesync.js) yields to us
 
 const IDLE_MS = 20000;
 
 export function resetDl(){ state.dl = { mode:null, expect:0, got:0, chunks:[], name:"scanlog.jsonl", sink:"save" }; }
 
-export function bleFetch(cmd, name){
+export async function bleFetch(cmd, name){
+  await syncWait();
   return new Promise((resolve, reject)=>{
     if(!state.connected || !state.chars.cmd){ reject(new Error("not connected")); return; }
     if(reqBusy()){ reject(new Error("another transfer is in progress")); return; }   // one request in flight (ble/xfer.js)
@@ -24,6 +27,6 @@ export function bleFetch(cmd, name){
       if(state.dl!==mine){ if(!mine.completing) finish(reject, new Error("transfer superseded")); return; }   // completing = download.js is finishing it
       if(Date.now()-mine.lastRx > IDLE_MS){ resetDl(); finish(reject, new Error("transfer timed out")); }
     }, 1000);
-    state.chars.cmd.writeValue(enc.encode(cmd)).catch(e=>{ if(state.dl===mine) resetDl(); finish(reject, e); });
+    gattWrite(state.chars.cmd, enc.encode(cmd)).catch(e=>{ if(state.dl===mine) resetDl(); finish(reject, e); });
   });
 }

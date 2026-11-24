@@ -37,6 +37,9 @@ export const state = {
   lastDetRows: [],      // latest live DETS snapshot, for the follower + category modals
   rids: {},             // live Remote-ID by lowercase MAC, replaced each snapshot (DETS v6 R: block)
   expAll: [],         // raw parsed rows of the loaded Explore session (never mutated in place)
+  liveSyncP: null,      // a Promise while a live-mirror pass holds LOGDATA (features/livesync.js); requesters wait on it
+  liveSyncWaiters: 0,   // requesters waiting on it (ble/syncwait.js): the pass stops at its next request
+  liveSyncFull: false,  // the pass is making a whole-file copy (minutes), not a tail
   xferBusy: 0,          // >0 while a BLE file transfer / multi-file Data action runs (presence watching pauses)
   exploreWant: false,   // populateSessions auto-loads the newest session when set
 };

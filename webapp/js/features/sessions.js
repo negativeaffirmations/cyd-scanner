@@ -14,11 +14,12 @@
 import { state } from '../state.js';
 import { $, log, esc, toast, saveBlob } from '../util/dom.js';
 import { openMap, plotCsvText } from './map.js';
-import { bleFetch } from '../ble/transfer.js';
+import { bleFetch, resetDl } from '../ble/transfer.js';
 import { fetchLog, cacheStatus } from '../ble/logfetch.js';
 import { onCacheChange } from '../data/logcache.js';
 import { onUnitReset } from '../unitreset.js';
 import { connGen } from '../ble/xfer.js';
+import { claimWrite } from '../ble/syncwait.js';
 import { joinLogParts } from '../data/parse.js';
 import { uploadSessionText, isPaired } from './remote.js';
 import { exportSpec, exportCmd, rangeFileName } from './timerange.js';
@@ -140,22 +141,34 @@ function groupFileName(gs, tag){
 
 // The device reads every log file's head/tail to build the list, so a refresh takes a few seconds on a
 // full card: show it's in progress (button, list placeholder, working toast) until the list lands.
-const LIST_TIMEOUT_MS = 30000;
+const LIST_TIMEOUT_MS = 45000;
 let listWait = null;   // timeout handle while a refresh is pending
+let listClaim = null;  // our LOGDATA claim for the SESS= reply (ble/syncwait.js claimWrite)
 function endListWait(ok){
   if(!listWait) return;
   clearTimeout(listWait); listWait=null;
+  const claim=listClaim; listClaim=null;
   const b=$("listBtn"); b.textContent="Refresh session list"; b.disabled=!state.connected;
-  if(!ok){ toast("Session list didn't arrive — try again.", {err:true}); renderList(); }
+  if(!ok){
+    if(claim && state.dl===claim) resetDl();   // our unanswered claim
+    toast("Session list didn't arrive — try again.", {err:true}); renderList();
+  }
 }
 export async function refreshSessions(){
   if(listWait) return;   // already waiting
   const b=$("listBtn"); b.disabled=true; b.textContent="Refreshing…";
   $("sessList").innerHTML='<div class="sub">Loading session list from the device…</div>';
   toast("Loading session list…", {work:true, sticky:true});
-  listWait=setTimeout(()=>endListWait(false), LIST_TIMEOUT_MS);
-  try{ await state.chars.cmd.writeValue(new TextEncoder().encode("Q")); log("Requesting session list…"); }
-  catch(e){ log("List failed: "+e.message); endListWait(true); toast("List failed: "+e.message, {err:true}); renderList(); }
+  listWait=-1;   // pending (blocks a second tap); the real timer starts once the request is out
+  const reset=()=>{ listWait=null; b.disabled=!state.connected; b.textContent="Refresh session list"; renderList(); };
+  try{
+    const c=await claimWrite("Q");
+    if(!c){ reset(); toast("Another transfer is in progress — try again in a moment.", {err:true}); return; }
+    listClaim=c;
+    listWait=setTimeout(()=>endListWait(false), LIST_TIMEOUT_MS);
+    log("Requesting session list…");
+  }
+  catch(e){ log("List failed: "+e.message); reset(); toast("List failed: "+e.message, {err:true}); }
 }
 export function populateSessions(text){
   const wasRefresh = !!listWait;
@@ -573,7 +586,10 @@ export function deleteSession(){
 export async function wipeAllLogs(){
   if(!state.chars.cmd) return;
   if(!confirm("Wipe ALL session logs on the SD card?\nThis cannot be undone. The current in-progress session is kept.")) return;
-  try{ await state.chars.cmd.writeValue(new TextEncoder().encode("D:*")); log("Wiping all logs… (list will refresh)"); }
+  try{
+    if(!await claimWrite("D:*")){ toast("Another transfer is in progress — try again in a moment.", {err:true}); return; }   // its reply is a session list
+    log("Wiping all logs… (list will refresh)");
+  }
   catch(e){ log("Wipe failed: "+e.message); }
 }
 // Explore picker: load the chosen scan (all its parts, joined) into the Scan Viewer.
