@@ -1,6 +1,6 @@
 # Phone-side recording and threat analysis
 
-Status: **design, phase 1 in progress** (2026-11-23).
+Status: **phase 1 deployed, phase 2 built** (2026-11-23).
 
 ## Goal
 
@@ -75,19 +75,30 @@ Known costs: each pass re-saves the whole file Blob in IndexedDB (why the interv
 20 MB; phase 2 removes it), and a phone that is not connected records nothing (the scanner's SD log is still the
 record).
 
-### Phase 2: push stream (firmware)
+### Phase 2: push stream (firmware 0.44.0, built)
 
-The scanner pushes every log line to the authenticated phone as it writes it, instead of the phone
-polling:
+The scanner pushes every log byte to the phone as it writes it, instead of the phone polling for tails:
 
-- A `LIVELOG` notify characteristic (or a new LOGDATA payload type, decided at build time): frames of
-  `fileId, byteOffset, lines…`, the same shape as the fleet `LogRows` frames, which already solve
-  "resume after a drop" with per-file acked offsets (`LogPos`).
-- The phone acks offsets; after a reconnect the scanner resends from the phone's last offset per file
-  (bounded by what is still on the card), so nothing is lost while the phone was away.
-- A leader pushes its fleet file the same way, so the phone gets every unit's lines through one link.
-- STATUS part 2 gains the live fleet file name, so phase 1's `Q` polling goes away.
-- The phone stores lines in chunks (append, not re-save), removing phase 1's Blob rewrite.
+- **Subscribe.** Once the phone's copies are current it sends CMD `J:<path>@<off>:<file_id>:<crc>[|<path>@…]` (the
+  current session file, plus the live fleet file on a leader; at most 2). The scanner checks each exactly like a tail
+  request (same `file_id` + prefix-CRC check) and answers one LOGDATA notify: `LLOK=<n>`, or `LLERR=parse|path|id|off|many|none`
+  with nothing subscribed. A bare `J` stops; a new `J:` replaces the set.
+- **Frames.** From then on, while no BLE transfer runs (never inside another reply), it sends single LOGDATA notifies
+  `LL=<file_id>:<offset>:<bytes>`, up to 4 per file every 250 ms, each as big as the link's MTU allows. It reads the
+  bytes from the card each round instead of queueing them in RAM, so a busy link or a full notify buffer only delays
+  them. A file renamed on time sync is followed by its `file_id`. The subscription ends with the authenticated session.
+- **Phone side** (`features/livesync.js`): the frames collect in RAM and are saved into the copy on each pass (or once
+  256 KB are waiting), only the part past the copy's current size (a user download may have fetched a tail
+  meanwhile). An offset gap, a lost copy or a refusal ends the push; the phase 1 tail updates take over, and it
+  subscribes again on the next pass (after a minute, or 10 min when the scanner never answered: older firmware or a
+  stale page module). New Session or a fleet file rotation changes the set of files: the phone stops the push, brings
+  the new files up to date, and subscribes again.
+- **For phase 3:** every pushed piece is announced as a window `cflo-livelog` event `{sid, path, fid, off, bytes}`.
+- Old web apps never send `J`, so they never get frames.
+
+Still to do: storing the copy in chunks instead of re-saving the whole file (the re-save cost is why the save interval
+grows with size), and a STATUS key for the leader's live fleet file (STATUS part 2 is at its size limit, so the
+session list still finds it, asked only on a real change).
 
 ### Phase 3: phone analysis engine
 

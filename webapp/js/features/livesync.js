@@ -18,7 +18,7 @@
 import { state } from '../state.js';
 import { enc } from '../config.js';
 import { $ } from '../util/dom.js';
-import { canTail } from '../ble/logfetch.js';
+import { canTail, fwAtLeast } from '../ble/logfetch.js';
 import { resetDl } from '../ble/transfer.js';
 import { reqBusy, connGen } from '../ble/xfer.js';
 import { gattWrite } from '../ble/gattq.js';
@@ -41,8 +41,11 @@ let running = false, nextAt = 0;
 let cur = null;   // per connection, see fresh()
 function fresh(gen, sid){
   return { gen, sid, files:{}, known:{}, fleet:null, listAt:0, listSess:"", listFlt:"", relist:false, missN:0, missAt:0,
-           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set() };
+           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(),
+           push:{ on:false, subs:{}, wait:null, blockUntil:0, why:"" } };
 }
+// push.subs[fid] = { label, path, fid, bufStart, end, chunks, bytes, lastAt }: bytes pushed since the last save
+// (bufStart = the copy's size when they started), end = the next offset expected.
 // files[label] = { path, fid, size, at, need, big, got, expect }   (label "own" / "fleet")
 // known[path]  = { path, fid, size, last }                            from the last session list
 
@@ -126,7 +129,11 @@ function crc32hex(bytes){
 
 async function save(sid, path, blob, fid){
   const rec = await put(sid, path, blob);
-  if(!rec || rec.size !== blob.size){ cur.stop = "the phone couldn't save the copy (storage full?)"; throw new Error(cur.stop); }
+  if(!rec || rec.size !== blob.size){
+    cur.stop = "the phone couldn't save the copy (storage full?)";
+    endPush(); cur.push.subs = {};
+    throw new Error(cur.stop);
+  }
   cur.hadCopy.add(fid);
 }
 
@@ -187,6 +194,115 @@ async function syncFile(label, t, gen, sid){
   return r.blob.size;
 }
 
+// --- Push (fw >= 0.44.0, phase 2): once both copies are current the scanner pushes every appended byte as
+// "LL=<file_id>:<offset>:<bytes>" (ble/download.js routes them here). The bytes collect in RAM and are saved to the
+// copy on each pass (or sooner past FLUSH_BYTES). Each frame carries its offset: a gap ends the push (what arrived is
+// kept) and the ordinary tail updates take over until the next subscribe. Every pushed piece is also announced as a
+// window "cflo-livelog" event {sid, path, fid, off, bytes} for live analysis (phase 3).
+const FLUSH_BYTES = 256 * 1024, PUSH_REPLY_MS = 6000;
+const PUSH_SILENT_MS = 60000;   // no frame this long: check with a tail update + subscribe again (a push can stop silently)
+const canPush = ()=>fwAtLeast(state.scannerFw, 0, 44, 0);
+const dec = new TextDecoder();
+
+function onLiveLog(v){
+  if(!cur || cur.gen !== connGen()) return;
+  const head = dec.decode(v.subarray(0, Math.min(v.length, 40)));
+  if(head.startsWith("LLOK=") || head.startsWith("LLERR=")){
+    const w = cur.push.wait;
+    if(!w) return;                 // not answering a subscribe of ours (a late reply, or a look-alike body chunk)
+    cur.push.wait = null;
+    const ok = head.startsWith("LLOK=");
+    // Set synchronously: the scanner may send its first frame right behind LLOK (same loop pass), and frames are
+    // only taken while push.on -- never move this behind an await.
+    if(ok) cur.push.on = true;
+    w(ok ? "" : head.slice(6).replace(/[^a-z]/g, "") || "refused");
+    return;
+  }
+  if(!enabled || cur.stop) return;
+  const m = /^LL=([0-9a-f]{8}):(\d+):/.exec(head);
+  const s = m && cur.push.subs[m[1]];
+  if(!s || !cur.push.on) return;
+  const off = parseInt(m[2], 10), data = v.slice(m[0].length);   // a copy: the notify buffer is reused
+  if(off > s.end){ endPush("a pushed piece was missed"); nextAt = 0; return; }
+  const skip = s.end - off;
+  if(skip >= data.length) return;                                 // a piece we already have
+  const add = skip ? data.subarray(skip) : data;
+  s.chunks.push(add); s.bytes += add.length; s.end += add.length; s.lastAt = Date.now();
+  const f = cur.files[s.label];
+  if(f && f.fid === s.fid){ f.size = s.end; f.at = s.lastAt; }
+  try{ window.dispatchEvent(new CustomEvent("cflo-livelog", { detail:{ sid:cur.sid, path:s.path, fid:s.fid, off:s.end - add.length, bytes:add } })); }catch(e){}
+  if(s.bytes >= FLUSH_BYTES) nextAt = 0;
+}
+
+function stopPush(){
+  if(state.connected && state.chars.cmd) gattWrite(state.chars.cmd, enc.encode("J")).catch(()=>{});
+}
+// End the push: tell the scanner, stop taking frames. What already arrived stays in subs until the next flush().
+function endPush(why){
+  if(!cur) return;
+  if(cur.push.on || cur.push.wait) stopPush();
+  cur.push.on = false;
+  if(why) cur.push.why = why;
+}
+
+// Save what was pushed into the copies. The copy may already be ahead (a user download fetched a tail meanwhile):
+// only the part past its size is added. A copy that is gone or behind the pushed bytes ends the push.
+async function flush(sid){
+  for(const s of Object.values(cur.push.subs)){
+    if(!s.bytes) continue;
+    // Snapshot: frames keep arriving while the copy is read and saved; only these pieces are saved now.
+    const n = s.chunks.length, nb = s.bytes, from = s.bufStart, upTo = from + nb;
+    const pieces = s.chunks.slice(0, n);
+    const drop = ()=>{ s.chunks.splice(0, n); s.bytes -= nb; s.bufStart = upTo; };
+    const meta = find(sid, s.path, s.fid);
+    const base = meta && meta.fileId === s.fid ? await getBlob(meta) : null;
+    if(!base || base.size !== meta.size || base.size < from){ endPush("the saved copy changed"); drop(); continue; }
+    const skip = base.size - from;
+    if(skip < nb){
+      const merged = new Blob([base, new Blob(pieces).slice(skip)]);
+      if(await fileIdOf(merged) !== s.fid){ endPush("the copy no longer matches the file"); drop(); continue; }
+      await save(sid, meta.path, merged, s.fid);
+    }
+    drop();
+  }
+}
+
+// Ask the scanner to push from the end of each current copy. Resolves true when it agreed.
+async function subscribe(want, gen, sid){
+  const subs = {}, toks = [];
+  for(const f of want){
+    const meta = find(sid, f.path, f.fid);
+    const base = meta && meta.fileId === f.fid ? await getBlob(meta) : null;
+    if(!base || base.size !== meta.size) return false;
+    const crc = crc32hex(new Uint8Array(await base.slice(Math.max(0, meta.size - 64), meta.size).arrayBuffer()));
+    toks.push(f.path + "@" + meta.size + ":" + f.fid + ":" + crc);
+    subs[f.fid] = { label:f.label, path:f.path, fid:f.fid, bufStart:meta.size, end:meta.size, chunks:[], bytes:0, lastAt:Date.now() };
+  }
+  gate(gen, sid);
+  cur.push.subs = subs;
+  const why = await new Promise(resolve=>{
+    const t = setTimeout(()=>{ if(cur && cur.push.wait === done){ cur.push.wait = null; resolve("no answer"); } }, PUSH_REPLY_MS);
+    const done = w=>{ clearTimeout(t); resolve(w); };
+    cur.push.wait = done;
+    gattWrite(state.chars.cmd, enc.encode("J:" + toks.join("|"))).catch(e=>{ if(cur && cur.push.wait === done){ cur.push.wait = null; done(e.message || "write failed"); } });
+  });
+  if(!cur || cur.gen !== gen) return false;
+  if(why){
+    if(why === "no answer" || why === "write failed" || !/^[a-z]+$/.test(why)) stopPush();   // it may still subscribe late
+    cur.push.on = false; cur.push.subs = {};
+    cur.push.why = why;
+    // No answer while a transfer held the scanner: just try again soon. No answer otherwise: an older firmware or a
+    // stale page module -- leave it for 10 min.
+    const busy = reqBusy() || (state.xferBusy || 0) > 0;
+    cur.push.blockUntil = Date.now() + (why === "no answer" && !busy ? 10 * 60000 : 60000);
+    if(why === "path" || why === "id") cur.relist = true;
+    return false;
+  }
+  cur.push.why = "";
+  cur.push.okAt = Date.now();
+  return true;
+}
+
 async function pass(){
   if(running || !canRun() || reqBusy() || (state.xferBusy || 0) > 0 || (state.liveSyncWaiters || 0) > 0) return;
   running = true;
@@ -212,12 +328,38 @@ async function pass(){
     const own = cur.known[path];
     if(!own || !own.fid || (leader && joined > 0 && !cur.fleet)){ cur.missN++; cur.missAt = Date.now() + Math.min(RETRY_MAX, RETRY_MIN * Math.pow(2, cur.missN)); }
     else cur.missN = 0;
-    if(own && own.fid){ await syncFile("own", own, gen, sid); interval = syncMs(cur.files.own.size || 0); }
-    else cur.files.own = { path, at:0, waiting:true };
-    if(leader && cur.fleet && cur.fleet.fid){
-      await syncFile("fleet", cur.fleet, gen, sid);
-      interval = Math.max(interval, syncMs(cur.files.fleet.size || 0));
-    } else delete cur.files.fleet;
+    const targets = [];
+    if(own && own.fid) targets.push({ label:"own", t:own });
+    if(leader && cur.fleet && cur.fleet.fid) targets.push({ label:"fleet", t:cur.fleet });
+    // Pushing the same files: just save what arrived. A different set (New Session, fleet file rotated) or a broken
+    // push: stop it, save what arrived, and fall back to tail updates (then subscribe again below).
+    const subFids = Object.keys(cur.push.subs);
+    let same = cur.push.on && targets.length > 0 && subFids.length === targets.length && targets.every(x=>cur.push.subs[x.t.fid]);
+    if(same){   // silent for PUSH_SILENT_MS: it may have stopped without telling us -> tail update + subscribe again
+      const last = Math.max(cur.push.okAt || 0, ...subFids.map(f=>cur.push.subs[f].lastAt || 0));
+      if(Date.now() - last > PUSH_SILENT_MS){ endPush(""); same = false; }
+    }
+    if(subFids.length){
+      if(!same && cur.push.on) endPush("");
+      await flush(sid);
+      if(!same) cur.push.subs = {};
+    }
+    if(same){
+      for(const x of targets){ const s = cur.push.subs[x.t.fid]; s.path = x.t.path; }   // follows a time-sync rename
+      interval = Math.max(...targets.map(x=>syncMs(cur.push.subs[x.t.fid].end)));
+    } else {
+      if(own && own.fid){ await syncFile("own", own, gen, sid); interval = syncMs(cur.files.own.size || 0); }
+      else cur.files.own = { path, at:0, waiting:true };
+      if(leader && cur.fleet && cur.fleet.fid){
+        await syncFile("fleet", cur.fleet, gen, sid);
+        interval = Math.max(interval, syncMs(cur.files.fleet.size || 0));
+      } else delete cur.files.fleet;
+      // Both copies current (no "Copy now" waiting, none too big): ask the scanner to push from here on.
+      const cand = targets.map(x=>({ label:x.label, ...x.t, f:cur.files[x.label] }))
+                           .filter(x=>x.f && x.f.at && !x.f.need && !x.f.big && x.f.fid === x.fid);
+      if(canPush() && targets.length && cand.length === targets.length && Date.now() >= cur.push.blockUntil)
+        await subscribe(cand, gen, sid);
+    }
     cur.err = ""; cur.errN = 0;
   }catch(e){
     if(e instanceof Yield) interval = 3000;   // try again soon, after the user's request
@@ -235,6 +377,9 @@ async function pass(){
 }
 
 function tick(){
+  if(cur && cur.gen === connGen() && (cur.push.on || Object.keys(cur.push.subs).length) && !canRun()){
+    endPush(""); cur.push.subs = {};   // frames would only pile up in RAM
+  }
   if(canRun() && !running && Date.now() >= nextAt) pass();
   render();
 }
@@ -267,6 +412,8 @@ function render(){
   else if(!mine || (!mine.files.own && !mine.files.fleet)) t = running ? "Checking the scanner's log files…" : "Waiting for the scanner…";
   else {
     t = [describe(mine.files.own, "Current scan"), describe(mine.files.fleet, "Fleet file")].filter(Boolean).join(". ") + ".";
+    if(mine.push.on) t += " Live: the scanner sends new lines as it writes them.";
+    else if(mine.push.why && canPush()) t += " (Live push off: " + mine.push.why + "; it updates by asking instead, and tries the push again shortly.)";
     if(mine.err) t += " Last update failed (" + mine.err + "); trying again shortly.";
     for(const f of [mine.files.own, mine.files.fleet]) if(f && f.need && !f.big) need += f.need;
   }
@@ -293,6 +440,7 @@ export function initLiveSync(){
     tick();
   });
   onUnitReset(()=>{ cur = null; nextAt = 0; render(); });
+  state.onLiveLog = onLiveLog;   // ble/download.js hands over the scanner's pushed frames (fw >= 0.44.0)
   setInterval(tick, 2000);
   window.addEventListener("cflo-bg-tick", tick);   // Android app: hidden-page timers are throttled (shim-background.js)
   render();

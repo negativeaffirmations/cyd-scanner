@@ -653,6 +653,14 @@ back (5 GHz included). Things that matter, learned the hard way:
       counted, the pass stops at its next request) in rawFetch / bleFetch / downloads / files / fleet; list-answered
       commands (Q, wipe-all, whitelist A / E / Y) go through `claimWrite()` (refuse when busy, claim state.dl, gattWrite).
       Data page switch "Keep a live copy of the current scan on this phone" (localStorage `cflo.livesync`).
+      **Live push (fw 0.44.0, phase 2):** once the copies are current the page sends CMD **`J:<path>@<off>:<file_id>:<crc>[|…]`**
+      (<= 2 files, checked like a tail; reply `LLOK=<n>` / `LLERR=parse|path|id|off|many|none|mtu`, bare `J` = stop); the
+      scanner then pushes appended bytes as single LOGDATA notifies `LL=<file_id>:<offset>:<bytes>` (one per 30 ms, only
+      while !xferBusy, read from the card each time, sizes checked every 250 ms, a rename followed by file_id, held 25 s
+      after a short raw send, ends with the auth epoch; `liveSubscribe`/`liveService` in host_log.cpp). download.js routes
+      them (mode null only) to `state.onLiveLog`; livesync saves them into the copy each pass (snapshot, only past the copy's
+      size), ends the push on a gap / lost copy / 60 s of silence and falls back to tails, and fires a window
+      `cflo-livelog` event per piece (for phase 3).
       **Tail fetch (fw >= 0.26.0, STATUS `fw`):** a saved prefix of a file that grew is topped up with `F:<path>@<size>:<file_id>`
       (only the new bytes cross BLE; verified to be exactly `n` bytes and that the merged file keeps its `file_id`, then
       appended to the cached Blob and re-saved); any refusal/mismatch/failed request falls back to the full `F:<path>`.

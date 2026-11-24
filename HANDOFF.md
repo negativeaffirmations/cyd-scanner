@@ -5,9 +5,14 @@
   records live, the units keep their own detection. Design + phases: docs/phone-analysis.md (1 live mirror, phone
   only; 2 firmware push stream; 3 phone analysis engine; 4 denser sightings). scan-analyzer told (bridge): no server
   change for phase 1; asked to think about live upload carrying the mirrored log lines later (contract change).
-- Phase 1 built (`features/livesync.js`, `ble/syncwait.js`, CLAUDE.md "Live copy"), reviewed 3x. Not yet tried on a
-  phone. Test: connect, Data page line shows the copy growing; Download current session = no transfer; New Session /
-  CYD screen switch = a new file picked up without a whole-file re-download; a leader shows its fleet file too.
+- Phase 1 built (`features/livesync.js`, `ble/syncwait.js`, CLAUDE.md "Live copy"), reviewed 3x, **deployed**
+  (main `3cf9798`, ui `2026-11-23 · live copy`). **Phone test passed 2026-11-23** (Vivaldi, SOPAFE leader, 3/3 members,
+  inspected over wireless adb + DevTools): own file 27 -> 31 KB and fleet file 322 -> 331 KB over 60 s, a pass every
+  ~20 s, link held ~1.5 s per minute; `fetchCurrent()` (= Download current session) answered "hit" in 0.66 s.
+  Still untested: New Session / CYD screen switch (new file picked up, no whole re-download), "Copy now" (> 1 MB).
+- Phone debugging from this PC: wireless adb (`ANDROID_ADB_SERVER_PORT=15037`, pair on the phone's pairing port, then
+  connect), `adb forward tcp:9222 localabstract:chrome_devtools_remote` (Vivaldi uses Chrome's socket name), then a
+  small no-deps CDP client (Runtime.evaluate) to read `state` / the cache. The page must be on screen.
 - The project hook `gitignore-sensitive.py` ignored syncwait.js once (a comment said `D:*`); reworded, reverted.
 
 
