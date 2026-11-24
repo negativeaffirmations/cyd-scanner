@@ -8,7 +8,8 @@
 import { $, esc } from '../util/dom.js';
 import { state } from '../state.js';
 const analysisFor = mac=>state.engine ? state.engine.analysisFor(mac) : null;
-const H = ()=>state.history || null;   // analysis/history.js (saved scans), same reasoning as state.engine
+const H = ()=>state.history || null;
+const V = ()=>state.vendors || null;   // analysis/vendors.js (full maker lists, loaded on first use)   // analysis/history.js (saved scans), same reasoning as state.engine
 
 let curMac = "";
 
@@ -24,6 +25,18 @@ const hm = t=>{ if(!t) return "?"; const d = new Date(t * 1000); return String(d
 const km = m=>m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m";
 const ymd = t=>t ? new Date(t * 1000).toISOString().slice(0, 10) : "?";
 const EVT_TXT = { eviltwin:"Evil-twin alert", deauth:"Deauth burst" };
+
+// Maker from the full public lists: the MAC's IEEE prefix, and a BLE device's manufacturer company ID.
+function makerHtml(mac, cid){
+  const v = V();
+  if(!v) return "";
+  const mk = v.makerFor(mac), co = cid ? v.companyFor(cid) : "";
+  if(mk === null || co === null) return kv("Maker", "looking it up…");
+  let out = "";
+  out += kv("Maker", mk ? esc(mk) : parseInt(mac.slice(0, 2), 16) & 0x02 ? "none: a made-up (random) address" : "not in the IEEE list");
+  if(cid) out += kv("BLE company", co ? esc(co) + " (" + esc(String(cid).toUpperCase()) + ")" : esc(String(cid).toUpperCase()) + ", not in the list");
+  return out;
+}
 
 // "Saved scans on this phone": every log file in the phone's cache (analysis/history.js).
 function historyHtml(mac, a){
@@ -68,6 +81,7 @@ function render(){
   if(a.places) h += kv("Places", a.places + (a.places > 1 ? ", up to " + km(a.spreadM) + " apart" : ""));
   if(a.span > 0) h += kv("You moved", km(a.youMovedM) + " in that time");
   h += kv("Heard by", esc(heard || "?"));
+  h += makerHtml(mac, a.cid);
   if(a.rotating) h += `<div class="sub" style="margin-top:.3em">Random Bluetooth address: the device changes it every few minutes, so this only covers the time it used this one.</div>`;
   else if(a.randomWifi) h += `<div class="sub" style="margin-top:.3em">Randomized Wi-Fi address: phones and laptops make these up and change them, so this only covers the time it used this one.</div>`;
   h += historyHtml(mac, a);
@@ -84,4 +98,5 @@ export function initPhoneView(){
   const again = ()=>{ const dlg2 = $("detDlg"); if(curMac && dlg2 && dlg2.open) render(); };
   if(state.engine) state.engine.onEngineChange(again);
   if(state.history) state.history.onHistoryChange(again);
+  if(state.vendors) state.vendors.onVendorsLoaded(again);
 }

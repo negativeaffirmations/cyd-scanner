@@ -30,10 +30,11 @@ import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261123g';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
-import { initEngine } from './analysis/engine.js?v=20261123g';   // phone analysis engine (docs/phone-analysis.md phase 3)
+import { initEngine } from './analysis/engine.js?v=20261124a';   // phone analysis engine (docs/phone-analysis.md phase 3)
 import { initHistory } from './analysis/history.js?v=20261123f';
-import { initAlerts } from './analysis/alerts.js?v=20261123g';   // phone analysis: its own alerts (phase 3c)   // phone analysis: saved-scan history (phase 3b)
-import { initPhoneView } from './features/phoneview.js?v=20261123f';   // device popup: Phone analysis section
+import { initAlerts } from './analysis/alerts.js?v=20261123g';
+import { initVendors } from './analysis/vendors.js?v=20261124a';   // phone analysis: full maker lists (phase 3d)   // phone analysis: its own alerts (phase 3c)   // phone analysis: saved-scan history (phase 3b)
+import { initPhoneView } from './features/phoneview.js?v=20261124a';   // device popup: Phone analysis section
 import { initServerHistory } from './features/serverhist.js?v=20261121a';   // new module: versioned so it loads fresh with main.js
 import { initServerFind } from './features/serverfind.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initServerMap } from './features/servermap.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
@@ -149,6 +150,7 @@ initNotify();    // Settings -> Notifications + the device popup's "Notify me wh
 initDisplayTimeout();   // Settings -> Device(s) -> Display timeout (CYD dto= / V:; features/displaytimeout.js)
 initEngine();          // phone analysis: per-device records of the whole scan from the live copy (analysis/engine.js)
 initHistory();         // phone analysis: per-device history from every saved log (analysis/history.js)
+initVendors();         // phone analysis: IEEE / Bluetooth SIG maker lists, fetched on first use (analysis/vendors.js)
 initAlerts();          // phone analysis alerts: whole-drive follower, alerts that fired here before (analysis/alerts.js)
 initPhoneView();       // device popup: the phone's analysis of this device (features/phoneview.js)
 initServerHistory();    // device popup: the paired server's history of this MAC + Settings 'Reading server data' (features/serverhist.js)
