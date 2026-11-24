@@ -21,6 +21,7 @@ const PLACE_M = 300, FOLLOW_PLACES = 3, FOLLOW_SPREAD_M = 1000, FOLLOW_SPAN_S = 
 const MAX_SIGHT = 2000;          // per device (oldest half thinned when full)
 const MAX_TRACK = 5000;          // own-track points (one per TRACK_STEP_S)
 const TRACK_STEP_S = 20;
+const MOVE_STEP_M = 60;         // movement counts only past this, so GPS jitter while parked adds nothing
 
 let gen = -1, sid = "";
 let devices = new Map();         // MAC -> record
@@ -158,6 +159,7 @@ export function distM(a, b){
 }
 // Is this a BLE resolvable private address (rotates every ~15 min, so one device shows up under several MACs)?
 const isRpa = mac=>(parseInt(mac.slice(0, 2), 16) & 0xC0) === 0x40;
+const isLocal = mac=>(parseInt(mac.slice(0, 2), 16) & 0x02) !== 0;   // Wi-Fi: a randomized (locally set) address
 
 // Greedy places in time order: a new place starts when a sighting is PLACE_M from the current place's first point.
 function places(sight){
@@ -173,12 +175,13 @@ function places(sight){
 
 // How far the scanner itself moved between two times (sum of track steps).
 function movedM(t0, t1){
-  let m = 0, prev = null;
+  let m = 0, anchor = null;
   for(const p of track){
-    if(p.t < t0) { prev = p; continue; }
+    if(p.t < t0){ anchor = p; continue; }
     if(p.t > t1) break;
-    if(prev) m += distM(prev, p);
-    prev = p;
+    if(!anchor){ anchor = p; continue; }
+    const step = distM(anchor, p);
+    if(step >= MOVE_STEP_M){ m += step; anchor = p; }
   }
   return m;
 }
@@ -210,7 +213,9 @@ export function analysisFor(macIn){
   return {
     mac, n:d.n, first:d.first, last:d.last, span, places:pl.length, spreadM:spread, youMovedM:youMoved,
     names:[...d.names], src:[...d.src], scanners:[...d.scanners], ownSid:sid, tier:d.tier, sig:d.sig, score:d.score,
-    flags:[...d.flags], rssiMax:d.rssiMax, rotating:isRpa(mac), verdict, level,
+    flags:[...d.flags], rssiMax:d.rssiMax, verdict, level,
+    rotating:d.src.has("BLE") && isRpa(mac),
+    randomWifi:!d.src.has("BLE") && !d.src.has("154") && isLocal(mac),
   };
 }
 const km = m=>m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m";
