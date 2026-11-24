@@ -111,8 +111,13 @@ analysis" (`features/phoneview.js`, reaching the engine through `state.engine`: 
 empty instance next to main.js's `?v=` one). Checked offline on a real fleet drive (no follower, matching the scanners)
 and a synthetic tracker (found).
 
-Next increments: history from past scans saved on the phone, alerts from the phone's verdicts, the full OUI / company-ID
-lists, fleet-wide correlation views.
+**Increment 3b (built):** `webapp/js/analysis/history.js` reads every log saved on the phone (all scanners, fleet files
+included) once per page load, in the background a file at a time, and keeps per device the days seen, places (300 m),
+first / last seen, names, and the evil-twin / deauth events that named it. The popup's "Saved scans on this phone" shows
+days seen, first seen, places, whether it was seen at its current place before ("seen here on 9 days"), and its past
+alerts (both XNVV4 routers list the 2026-10-22 and 2026-11-23 evil-twin events). Reached through `state.history`.
+
+Next increments: alerts from the phone's verdicts, the full OUI / company-ID lists, fleet-wide correlation views.
 
 
 `webapp/js/analysis/` (new). Runs over the mirrored lines as they arrive (and over any loaded scan):
