@@ -42,6 +42,7 @@ function render(){
   if(a.span > 0) h += kv("You moved", km(a.youMovedM) + " in that time");
   h += kv("Heard by", esc(heard || "?"));
   if(a.rotating) h += `<div class="sub" style="margin-top:.3em">Random Bluetooth address: the device changes it every few minutes, so this only covers the time it used this one.</div>`;
+  else if(a.randomWifi) h += `<div class="sub" style="margin-top:.3em">Randomized Wi-Fi address: phones and laptops make these up and change them, so this only covers the time it used this one.</div>`;
   el.innerHTML = h;
 }
 
