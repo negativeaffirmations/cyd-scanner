@@ -31,7 +31,7 @@ const RID_FLAG = 128;
 const KEY = "cflo.notify";
 const WATCH_MAX = 50;
 const DEFAULTS = { on:false, cats:[1,2,3,6], tierMin:3, follow:true, rid:true, deauth:true, evil:true, quietMin:15,
-                   vibrate:true, watch:[] };
+                   vibrate:true, screen:true, watch:[] };
 
 let cfg = load();
 let swReg = null;          // ServiceWorkerRegistration once registered, else null (desktop falls back to new Notification)
@@ -61,9 +61,11 @@ async function ensureSw(){
   return swReg;
 }
 // kind: a notifystyle.js KINDS id, "many" (kinds = the folded types) or "general"; picks the alert style.
-async function show(title, body, data, tag, kind, kinds){
+// quiet = no sound, no vibration (an alert the server explains, features/screen.js).
+async function show(title, body, data, tag, kind, kinds, quiet){
   if(!supported() || Notification.permission !== "granted") return false;
-  const st = styleFor(cfg, kind || "general", kinds);
+  let st = styleFor(cfg, kind || "general", kinds);
+  if(quiet) st = { ...st, sound:"", vibration:[] };
   if(!st.details){ title = plainTitle(kind || "general"); body = PLAIN_BODY; }   // nothing about the device in the text
   const opts = { body, tag: tag || "cflo", renotify: true, data: data || {}, cfloStyle: st };
   if(st.vibration && st.vibration.length) opts.vibrate = st.vibration;
@@ -116,6 +118,20 @@ function evalSnapshot(rows){
   for(const [k, t] of seen) if(now - t > q) seen.delete(k);   // forget long-gone devices
   if(!fresh.length) return;
   fresh.sort((a, b) => tierOf(b.r) - tierOf(a.r) || b.r.rssi - a.r.rssi);
+  // Weak signature alerts are checked with the paired server first (features/screen.js); everything else goes out now.
+  const held = fresh.filter(f => state.screen && cfg.screen && f.kinds.every(k => k === "cat" || k === "tier") && state.screen.wants(f.r));
+  for(const f of held) state.screen.device(f.r).then(v => {
+    if(!cfg.on || !state.connected) return;
+    if(v && v.low){
+      log("Alert (probably false): " + titleFor(f.r, f.kinds) + " - " + devLine(f.r) + " - " + v.why);
+      show("Probably a false alarm: " + titleFor(f.r, f.kinds), devLine(f.r) + "\n" + v.why, { mac:f.r.mac, kind:f.kinds[0] },
+           "cflo-" + normMac(f.r.mac), "threat", undefined, true);
+    } else present([f]);
+  });
+  const now2 = fresh.filter(f => !held.includes(f));
+  if(now2.length) present(now2);
+}
+function present(fresh){
   fresh.forEach(f => log("Alert: " + titleFor(f.r, f.kinds) + " - " + devLine(f.r)));
   if(fresh.length === 1){
     const { r, kinds } = fresh[0];
@@ -138,8 +154,13 @@ function evalStatus(){
     show("Deauth flood", da + " deauth / disassoc frames per second nearby", { kind:"deauth" }, "cflo-deauth", "deauth");
   }
   if(cfg.evil && evOn && !evState.evil && now - evState.evilAt > q){
-    evState.evilAt = now; log("Alert: evil twin " + ev + " SSID(s)");
-    show("Evil-twin access point", ev + " SSID" + (ev > 1 ? "s" : "") + " broadcast by APs with different security", { kind:"evil" }, "cflo-evil", "evil");
+    evState.evilAt = now;
+    (state.screen && cfg.screen ? state.screen.evil(ev) : Promise.resolve(null)).then(v => {
+      if(!cfg.on || !state.connected) return;
+      log("Alert: evil twin " + ev + " SSID(s)" + (v && v.low ? " (probably false: " + v.why + ")" : ""));
+      if(v && v.low){ show("Probably a false alarm: evil-twin access point", v.why, { kind:"evil" }, "cflo-evil", "evil", undefined, true); return; }
+      show("Evil-twin access point", ev + " SSID" + (ev > 1 ? "s" : "") + " broadcast by APs with different security", { kind:"evil" }, "cflo-evil", "evil");
+    });
   }
   evState.deauth = daOn; evState.evil = evOn;
 }
@@ -186,6 +207,7 @@ function renderCard(){
   $("nfQuiet").value = String(cfg.quietMin);
   $("nfFol").checked = !!cfg.follow; $("nfRid").checked = !!cfg.rid;
   $("nfDeauth").checked = !!cfg.deauth; $("nfEvil").checked = !!cfg.evil;
+  if($("nfScreen")) $("nfScreen").checked = !!cfg.screen;
   $("nfWatch").innerHTML = cfg.watch.length ? cfg.watch.map(w =>
     `<div class="sessrow keyrow"><span class="material-symbols-outlined">notifications_active</span>` +
     `<div class="sessmain"><span class="sessdate">${esc(w.label || w.mac)}</span><span class="sesssub">${esc(w.mac)}</span></div>` +
@@ -209,6 +231,7 @@ function onCardChange(){
   cfg.quietMin = +$("nfQuiet").value || 15;
   cfg.follow = $("nfFol").checked; cfg.rid = $("nfRid").checked;
   cfg.deauth = $("nfDeauth").checked; cfg.evil = $("nfEvil").checked;
+  if($("nfScreen")) cfg.screen = $("nfScreen").checked;
   save();
 }
 
@@ -271,13 +294,14 @@ export function initNotify(){
   const card = $("nfCard"); if(!card) return;
   // For the phone's own analysis alerts (analysis/alerts.js): the same switches, permission, style and tap handling.
   // A state hook, not an export (stale-module rule). rule = a cfg switch ("follow" / "evil" / "deauth") or "".
-  state.notifyShow = (rule, title, body, data, tag, kind) => {
+  state.notifyShow = (rule, title, body, data, tag, kind, quiet) => {
     if(!cfg.on || !supported() || Notification.permission !== "granted" || !state.connected) return Promise.resolve(false);
     if(rule && !cfg[rule]) return Promise.resolve(false);
     log("Alert: " + title + " - " + String(body).split("\n")[0]);
-    return show(title, body, data, tag, kind);
+    return show(title, body, data, tag, kind, undefined, quiet);
   };
   state.notifyQuietMs = quietMs;
+  state.notifyScreenOn = () => !!cfg.screen;
   $("nfEnableBtn").onclick = toggleOn;
   $("nfTestBtn").onclick = async () => {
     if(await show("Test notification", "Scanner alerts will look like this.", { kind:"test" }, "cflo-test", "general")) toast("Test sent.");
@@ -288,7 +312,7 @@ export function initNotify(){
     cfg.cats = cfg.cats.includes(c) ? cfg.cats.filter(x => x !== c) : cfg.cats.concat(c);
     save(); renderCard();
   });
-  ["nfTier","nfQuiet","nfFol","nfRid","nfDeauth","nfEvil"].forEach(id => $(id).addEventListener("change", onCardChange));
+  ["nfTier","nfQuiet","nfFol","nfRid","nfDeauth","nfEvil","nfScreen"].forEach(id => $(id) && $(id).addEventListener("change", onCardChange));
   initStyleUI(cfg, save, testKind);
   $("nfWatch").addEventListener("click", e => {
     const b = e.target.closest(".keyforget"); if(!b) return;

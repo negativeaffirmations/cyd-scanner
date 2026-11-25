@@ -408,6 +408,8 @@ back (5 GHz included). Things that matter, learned the hard way:
   2026-10-22 at the same spot): an old Actiontec Fios router + an eero sharing one SSID.
 - The DB **self-seeds** to the card on first boot and is editable on the card or
   reloadable from the phone (no reflash). Missing/corrupt → compiled-in fallback (`db=fb`).
+- **Flock community prefixes (fw 0.45.0, DB_GEN 6):** module makers' OUIs at weight 20 (below suspect); `FLOCK_WILDCARD_BONUS` +25 only for a
+  `Flock (…)`-labelled client that sends wildcard probes and no data frames. A Flock label below suspect has no category.
 - Rules: `oui,<PREFIX>,<weight>,<srcmask>,<label>`, `exact|prefix|contains,<pattern>,…`,
   `ie,<8-hex-fingerprint>,…` (Phase 2 — matches the C5's 802.11 IE hash),
   `bleuuid,<uuid>,…` (Phase 3 — matches a BLE service UUID, 16-bit or full 128-bit; matched
@@ -839,6 +841,11 @@ transfer to the new repo), not in version control.
   a row's `seq`, if one is ever added, must not change on resend). Before this, a slow reply was a hole in the live data
   (2026-11-20: ~90 s gaps from a server-side recompute, fixed there); now it is a delay. Check reply times before blaming
   DETS / the firmware.
+- **Full-log live upload (webapp 2026-11-24, `features/loglines.js`, contract "loglines v1"):** when whoami has `"loglines":1` and the
+  live copies are complete (`state.liveCopies`; own + a leader's fleet file), their bytes go to `POST /api/v1/loglines` from the
+  server's acked offset (resumes after any outage) and `remote.js` skips the DETS rows (`state.logLinesOn`). DETS rows are the fallback.
+- **Alert checks (webapp 2026-11-24, `features/screen.js`):** weak Flock / ALPR, evil-twin and phone-follower alerts are first checked with the
+  server (`/screen`, `/devices/{mac}`); an explained one is shown silently as "Probably a false alarm". Owner rule: label or lower, NEVER hide; fail open.
 - **Reading the server (webapp 2026-11-20, scan-analyzer `docs/api-contract.md` "Read API — v1"):** the paired key may
   also READ once the owner ticks **read** for it (admin page, Keys tab). Bearer on every read; 401 = re-pair, 403 = read
   off; epochs are LOCAL seconds (UTC getters), MACs `AA:BB:…`, `threat_cat` = our 12 categories lowercase (null =

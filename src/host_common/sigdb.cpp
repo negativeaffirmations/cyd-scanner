@@ -42,6 +42,11 @@ CidRule   g_cid[MAX_CID];
 VendorRule  g_vendor[MAX_VENDOR];
 CidNameRule g_cidname[MAX_CIDNAME];
 int      g_ouiN = 0, g_strN = 0, g_ieN = 0, g_uuidN = 0, g_cidN = 0, g_vendorN = 0, g_cidnameN = 0;
+// Flock cameras use LTE, so their Wi-Fi shows up as wildcard probe requests (flock-you's field-tested signature).
+// A community-prefix client that does that and was never heard in a data frame gets this on top of its OUI weight, so
+// it reaches "suspect"; a laptop or TV on a home network with the same module doesn't (2026-11-24: a Liteon client of
+// a home router raised a Flock alert).
+constexpr int FLOCK_WILDCARD_BONUS = 25;
 uint8_t  g_suspect = 40, g_likely = 70, g_confirmed = 100;
 bool     g_loaded = false;
 
@@ -60,12 +65,38 @@ const char* kSeedCsv =
     "#   oui,<AA:BB:CC>,<weight>,4,<label>\n"
     "thresholds,40,70,100\n"
     "oui,B4:1E:52,70,A,Flock IEEE\n"
-    "oui,70:C9:4E,40,W,Flock (community)\n"
-    "oui,3C:91:80,40,W,Flock (community)\n"
-    "oui,D8:F3:BC,40,W,Flock (community)\n"
-    "oui,80:30:49,40,W,Flock (community)\n"
-    "oui,B8:35:32,40,W,Flock (community)\n"
-    "oui,82:6B:F2,40,W,Flock (field)\n"
+    // Community Flock prefixes: the research of @NitekryDPaul (nitekry/nite-oui-collection, synced 2026-07-16) and
+    // DeflockJoplin via colonelpanichacks/flock-you (MIT), read 2026-11-24; its generic Espressif / Samsung entries
+    // are left out. These are module makers' prefixes (Liteon, USI, SiLabs, ...), so alone they score below "suspect";
+    // FLOCK_WILDCARD_BONUS lifts a client that also probes for ANY network and isn't on somebody's Wi-Fi (score()).
+    "oui,70:C9:4E,20,W,Flock (community)\n"
+    "oui,3C:91:80,20,W,Flock (community)\n"
+    "oui,D8:F3:BC,20,W,Flock (community)\n"
+    "oui,80:30:49,20,W,Flock (community)\n"
+    "oui,B8:35:32,20,W,Flock (community)\n"
+    "oui,14:5A:FC,20,W,Flock (community)\n"
+    "oui,74:4C:A1,20,W,Flock (community)\n"
+    "oui,9C:2F:9D,20,W,Flock (community)\n"
+    "oui,C0:35:32,20,W,Flock (community)\n"
+    "oui,94:08:53,20,W,Flock (community)\n"
+    "oui,E4:AA:EA,20,W,Flock (community)\n"
+    "oui,F4:6A:DD,20,W,Flock (community)\n"
+    "oui,E0:0A:F6,20,W,Flock (community)\n"
+    "oui,24:B2:B9,20,W,Flock (community)\n"
+    "oui,00:F4:8D,20,W,Flock (community)\n"
+    "oui,D0:39:57,20,W,Flock (community)\n"
+    "oui,E8:D0:FC,20,W,Flock (community)\n"
+    "oui,E0:4F:43,20,W,Flock (community)\n"
+    "oui,B8:1E:A4,20,W,Flock (community)\n"
+    "oui,70:08:94,20,W,Flock (community)\n"
+    "oui,58:8E:81,20,W,Flock (community)\n"
+    "oui,EC:1B:BD,20,W,Flock (community)\n"
+    "oui,58:00:E3,20,W,Flock (community)\n"
+    "oui,90:35:EA,20,W,Flock (community)\n"
+    "oui,5C:93:A2,20,W,Flock (community)\n"
+    "oui,64:6E:69,20,W,Flock (community)\n"
+    "oui,14:B5:CD,20,W,Flock (community)\n"
+    "oui,82:6B:F2,20,W,Flock (field)\n"
     "oui,00:03:7F,15,A,Qualcomm (shared)\n"
     "oui,D4:AD:FC,15,A,Espressif (shared)\n"
     "oui,AC:67:B2,15,A,Espressif (shared)\n"
@@ -543,6 +574,10 @@ void score(const Detection& d, ScoreResult& out) {
       }
     }
   }
+
+  if (out.bestOui >= 0 && d.source == (uint8_t)Source::WifiProbe && (d.flags & FLAG_WILDCARD_PROBE) &&
+      !(d.flags & FLAG_WIFI_DATA_CLIENT) && strncmp(g_oui[out.bestOui].label, "Flock (", 7) == 0)
+    ouiW += FLOCK_WILDCARD_BONUS;
 
   int total = ouiW + strW + ieW + uuidW + cidW;
   out.score = (uint8_t)(total > 255 ? 255 : total);

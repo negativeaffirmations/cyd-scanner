@@ -99,11 +99,12 @@ function line(text, f){
   let d = devices.get(mac);
   if(!d){
     d = { mac, first:t || 0, last:t || 0, n:0, src:new Set(), names:new Set(), scanners:new Set(), sight:[],
-          tier:"", score:0, sig:"", flags:new Set(), rssiMax:-999, wl:false, cid:"" };
+          tier:"", score:0, sig:"", flags:new Set(), rssiMax:-999, wl:false, cid:"", bssid:"" };
     devices.set(mac, d);
   }
   d.n++;
   if(t){ if(!d.first || t < d.first) d.first = t; if(t > d.last) d.last = t; }
+  if(o.bssid) d.bssid = String(o.bssid).toUpperCase();   // the AP a data-frame client talks to
   if(o.src) d.src.add(o.src);
   if(o.name) d.names.add(o.name);
   d.scanners.add(o.scanner || sid);
@@ -275,7 +276,7 @@ export function analysisFor(macIn){
     mac, n:d.n, first:d.first, last:d.last, span, places:pl.length, spreadM:spread, youMovedM:youMoved,
     names:[...d.names], src:[...d.src], scanners:[...d.scanners], ownSid:sid, tier:d.tier, sig:d.sig, score:d.score,
     flags:[...d.flags], rssiMax:d.rssiMax, verdict, level,
-    wl:d.wl, cid:d.cid,
+    wl:d.wl, cid:d.cid, bssid:d.bssid,
     lastPos:d.sight.length ? { lat:d.sight[d.sight.length - 1].lat, lon:d.sight[d.sight.length - 1].lon } : null,
     rotating:d.src.has("BLE") && isRpa(mac),
     randomWifi:!d.src.has("BLE") && !d.src.has("154") && isLocal(mac),
@@ -292,6 +293,11 @@ export function followers(){
 }
 // Alert lines (deauth / eviltwin / rid / follow) of this scan from index i on: {next, list}.
 export function eventsFrom(i){ return { next:events.length, list:events.slice(i) }; }
+// Lines of one kind from the last `sec` seconds (line times are LOCAL epoch seconds).
+export function recentEvents(evt, sec){
+  const now = Date.now() / 1000 - new Date().getTimezoneOffset() * 60;
+  return events.filter(e=>e.evt === evt && e.t && Math.abs(now - e.t) <= sec);
+}
 export const engineGen = ()=>gen;
 
 export function engineStats(){
@@ -305,5 +311,5 @@ export function initEngine(){
   onUnitReset(reset);
   // The one way other modules reach the engine (features/phoneview.js): importing engine.js under a different URL
   // than main.js's ?v= one would load a second, empty instance. Also handy over DevTools.
-  state.engine = { analysisFor, engineStats, onEngineChange, followers, eventsFrom, engineGen };
+  state.engine = { analysisFor, engineStats, onEngineChange, followers, eventsFrom, recentEvents, engineGen };
 }
