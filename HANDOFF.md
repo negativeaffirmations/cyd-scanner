@@ -1,6 +1,21 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-25 (afternoon): fw 0.45.2 + upload timing
+## RESUME HERE - 2026-11-25 (evening): live upload done on the bench; next = a drive on fw 0.46.x
+- **State:** SOPAFE (leader, COM15) fw 0.46.1; BEMOPU (COM10) + ZUDIMU (CYD, COM17) fw 0.46.0 (the 0.46.1 change is leader-only); C5s unchanged.
+  App build 27 / web `20261125f`, all on `main` (`cf0ff6f`). scan-analyzer schema v17 stores meta `start` (from 17:25:38). TOLUBA still out.
+- **Live upload, final picture:** push backlog fixed (drive 6: max 17 KB waiting, data <= 31 s old at the phone); scan-end tail fetched by the
+  app (finishOld); files that live only seconds are copied + uploaded live (build 27 retest: member orow continuous on live sessions only).
+- **One own log (fw 0.46.0):** no new bg- files; meta `"start":"boot|user|auto"`; Start after Stop = new own + fleet file; New Session reuses an
+  own file with no row and then does NOT rotate the fleet file (0.46.1); STATUS part 3 `sfid;sst;ffid`; live-POST key `<sid>-<file_id>`.
+- **Next drive:** New Session at start; at the end stop the scan, keep the app connected >= 3 min, then upload; save the background log
+  (`page live push ... t%=` lines). Tell scan-analyzer's session at start and end.
+- **Open (small):** a 2 s own file kept its `sess-NNNNN` name with the clock set (ended before the rename ran; cosmetic); .cflo grouping put
+  fleet-175237 with the 3d11178f scan (overlap rule); REV-004 (mini download exit resumes the scan in the old file) and REV-006 (STATUS part 3
+  not re-sent if its notify fails) from the 0.46.0 review; BEMOPU forwarding stays ~20-30 s behind at busy times.
+- **Flock:** the camera at the Ewing Home Depot entrance (40.244413,-74.760476) gave no recognisable radio in a 5 min stop ~7 m away;
+  candidate CSV on the bridge (drive-20261125-6/). A stop at a different Flock camera is the next useful comparison.
+
+## 2026-11-25 (afternoon, superseded above): fw 0.45.2 + upload timing
 - **Drive 4 (fw 0.45.1, build 21):** no errors, no confirmed loss. Peak lag own 146 s (was 248), BEMOPU 289, ZUDIMU 237 (was ~621; measures may
   differ). Upstream of the server; app was in the foreground with the screen on during the worst of it. Axon alerts loud (correct: not covered by
   the server check). Spotify fine. Own rows end 13:59:08 = owner stopped the scan; members kept logging, so the .cflo misses later fleet lines.
