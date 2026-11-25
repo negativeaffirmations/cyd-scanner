@@ -139,6 +139,7 @@ void core::servicePhoneScan(PhoneCmdFlags& f) {
   // (acceptScanStart=false) so a stray phone toggle can't disturb a screen holding indices into the live
   // tables; scanStartRequested() is consume-on-read, so short-circuiting leaves it pending.
   if (f.acceptScanStart && phone::scanStartRequested()) {
+    logScanStarting(g_scanActive);   // after a stop: a new log file
     g_scanActive = true;
     g_lastCycleMs = 0;  // run the first cycle immediately
     f.scanStarted = true;

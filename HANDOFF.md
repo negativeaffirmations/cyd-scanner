@@ -18,6 +18,13 @@
   `;T,scan,proc,log,phone,fleet,push` loop ms (scan includes pushes inside it). Not yet driven.
 - **Web `20261125c` / build 24:** `finishOld()` fetches the rest of a file that stopped being current (now + 90 s later); `t%=` in the log line. A
   disconnect still drops that queue.
+- **Drive 6 (fw 0.45.3, build 24):** push backlog fixed (max 17 KB waiting, oldest 31 s at the phone; peaks 68-79 s at one
+  disconnect); no rows missing (.cflo added 0); Axon alert 16:34 loud and correct; 22 min screen-off OK. Flock camera at the Ewing Home Depot
+  entrance (40.244413,-74.760476): 5 min parked ~7 m away, NO recognisable radio; analyzer candidate CSV on the bridge (drive-20261125-6/).
+- **fw 0.46.0 (all three hosts flashed) + web 20261125d / build 25:** one own log stream (g_bg never opened, no new bg- files); meta
+  `"start":"boot|user|auto"`; a scan started after a stop starts a new own file (+ a leader's fleet file); STATUS part 3 `sfid;sst`; the
+  live-POST session key = `<sid>-<file_id>`; BOOT_FILES 8 -> 16. Reviewed (REV-001/002/003/005 fixed; REV-004 mini download resume,
+  REV-006 part-3 notify retry left open). scan-analyzer v17 stores `start` from 17:25:38. CLAUDE.md SD-logging text still says two streams.
 - **Next drive:** read those lines: large `wait` = scanner push; old member `age` with small `wait` = member forwarding; slow / failed `post` =
   phone / network. Still untested: a real alert through `/screen`, evil-twin fields, Flock / ALPR, a long screen-off stretch.
 

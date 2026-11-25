@@ -89,6 +89,11 @@ void pushStatus() {
   }
   phone::setStatus(String(s));
   phone::setStatus(String(s2));
+  // Part 3 (fw 0.46.0): the current own file's file_id (the live-POST session key, constant across the sync rename)
+  // and how it started (boot / user / auto).
+  { char s3[48]; const LogStream& as = activeStream();
+    snprintf(s3, sizeof(s3), "sfid=%s;sst=%s", ownFileId(), as.start);
+    phone::setStatus(String(s3)); }
   hostui::onStatusPushed();
 }
 

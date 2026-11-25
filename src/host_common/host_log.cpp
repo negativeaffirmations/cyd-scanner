@@ -106,7 +106,7 @@ struct XferScope {
 bool logXferActive() { return g_xferDepth > 0; }
 
 bool bgCtx() { return g_bgScan && !hostboard::foregroundScan(); }
-LogStream& activeStream() { return bgCtx() ? g_bg : g_fg; }
+LogStream& activeStream() { return g_fg; }   // fw 0.46.0: one own stream (g_bg is never opened)
 // .cflo pairing: the own stream a leader New Session rotated together with the fleet file (null = none yet: the fleet
 // file names the active stream when it is created). Set at rotation time, not at fleet-file creation, because the
 // Scan menu's New Session rotates fg while the menu itself is a bg context.
@@ -205,7 +205,7 @@ static void sweepEmptySessions() {
 // time-window export can still date them, and renameSessionOnSync() appends a timesync anchor to
 // any that ended before the clock was known (else their epoch:0 rows could never be dated).
 struct BootFile { char path[48]; char fileId[9]; bool anchored; };
-static constexpr int BOOT_FILES = 8;
+static constexpr int BOOT_FILES = 16;   // fw 0.46.0: 8 -> 16, Stop then Start ends a file too
 static BootFile g_bootFiles[BOOT_FILES];
 static int g_bootFileN = 0;  // ring write count
 static int fleetOldFiles(const char** out, int cap);   // with the fleet-file code below
@@ -231,7 +231,7 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all);  // below, wi
 void beginSessionNamed(LogStream& st, bool bg) {
   writeDepartures(st, millis(), true);  // close out every presence period in the outgoing file
   rememberBootFile(st);
-  if (!st.seen && (bg || !fleet::isClient())) {   // a fleet client never logs to fg: skip its ~9.6 KB dedup table
+  if (!st.seen) {
     st.seen = (SeenKey*)calloc(MAX_SEEN, sizeof(SeenKey));
     if (!st.seen) Serial.printf("[CYD] %s seen table: out of memory (logging disabled)\n", bg ? "bg" : "fg");
   }
@@ -243,7 +243,8 @@ void beginSessionNamed(LogStream& st, bool bg) {
   snprintf(st.path, sizeof(st.path), bg ? "/logs/bg-%05lu.jsonl" : "/logs/sess-%05lu.jsonl", (unsigned long)n);
   st.named        = false;   // re-arm rename-on-sync
   st.started      = false;   // file is created lazily on the first row (ensureLogFile)
-  st.fileId[0]    = 0;       // a new file gets a new file_id when it is created
+  st.fileId[0]    = 0;       // made when the file is created, or earlier by ownFileId() (STATUS, after the radios are up)
+  snprintf(st.start, sizeof(st.start), "auto");   // the caller says boot / user
   st.seenCount    = 0;       // fresh per-session dedup
   st.uniqCount    = 0;
   st.rowCount     = 0;
@@ -255,15 +256,26 @@ void openSession() {
   if (SD.exists("/scanlog.csv")) SD.remove("/scanlog.csv");  // retire the legacy single file (CSV era)
   sweepEmptySessions();
   beginSessionNamed(g_fg, false);
+  snprintf(g_fg.start, sizeof(g_fg.start), "boot");
   resetFollow();          // a "following" judgement is per continuous trip
 }
 
 // Open the background stream's session (boot with bg on, and when bg is toggled on). A pending bg
 // session that never wrote a row is reused rather than burning another counter value.
-void openBgSession() {
-  if (!g_sdOk) return;
-  if (g_bg.path[0] && !g_bg.started) return;
-  beginSessionNamed(g_bg, true);
+void openBgSession() {   // fw 0.46.0: the background scan logs to the one own stream too
+  if (!g_sdOk || g_fg.path[0]) return;
+  beginSessionNamed(g_fg, false);
+}
+
+void logScanStarting(bool wasActive) {
+  if (wasActive || !g_sdOk) return;
+  const bool had = g_fg.started;
+  if (g_fg.started || !g_fg.path[0]) beginSessionNamed(g_fg, false);   // a file with no row yet is reused
+  else g_fg.named = false;   // reused: take a current date-time name at the next sync check, not the one from hours ago
+  if (had && fleet::role() == fleet::ROLE_LEADER) { g_fleetPair = &g_fg; fleetLogRotate(); }   // one scan = own + fleet file
+  snprintf(g_fg.start, sizeof(g_fg.start), "user");
+  syncSharePath();
+  Serial.printf("[CYD] scan started: log %s\n", g_fg.path);
 }
 
 // Start a fresh session without rebooting (Scan menu / phone CMD "N"). fw 0.37.2: rotates BOTH the foreground and the
@@ -273,11 +285,12 @@ void openBgSession() {
 // The fleet file pairs with the stream that is logging now (the Scan menu's forceFg: the manual scan it opens next).
 // The writer opens with FILE_APPEND and closes every cycle, so there is no handle to flush.
 void startNewSession(bool forceFg) {
-  const bool bgNow = !forceFg && bgCtx();
+  (void)forceFg;   // fw 0.46.0: one own stream
   if (g_fg.started || !g_fg.path[0]) beginSessionNamed(g_fg, false);
-  if (g_bgScan && (g_bg.started || !g_bg.path[0])) beginSessionNamed(g_bg, true);
+  else g_fg.named = false;   // reused: a current date-time name at the next sync check
+  snprintf(g_fg.start, sizeof(g_fg.start), "user");
   if (fleet::role() == fleet::ROLE_LEADER) {   // the members' rows start a new fleet file too
-    g_fleetPair = bgNow ? &g_bg : &g_fg;
+    g_fleetPair = &g_fg;
     fleetLogRotate();
   }
   resetFollow();
@@ -298,6 +311,8 @@ static void makeFileId(LogStream& st) {
   esp_fill_random(b, sizeof(b));
   snprintf(st.fileId, sizeof(st.fileId), "%02x%02x%02x%02x", b[0], b[1], b[2], b[3]);
 }
+const char* ownFileId() { makeFileId(g_fg); return g_fg.fileId; }
+
 bool ensureLogFile(LogStream& st) {
   if (st.started) return true;
   if (!g_sdOk || !st.path[0]) return false;
@@ -439,6 +454,7 @@ static void writeSessionMeta(File& f, const LogStream& st) {
     char id[17], leader[13];
     if (fleet::fleetIdent(id, leader)) f.printf(",\"fleet_id\":\"%s\",\"fleet_leader\":\"%s\"", id, leader);
   }
+  if (&st != &g_fleetLog && st.start[0]) f.printf(",\"start\":\"%s\"", st.start);   // fw 0.46.0: boot / user / auto
   if (st.fileId[0]) f.printf(",\"file_id\":\"%s\"", st.fileId);
   f.print("}\n");
 }
@@ -448,7 +464,6 @@ void initSD() {
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
   reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
   openSession();       // create this boot's /logs/sess-NNNNN.jsonl (renamed on time sync)
-  if (g_bgScan) openBgSession();  // and the background stream /logs/bg-NNNNN.jsonl
   enforceLogCap();     // rotation trigger: boot
   syncSharePath();
   Serial.println("[CYD] SD ready");
@@ -1650,7 +1665,7 @@ void sendSessionList() {
       d.close();
     }
   }
-  const char* flagWord = (cs.started && (hostboard::foregroundScan() || (g_bgScan && g_scanActive))) ? "current" : "latest";
+  const char* flagWord = (cs.started && g_scanActive) ? "current" : "latest";
 
   String list;
   list.reserve(4096);
