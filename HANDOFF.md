@@ -1,5 +1,27 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE - 2026-11-25 (afternoon): fw 0.45.2 + upload timing
+- **Drive 4 (fw 0.45.1, build 21):** no errors, no confirmed loss. Peak lag own 146 s (was 248), BEMOPU 289, ZUDIMU 237 (was ~621; measures may
+  differ). Upstream of the server; app was in the foreground with the screen on during the worst of it. Axon alerts loud (correct: not covered by
+  the server check). Spotify fine. Own rows end 13:59:08 = owner stopped the scan; members kept logging, so the .cflo misses later fleet lines.
+- **fw 0.45.2 (hosts; flashed on SOPAFE only, BEMOPU / ZUDIMU still 0.45.1; no protocol change):** a waiting live-log file gets a turn at least every
+  second; `LL=~ms,bytes,frames,refused,calls,maxgap;<fid>,<sent>,<size>` every 10 s (serial + phone). Suspected, not proven: the smaller file starved.
+- **Web `20261125a`:** `features/livestats.js` writes a `live push / rx / age / post` line every 30 s to the app's background log.
+- **Bench (100 s, light load <= 0.9 KB/s):** backlog cleared, 0 refused; ~0.7 s pause between push calls in every 10 s window (main loop), cause unknown.
+- **Next drive:** read those lines: large `wait` = scanner push; old member `age` with small `wait` = member forwarding; slow / failed `post` =
+  phone / network. Still untested: a real alert through `/screen`, evil-twin fields, Flock / ALPR, a long screen-off stretch.
+
+## 2026-11-25 (earlier, superseded by the section above)
+- **State:** web `20261124c` / app build 21 published (main `a35d122`). Hosts SOPAFE COM15, BEMOPU COM10, ZUDIMU COM17 on fw 0.45.1, C5s with the
+  64-slot evil-twin table. TOLUBA out of service (rebuild). Server has loglines + `/screen` live.
+- **Next drive (owner messages before leaving):** tell the scan-analyzer session to watch (list in the messages of 2026-11-24; it needs no owner step)
+  and check: live lag (before: own peak 248 s, members ~621 s), a real alert through `/screen` (silent "Probably a false alarm"),
+  evil-twin `enc` / `rssis` / `alert:0` lines, phone follower rule, a real Flock / ALPR camera (the stricter rule may miss one), Spotify with
+  Tailscale split tunneling (Spotify, YouTube, Maps and others excluded), background operation.
+- **Owner steps open:** remove the "dev app" server key if unwanted; Remote Control
+  (`/remote-control`) for the phone; server restart / deploy is the owner's, in the scan-analyzer session.
+- **Dev app** (`.dev`) is still installed on the phone (closed); USB adb works (`ANDROID_ADB_SERVER_PORT=15037`), Stay awake is ON.
+
 ## 2026-11-24: phone-side recording + analysis, phases 1-3d deployed (main `1531d0f`)
 State at the end of the 2026-11-23/24 session (one long conversation; start a fresh one from here):
 - **fw 0.44.0 on all 4 hosts** (SOPAFE COM15, BEMOPU COM10, TOLUBA COM17, ZUDIMU COM21); C5s on 0.43.0 (link
@@ -41,7 +63,7 @@ State at the end of the 2026-11-23/24 session (one long conversation; start a fr
 - **Still untested:** evil-twin `enc`/`rssis`/`alert:0` line, live-POST queue (phone off Tailscale all drive, 0 live rows),
   New Session mid-fleet, phone 3c alerts (no follow events), TOLUBA (removed from the fleet early in the drive).
 
-## RESUME HERE - 2026-11-24 (late): full-log live upload + alert checks + Flock rules (tested on the phone, published)
+## 2026-11-24 (late): full-log live upload + alert checks + Flock rules (tested on the phone, published)
 - Second drive (3 units, live upload on): upload queue PASSED (server stall up to 23.6 s, re-sent rows deduped), no follower
   notifications, one Flock alert = a Liteon client of a resident home router (false). Live (DETS top 12) carried only 7-13% of addresses.
 - **Live upload of the full log:** `features/loglines.js` (contract "loglines v1", bridge 2026-11-24 21:30 / 21:45 / 22:15). Sends the
@@ -59,7 +81,15 @@ State at the end of the 2026-11-23/24 session (one long conversation; start a fr
   (594/594 + 791/791 already streamed); `/screen` on the real Flock case = likely_false; quiet / normal notification channels.
   First BLE reconnect right after a force-stop failed once (GATT 133). Not tested: a real alert going through the check, a long drive.
 - **Phone debugging:** install the debug APK (needs JAVA_HOME jdk 21 + ANDROID_HOME), `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`.
-- **Next:** a drive on the release build.
+- **Drive 3 (release build 21, full-log upload):** no loss (`.cflo` added only the 335 fleet lines not yet pushed), no errors, no DETS rows; Axon alert
+  arrived loud, no other alerts, no /screen call. **Live data lagged**: own up to 4 min, members ~10 min: the scanner's live-log push
+  ran at ~2.7 KB/s (member forwarding backlog was 0).
+- **fw 0.45.1 flashed on SOPAFE / BEMOPU / ZUDIMU (not committed):** `liveService()` sends several frames per pass, fullest file first. Bench: 65 KB
+  backlog in 11 s (~5.9 KB/s), 0 gaps in the offsets. Not driven yet.
+- **Spotify wouldn't load the next song late in drive 3: most likely Tailscale on Android** (owner saw its "DNS unavailable" warning; known bug
+  after a network switch, tailscale issues 22273 / 17747), not the app: uploads kept flowing. Suggested: exclude Spotify / YouTube with
+  Tailscale's App split tunneling. Not confirmed yet. Uncommitted: fw 0.45.1 + this file.
+- **Next:** a drive on 0.45.1 (live lag, Spotify with split tunneling, a real alert through the server check).
 
 ## 2026-11-24 (night): tighter phone follower rule + evil-twin table fix
 - Phone 3c follower alerts DO fire on the owner's phone; on the drive above most were traffic on one highway. New

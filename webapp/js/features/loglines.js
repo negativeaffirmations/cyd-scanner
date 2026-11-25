@@ -116,7 +116,9 @@ async function sendFile(f){
     const piece = new Uint8Array(await blob.slice(f.ack, f.ack + f.maxPost).arrayBuffer());
     const end = piece.lastIndexOf(10) + 1;
     if(!end){ if(piece.length >= f.maxPost) stop(f, "a line is too long"); return; }   // only a partial line so far
-    const r = await call("/api/v1/loglines", { method:"POST", headers:headers(f, f.ack, await hashBefore(blob, f.ack)), body:piece.slice(0, end) });
+    const hash = await hashBefore(blob, f.ack), p0 = performance.now();
+    const r = await call("/api/v1/loglines", { method:"POST", headers:headers(f, f.ack, hash), body:piece.slice(0, end) });
+    if(state.onLivePost) state.onLivePost(end, performance.now() - p0, r.status === 200);   // timing (livestats.js)
     if(!await handle(f, blob, r, r.status !== 413)) return;
   }
 }

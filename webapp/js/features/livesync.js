@@ -227,6 +227,7 @@ function onLiveLog(v){
     return;
   }
   if(!enabled || cur.stop) return;
+  if(head.startsWith("LL=~")){ if(state.onLiveStat) state.onLiveStat(dec.decode(v)); return; }   // push statistics (livestats.js)
   const m = /^LL=([0-9a-f]{8}):(\d+):/.exec(head);
   const s = m && cur.push.subs[m[1]];
   if(!s || !cur.push.on) return;
