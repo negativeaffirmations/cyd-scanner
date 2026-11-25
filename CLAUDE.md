@@ -268,7 +268,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   C5 sends empty names (no protocol involvement). The NDJSON
   log is unchanged — it still omits `name` when blank and carries `mac` separately; readers
   apply the MAC fallback at display time.
-- **SD logging (CYD) — per-session NDJSON files, two parallel streams.** The log is **NDJSON**
+- **SD logging (CYD) — per-session NDJSON files, two parallel streams.** **fw 0.46.0: ONE own stream** — every scan logs to g_fg (`/logs/sess-NNNNN` -> `YYYYMMDD-HHMMSS`), g_bg is never opened, old `bg-` files stay readable; the meta line carries `"start":"boot|user|auto"`, a scan started after a stop begins a new file (and a leader's fleet file), STATUS part 3 = `sfid;sst`, live-POST session = `<sid>-<file_id>`. The two-stream text below is the pre-0.46 history. The log is **NDJSON**
   (one JSON object per line, `logNewDetections` in `main.cpp`). There are **two independent streams**
   (each a `LogStream` with its own dedup set): a **foreground** stream for on-screen scan sessions
   (`/logs/sess-NNNNN.jsonl`, renamed to `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync) and a dedicated
