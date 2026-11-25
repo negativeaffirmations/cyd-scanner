@@ -187,7 +187,9 @@ static void mergeDetection(const Detection& d) {
 // Verdict: the SAME SSID seen from >=2 distinct BSSIDs whose encryption CLASS differs
 // (open / WEP / secured). BSSID count alone never flags (band-roaming, mesh, extenders).
 // Guarded by g_mux (promiscuous callback + loop task + stream path).
-static constexpr int SSID_SLOTS = 24, SSID_APS = 4;
+// Slots: a busy road has more than 24 SSIDs in 30 s (2026-11-24 drive: a flagged pair was pushed out before the count
+// was read, so it got no alert and no event line). 64, and a current evil entry is never the one evicted.
+static constexpr int SSID_SLOTS = 64, SSID_APS = 4;
 struct SsidObs {
   char     ssid[33];
   uint8_t  n;          // valid aps
@@ -224,15 +226,17 @@ static void ssidObserve(const char* ssid, const uint8_t* bssid, uint8_t enc, uin
   if (!g_mux || !ssid[0]) return;  // hidden SSIDs can't be compared
   uint32_t now = millis();
   xSemaphoreTake(g_mux, portMAX_DELAY);
-  int freeIdx = -1, oldIdx = 0, hit = -1;
-  uint32_t oldest = UINT32_MAX;
+  int freeIdx = -1, oldIdx = -1, oldEvilIdx = 0, hit = -1;
+  uint32_t oldest = 0, oldestEvil = 0;   // ages (wrap-safe)
   for (int i = 0; i < SSID_SLOTS; i++) {
     if (!g_ssidTab[i].used) { if (freeIdx < 0) freeIdx = i; continue; }
     if (strncmp(g_ssidTab[i].ssid, ssid, 32) == 0) { hit = i; break; }
-    if (g_ssidTab[i].last < oldest) { oldest = g_ssidTab[i].last; oldIdx = i; }
+    const uint32_t age = now - g_ssidTab[i].last;
+    if (g_ssidTab[i].evil && age <= ENTRY_TTL_MS) { if (age >= oldestEvil) { oldestEvil = age; oldEvilIdx = i; } }
+    else if (oldIdx < 0 || age > oldest) { oldest = age; oldIdx = i; }
   }
   if (hit < 0) {
-    hit = (freeIdx >= 0) ? freeIdx : oldIdx;
+    hit = (freeIdx >= 0) ? freeIdx : (oldIdx >= 0) ? oldIdx : oldEvilIdx;
     memset(&g_ssidTab[hit], 0, sizeof(SsidObs));
     strncpy(g_ssidTab[hit].ssid, ssid, 32);
     g_ssidTab[hit].used = true;

@@ -25,6 +25,33 @@ State at the end of the 2026-11-23/24 session (one long conversation; start a fr
   (chunked cache storage instead of whole-Blob re-save; a STATUS key for the leader's fleet file, blocked by the
   part-2 size limit).
 
+## 2026-11-24 (evening): 3-unit fleet drive on fw 0.44.0 (3 h), analyzed with scan-analyzer (bridge 2026-11-24 18:50)
+- **Passed:** store-and-forward: 30,351 forwarded lines (orow) with only each unit's timesync line absent (not stored
+  by the server) = no loss. Removing a member from the phone mid-session (slots shift down by design, so a later
+  `member_lost` names the new slot). No own-unit addresses among the detections (none recognisable).
+- **Deauth filter:** one benign-shape burst (1 sender = the BSSID, unicast, 21 of 21, reason 6), logged once. Whether a
+  banner / notification showed is the owner's to confirm.
+- **Bug found (fix flashed on all 4 C5s, see below):** two leader rows (one car hotspot, 2.4 + 5 GHz, adjacent BSSIDs, first dump in the same ms)
+  carry the `eviltwin` flag but there is no `eviltwin` line, so no alert either. Likely cause: C5 `g_ssidTab` has
+  24 slots (`SSID_SLOTS`), >= 25 SSIDs were new in the 30 s before; the evil entry is evicted before `countAggregates()` runs,
+  while the row flag stays. Evictions also hide pairs entirely in dense areas. Idea: more slots + never evict an evil
+  entry before its TTL, and count evil SSIDs from the flagged table rows too.
+- Also: detection rows don't log the enc class, so why that pair differed is unknown. A same-radio pair (adjacent BSSIDs)
+  isn't covered by the quiet filter (needs global addresses + two makers).
+- **Still untested:** evil-twin `enc`/`rssis`/`alert:0` line, live-POST queue (phone off Tailscale all drive, 0 live rows),
+  New Session mid-fleet, phone 3c alerts (no follow events), TOLUBA (removed from the fleet early in the drive).
+
+## 2026-11-24 (night): tighter phone follower rule + evil-twin table fix
+- Phone 3c follower alerts DO fire on the owner's phone; on the drive above most were traffic on one highway. New
+  rule in `analysis/engine.js` (`checkpoints()` / `stayedWith()`, docs/phone-analysis.md 3a), also ignores held fixes for
+  the own track. Replay (real engine code, scratch harness): that drive 18 alerts -> 1 (a passenger device / tablet that
+  was really in the car), 11-22 / 11-23 drives 0; synthetic tails still alert 10-15 min after they start. Limit: a tail
+  along one straight road with no stop / fewer than 3 turns no longer alerts on the phone (the scanners' own check is unchanged).
+- **Web change published** (token `20261124b`, footer "follow rule"). Own devices: whitelist them.
+- **C5 `SSID_SLOTS` 24 -> 64**, a current evil entry isn't evicted first (`ssidObserve`). Flashed BEMOPU, SOPAFE, ZUDIMU,
+  TOLUBA C5s; all boot and scan, no resets in 75 s. Evil path itself untested on air. Hosts unchanged (0.44.0, link same).
+  TOLUBA's host wasn't polling: powered only through the C5's USB (main switch off, CYD 5V switch on) it brownout-looped (owner).
+
 ## 2026-11-24: phase 3c phone alerts deployed (`098325a`)
 - `analysis/alerts.js`: whole-drive follower + "alert seen here before", via `state.notifyShow` (notify.js hook, uses the
   Notifications switches). Checked offline (synthetic tracker; today's XNVV4 line with the October one in the saved
