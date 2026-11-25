@@ -91,8 +91,10 @@ void pushStatus() {
   phone::setStatus(String(s2));
   // Part 3 (fw 0.46.0): the current own file's file_id (the live-POST session key, constant across the sync rename)
   // and how it started (boot / user / auto).
-  { char s3[48]; const LogStream& as = activeStream();
-    snprintf(s3, sizeof(s3), "sfid=%s;sst=%s", ownFileId(), as.start);
+  { char s3[64]; const LogStream& as = activeStream();
+    int n3 = snprintf(s3, sizeof(s3), "sfid=%s;sst=%s", ownFileId(), as.start);
+    if (g_fleetLog.started && n3 > 0 && n3 < (int)sizeof(s3))   // fw 0.46.1: the leader's live fleet file (the phone relists on a change)
+      snprintf(s3 + n3, sizeof(s3) - n3, ";ffid=%s", g_fleetLog.fileId);
     phone::setStatus(String(s3)); }
   hostui::onStatusPushed();
 }

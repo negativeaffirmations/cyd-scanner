@@ -112,6 +112,8 @@ async function list(gen, sid){
     else if(e.last >= nowLocal - FLEET_FRESH_S && (!best || e.last > best.last)) best = e;
   }
   best = best || undated;
+  const ffid = /^[0-9a-f]{8}$/.test(state.status.ffid || "") ? state.status.ffid : "";   // fw >= 0.46.1 names it exactly
+  if(ffid){ const byId = Object.values(known).find(k=>k.fid === ffid && /^\/logs\/fleet-/.test(k.path)); if(byId) best = byId; }
   cur.known = known;
   cur.fleet = best;
   cur.listAt = Date.now();
@@ -353,7 +355,9 @@ async function pass(){
     const want = !cur.listAt || cur.relist ||
                  (cur.listSess !== sess && !own0) ||                                  // a new name: New Session / sync rename / fg-bg
                  (leader && cur.listFlt !== (state.status.flt || "") && Date.now() - cur.listAt > 30000) ||   // members came / went
-                 (missing && Date.now() >= cur.missAt);                               // still missing: backoff
+                 (missing && Date.now() >= cur.missAt) ||                             // still missing: backoff
+                 (leader && /^[0-9a-f]{8}$/.test(state.status.ffid || "") && cur.fleet && cur.fleet.fid !== state.status.ffid &&
+                  Date.now() - cur.listAt > 5000);                                    // fw >= 0.46.1: the fleet file changed
     if(want) await list(gen, sid);
     const own = cur.known[path];
     if(!own || !own.fid || (leader && joined > 0 && !cur.fleet)){ cur.missN++; cur.missAt = Date.now() + Math.min(RETRY_MAX, RETRY_MIN * Math.pow(2, cur.missN)); }

@@ -286,10 +286,13 @@ void logScanStarting(bool wasActive) {
 // The writer opens with FILE_APPEND and closes every cycle, so there is no handle to flush.
 void startNewSession(bool forceFg) {
   (void)forceFg;   // fw 0.46.0: one own stream
+  const bool had = g_fg.started;
   if (g_fg.started || !g_fg.path[0]) beginSessionNamed(g_fg, false);
   else g_fg.named = false;   // reused: a current date-time name at the next sync check
   snprintf(g_fg.start, sizeof(g_fg.start), "user");
-  if (fleet::role() == fleet::ROLE_LEADER) {   // the members' rows start a new fleet file too
+  // The members' rows start a new fleet file too, but only when the own file really changed (fw 0.46.1): an own file
+  // with no row is reused, and rotating the fleet file alone left the phone uploading the old one.
+  if (had && fleet::role() == fleet::ROLE_LEADER) {
     g_fleetPair = &g_fg;
     fleetLogRotate();
   }
