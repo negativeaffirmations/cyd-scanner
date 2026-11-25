@@ -294,7 +294,10 @@ export function maybePostLive(rows){
   if(!rows || !rows.length) return;
   if(state.logLinesOn && state.logLinesOn()){ liveQueue = []; return; }   // the full log is going out instead (features/loglines.js)
   if(liveQueueGen !== connGen()){ liveQueue = []; liveDropped = 0; liveQueueGen = connGen(); }
-  const sess = ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "live";
+  // The live session key: fw >= 0.46.0 sends the own file's file_id (sfid), unique per scanner and the same before and
+  // after the clock-sync rename; older firmware: the file name (sess-NNNNN can repeat between scanners and boots).
+  const sfid = state.status && /^[0-9a-f]{8}$/.test(state.status.sfid || "") ? state.status.sfid : "";
+  const sess = sfid && state.scannerId ? state.scannerId + "-" + sfid : ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "live";
   const epoch = localEpoch();
   const baseMs = Date.now();
   const fix = scannerFix();   // one position per snapshot, like the file log's per-cycle stamp

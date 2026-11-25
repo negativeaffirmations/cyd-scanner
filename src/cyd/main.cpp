@@ -814,7 +814,7 @@ static void drawScanInfo() {
   tft.setTextDatum(TL_DATUM);
   char buf[48];
   // Line 1 (y44): active session name (left) + unique-device count (right).
-  const LogStream& ls = fleet::isClient() ? g_bg : g_fg;  // the scanner screen logs to fg; a fleet client stays on bg
+  const LogStream& ls = g_fg;  // fw 0.46.0: one own stream
   char sb[32]; sessBase(ls, sb, sizeof(sb));
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   snprintf(buf, sizeof(buf), "Sess: %s", sb);
@@ -1513,7 +1513,7 @@ static void drawFleetInfo() {
   snprintf(b, sizeof(b), "Time: %s   Pos: %s", srcWord(timeSource(), false), srcWord(posSource(), true));
   tft.drawString(b, 6, 82, 1);
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
-  snprintf(b, sizeof(b), "2.4:%d 5G:%d BLE:%d PRB:%d U:%lu", n24, n5, nble, nprb, (unsigned long)g_bg.uniqCount);
+  snprintf(b, sizeof(b), "2.4:%d 5G:%d BLE:%d PRB:%d U:%lu", n24, n5, nble, nprb, (unsigned long)g_fg.uniqCount);
   tft.drawString(b, 6, 94, 1);
   uint32_t tot = u.txOk + u.txFail;
   snprintf(b, sizeof(b), "TX %lu ok  %.1f%% fail  C5", (unsigned long)u.txOk, tot ? 100.0f * u.txFail / tot : 0.0f);
@@ -1524,7 +1524,7 @@ static void drawFleetInfo() {
   snprintf(b, sizeof(b), "ch %u   payload %u B   rx %lu", (unsigned)u.channel, (unsigned)fleet::maxPayload(),
            (unsigned long)u.rxFrames);
   tft.drawString(b, 6, 138, 1);
-  char sb[32]; sessBase(g_bg, sb, sizeof(sb));   // a fleet client always logs to the background stream
+  char sb[32]; sessBase(g_fg, sb, sizeof(sb));   // fw 0.46.0: one own stream
   snprintf(b, sizeof(b), "Sess: %s", sb);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.drawString(b, 6, 152, 1);
@@ -3028,7 +3028,7 @@ static void activateScanSettings(int sel) {
     if (fleet::isClient()) return;                                               // a fleet client always scans (docs §1.2 step 7)
     g_bgScan = !g_bgScan;
     saveBgScan();
-    if (g_bgScan) { openBgSession(); syncSharePath(); g_scanActive = true; g_lastCycleMs = 0; }  // start now; first cycle right away
+    if (g_bgScan) { logScanStarting(g_scanActive); g_scanActive = true; g_lastCycleMs = 0; }  // start now; first cycle right away
     else          { g_scanActive = false; g_viewFrozen = false; showLinkLed(); }
     drawScanSettings();
     pushStatus();
@@ -4006,6 +4006,7 @@ void loop() {
       int bb = bodyButtonTapped(4);  // START/STOP | PAUSE/RESUME | FILTER | NEW SESSION
       if (bb == 0 && fleet::isClient()) { delay(20); return; }   // a fleet client's scan is always on
       if (bb == 0) {
+        if (!g_scanActive) logScanStarting(false);   // START after a stop: a new log file
         g_scanActive = !g_scanActive;
         if (g_scanActive) g_lastCycleMs = 0;  // first cycle runs right away
         else              showLinkLed();

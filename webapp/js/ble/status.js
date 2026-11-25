@@ -109,9 +109,11 @@ export function onStatus(ev){
     // A key added from a QR has no name, and AUTH v2 rarely supplies one: name it from this authenticated STATUS.
     if(linkSecurity() === "auth" && state.scannerId) learnKeyName(state.scannerId, kv.name);
   }
-  if("sess"in kv){
-    $("sessName").textContent = "Session: " + kv.sess;   // (download.js / remote.js read the name back from this label)
-    const k = $("sessKind"); if(k) k.textContent = kv.sess.startsWith("bg-") ? "· background scan" : kv.sess ? "· scan" : "";
+  if("sess"in kv) $("sessName").textContent = "Session: " + kv.sess;   // (download.js / remote.js read the name back from this label)
+  if("sess"in kv || "sst"in kv){   // fw >= 0.46.0: sst = how the file started; older firmware: a bg- name = the background scan
+    const k = $("sessKind"), s = state.status.sess || "", st = state.status.sst || "";
+    if(k) k.textContent = !s ? "" : st === "boot" ? "· started at power-on" : st === "user" ? "· started by you" :
+                         st === "auto" ? "· started by the scanner" : s.startsWith("bg-") ? "· background scan" : "· scan";
   }
   if("scan"in kv){ state.scanning = kv.scan==="1"; updateScanBtn(); }
   if("src" in kv){ const m=+kv.src;
