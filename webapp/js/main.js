@@ -25,7 +25,7 @@ import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined,
 import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261125b';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
-import { initLiveSync } from './features/livesync.js?v=20261125c';   // live copy of the current scan (docs/phone-analysis.md)
+import { initLiveSync } from './features/livesync.js?v=20261125e';   // live copy of the current scan (docs/phone-analysis.md)
 import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261124c';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
