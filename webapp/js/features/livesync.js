@@ -41,7 +41,7 @@ let running = false, nextAt = 0;
 let cur = null;   // per connection, see fresh()
 function fresh(gen, sid){
   return { gen, sid, files:{}, known:{}, fleet:null, listAt:0, listSess:"", listFlt:"", relist:false, missN:0, missAt:0,
-           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(),
+           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(), old:[],
            push:{ on:false, subs:{}, wait:null, blockUntil:0, why:"" } };
 }
 // push.subs[fid] = { label, path, fid, bufStart, end, chunks, bytes, lastAt }: bytes pushed since the last save
@@ -314,6 +314,25 @@ async function subscribe(want, gen, sid){
   return true;
 }
 
+// Fetch what is left of files that stopped being current: at once, and again OLD_AGAIN_MS later (the scanner may still
+// append departure lines). Only ever a tail of a copy we have; loglines.js uploads the bytes.
+const OLD_AGAIN_MS = 90000;
+async function finishOld(gen, sid){
+  for(const o of [...cur.old]){
+    if(Date.now() < o.at) continue;
+    if(Object.values(cur.known).some(k=>k.fid === o.fid)) o.path = Object.values(cur.known).find(k=>k.fid === o.fid).path;   // renamed
+    const meta = find(sid, o.path, o.fid);
+    let ok = false;
+    if(!meta || meta.fileId !== o.fid){ cur.old = cur.old.filter(x=>x !== o); continue; }
+    try{ await syncFile("old", { path:o.path, fid:o.fid, size:meta.size }, gen, sid); ok = true; }
+    catch(e){ if(e instanceof Yield || !cur || cur.gen !== gen) throw e; }
+    finally{ if(cur) delete cur.files.old; }
+    if(ok) o.n++; else o.fails++;
+    if(o.n >= 2 || o.fails >= 3) cur.old = cur.old.filter(x=>x !== o);
+    else o.at = Date.now() + (ok ? OLD_AGAIN_MS : RETRY_MIN);
+  }
+}
+
 async function pass(){
   if(running || !canRun() || reqBusy() || (state.xferBusy || 0) > 0 || (state.liveSyncWaiters || 0) > 0) return;
   running = true;
@@ -353,7 +372,12 @@ async function pass(){
     if(subFids.length){
       if(!same && cur.push.on) endPush("");
       await flush(sid);
-      if(!same) cur.push.subs = {};
+      if(!same){
+        // A file that is no longer current (scan stopped, New Session) may still have bytes the push never got to.
+        for(const s of Object.values(cur.push.subs))
+          if(!targets.some(x=>x.t.fid === s.fid) && !cur.old.some(o=>o.fid === s.fid)) cur.old.push({ path:s.path, fid:s.fid, at:0, n:0, fails:0 });
+        cur.push.subs = {};
+      }
     }
     if(same){
       for(const x of targets){ const s = cur.push.subs[x.t.fid]; s.path = x.t.path; }   // follows a time-sync rename
@@ -372,6 +396,7 @@ async function pass(){
         await subscribe(cand, gen, sid);
     }
     cur.err = ""; cur.errN = 0;
+    await finishOld(gen, sid);
   }catch(e){
     if(e instanceof Yield) interval = 3000;   // try again soon, after the user's request
     else if(cur && cur.gen === gen){

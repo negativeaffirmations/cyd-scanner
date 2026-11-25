@@ -1057,7 +1057,10 @@ ScanCycleResult core::runScanCycle() {
   ScanCycleResult res{};
   hostboard::sample();  // refresh the battery reading every cadence (independent of the C5 link)
   bool fleetOnly = false;
+  uint32_t lp = millis();
+  auto lap = [&lp](LoopPhase p) { const uint32_t t = millis(); g_loopMs[p] += t - lp; lp = t; };
   const bool polled = requestScan();
+  lap(LP_SCAN);
   // Fleet leader whose OWN C5 is really down (past the sticky window, not a busy miss) while members still report:
   // run the pipeline on the members' rows alone so the merged view keeps working (docs/fleet-mode.md §9.2).
   if (!polled && c5LinkAgeMs() >= LINK_STICKY_MS && fleet::hasRemote()) {
@@ -1095,10 +1098,12 @@ ScanCycleResult core::runScanCycle() {
   g_pipelineMs = millis(); if (!g_pipelineMs) g_pipelineMs = 1;
   applyFleetAlerts(); // fleet: the banner / LED alerts also follow what the other units see (no log lines)
   applyScanLed();   // alert / follow / link LED (works headless)
+  lap(LP_PROC);
   int newCount = logNewDetections();
   logRidEvents();   // rate-limited per-MAC Remote-ID event lines
   logFollowEvents(); // rate-limited per-MAC FOLLOWING event lines
   logDevPos();      // fleet: this unit's own GPS fix vs the fleet position (devpos lines)
+  lap(LP_LOG);
   int n24, n5, nble, nprb, n154; countBands(n24, n5, nble, nprb, n154);
   int susp, lk, conf; countTiers(susp, lk, conf);
   Serial.printf("[CYD] table=%d (2.4:%d 5G:%d BLE:%d PRB:%d 154:%d) new=%d uniq=%d threats S%d/L%d/C%d db=%d\n",
@@ -1109,6 +1114,7 @@ ScanCycleResult core::runScanCycle() {
   res.susp = susp; res.lk = lk; res.conf = conf;
   pushStatus();
   pushDetections();
+  lap(LP_PHONE);
   hostui::onScanCycle(res);  // CYD: rebuild the scan view + repaint if on the scanner screen
   if (polled) fleet::forwardCycle();   // client: send what changed to the leader (no-op on every other unit)
   return res;

@@ -18,9 +18,11 @@ posts = freshPost();
 function onStat(text){
   const parts = text.slice(4).split(";"), h = parts[0].split(",").map(Number);
   if(h.length !== 6 || h.some(x=>!Number.isFinite(x))) return;
-  if(!push) push = { ms:0, bytes:0, refused:0, gap:0, wait:[] };
+  if(!push) push = { ms:0, bytes:0, refused:0, gap:0, wait:[], t:[0,0,0,0,0,0] };
   push.ms += h[0]; push.bytes += h[1]; push.refused += h[3]; push.gap = Math.max(push.gap, h[5]);
-  push.wait = parts.slice(1).map(p=>{ const f = p.split(","); return Math.max(0, (+f[2] || 0) - (+f[1] || 0)); });
+  const t = parts.find(p=>p.startsWith("T,"));   // fw >= 0.45.3: loop ms (C5 wait, processing, logging, phone, fleet, push)
+  if(t) t.slice(2).split(",").forEach((x, i)=>{ if(i < 6) push.t[i] += +x || 0; });
+  push.wait = parts.slice(1).filter(p=>!p.startsWith("T,")).map(p=>{ const f = p.split(","); return Math.max(0, (+f[2] || 0) - (+f[1] || 0)); });
 }
 
 // Pushed pieces split lines anywhere: keep the unfinished end per file.
@@ -55,7 +57,7 @@ function tick(){
   if(push || rx || posts.n || posts.fail){
     const kbs = (b, m)=>(b / 1024 / Math.max(1, m / 1000)).toFixed(1);
     const age = [...newest].map(([u, r])=>(u === "own" ? "own" : u.slice(0, 4)) + "=" + r.max).join(" ");
-    say("live" + (push ? " push " + kbs(push.bytes, push.ms) + "KB/s refused=" + push.refused + " gap=" + push.gap + " wait=" + push.wait.join("/") : "") +
+    say("live" + (push ? " push " + kbs(push.bytes, push.ms) + "KB/s refused=" + push.refused + " gap=" + push.gap + " wait=" + push.wait.join("/") + " t%=" + push.t.map(x=>Math.round(100 * x / Math.max(1, push.ms))).join("/") : "") +
         " rx " + kbs(rx, ms) + "KB/s age " + (age || "-") + " post n=" + posts.n + " b=" + posts.bytes + " max=" + posts.max + " fail=" + posts.fail);
   }
   t0 = Date.now(); push = null; rx = 0; posts = freshPost();

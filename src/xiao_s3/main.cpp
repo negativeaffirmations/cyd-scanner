@@ -83,7 +83,7 @@ void setup() {
 }
 
 void loop() {
-  fleet::service();   // drain fleet RX (<= 8 frames/pass); no-op when fleet is off
+  { const uint32_t t = millis(); fleet::service(); g_loopMs[LP_FLEET] += millis() - t; }   // drain fleet RX (<= 8 frames/pass); no-op when fleet is off
   tickScanLed();
   PhoneCmdFlags pf;
   core::servicePhoneCommands(pf);

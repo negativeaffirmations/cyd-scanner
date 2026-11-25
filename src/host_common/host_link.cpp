@@ -4,12 +4,17 @@
 #include "host_core.h"
 #include "phone.h"
 #include "fleet.h"
+#include "host_log.h"
 
 HardwareSerial LinkSerial(1);  // UART1 (pins are supplied by the board via hostlink::begin)
 FrameParser    parser;
 
 void hostlink::begin(int rxPin, int txPin) {
+#if CONFIG_IDF_TARGET_ESP32S3
+  LinkSerial.setRxBufferSize(8192);   // ~0.7 s at 115200: requestScan() pushes the live log between reads
+#else
   LinkSerial.setRxBufferSize(2048);
+#endif
   LinkSerial.begin(LINK_BAUD, SERIAL_8N1, rxPin, txPin);
 }
 
@@ -66,7 +71,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
   uint32_t t0 = millis();
   uint32_t lastByte = millis();
   while (!done && millis() - t0 < timeoutMs) {
-    if (!anyByte && millis() - t0 > noRespMs) break;  // no reply at all -> busy miss, bail fast
+    if (!anyByte && !LinkSerial.available() && millis() - t0 > noRespMs) break;  // no reply at all -> busy miss, bail fast
     bool got = false;
     while (LinkSerial.available()) {
       got = true; anyByte = true; lastByte = millis();
@@ -117,6 +122,11 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
     }
     // Idle-gap backstop: burst started but the closing Status was lost -> don't wait the full timeout.
     if ((sawStart || g_detCount > 0) && millis() - lastByte > 250) done = true;
+#if CONFIG_IDF_TARGET_ESP32S3
+    // The C5's table takes over a second on a busy drive: push the live log meanwhile (<= 60 ms + a file open; the RX
+    // buffer holds ~0.7 s). Nothing else of this unit's phone handling runs here, and no file is open.
+    if (!done) liveService();
+#endif
     if (!got) delay(1);  // yield instead of a tight spin
   }
   return done || sawStart || g_detCount > 0;

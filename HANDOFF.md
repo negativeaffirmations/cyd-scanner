@@ -11,6 +11,13 @@
 - **Web `20261125b` / build 23:** with Settings open on a leader, the 5 s fleet poll made livesync drop every session-list reply, so after a New
   Session / reconnect the live copy never started (DETS fallback, 14:59:45-15:04:55). Replies already received are now kept; no fleet poll during a pass.
   Local test only so far: check on the phone with Settings open right after a New Session.
+- **Drive 5 (fw 0.45.2, build 23, screen locked 17.5 min):** bottleneck = SOPAFE's push (up to 174 KB own + 300 KB fleet waiting, 0 refused, 1.3-1.7 s
+  between push turns); worst age 157 s. No errors. No Flock / Axon signature in any row (owner passed a Flock camera 15:38-15:40 and an officer): not
+  heard under a known signature, so nothing to alert on. Own tail (139 KB) stayed unsent after the scan stopped until the .cflo upload.
+- **fw 0.45.3 (SOPAFE only):** S3 hosts call `liveService()` while `requestScan()` waits for the C5's table (UART RX buffer 8192); `LL=~` gains
+  `;T,scan,proc,log,phone,fleet,push` loop ms (scan includes pushes inside it). Not yet driven.
+- **Web `20261125c` / build 24:** `finishOld()` fetches the rest of a file that stopped being current (now + 90 s later); `t%=` in the log line. A
+  disconnect still drops that queue.
 - **Next drive:** read those lines: large `wait` = scanner push; old member `age` with small `wait` = member forwarding; slow / failed `post` =
   phone / network. Still untested: a real alert through `/screen`, evil-twin fields, Flock / ALPR, a long screen-off stretch.
 
