@@ -1336,16 +1336,19 @@ void transferFile(const char* path) {
 // from the card each time, never queued in RAM, so a busy link or a full notify buffer just delays them: the push
 // resumes from the last offset sent. A file renamed on time sync is followed by its file_id through the live streams.
 // Subscriptions end with the authenticated session (authEpoch); a new J replaces them all.
-// Pacing: ONE frame per LIVE_GAP_MS across all files (~8 KB/s at a 252 B MTU, far above a log's rate), so a backlog
-// (after a transfer, a leader's member catch-up) never floods the notify buffers DETS / STATUS also need. Each file's
+// Pacing: up to LIVE_BUDGET_MS of frames per call, LIVE_FRAME_MS apart (fw 0.45.1; like xferService), from the fullest
+// file (or one that has waited LIVE_TURN_MS: the smaller file starved, fw 0.45.2), at least LIVE_GAP_MS between calls; a refused notify ends the call, leaving room for DETS / STATUS. Each file's
 // size is looked up at most every LIVE_CHECK_MS; the card is only searched (rename) when the file can't be opened, and
 // a file that stays missing for LIVE_MISS_MAX checks is dropped (the phone notices the silence and re-subscribes).
-struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs; uint8_t miss; };
+struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs, servedMs; uint8_t miss; };
 static LiveSub g_live[2];
 static int g_liveN = 0, g_liveNext = 0;
 static uint32_t g_liveEpoch = 0, g_liveSendMs = 0;
 static constexpr uint32_t LIVE_GAP_MS = 30, LIVE_CHECK_MS = 250;
+static constexpr uint32_t LIVE_BUDGET_MS = 60, LIVE_FRAME_MS = 8;   // per call / between frames (as xferService)
+static constexpr uint32_t LIVE_TURN_MS = 1000, LIVE_STAT_MS = 10000;
 static constexpr uint8_t LIVE_MISS_MAX = 40;   // ~10 s
+static struct { uint32_t bytes, frames, refused, calls, maxGap, lastCall, t0; } g_lst;   // since the last stats frame
 
 static void liveReply(const char* s) { phone::logNotify((const uint8_t*)s, strlen(s)); }
 
@@ -1375,6 +1378,7 @@ void liveSubscribe(const char* arg) {
     tmp[n].size = sz;
     tmp[n].checkMs = millis();
     tmp[n].miss = 0;
+    tmp[n].servedMs = millis();
     n++;
   }
   char h[24];
@@ -1389,6 +1393,8 @@ void liveSubscribe(const char* arg) {
   g_liveNext = 0;
   g_liveEpoch = phone::authEpoch();
   g_liveSendMs = 0;
+  memset(&g_lst, 0, sizeof(g_lst));
+  g_lst.t0 = g_lst.lastCall = millis();
   snprintf(h, sizeof(h), "LLOK=%d", n);
   liveReply(h);
   for (int i = 0; i < n; i++) Serial.printf("[CYD] live log: %s from %u\n", g_live[i].path, (unsigned)g_live[i].off);
@@ -1408,12 +1414,39 @@ static File liveOpen(LiveSub& s) {
   return File();
 }
 
+// Push statistics, every LIVE_STAT_MS: "LL=~ms,bytes,frames,refused,calls,maxgap;<fid>,<sent to>,<size>[;...]". An app that
+// doesn't know it ignores it (not a file_id). Sizes are read fresh: LiveSub.size is stale while bytes wait.
+static void liveStats(uint32_t now) {
+  if (now - g_lst.t0 < LIVE_STAT_MS) return;
+  char m[160];
+  int n = snprintf(m, sizeof(m), "LL=~%u,%u,%u,%u,%u,%u", (unsigned)(now - g_lst.t0), (unsigned)g_lst.bytes, (unsigned)g_lst.frames,
+                   (unsigned)g_lst.refused, (unsigned)g_lst.calls, (unsigned)g_lst.maxGap);
+  for (int i = 0; i < g_liveN && n > 0 && n < (int)sizeof(m); i++) {
+    File f = liveOpen(g_live[i]);
+    const uint32_t sz = f ? (uint32_t)f.size() : g_live[i].size;
+    if (f) f.close();
+    n += snprintf(m + n, sizeof(m) - n, ";%s,%u,%u", g_live[i].fid, (unsigned)g_live[i].off, (unsigned)sz);
+  }
+  // A window is never repeated: a refused stats frame stays counted and goes out with the next, longer window.
+  if (n > 0 && n < (int)sizeof(m) && n <= (int)phone::logChunkMax() && !phone::logNotify((const uint8_t*)m, (size_t)n)) {
+    g_lst.refused++;
+    return;
+  }
+  Serial.printf("[CYD] live log stats %s\n", m + 4);
+  g_lst.bytes = g_lst.frames = g_lst.refused = g_lst.calls = g_lst.maxGap = 0;
+  g_lst.t0 = now;
+}
+
 void liveService() {
   if (!g_liveN || xferBusy() || !g_sdOk) return;
   if (!phone::peerAlive(g_liveEpoch)) { g_liveN = 0; return; }   // the phone that subscribed is gone
   const uint32_t now = millis();
   if ((int32_t)(g_liveHoldUntil - now) > 0) return;               // a short raw send: the phone still expects file bytes
   if (now - g_liveSendMs < LIVE_GAP_MS) return;
+  g_lst.calls++;
+  if (now - g_lst.lastCall > g_lst.maxGap) g_lst.maxGap = now - g_lst.lastCall;
+  g_lst.lastCall = now;
+  liveStats(now);
   // Refresh the sizes that are due (open + size + close; a FAT read handle doesn't see later appends).
   for (int i = 0; i < g_liveN; i++) {
     LiveSub& s = g_live[i];
@@ -1432,29 +1465,41 @@ void liveService() {
     s.size = f.size();
     f.close();
   }
-  // One frame from the next file with a backlog (round-robin).
+  // The file with the most bytes waiting (a busy drive's fleet file grows several times faster than the own file), as
+  // many frames as fit in the budget from ONE open: one frame per pass fell minutes behind (2026-11-24 drive).
+  int best = -1;
   for (int k = 0; k < g_liveN; k++) {
     const int i = (g_liveNext + k) % g_liveN;
-    LiveSub& s = g_live[i];
-    if (s.off >= s.size) continue;
-    uint8_t buf[512];
+    if (g_live[i].off < g_live[i].size && (best < 0 || g_live[i].size - g_live[i].off > g_live[best].size - g_live[best].off)) best = i;
+  }
+  if (best < 0) return;
+  for (int i = 0; i < g_liveN; i++)   // a file whose bytes have waited too long goes first, however few
+    if (g_live[i].off < g_live[i].size && now - g_live[i].servedMs >= LIVE_TURN_MS && now - g_live[i].servedMs > now - g_live[best].servedMs) best = i;
+  g_liveNext = (best + 1) % g_liveN;                              // ties alternate
+  LiveSub& s = g_live[best];
+  File f = liveOpen(s);
+  if (!f) return;
+  if (!f.seek(s.off)) { f.close(); s.size = s.off; return; }      // re-check the size next time
+  uint8_t buf[512];
+  for (;;) {
     size_t chunk = phone::logChunkMax();
     if (chunk > sizeof(buf)) chunk = sizeof(buf);
     int hn = snprintf((char*)buf, 40, "LL=%s:%u:", s.fid, (unsigned)s.off);
-    if (hn <= 0 || (size_t)hn + 16 > chunk) return;
+    if (hn <= 0 || (size_t)hn + 16 > chunk) break;
     size_t want = chunk - (size_t)hn;
     if (want > s.size - s.off) want = s.size - s.off;
-    File f = liveOpen(s);
-    if (!f) return;
-    int got = (f.seek(s.off) ? f.read(buf + hn, want) : -1);
-    f.close();
-    if (got <= 0) { s.size = s.off; return; }                     // re-check the size next time
-    g_liveSendMs = now;
-    if (!phone::logNotify(buf, (size_t)hn + (size_t)got)) return;  // notify buffer full: the same bytes next time
+    int got = f.read(buf + hn, want);
+    if (got <= 0) { s.size = s.off; break; }
+    g_liveSendMs = millis();
+    if (!phone::logNotify(buf, (size_t)hn + (size_t)got)) { g_lst.refused++; break; }   // notify buffer full: the same bytes next pass
     s.off += (uint32_t)got;
-    g_liveNext = (i + 1) % g_liveN;
-    return;
+    s.servedMs = millis();
+    g_lst.bytes += (uint32_t)got;
+    g_lst.frames++;
+    if (s.off >= s.size || millis() - now >= LIVE_BUDGET_MS) break;
+    delay(LIVE_FRAME_MS);
   }
+  f.close();
 }
 
 
