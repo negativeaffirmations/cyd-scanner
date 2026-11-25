@@ -41,7 +41,7 @@ let running = false, nextAt = 0;
 let cur = null;   // per connection, see fresh()
 function fresh(gen, sid){
   return { gen, sid, files:{}, known:{}, fleet:null, listAt:0, listSess:"", listFlt:"", relist:false, missN:0, missAt:0,
-           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(), old:[],
+           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(), old:[], seenF:null, extras:[],
            push:{ on:false, subs:{}, wait:null, blockUntil:0, why:"" } };
 }
 // push.subs[fid] = { label, path, fid, bufStart, end, chunks, bytes, lastAt }: bytes pushed since the last save
@@ -116,6 +116,14 @@ async function list(gen, sid){
   if(ffid){ const byId = Object.values(known).find(k=>k.fid === ffid && /^\/logs\/fleet-/.test(k.path)); if(byId) best = byId; }
   cur.known = known;
   cur.fleet = best;
+  // A file that appeared since the previous list (not counting the first list of this connection) may have come and gone
+  // between two passes (a fleet file that lived 5 s on a quick Start + New Session, 2026-11-25): copy it once and upload it.
+  if(!cur.seenF) cur.seenF = new Set(Object.values(known).map(k=>k.fid).filter(Boolean));
+  else for(const k of Object.values(known)){
+    if(!k.fid || cur.seenF.has(k.fid)) continue;
+    cur.seenF.add(k.fid);
+    if(!cur.old.some(o=>o.fid === k.fid)) cur.old.push({ path:k.path, fid:k.fid, at:0, n:0, fails:0, full:true, size:k.size });
+  }
   cur.listAt = Date.now();
   cur.listSess = state.status.sess;
   cur.listFlt = state.status.flt || "";
@@ -322,11 +330,17 @@ const OLD_AGAIN_MS = 90000;
 async function finishOld(gen, sid){
   for(const o of [...cur.old]){
     if(Date.now() < o.at) continue;
+    if([cur.files.own, cur.files.fleet].some(f=>f && f.fid === o.fid)){ cur.old = cur.old.filter(x=>x !== o); continue; }   // it is a current file
     if(Object.values(cur.known).some(k=>k.fid === o.fid)) o.path = Object.values(cur.known).find(k=>k.fid === o.fid).path;   // renamed
     const meta = find(sid, o.path, o.fid);
     let ok = false;
-    if(!meta || meta.fileId !== o.fid){ cur.old = cur.old.filter(x=>x !== o); continue; }
-    try{ await syncFile("old", { path:o.path, fid:o.fid, size:meta.size }, gen, sid); ok = true; }
+    const have = meta && meta.fileId === o.fid;
+    if(!have && !(o.full && o.size <= AUTO_FULL_MAX)){ cur.old = cur.old.filter(x=>x !== o); continue; }   // no copy, too big to fetch
+    if(!have) cur.allowFull.add(o.fid);
+    try{
+      await syncFile("old", { path:o.path, fid:o.fid, size:have ? meta.size : o.size }, gen, sid); ok = true;
+      if(!cur.extras.some(x=>x.fid === o.fid)) cur.extras.push({ path:o.path, fid:o.fid });   // loglines.js uploads it
+    }
     catch(e){ if(e instanceof Yield || !cur || cur.gen !== gen) throw e; }
     finally{ if(cur) delete cur.files.old; }
     if(ok) o.n++; else o.fails++;
@@ -492,6 +506,9 @@ export function initLiveSync(){
     }
     return out;
   };
+  // features/loglines.js: finished files of this connection that are no longer current (they still need uploading).
+  state.liveExtras = ()=>!cur || cur.gen !== connGen() ? [] :
+    cur.extras.map(x=>{ const m = find(cur.sid, x.path, x.fid); return { label:"old", sid:cur.sid, path:m ? m.path : x.path, fid:x.fid, ok:!!(m && m.fileId === x.fid) }; });
   state.onLiveLog = onLiveLog;   // ble/download.js hands over the scanner's pushed frames (fw >= 0.44.0)
   setInterval(tick, 2000);
   window.addEventListener("cflo-bg-tick", tick);   // Android app: hidden-page timers are throttled (shim-background.js)

@@ -127,7 +127,7 @@ async function sendFile(f){
 function collect(){
   if(!state.connected || !state.liveCopies) return;
   const gen = connGen();
-  for(const c of state.liveCopies()){
+  for(const c of [...state.liveCopies(), ...(state.liveExtras ? state.liveExtras() : [])]){   // + finished files (livesync)
     if(!c.fid || !c.sid || !c.ok) continue;
     const key = c.sid + "|" + c.fid;
     const f = files.get(key);

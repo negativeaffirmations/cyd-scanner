@@ -25,6 +25,10 @@
   `"start":"boot|user|auto"`; a scan started after a stop starts a new own file (+ a leader's fleet file); STATUS part 3 `sfid;sst`; the
   live-POST session key = `<sid>-<file_id>`; BOOT_FILES 8 -> 16. Reviewed (REV-001/002/003/005 fixed; REV-004 mini download resume,
   REV-006 part-3 notify retry left open). scan-analyzer v17 stores `start` from 17:25:38. CLAUDE.md SD-logging text still says two streams.
+- **fw 0.46.1 (SOPAFE) + web 20261125e/f, builds 26/27:** New Session rotates the fleet file only with the own file; STATUS part 3
+  `ffid`; livesync follows the fleet file by id, and (f) copies + uploads any file that appeared between two session lists (a fleet file
+  that lived 5 s on a quick Stop/Start/New Session lost 4 sightings + 1 lastseen live, recovered by .cflo). Server check: member orow
+  continuous 137/307 -> now. Open: .cflo grouping put fleet-175237 with the 3d11178f scan (overlap rule).
 - **Next drive:** read those lines: large `wait` = scanner push; old member `age` with small `wait` = member forwarding; slow / failed `post` =
   phone / network. Still untested: a real alert through `/screen`, evil-twin fields, Flock / ALPR, a long screen-off stretch.
 
