@@ -8,6 +8,9 @@
   second; `LL=~ms,bytes,frames,refused,calls,maxgap;<fid>,<sent>,<size>` every 10 s (serial + phone). Suspected, not proven: the smaller file starved.
 - **Web `20261125a`:** `features/livestats.js` writes a `live push / rx / age / post` line every 30 s to the app's background log.
 - **Bench (100 s, light load <= 0.9 KB/s):** backlog cleared, 0 refused; ~0.7 s pause between push calls in every 10 s window (main loop), cause unknown.
+- **Web `20261125b` / build 23:** with Settings open on a leader, the 5 s fleet poll made livesync drop every session-list reply, so after a New
+  Session / reconnect the live copy never started (DETS fallback, 14:59:45-15:04:55). Replies already received are now kept; no fleet poll during a pass.
+  Local test only so far: check on the phone with Settings open right after a New Session.
 - **Next drive:** read those lines: large `wait` = scanner push; old member `age` with small `wait` = member forwarding; slow / failed `post` =
   phone / network. Still untested: a real alert through `/screen`, evil-twin fields, Flock / ALPR, a long screen-off stretch.
 
