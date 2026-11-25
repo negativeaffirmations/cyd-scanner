@@ -30,7 +30,7 @@ import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261123g';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
-import { initEngine } from './analysis/engine.js?v=20261124a';   // phone analysis engine (docs/phone-analysis.md phase 3)
+import { initEngine } from './analysis/engine.js?v=20261124b';   // phone analysis engine (docs/phone-analysis.md phase 3)
 import { initHistory } from './analysis/history.js?v=20261123f';
 import { initAlerts } from './analysis/alerts.js?v=20261123g';
 import { initVendors } from './analysis/vendors.js?v=20261124a';   // phone analysis: full maker lists (phase 3d)   // phone analysis: its own alerts (phase 3c)   // phone analysis: saved-scan history (phase 3b)

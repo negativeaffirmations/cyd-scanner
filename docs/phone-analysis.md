@@ -105,7 +105,8 @@ session list still finds it, asked only on a real change).
 **Increment 3a (built):** `webapp/js/analysis/engine.js` keeps one record per device for the whole current scan and
 every fleet unit, fed by the live copy's `cflo-livelog` pieces (pushed, tail updates and whole copies alike; the start
 of a file is read from the saved copy). Whole-scan follow: sightings grouped into places 300 m apart; 3+ places spread
-over 1+ km across 10+ min = "following"; "stayed in one place while you moved N km" when it didn't move with you
+over 1+ km across 10+ min AND (2026-11-24) still heard within 12 min before and after one of your stops (5+ min), or
+through 3+ of your turns = "following", else "probably traffic" (no alert); "stayed in one place while you moved N km" when it didn't move with you
 (movement counts only past 60 m steps, so GPS jitter while parked adds nothing). The device popup shows it as "Phone
 analysis" (`features/phoneview.js`, reaching the engine through `state.engine`: a plain import would load a second,
 empty instance next to main.js's `?v=` one). Checked offline on a real fleet drive (no follower, matching the scanners)
@@ -125,7 +126,13 @@ notification settings (`features/notify.js` exposes `state.notifyShow`: same swi
 - **Evil-twin / deauth alert seen here before:** a new alert line in this scan whose devices set off the same alert on
   an earlier day, "probably a fixed setup, not an attack". The scanner's own alert still fires as before.
 
-Next increments: the full OUI / company-ID lists, fleet-wide correlation views.
+**Increment 3d (built):** `tools/vendordb/build.py` builds `webapp/data/oui.tsv` (40,320 IEEE MA-L prefixes) and
+`webapp/data/cid.tsv` (4,082 Bluetooth SIG company IDs); `webapp/js/analysis/vendors.js` fetches them the first time a
+device popup needs them (~1.3 MB, not on page load) and the popup shows "Maker" and "BLE company". Random (locally
+set) addresses have no maker. Sources and licences: docs/references.md.
+
+Next: fleet-wide correlation views (which units heard a device, when, from where), and using the maker lists in the
+follow / "your own device" decisions.
 
 
 `webapp/js/analysis/` (new). Runs over the mirrored lines as they arrive (and over any loaded scan):
