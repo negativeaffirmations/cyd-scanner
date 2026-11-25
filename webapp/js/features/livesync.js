@@ -58,9 +58,11 @@ function canRun(){
 
 // Thrown to end a pass quietly: someone is waiting for LOGDATA, or the scanner changed.
 class Yield extends Error {}
-function gate(gen, sid){
+// got = the reply is already here: keep it even if someone now waits (they are still waiting, so nothing races). Throwing it
+// away let the fleet poll of an open Settings page repeat the session list forever (2026-11-25).
+function gate(gen, sid, got){
   if(!cur || cur.gen !== gen || connGen() !== gen || state.scannerId !== sid) throw new Yield("the scanner changed");
-  if((state.liveSyncWaiters || 0) > 0 || (state.xferBusy || 0) > 0 || reqBusy()) throw new Yield("yielded");
+  if((!got && (state.liveSyncWaiters || 0) > 0) || (state.xferBusy || 0) > 0 || reqBusy()) throw new Yield("yielded");
 }
 
 // One LOGDATA request of our own. raw = file/tail replies as bytes (download.js state.dl.raw); quiet = a session
@@ -92,7 +94,7 @@ async function list(gen, sid){
   gate(gen, sid);
   const text = await req("Q", false, LIST_IDLE_MS);
   if(typeof text !== "string" || (text !== "" && !text.startsWith("/logs/"))){ await drain(); throw new Error("unexpected reply to the session list"); }
-  gate(gen, sid);
+  gate(gen, sid, true);
   const known = {};
   let best = null;
   // The scanner's epochs are LOCAL seconds; a dated fleet file counts only if it was written in the last FLEET_FRESH_S
@@ -152,13 +154,13 @@ async function syncFile(label, t, gen, sid){
     const crc = crc32hex(new Uint8Array(await base.slice(Math.max(0, meta.size - 64), meta.size).arrayBuffer()));
     gate(gen, sid);
     const r = await req("F:" + t.path + "@" + meta.size + ":" + t.fid + ":" + crc, true, FILE_IDLE_MS);
-    gate(gen, sid);
+    gate(gen, sid, true);
     if(r && r.kind === "tailerr"){ cur.relist = true; throw new Error("the scanner refused the update (" + r.why + ")"); }
     if(!r || r.kind !== "tail" || r.off !== meta.size || r.blob.size !== r.n){ await drain(); throw new Error("unexpected reply"); }
     if(r.n){
       const merged = new Blob([base, r.blob]);
       if(await fileIdOf(merged) !== t.fid) throw new Error("the copy no longer matches the file");
-      gate(gen, sid);
+      gate(gen, sid, true);
       await save(sid, t.path, merged, t.fid);
       announce(t.path, t.fid, meta.size, new Uint8Array(await r.blob.arrayBuffer()));
     }
@@ -189,12 +191,12 @@ async function syncFile(label, t, gen, sid){
       if(cur && cur.files[label]){ cur.files[label].got = got; cur.files[label].expect = expect; render(); }
     });
   }finally{ state.liveSyncFull = false; }
-  gate(gen, sid);
+  gate(gen, sid, true);
   if(r === ""){ cur.tried.delete(t.fid); cur.files[label] = { ...t, size:0, at:Date.now() }; return 0; }   // empty file
   if(!r || r.kind !== "file"){ await drain(); throw new Error("unexpected reply"); }
   if(r.blob.size !== r.n) throw new Error("short transfer");
   if(await fileIdOf(r.blob) !== t.fid){ cur.relist = true; throw new Error("the file changed on the scanner"); }
-  gate(gen, sid);
+  gate(gen, sid, true);
   await save(sid, t.path, r.blob, t.fid);
   announce(t.path, t.fid, 0, new Uint8Array(await r.blob.arrayBuffer()));
   cur.tried.delete(t.fid);

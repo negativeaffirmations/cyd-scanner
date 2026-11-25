@@ -264,7 +264,7 @@ export function initFleet(){
     const st = fltStatus();
     // Member list: every 5 s while the Fleet card is open, every 30 s otherwise (the live list's "seen by" names).
     const due = settingsOpen() ? POLL_MS : 30000;
-    if (state.connected && st && st.role === 2 && state.dl.mode === null && Date.now() - lastPoll >= due) refreshMembers();
+    if (state.connected && st && st.role === 2 && state.dl.mode === null && !state.liveSyncP && Date.now() - lastPoll >= due) refreshMembers();
     if (!state.connected && members.length) { members = []; state.fleetMembers = []; renderMembers(); }
   }, 1000);
   renderFleet();
