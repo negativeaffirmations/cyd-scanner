@@ -1341,6 +1341,7 @@ void transferFile(const char* path) {
 // size is looked up at most every LIVE_CHECK_MS; the card is only searched (rename) when the file can't be opened, and
 // a file that stays missing for LIVE_MISS_MAX checks is dropped (the phone notices the silence and re-subscribes).
 struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs, servedMs; uint8_t miss; };
+uint32_t g_loopMs[LP_N];
 static LiveSub g_live[2];
 static int g_liveN = 0, g_liveNext = 0;
 static uint32_t g_liveEpoch = 0, g_liveSendMs = 0;
@@ -1394,6 +1395,7 @@ void liveSubscribe(const char* arg) {
   g_liveEpoch = phone::authEpoch();
   g_liveSendMs = 0;
   memset(&g_lst, 0, sizeof(g_lst));
+  memset(g_loopMs, 0, sizeof(g_loopMs));
   g_lst.t0 = g_lst.lastCall = millis();
   snprintf(h, sizeof(h), "LLOK=%d", n);
   liveReply(h);
@@ -1418,7 +1420,7 @@ static File liveOpen(LiveSub& s) {
 // doesn't know it ignores it (not a file_id). Sizes are read fresh: LiveSub.size is stale while bytes wait.
 static void liveStats(uint32_t now) {
   if (now - g_lst.t0 < LIVE_STAT_MS) return;
-  char m[160];
+  char m[230];
   int n = snprintf(m, sizeof(m), "LL=~%u,%u,%u,%u,%u,%u", (unsigned)(now - g_lst.t0), (unsigned)g_lst.bytes, (unsigned)g_lst.frames,
                    (unsigned)g_lst.refused, (unsigned)g_lst.calls, (unsigned)g_lst.maxGap);
   for (int i = 0; i < g_liveN && n > 0 && n < (int)sizeof(m); i++) {
@@ -1427,12 +1429,16 @@ static void liveStats(uint32_t now) {
     if (f) f.close();
     n += snprintf(m + n, sizeof(m) - n, ";%s,%u,%u", g_live[i].fid, (unsigned)g_live[i].off, (unsigned)sz);
   }
+  if (n > 0 && n < (int)sizeof(m))   // loop time (ms): C5 wait (with pushes inside it), processing, logging, phone, fleet, push
+    n += snprintf(m + n, sizeof(m) - n, ";T,%u,%u,%u,%u,%u,%u", (unsigned)g_loopMs[LP_SCAN], (unsigned)g_loopMs[LP_PROC],
+                  (unsigned)g_loopMs[LP_LOG], (unsigned)g_loopMs[LP_PHONE], (unsigned)g_loopMs[LP_FLEET], (unsigned)g_loopMs[LP_LIVE]);
   // A window is never repeated: a refused stats frame stays counted and goes out with the next, longer window.
   if (n > 0 && n < (int)sizeof(m) && n <= (int)phone::logChunkMax() && !phone::logNotify((const uint8_t*)m, (size_t)n)) {
     g_lst.refused++;
     return;
   }
   Serial.printf("[CYD] live log stats %s\n", m + 4);
+  memset(g_loopMs, 0, sizeof(g_loopMs));
   g_lst.bytes = g_lst.frames = g_lst.refused = g_lst.calls = g_lst.maxGap = 0;
   g_lst.t0 = now;
 }
@@ -1500,6 +1506,7 @@ void liveService() {
     delay(LIVE_FRAME_MS);
   }
   f.close();
+  g_loopMs[LP_LIVE] += millis() - now;
 }
 
 
