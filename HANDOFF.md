@@ -1,6 +1,6 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE — 2026-11-24: phone-side recording + analysis, phases 1-3d deployed (main `1531d0f`)
+## 2026-11-24: phone-side recording + analysis, phases 1-3d deployed (main `1531d0f`)
 State at the end of the 2026-11-23/24 session (one long conversation; start a fresh one from here):
 - **fw 0.44.0 on all 4 hosts** (SOPAFE COM15, BEMOPU COM10, TOLUBA COM17, ZUDIMU COM21); C5s on 0.43.0 (link
   unchanged). 0.43.0 = evil-twin enc/rssis/alert:0 + quiet filter; 0.44.0 = live-log push (CMD `J:`, `LL=` frames).
@@ -41,6 +41,26 @@ State at the end of the 2026-11-23/24 session (one long conversation; start a fr
 - **Still untested:** evil-twin `enc`/`rssis`/`alert:0` line, live-POST queue (phone off Tailscale all drive, 0 live rows),
   New Session mid-fleet, phone 3c alerts (no follow events), TOLUBA (removed from the fleet early in the drive).
 
+## RESUME HERE - 2026-11-24 (late): full-log live upload + alert checks + Flock rules (tested on the phone, published)
+- Second drive (3 units, live upload on): upload queue PASSED (server stall up to 23.6 s, re-sent rows deduped), no follower
+  notifications, one Flock alert = a Liteon client of a resident home router (false). Live (DETS top 12) carried only 7-13% of addresses.
+- **Live upload of the full log:** `features/loglines.js` (contract "loglines v1", bridge 2026-11-24 21:30 / 21:45 / 22:15). Sends the
+  live copy's bytes; off until the server's whoami says `"loglines":1`; DETS rows until then. Hooks: `state.liveCopies` (livesync),
+  `state.logLinesOn` (remote.js skips DETS). Mock test 27/27 (scratch). Server side live since 21:58 EST.
+- **Alert checks:** `features/screen.js` + a Notifications checkbox: a weak Flock / ALPR alert on a client of a known ordinary AP, an
+  evil twin whose APs are all known and none open, a follower the server has fixed in place -> still shown, silently, as "Probably
+  a false alarm" (owner: label or lower, never hide). Uses `/devices/{mac}`; the device check uses `/screen` when whoami has `"screen":1`. Test 24/24.
+- **fw 0.45.0 (hosts only, DB_GEN 6 = /signatures.csv re-seeded, on-card edits lost):** Flock community prefixes 26 (were 6), weight
+  20, +25 only for a wildcard-probing client with no data frames; a Flock label below suspect has no category. Of 18,681 Wi-Fi
+  addresses in our drives 11 match a public prefix, 1 as a non-associated probing client. Builds OK: cyd, xiao_s3, xiao_s3_rgb.
+- **Hosts flashed 0.45.0:** SOPAFE COM15, BEMOPU COM10, ZUDIMU COM17 (all chip-ID checked; fleet joined).
+- **Phone tests PASSED** (debug app `.dev` over USB adb + WebView DevTools, key cyd-72da9cd3): real loglines (own + fleet), app kill +
+  resume, network cut (recovers in 1 s), lost reply (409 -> continue), New Session, server restart, `.cflo` after it = 0 new rows
+  (594/594 + 791/791 already streamed); `/screen` on the real Flock case = likely_false; quiet / normal notification channels.
+  First BLE reconnect right after a force-stop failed once (GATT 133). Not tested: a real alert going through the check, a long drive.
+- **Phone debugging:** install the debug APK (needs JAVA_HOME jdk 21 + ANDROID_HOME), `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`.
+- **Next:** a drive on the release build.
+
 ## 2026-11-24 (night): tighter phone follower rule + evil-twin table fix
 - Phone 3c follower alerts DO fire on the owner's phone; on the drive above most were traffic on one highway. New
   rule in `analysis/engine.js` (`checkpoints()` / `stayedWith()`, docs/phone-analysis.md 3a), also ignores held fixes for
@@ -51,6 +71,12 @@ State at the end of the 2026-11-23/24 session (one long conversation; start a fr
 - **C5 `SSID_SLOTS` 24 -> 64**, a current evil entry isn't evicted first (`ssidObserve`). Flashed BEMOPU, SOPAFE, ZUDIMU,
   TOLUBA C5s; all boot and scan, no resets in 75 s. Evil path itself untested on air. Hosts unchanged (0.44.0, link same).
   TOLUBA's host wasn't polling: powered only through the C5's USB (main switch off, CYD 5V switch on) it brownout-looped (owner).
+- **TOLUBA is out of service** (2026-11-24, owner: wiring bad, probably a rebuild; no action until then). Not in the fleet.
+  After a rebuild: flash both boards to the current release, re-add it, tell scan-analyzer about any new radio address.
+- **Live upload checked** (bridge 2026-11-24 19:35): 3 units, ~1 s behind, no bad gaps; slow-reply queue still untested. The
+  app and the web page have separate pairings, so switching mid-scan starts a new server session. Four of our own
+  addresses were in the bench live data (likely TOLUBA, removed from the fleet, or fresh C5 boots; not confirmed): recheck.
+- Maker lines checked on the phone by the owner (shown for fixed addresses).
 
 ## 2026-11-24: phase 3c phone alerts deployed (`098325a`)
 - `analysis/alerts.js`: whole-drive follower + "alert seen here before", via `state.notifyShow` (notify.js hook, uses the

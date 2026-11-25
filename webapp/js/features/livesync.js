@@ -448,6 +448,18 @@ export function initLiveSync(){
     tick();
   });
   onUnitReset(()=>{ cur = null; nextAt = 0; render(); });
+  // features/loglines.js: the files a live upload must cover, and whether each copy is complete and kept up.
+  state.liveCopies = ()=>{
+    if(!enabled || !cur || cur.gen !== connGen() || !state.connected) return [];
+    const m = /^2,(\d+)\//.exec((state.status && state.status.flt) || "");
+    const out = [], need = cur.fleet || (m && +m[1] > 0) ? ["own", "fleet"] : ["own"];   // members joined = their file counts too
+    for(const label of need){
+      const f = cur.files[label];
+      out.push({ label, sid:cur.sid, path:f ? f.path : "", fid:f ? f.fid : "",
+                 ok:!!(f && f.fid && f.at && !f.need && !f.big && !cur.stop) });
+    }
+    return out;
+  };
   state.onLiveLog = onLiveLog;   // ble/download.js hands over the scanner's pushed frames (fw >= 0.44.0)
   setInterval(tick, 2000);
   window.addEventListener("cflo-bg-tick", tick);   // Android app: hidden-page timers are throttled (shim-background.js)

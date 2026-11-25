@@ -34,9 +34,15 @@ function followerAlerts(){
     if(recent(key)) continue;
     told.set(key, Date.now());
     const name = a.names[0] || a.mac;
-    state.notifyShow("follow", "Following you (phone analysis)",
-      name + "\n" + a.verdict.replace(/^Following: s/, "S").replace(/\.$/, "") + (a.sig ? "\n" + a.sig : ""),
-      { mac:a.mac, kind:"follow" }, "cflo-pfol-" + a.mac, "follow");
+    // The server may know it as fixed in place (features/screen.js): then it can't be following.
+    const g = gen, v = state.screen ? state.screen.follower(a.mac) : Promise.resolve(null);
+    v.then(r=>{
+    if(g !== connGen()) return;
+    const low = !!(r && r.low);
+    state.notifyShow("follow", (low ? "Probably a false alarm: " : "") + "Following you (phone analysis)",
+      name + "\n" + a.verdict.replace(/^Following: s/, "S").replace(/\.$/, "") + (a.sig ? "\n" + a.sig : "") + (low ? "\n" + r.why : ""),
+      { mac:a.mac, kind:"follow" }, "cflo-pfol-" + a.mac, "follow", low);
+    });
   }
 }
 

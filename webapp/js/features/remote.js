@@ -292,6 +292,7 @@ function sendLive(){
 export function maybePostLive(rows){
   if(!liveEnabled() || !isPaired() || !state.scanning || !state.connected) return;
   if(!rows || !rows.length) return;
+  if(state.logLinesOn && state.logLinesOn()){ liveQueue = []; return; }   // the full log is going out instead (features/loglines.js)
   if(liveQueueGen !== connGen()){ liveQueue = []; liveDropped = 0; liveQueueGen = connGen(); }
   const sess = ($("sessName").textContent.replace(/^Session:\s*/,"").trim()) || "live";
   const epoch = localEpoch();

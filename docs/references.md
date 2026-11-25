@@ -115,7 +115,9 @@ near-verbatim reuse is what triggers the rules above.**
   (https://github.com/skizzophrenic/SquachWatch-CYD).
 - **License:** GPL-3.0 — compatible, as cyd-scanner is now GPL-3.0 (`/LICENSE`).
 - **Upstream credits carried forward:** Flock OUIs via `colonelpanichacks/flock-you` (MIT) + the
-  DeFlock community field list; Ring/Verkada/Avigilon/Axis/Motorola OUIs read from the public
+  DeFlock community field list (updated 2026-11-24 from flock-you `datasets/NitekryDPaul_wifi_ouis.md`, the research of
+  @NitekryDPaul (nitekry/nite-oui-collection, synced 2026-07-16) and DeflockJoplin; the wildcard-probe rule is their finding,
+  reimplemented here); Ring/Verkada/Avigilon/Axis/Motorola OUIs read from the public
   **IEEE MA-L registry**; Flipper constants verified against IEEE + Bluetooth SIG registries.
 - **Deliberately NOT ported:** BT-Classic skimmer signatures (scanner build is BLE-only, so
   unobservable); and the behavioral/payload matchers (iBeacon, AirTag raw-advert payload,

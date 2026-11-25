@@ -162,7 +162,8 @@ Category categoryOf(int i) {
   if (fl & (FLAG_WIFI_PWNAGOTCHI | FLAG_WIFI_EVILTWIN))  return CAT_DEAUTH;
   const char* l = detLabel(i);
   if (!l || !l[0]) return CAT_NONE;
-  if (strstr(l, "Flock"))       return CAT_FLOCK;
+  // Below "suspect" a Flock label is only a module maker's prefix (sigdb seed): no tile, no category alert.
+  if (strstr(l, "Flock"))       return g_score[i].tier == sigdb::Tier::None ? CAT_NONE : CAT_FLOCK;
   if (strstr(l, "Axon"))        return CAT_AXON;
   if (strstr(l, "ALPR"))        return CAT_ALPR;
   if (strstr(l, "Raven"))       return CAT_RAVEN;
