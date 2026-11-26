@@ -183,6 +183,7 @@ void handle(char* cmd) {
     if (!saved) Serial.println("[key] WARNING: rekey NOT persisted (NVS write failed) -- the old key returns after a reboot");
     return;
   }
+  if (!strcmp(cmd, "live") || !strncmp(cmd, "live ", 5)) { liveDebug(cmd[4] ? cmd + 5 : ""); return; }
   if (!strncmp(cmd, "fleet", 5) && (cmd[5] == 0 || cmd[5] == ' ')) {
     const char* a = cmd + 5;
     while (*a == ' ') a++;

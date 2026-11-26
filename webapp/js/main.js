@@ -42,6 +42,7 @@ import { initPhoneView } from './features/phoneview.js?v=20261124a';   // device
 import { initServerHistory } from './features/serverhist.js?v=20261121a';   // new module: versioned so it loads fresh with main.js
 import { initServerFind } from './features/serverfind.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initServerMap } from './features/servermap.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
+import { initDisconnect, disconnectScanner } from './features/disconnect.js?v=20261126a';   // new module: versioned so it loads fresh with main.js
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -72,6 +73,7 @@ $("statusClose").onclick = ()=> $("statusDlg").close();
 $("statusDlg").addEventListener("click", e=>{
   if(e.target === $("statusDlg")) $("statusDlg").close();
   else if(e.target.id === "siConnect"){ $("statusDlg").close(); connect(); }   // connect() needs this user gesture
+  else if(e.target.id === "siDisconnect"){ $("statusDlg").close(); disconnectScanner(); }
 });
 new MutationObserver(renderStatusInfo).observe($("conn"), { attributes:true, childList:true });   // BT state -> modal
 
@@ -164,6 +166,7 @@ initPhoneView();       // device popup: the phone's analysis of this device (fea
 initServerHistory();    // device popup: the paired server's history of this MAC + Settings 'Reading server data' (features/serverhist.js)
 initServerFind();       // Map page 'Server data' dialog: devices near me + search on the paired server (features/serverfind.js)
 initServerMap();        // Map page 'Server devices' layer from the paired server (features/servermap.js)
+initDisconnect();       // Disconnect buttons: status popup Bluetooth row + Settings > Device(s) > Scanners (features/disconnect.js)
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;
