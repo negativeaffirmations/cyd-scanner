@@ -29,7 +29,7 @@ static void term(char* s, size_t cap) { s[cap - 1] = 0; }
 uint32_t fieldHash(const DevInfo& di) {
   uint32_t h = 2166136261u;
   auto mix = [&](uint8_t b) { h = (h ^ b) * 16777619u; };
-  mix(di.have); mix(di.tried); mix(di.addrType); mix((uint8_t)di.appearance); mix((uint8_t)(di.appearance >> 8));
+  mix(di.have); mix((uint8_t)(di.tried & ~DI_TRIED_RESENT)); mix(di.addrType); mix((uint8_t)di.appearance); mix((uint8_t)(di.appearance >> 8));
   for (const char* s : {di.name, di.mfr, di.model, di.fw, di.hw}) { for (; *s; s++) mix((uint8_t)*s); mix(0); }
   return h;
 }
@@ -62,7 +62,7 @@ void ingest(const DevInfo& in) {
   if (slot < 0) slot = oldest;
   Entry& e = s_ents[slot];
   if (isNew) memset(&e, 0, sizeof(e));
-  if (isNew || fieldHash(e.di) != fieldHash(d)) e.readMs = millis();   // the C5 re-sends a cached read: keep its time
+  if (isNew || fieldHash(e.di) != fieldHash(d)) e.readMs = (d.tried & DI_TRIED_RESENT) ? 0 : millis();   // 0 = read time unknown (a cached copy)
   e.di = d;
   e.heardMs = millis();
   e.used = true;

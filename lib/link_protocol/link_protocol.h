@@ -223,6 +223,8 @@ enum DevInfoHave : uint8_t {
   DI_NAME_WITHHELD = 64,   // a name was read but is not kept (personal appearance, or it carries "'s ")
   DI_AUTH = 128,           // a read was refused for lack of encryption/authentication (never followed by pairing)
 };
+// In DevInfo.tried (bits 0-5 are DevInfoHave fields): the C5 sent this result before (a cached copy, not a new read; C5 0.47.1).
+constexpr uint8_t DI_TRIED_RESENT = 0x80;
 // What one read-by-type pass found for one BLE device (Reply::DevInfo payload); strings are printable ASCII, NUL-terminated.
 struct DevInfo {
   uint8_t  mac[6];
