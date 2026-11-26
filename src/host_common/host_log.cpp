@@ -912,8 +912,11 @@ void logDevInfoEvents() {
     if (d.have & DI_AUTH)         lnAppend(ln, n, ",\"auth\":1");
     // The same values already logged in an earlier file (New Session / a new file): a copy, not a new read. re:1 + the
     // read's age in s, so readers don't count it as a read (agreed with scan-analyzer 2026-11-25).
-    if (e->loggedFile && e->loggedFile != fid && e->loggedHash == h)
-      lnAppend(ln, n, ",\"re\":1,\"age\":%lu", (unsigned long)((millis() - e->readMs) / 1000));
+    // Or the C5 says it is a cached copy this host never saw being read (e.g. after a host reboot): re:1, age unknown.
+    if ((e->loggedFile && e->loggedFile != fid && e->loggedHash == h) || !e->readMs) {
+      lnAppend(ln, n, ",\"re\":1");
+      if (e->readMs) lnAppend(ln, n, ",\"age\":%lu", (unsigned long)((millis() - e->readMs) / 1000));
+    }
     if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
       lnAppend(ln, n, "}\n");
       if (!f) f = SD.open(st.path, FILE_APPEND);

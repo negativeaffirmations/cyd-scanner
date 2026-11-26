@@ -99,7 +99,7 @@ order: name, appearance, maker, model, firmware, hardware; a name skipped for pr
 right after `at`. The full order is
 `…"evt":"devinfo","src":"BLE","mac","at","rssi":N,"rd":"…"[,"name"][,"app"][,"mfr"][,"model"][,"fw"][,"hw"][,"nw":1][,"auth":1][,"re":1,"age":S]`.
 A line copied into a new log file (New Session, a new file) with values already logged in an earlier file carries
-`"re":1` and `"age"` (seconds since the read, fw 0.47.1): a copy, not a new read.
+`"re":1` and `"age"` (seconds since the read, fw 0.47.1): a copy, not a new read. A result the C5 flags as already sent (`DI_TRIED_RESENT`, e.g. after a host reboot) is also logged `"re":1`, without `age` (fw 0.47.2).
 
 Detection rows: `name` is still an advertised name; `"nc":1` marks one filled in from an earlier advert of the same device; readers join on `mac`. Phone CMD `C:<0|1>` turns the
 reads on or off (NVS `cydui/gattrd`, default on; serial `gatt on|off`); STATUS part 3 `gatt=<0|1>`. DETS v11 appends `nsrc` to each row: `g` when the shown name came from a GATT read (the name, or "maker model"),

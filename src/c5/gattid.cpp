@@ -593,7 +593,9 @@ int collect(const Detection* live, int nLive, DevInfo* out, int max) {
     for (int k = 0; k < nLive; k++)
       if (live[k].source == (uint8_t)Source::BleScan && macEq(live[k].mac, c.di.mac)) { present = true; break; }
     if (!present) continue;
-    out[n++] = c.di;
+    out[n] = c.di;
+    if (c.sentCnt) out[n].tried |= DI_TRIED_RESENT;   // a copy: the host must not log it as a new read
+    n++;
     if (c.sentCnt < 255) c.sentCnt++;
     c.lastSent = now;
   }
