@@ -1434,16 +1434,33 @@ void transferFile(const char* path) {
 // file (or one that has waited LIVE_TURN_MS: the smaller file starved, fw 0.45.2), at least LIVE_GAP_MS between calls; a refused notify ends the call, leaving room for DETS / STATUS. Each file's
 // size is looked up at most every LIVE_CHECK_MS; the card is only searched (rename) when the file can't be opened, and
 // a file that stays missing for LIVE_MISS_MAX checks is dropped (the phone notices the silence and re-subscribes).
-struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs, servedMs; uint8_t miss; };
+struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs, servedMs; uint8_t miss; uint32_t raOff, raLen; };
 uint32_t g_loopMs[LP_N];
 static LiveSub g_live[2];
 static int g_liveN = 0, g_liveNext = 0;
 static uint32_t g_liveEpoch = 0, g_liveSendMs = 0;
-static constexpr uint32_t LIVE_GAP_MS = 30, LIVE_CHECK_MS = 250;
+// LIVE_CHECK_MS: a size check is a file open (~30-40 ms in a long /logs folder); 250 ms cost ~1/3 of the loop with
+// two files (2026-11-26). 2 s adds at most 2 s to a push the phone posts every ~20 s.
+static constexpr uint32_t LIVE_GAP_MS = 30, LIVE_CHECK_MS = 2000;
+#if CONFIG_IDF_TARGET_ESP32S3
+static constexpr uint32_t LIVE_RA = 4096;   // read-ahead per subscribed file (heap, made on the first push)
+#else
+static constexpr uint32_t LIVE_RA = 2048;   // the CYD's heap is tight beside the phone link
+#endif
+static uint8_t* g_liveRa[2] = { nullptr, nullptr };
+static bool g_liveOld = false;       // serial `live ra off`: the 0.47.2 behaviour (no read-ahead, 250 ms size checks), bench A/B
+static uint8_t* liveRaBuf(int i) {   // nullptr when the heap can't spare it: the push then reads frame by frame
+  if (i < 0 || i >= 2 || g_liveOld) return nullptr;
+  if (!g_liveRa[i]) g_liveRa[i] = (uint8_t*)malloc(LIVE_RA);
+  return g_liveRa[i];
+}
 static constexpr uint32_t LIVE_BUDGET_MS = 60, LIVE_FRAME_MS = 8;   // per call / between frames (as xferService)
 static constexpr uint32_t LIVE_TURN_MS = 1000, LIVE_STAT_MS = 10000;
 static constexpr uint8_t LIVE_MISS_MAX = 40;   // ~10 s
 static struct { uint32_t bytes, frames, refused, calls, maxGap, lastCall, t0; } g_lst;   // since the last stats frame
+// Bench profile of the push (serial): where a call's time goes, since the last stats frame. Serial only.
+static struct { uint32_t open, read, notify, sleep, size, sends, maxCall; } g_lprof;
+static uint32_t g_liveHoldDbg = 0;   // serial `live hold <s>`: no push until then (builds a backlog on the bench)
 
 static void liveReply(const char* s) { phone::logNotify((const uint8_t*)s, strlen(s)); }
 
@@ -1474,6 +1491,7 @@ void liveSubscribe(const char* arg) {
     tmp[n].checkMs = millis();
     tmp[n].miss = 0;
     tmp[n].servedMs = millis();
+    tmp[n].raOff = tmp[n].raLen = 0;
     n++;
   }
   char h[24];
@@ -1532,6 +1550,10 @@ static void liveStats(uint32_t now) {
     return;
   }
   Serial.printf("[CYD] live log stats %s\n", m + 4);
+  Serial.printf("[CYD] live prof open=%u read=%u notify=%u sleep=%u size=%u sends=%u maxCall=%u (ms)\n", (unsigned)g_lprof.open,
+                (unsigned)g_lprof.read, (unsigned)g_lprof.notify, (unsigned)g_lprof.sleep, (unsigned)g_lprof.size, (unsigned)g_lprof.sends,
+                (unsigned)g_lprof.maxCall);
+  memset(&g_lprof, 0, sizeof(g_lprof));
   memset(g_loopMs, 0, sizeof(g_loopMs));
   g_lst.bytes = g_lst.frames = g_lst.refused = g_lst.calls = g_lst.maxGap = 0;
   g_lst.t0 = now;
@@ -1543,6 +1565,8 @@ void liveService() {
   const uint32_t now = millis();
   if ((int32_t)(g_liveHoldUntil - now) > 0) return;               // a short raw send: the phone still expects file bytes
   if (now - g_liveSendMs < LIVE_GAP_MS) return;
+  if (g_liveHoldDbg && (int32_t)(g_liveHoldDbg - now) > 0) return;
+  g_liveHoldDbg = 0;
   g_lst.calls++;
   if (now - g_lst.lastCall > g_lst.maxGap) g_lst.maxGap = now - g_lst.lastCall;
   g_lst.lastCall = now;
@@ -1550,7 +1574,7 @@ void liveService() {
   // Refresh the sizes that are due (open + size + close; a FAT read handle doesn't see later appends).
   for (int i = 0; i < g_liveN; i++) {
     LiveSub& s = g_live[i];
-    if (s.off < s.size || now - s.checkMs < LIVE_CHECK_MS) continue;
+    if (s.off < s.size || now - s.checkMs < (g_liveOld ? 250u : LIVE_CHECK_MS)) continue;
     s.checkMs = now;
     File f = liveOpen(s);
     if (!f) {
@@ -1558,6 +1582,7 @@ void liveService() {
         Serial.printf("[CYD] live log: %s gone, dropped\n", s.path);
         for (int k = i; k + 1 < g_liveN; k++) g_live[k] = g_live[k + 1];
         g_liveN--; i--;
+        for (int k = 0; k < g_liveN; k++) g_live[k].raLen = 0;   // the read-ahead buffers belong to slots, not files
       }
       continue;
     }
@@ -1565,6 +1590,7 @@ void liveService() {
     s.size = f.size();
     f.close();
   }
+  g_lprof.size += millis() - now;
   // The file with the most bytes waiting (a busy drive's fleet file grows several times faster than the own file), as
   // many frames as fit in the budget from ONE open: one frame per pass fell minutes behind (2026-11-24 drive).
   int best = -1;
@@ -1577,9 +1603,15 @@ void liveService() {
     if (g_live[i].off < g_live[i].size && now - g_live[i].servedMs >= LIVE_TURN_MS && now - g_live[i].servedMs > now - g_live[best].servedMs) best = i;
   g_liveNext = (best + 1) % g_liveN;                              // ties alternate
   LiveSub& s = g_live[best];
-  File f = liveOpen(s);
-  if (!f) return;
-  if (!f.seek(s.off)) { f.close(); s.size = s.off; return; }      // re-check the size next time
+  const uint32_t t0 = millis();                                   // the frame budget starts here (size checks excluded)
+  uint32_t tp = t0;
+  // Read-ahead (fw 0.47.3): one open of a file in a long /logs folder took ~30-40 ms on the 2026-11-26 drive, most of
+  // the 60 ms budget, so the push managed ~2 frames per call (~2.8 KB/s). The bytes are read LIVE_RA at a time into
+  // RAM and sent from there over the following calls; a log file is append-only, so buffered bytes never go stale.
+  uint8_t* ra = liveRaBuf(best);
+  const uint32_t raCap = ra ? LIVE_RA : 0;
+  File f;
+  bool opened = false;
   uint8_t buf[512];
   for (;;) {
     size_t chunk = phone::logChunkMax();
@@ -1588,19 +1620,75 @@ void liveService() {
     if (hn <= 0 || (size_t)hn + 16 > chunk) break;
     size_t want = chunk - (size_t)hn;
     if (want > s.size - s.off) want = s.size - s.off;
-    int got = f.read(buf + hn, want);
-    if (got <= 0) { s.size = s.off; break; }
+    int got = 0;
+    if (!(s.raLen && s.off >= s.raOff && s.off < s.raOff + s.raLen) && !opened) {   // not buffered: open (once per call) at s.off
+      tp = millis();
+      f = liveOpen(s);
+      opened = true;
+      if (!f) break;
+      if (!f.seek(s.off)) { f.close(); s.size = s.off; break; }  // re-check the size next time
+      s.raLen = 0;
+      g_lprof.open += millis() - tp;
+      if (ra) {
+        uint32_t n = s.size - s.off;
+        if (n > raCap) n = raCap;
+        tp = millis();
+        const int r = f.read(ra, n);
+        g_lprof.read += millis() - tp;
+        if (r <= 0) { f.close(); s.size = s.off; break; }
+        s.raOff = s.off;
+        s.raLen = (uint32_t)r;
+        f.close();                                                // everything this call can send is in RAM now
+      }
+    }
+    if (s.raLen && s.off >= s.raOff && s.off < s.raOff + s.raLen) {
+      const uint32_t have = s.raOff + s.raLen - s.off;
+      if (want > have) want = have;
+      memcpy(buf + hn, ra + (s.off - s.raOff), want);
+      got = (int)want;
+    } else if (f) {                                               // no read-ahead buffer (allocation failed): read per frame
+      tp = millis();
+      got = f.read(buf + hn, want);
+      g_lprof.read += millis() - tp;
+    } else {
+      break;                                                      // the next frame needs a second open: leave it to the next call
+    }
+    if (got <= 0) { s.size = s.off; s.raLen = 0; break; }
     g_liveSendMs = millis();
-    if (!phone::logNotify(buf, (size_t)hn + (size_t)got)) { g_lst.refused++; break; }   // notify buffer full: the same bytes next pass
+    tp = g_liveSendMs;
+    const bool sent = phone::logNotify(buf, (size_t)hn + (size_t)got);
+    g_lprof.notify += millis() - tp;
+    g_lprof.sends++;
+    if (!sent) { g_lst.refused++; break; }   // notify buffer full: the same bytes next pass
     s.off += (uint32_t)got;
     s.servedMs = millis();
     g_lst.bytes += (uint32_t)got;
     g_lst.frames++;
-    if (s.off >= s.size || millis() - now >= LIVE_BUDGET_MS) break;
+    if (s.off >= s.size || millis() - t0 >= LIVE_BUDGET_MS) break;
+    tp = millis();
     delay(LIVE_FRAME_MS);
+    g_lprof.sleep += millis() - tp;
   }
-  f.close();
+  if (f) f.close();
   g_loopMs[LP_LIVE] += millis() - now;
+  if (millis() - now > g_lprof.maxCall) g_lprof.maxCall = millis() - now;
+}
+
+// Bench console: `live` (state), `live hold <s>` (pause <= 50 s to build a backlog), `live rewind <bytes>` (re-send the
+// last bytes of every file: the phone drops what it already has, so this replays a backlog), `live ra on|off` (A/B).
+void liveDebug(const char* a) {
+  if (!strncmp(a, "hold ", 5)) { const int sec = atoi(a + 5); g_liveHoldDbg = millis() + (uint32_t)(sec > 0 && sec <= 50 ? sec : 30) * 1000u; }
+  if (!strncmp(a, "rewind ", 7)) {
+    const uint32_t b = (uint32_t)strtoul(a + 7, nullptr, 10);
+    for (int i = 0; i < g_liveN; i++) { g_live[i].off = g_live[i].off > b ? g_live[i].off - b : 0; g_live[i].raLen = 0; }
+  }
+  if (!strcmp(a, "ra off")) g_liveOld = true;
+  if (!strcmp(a, "ra on"))  g_liveOld = false;
+  if (g_liveOld) for (int i = 0; i < g_liveN; i++) g_live[i].raLen = 0;
+  Serial.printf("[live] read-ahead %s%s;", g_liveOld ? "OFF (0.47.2 behaviour)" : "on", g_liveRa[0] || g_liveRa[1] ? "" : " (no buffer yet)");
+  Serial.printf("[live] %d file(s)", g_liveN);
+  for (int i = 0; i < g_liveN; i++) Serial.printf("  %s sent %u of %u", g_live[i].fid, (unsigned)g_live[i].off, (unsigned)g_live[i].size);
+  Serial.printf("%s\n", g_liveHoldDbg ? "  (held)" : "");
 }
 
 

@@ -1,6 +1,22 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-25 (late): GATT identification shipped (hosts 0.47.1, C5s 0.47.0)
+## RESUME HERE - 2026-11-26: drive 7 analysed; live push 3.5x faster (fw 0.47.3 on all 3 hosts); web Disconnect button
+- **Drive 7 (11:21-12:20, live upload, server-checked by scan-analyzer):** nothing lost (orows continuous, .cflo added 0 rows), no alerts,
+  Ring 27 / Wyze 8 / Reolink 3 / Nest 2 / Tile 1 likely, Find My 287 suspect, no Flock/ALPR/Axon. Live data fell ~5.5 min behind 11:26-11:46
+  (waiting on the leader up to 184 KB own + 490 KB fleet); push ~2.8 KB/s vs ~4 KB/s produced. DETS rows stop once loglines starts (by design).
+- **Cause (bench profile, serial `live`):** every `SD.open` of a log in the long /logs folder takes ~30-40 ms. The push opened each file 4x/s just
+  to check sizes (~1/3 of the loop idle) and once per call before sending (most of the 60 ms budget -> ~2 frames per call).
+- **fw 0.47.3 (SOPAFE COM15, BEMOPU COM10, ZUDIMU COM17 flashed; C5s unchanged):** read-ahead 4 KB (CYD 2 KB) per open, size checks every 2 s.
+  Bench A/B in one build (`live ra off` = old): old 2.0-2.4 KB/s, new ~8-9 KB/s (65 KB backlog in < 9 s); one refused notify, so BLE is near
+  its limit now. Console: `live`, `live hold <s>`, `live rewind <bytes>` (phone drops what it has), `live ra on|off`; "[CYD] live prof" line.
+- **Web `20261126a`:** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
+  had no in-app way to disconnect (only the notification button).
+- **Open:** a 3.5 s loop stall every ~10 min (seen as push gap=3.5 s; likely `enforceLogCap` listing /logs, same slow-folder cause; also
+  stalls scanning); devinfo 0 lines on the drive (check the C5 `gatt stat` on SOPAFE: driving makes reads unlikely, but unconfirmed); an 8 s
+  push gap when the app came to the foreground at 12:05; 488 own rows without lat (before the phone connected?).
+- **Next drive:** confirm live lag stays under ~30 s on a busy stretch.
+
+## 2026-11-25 (late, superseded above): GATT identification shipped (hosts 0.47.1, C5s 0.47.0)
 - **Scope widened by the owner** (CLAUDE.md scope bullet): brief read-only GATT identification reads. Design + as built:
   docs/gatt-identify.md (C5 src/c5/gattid.*, host src/host_common/devinfo.*). Security + code reviews done, all findings fixed.
 - **Bench:** SOPAFE (fleet BLE role) read 11 devices in ~5 min (9 "C by GE" bulbs mfr GE fw V1.x, an Anker SOLIX C300, an HP

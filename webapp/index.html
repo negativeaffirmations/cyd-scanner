@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261125g">
+<link rel="stylesheet" href="style.css?v=20261126a">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -73,7 +73,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-25g&nbsp;·&nbsp;device&nbsp;info</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-26a&nbsp;·&nbsp;disconnect</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -313,6 +313,7 @@
         <strong class="cardhdr">Scanners</strong>
         <div class="sub" style="margin:.4em 0">Switch to another scanner without reloading the page, or add one. Logs, counts and lists from the previous scanner are cleared.</div>
         <button id="switchOpenBtn" class="secondary">Switch scanner&hellip;</button>
+        <button id="disconnectBtn" class="secondary" style="margin-top:8px" disabled>Disconnect</button>
       </div>
 
       <!-- Scanner keys (BLE phone-link auth, docs/ble-auth.md): per-scanner keys held in this browser as
@@ -723,6 +724,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261125g"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261126a"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

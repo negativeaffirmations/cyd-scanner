@@ -96,6 +96,7 @@ export function renderStatusInfo(){
       '<div class="sistat ' + tone + '">' + esc(txt) + '</div>' +
       '<div class="sidesc">' + esc(r.desc) + '</div>' +
       (r.id === "conn" && !live ? '<button id="siConnect" class="sibtn">Connect</button>' : "") +
+      (r.id === "conn" && live ? '<button id="siDisconnect" class="sibtn secondary">Disconnect</button>' : "") +
       '</div></div>';
   }).join("");
 }
