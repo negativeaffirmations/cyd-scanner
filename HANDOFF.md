@@ -9,7 +9,7 @@
 - **fw 0.47.3 (SOPAFE COM15, BEMOPU COM10, ZUDIMU COM17 flashed; C5s unchanged):** read-ahead 4 KB (CYD 2 KB) per open, size checks every 2 s.
   Bench A/B in one build (`live ra off` = old): old 2.0-2.4 KB/s, new ~8-9 KB/s (65 KB backlog in < 9 s); one refused notify, so BLE is near
   its limit now. Console: `live`, `live hold <s>`, `live rewind <bytes>` (phone drops what it has), `live ra on|off`; "[CYD] live prof" line.
-- **Web `20261126a`:** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
+- **Web `20261126a` + app build 29 (main `669cb1e`, installed on the owner phone over adb + checked: popup button disconnects, service stops, no "link lost" note; Settings button enabled while connected):** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
   had no in-app way to disconnect (only the notification button).
 - **Open:** a 3.5 s loop stall every ~10 min (seen as push gap=3.5 s; likely `enforceLogCap` listing /logs, same slow-folder cause; also
   stalls scanning); devinfo 0 lines on the drive (check the C5 `gatt stat` on SOPAFE: driving makes reads unlikely, but unconfirmed); an 8 s
