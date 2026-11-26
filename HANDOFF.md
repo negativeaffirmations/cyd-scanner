@@ -7,6 +7,12 @@
   OfficeJet), server read-back OK (scan-analyzer schema v18 + /devices/{mac}/devinfo). Members (Wi-Fi roles) don't read: by design.
 - 0.47.1: devinfo lines copied into a new file carry re:1 + age. Web 20261125g / build 28: devinfo not a map pin, Settings
   "Identify nearby devices" (C:0/1), maker from the full Bluetooth SIG list in the live list, live-POST nsrc.
+- **0.47.2 (all C5s + hosts, 2026-11-25 ~21:20):** C5 flags cached re-sends (DI_TRIED_RESENT) -> host logs re:1 without age; server
+  check PASSED (reads count only real reads).
+- **OPEN, first thing next session:** owner sees NO GATT names in the app's scan list yet (build 28). Check the chain: DETS `name`
+  = groupName() (does it pick the devinfo name for nameless BLE groups? is the host's devinfo store filled on the leader, incl. for
+  rows merged from members?), DETS `nsrc`, the web live list / device modal (detections.js renderDetList uses r.name; is a MAC-text
+  name being shown instead?). Also show maker/model/fw in the device modal.
 - **Next:** a drive (also tests 0.46.x naming + the stop-then-wait tail). Deauth false alarm to fix: an Espressif client
   sending ~20 reason-8 disassocs to its own Google mesh AP (17:12 + 20:10 at the start spot) trips the alert.
 
