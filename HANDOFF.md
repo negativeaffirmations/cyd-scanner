@@ -12,7 +12,7 @@
 - **Web `20261126a` + app build 29 (main `669cb1e`, installed on the owner phone over adb + checked: popup button disconnects, service stops, no "link lost" note; Settings button enabled while connected):** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
   had no in-app way to disconnect (only the notification button).
 - **Open:** a 3.5 s loop stall every ~10 min (seen as push gap=3.5 s; likely `enforceLogCap` listing /logs, same slow-folder cause; also
-  stalls scanning); devinfo 0 lines on the drive (check the C5 `gatt stat` on SOPAFE: driving makes reads unlikely, but unconfirmed); an 8 s
+  stalls scanning); devinfo 0 lines on the drive is EXPLAINED (C5 `gatt stat` 11/11 OK = the bench devices, already logged once per file; nothing readable from the car); an 8 s
   push gap when the app came to the foreground at 12:05; 488 own rows without lat (before the phone connected?).
 - **Next drive:** confirm live lag stays under ~30 s on a busy stretch.
 
