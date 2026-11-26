@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261125f">
+<link rel="stylesheet" href="style.css?v=20261125g">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -73,7 +73,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-25f&nbsp;·&nbsp;short&nbsp;files</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-25g&nbsp;·&nbsp;device&nbsp;info</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -269,6 +269,13 @@
           <button id="dtoOffCancel" class="secondary">Cancel</button>
         </div>
         <div class="sub" id="dtoCustomErr" style="color:#f85149" hidden></div>
+      </div>
+
+      <!-- Device identification (fw >= 0.47.0: CMD "C:<0|1>", saved on the scanner; shown once STATUS reports gatt=) -->
+      <div class="card" id="gattCard" style="margin-top:12px; display:none">
+        <strong class="cardhdr">Identify nearby devices</strong>
+        <div class="sub" style="margin:.3em 0 .4em">The scanner briefly connects to nearby Bluetooth devices that allow it and reads their name, maker and model (read only, about once a day per device). Phones, watches, medical devices and whitelisted devices are skipped.</div>
+        <label class="k"><input type="checkbox" id="gattOn" disabled> Read device names and models</label>
       </div>
 
       <!-- Status LED (mini RGB build, CMD "I:<pct>", saved on the scanner; shown once STATUS reports led>=0) -->
@@ -716,6 +723,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261125f"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261125g"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

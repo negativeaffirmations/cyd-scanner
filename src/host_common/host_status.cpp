@@ -9,6 +9,7 @@
 #include "webshare.h"
 #include "whitelist.h"
 #include "fleet.h"
+#include "devinfo.h"
 
 void pushStatus() {
   if (!phone::authed()) return;   // setStatus() only reaches an authenticated phone: skip the build (heap churn on fleet clients)
@@ -94,7 +95,9 @@ void pushStatus() {
   { char s3[64]; const LogStream& as = activeStream();
     int n3 = snprintf(s3, sizeof(s3), "sfid=%s;sst=%s", ownFileId(), as.start);
     if (g_fleetLog.started && n3 > 0 && n3 < (int)sizeof(s3))   // fw 0.46.1: the leader's live fleet file (the phone relists on a change)
-      snprintf(s3 + n3, sizeof(s3) - n3, ";ffid=%s", g_fleetLog.fileId);
+      n3 += snprintf(s3 + n3, sizeof(s3) - n3, ";ffid=%s", g_fleetLog.fileId);
+    if (n3 > 0 && n3 + 8 < (int)sizeof(s3))   // gatt = GATT identification reads on/off (web Settings)
+      snprintf(s3 + n3, sizeof(s3) - n3, ";gatt=%d", devinfo::enabled() ? 1 : 0);
     phone::setStatus(String(s3)); }
   hostui::onStatusPushed();
 }
@@ -120,6 +123,9 @@ void pushStatus() {
 // primary BLE service UUID — 4-hex short form when it is a Bluetooth-base 16-bit UUID, else 32 hex
 // (empty = none) — and <sig> the strongest-scoring member's detLabel (the file log's "sig").
 // Worst-case row stays under the ~252 B notify cap (sig <= 19 chars, LABEL_LEN).
+// v9 (fleet P5) appends <via>, v10 the per-unit RSSI list. v11 (fw 0.47.0) appends <nsrc>: where the shown name came
+// from, "g" = a GATT identification read (name or "<maker> <model>"), "c" = the C5's advert-name cache (the advert
+// itself carried none), empty = the device's own advert or the vendor / MAC fallback.
 // v6 appends a trailing RID block AFTER the n detection rows, only while a Remote-ID emitter is
 // held: an "R:<ridCount>" header then ridCount rows of 11 tab-separated fields (always 11 columns,
 // unknown = empty): mac uas dlat dlon olat olon h alt spd hdg oid (lat/lon %.6f deg, h/alt m,
@@ -215,7 +221,10 @@ void pushDetections() {
         pn += w;
       }
     }
-    snprintf(row + len, sizeof(row) - len, "\t%s", per);
+    len += snprintf(row + len, sizeof(row) - len, "\t%s", per);
+    if (len < 0 || len >= (int)sizeof(row)) len = sizeof(row) - 1;
+    { const char ns = groupNameSrc(&g);   // v11 trailing: name provenance
+      snprintf(row + len, sizeof(row) - len, "\t%s", ns == 'g' ? "g" : ns == 'c' ? "c" : ""); }
     phone::detsNotify(String(row));
     delay(6);  // let the BLE stack drain each notification
   }

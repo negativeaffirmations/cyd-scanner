@@ -111,6 +111,7 @@ export function parseScanEvents(text){
     if(o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync[o.ofile||""]={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }  // anchor, not a map pin
     if(o.evt==="meta") continue;   // scan-provenance anchor (scanner_id/fw/db_gen) — server-side only, not a map pin
     if(o.evt==="lastseen") continue;   // per-device departure line (presence/dwell) — server-side only, not a map pin
+    if(o.evt==="devinfo") continue;    // fw 0.47.0: GATT identification of a device (name / maker / model) — not a map pin
     const ev={evt:String(o.evt), count:parseInt(o.count,10)||0, epoch:parseInt(o.epoch,10)||0,
       ms:parseInt(o.ms,10)||0, lat:o.lat==null?NaN:parseFloat(o.lat), lon:o.lon==null?NaN:parseFloat(o.lon),
       ofile:o.ofile==null?"":String(o.ofile)};

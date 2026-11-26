@@ -108,7 +108,8 @@ export function onDets(ev){
                       uuid: p.length>14 ? (p[14]||"") : "",     // DETS v8: primary service UUID (4 or 32 hex)
                       sig: p.length>15 ? (p[15]||"") : "",      // DETS v8: sigdb/flag label (live-POST `sig`)
                       via: p.length>16 ? (+p[16]||1) : 1,       // DETS v9: fleet "seen by" mask (1 = this scanner only)
-                      units: p.length>17 ? unitRssi(p[17]) : null});  // DETS v10: {viaBit: that unit's own RSSI}, fleet rows only
+                      units: p.length>17 ? unitRssi(p[17]) : null,   // DETS v10: {viaBit: that unit's own RSSI}, fleet rows only
+                      nsrc: p.length>18 ? (p[18]||"") : ""});  // DETS v11 (fw 0.47.0): name source g = GATT read, c = C5 name cache, "" = advertised
   if (detState.expect && detState.rows.length >= detState.expect) {
     renderDets(detState.rows); detState.rendered = true; emptyStreak = 0;  // atomic full replace
   }
@@ -139,7 +140,10 @@ export function renderDetList(el, rows, opts){
       `<span class="via v${u.k}" title="Seen by ${esc(u.name)}">${esc(u.letter)}</span>`).join("") + `</span>` : "";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
     const extra = [esc(r.mac || "")];
-    if (!viewer && r.cid) extra.push(`<span class="mk">${esc(r.cid)}</span>`);  // BLE company maker, in addition to the MAC
+    // BLE company maker, in addition to the MAC: the scanner's label, else the full Bluetooth SIG list (analysis/vendors.js,
+    // loaded on first use; the live list repaints every cycle, so it shows up once the list has arrived).
+    const mk = r.cid || (!viewer && r.cidHex && !/^0+$/.test(r.cidHex) && state.vendors ? state.vendors.companyFor(r.cidHex) || "" : "");
+    if (!viewer && mk) extra.push(`<span class="mk">${esc(mk)}</span>`);
     if (viewer && r.channel) extra.push("ch"+esc(r.channel));
     if (viewer) extra.push(fmtTimecode(r));
     return `<div class="detrow clk ${sc}${muted?" muted":""}${ft===2?" following":""}" data-ri="${ri}">`+

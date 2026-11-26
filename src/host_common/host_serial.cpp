@@ -3,6 +3,8 @@
 #include "host_serial.h"
 #include "devkey.h"
 #include "host_log.h"  // scannerIdHex(), scannerName(), FW_VERSION
+#include "devinfo.h"
+#include "host_status.h"
 #include "phone.h"
 #include "fleet.h"
 #include "host_board.h"
@@ -29,6 +31,7 @@ void help() {
   Serial.println("[cmd] bonds              phone-link security level, stored bonds, link state");
   Serial.println("[cmd] bonds clear        forget all paired phones (then `bonds confirm` within 15 s)");
   Serial.println("[cmd] download           CYD: restart into the Wi-Fi download (as the web app's Download over Wi-Fi)");
+  Serial.println("[cmd] gatt on|off        GATT identification reads (the C5 connects briefly to read name / maker / model)");
   Serial.println("[cmd] mem                free heap (now, lowest, largest block) and NVS entries used / free");
   Serial.println("[cmd] fleet              fleet status; also: fleet leave | client | leader on|off | ch <1-13> | remac");
 }
@@ -116,6 +119,11 @@ void handle(char* cmd) {
 
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) { help(); return; }
   if (!strcmp(cmd, "download")) { Serial.printf("[download] %s\n", hostboard::downloadBoot()); return; }
+  if (!strcmp(cmd, "gatt") || !strcmp(cmd, "gatt on") || !strcmp(cmd, "gatt off")) {
+    if (cmd[4]) { devinfo::setEnabled(cmd[6] == 'n'); pushStatus(); }
+    Serial.printf("[gatt] identification reads %s (C5 side: its console `gatt stat`)\n", devinfo::enabled() ? "on" : "off");
+    return;
+  }
   if (!strcmp(cmd, "mem")) {
     Serial.printf("[mem] heap free %u, lowest %u, largest block %u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));

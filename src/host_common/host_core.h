@@ -204,6 +204,9 @@ extern int      g_sortIdx[MAX_DET];
 extern DevGroup g_groups[MAX_DET];
 extern int      g_groupCount;
 const char* groupName(const DevGroup* g);
+// Where groupName()'s text came from: 'g' = a GATT read (name, or "<maker> <model>"), 'c' = the C5's advert-name cache
+// (the advert itself had no name), 0 = the device's own advert or the vendor / MAC fallback. DETS `nsrc`.
+char groupNameSrc(const DevGroup* g);
 int  buildGroups();
 Category groupCategory(const DevGroup& g);
 int  countCategories(int cnt[CAT_N], int worstTier[CAT_N], int scoreMax[CAT_N]);

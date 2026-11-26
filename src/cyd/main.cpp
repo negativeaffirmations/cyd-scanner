@@ -36,6 +36,7 @@
 #include "../host_common/host_link.h"
 #include "../host_common/host_core.h"
 #include "../host_common/host_log.h"
+#include "../host_common/devinfo.h"
 #include "../host_common/host_status.h"
 #include "../host_common/host_phone_cmds.h"
 #include "../host_common/host_board.h"
@@ -2651,6 +2652,18 @@ static void buildDeviceDetail(const uint8_t* mac) {
         snprintf(b, sizeof(b), "%.6f", rid->operatorLat / 1e7); addField("Oper lat", b);
         snprintf(b, sizeof(b), "%.6f", rid->operatorLon / 1e7); addField("Oper lon", b);
       }
+    }
+    const DevInfo* gi = devinfo::find(mac);   // GATT identification read (docs/gatt-identify.md)
+    if (gi && (g->srcMask & (1u << 2))) {
+      addField("-- Device --", "", TFT_CYAN);
+      if (gi->have & DI_NAME) addField("GATT name", gi->name);
+      else if (gi->have & DI_NAME_WITHHELD) addField("GATT name", "withheld");
+      if ((gi->have & DI_MFR) && gi->mfr[0]) addField("Maker", gi->mfr);
+      if ((gi->have & DI_MODEL) && gi->model[0]) addField("Model", gi->model);
+      if ((gi->have & DI_FW) && gi->fw[0]) addField("FW", gi->fw);
+      if ((gi->have & DI_HW) && gi->hw[0]) addField("HW", gi->hw);
+      if (gi->have & DI_APPEAR) { snprintf(b, sizeof(b), "%u", (unsigned)gi->appearance); addField("Appearance", b); }
+      if (gi->have & DI_AUTH) addField("Needs pairing", "yes (not read)");
     }
   }
 }

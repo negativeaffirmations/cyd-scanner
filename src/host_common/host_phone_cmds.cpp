@@ -3,6 +3,7 @@
 #include "host_phone_cmds.h"
 #include "host_core.h"
 #include "host_log.h"
+#include "devinfo.h"
 #include "host_status.h"
 #include "host_board.h"
 #include "host_files.h"
@@ -114,6 +115,7 @@ void core::servicePhoneCommands(PhoneCmdFlags& f) {
       if (t != g_timePref || g != g_gpsPref) { g_timePref = t; g_gpsPref = g; saveSrcPrefs(); }  // skip a no-op NVS write
       pushStatus();  // the Settings selects + source icons reflect it right away
     } }
+  { bool on; if (phone::gattReadRequested(&on)) { devinfo::setEnabled(on); pushStatus(); } }   // web-app GATT identification switch (rides the next StartScan)
   if (phone::newSessionRequested()) { startNewSession(); f.newSession = true; }  // web-app "New Session"
   if (!xferBusy()) renameSessionOnSync();  // (waits for a transfer: an export reopens files by path) give each live session a date-time filename once time is known (also syncs the share path)
   syncSharePath();        // the screen context (fg/bg) may have changed

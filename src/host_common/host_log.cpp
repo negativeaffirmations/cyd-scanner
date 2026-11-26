@@ -15,6 +15,7 @@
 #include "fleet.h"
 #include "webshare.h"
 #include "whitelist.h"
+#include "devinfo.h"
 
 // Copy a device-controlled free-text field, replacing delimiter-breaking characters
 // (comma, tab, CR/LF and other control chars) with a space so plain delimiter-split
@@ -557,6 +558,7 @@ int logNewDetections() {
     if (uuidStr[0])  lnAppend(ln, n2, ",\"uuid\":\"%s\"", uuidStr);
     if (panStr[0])   lnAppend(ln, n2, ",\"pan\":\"%s\"", panStr);
     if (safe[0])     lnAppend(ln, n2, ",\"name\":\"%s\"", safe);
+    if (safe[0] && (d.flags & FLAG_BLE_NAME_CACHED)) lnAppend(ln, n2, ",\"nc\":1");   // the C5 filled the name from its advert-name cache
     lnAppend(ln, n2, ",\"score\":%d,\"tier\":\"%s\"", sc.score, sigdb::tierName(sc.tier));
     if (sig[0])      lnAppend(ln, n2, ",\"sig\":\"%s\"", sig);
     if (flagStr[0])  lnAppend(ln, n2, ",\"flags\":\"%s\"", flagStr);
@@ -850,6 +852,77 @@ void logRidEvents() {
     }
     f.close();
   }
+}
+
+// One "devinfo" line per device per log file (keyed by the active stream's file_id), again when its fields change:
+//   {"epoch":..,"ms":..,["lat":..,"lon":..,]"evt":"devinfo","src":"BLE","mac":"..","at":"public|static","rssi":N,
+//    "rd":"n,a,m,o,f,h"[,"name":..][,"app":N][,"mfr":..][,"model":..][,"fw":..][,"hw":..][,"nw":1][,"auth":1]}
+// rd = the fields the C5 attempted (n name, a appearance, m maker, o model, f firmware, h hardware); a name skipped
+// for privacy counts as attempted, with nw:1. Strings are printable ASCII, at most 31/23/23/15/15 chars (struct size - NUL).
+// Only this unit's own C5 results (requestScan fills devinfo from its own link).
+void logDevInfoEvents() {
+  const int cap = devinfo::capacity();
+  if (!cap) return;
+  LogStream& st = activeStream();
+  makeFileId(st);
+  const uint32_t fid = (uint32_t)strtoul(st.fileId, nullptr, 16);
+  static uint32_t lastFid = 0;
+  if (fid != lastFid) {                                // a new log file (session / stream switch): name every device heard now again
+    lastFid = fid;
+    for (int k = 0; k < g_detCount; k++) {
+      if (g_dets[k].source != (uint8_t)Source::BleScan || !(g_detVia[k] & 1)) continue;
+      for (int i = 0; i < cap; i++) { devinfo::Entry* e = devinfo::entryAt(i); if (e && !memcmp(e->di.mac, g_dets[k].mac, 6)) e->pending = true; }
+    }
+  }
+  int todo = 0;
+  for (int i = 0; i < cap; i++) { devinfo::Entry* e = devinfo::entryAt(i); if (e && e->pending) todo++; }
+  if (!todo) return;
+  if (bgCtx() && !st.path[0]) openBgSession();
+  if (!g_sdOk || !ensureLogFile(st)) return;
+  File f;
+  for (int i = 0; i < cap; i++) {
+    devinfo::Entry* e = devinfo::entryAt(i);
+    if (!e || !e->pending) continue;
+    const link_protocol::DevInfo& d = e->di;
+    const uint32_t h = devinfo::fieldHash(d);
+    if (e->loggedFile == fid && e->loggedHash == h) { e->pending = false; continue; }
+    char name[64], mfr[48], model[48], fw[32], hw[32];
+    jsonEscape(name, sizeof(name), (d.have & DI_NAME) ? d.name : "");
+    jsonEscape(mfr, sizeof(mfr), (d.have & DI_MFR) ? d.mfr : "");
+    jsonEscape(model, sizeof(model), (d.have & DI_MODEL) ? d.model : "");
+    jsonEscape(fw, sizeof(fw), (d.have & DI_FW) ? d.fw : "");
+    jsonEscape(hw, sizeof(hw), (d.have & DI_HW) ? d.hw : "");
+    char rd[16]; int rn = 0;
+    static const struct { uint8_t bit; char c; } kRd[] = {{DI_NAME, 'n'}, {DI_APPEAR, 'a'}, {DI_MFR, 'm'}, {DI_MODEL, 'o'}, {DI_FW, 'f'}, {DI_HW, 'h'}};
+    for (const auto& r : kRd) if (d.tried & r.bit) rn += snprintf(rd + rn, sizeof(rd) - rn, "%s%c", rn ? "," : "", r.c);
+    rd[rn] = 0;
+    char ln[LOG_LINE];
+    int n = 0;
+    lnAppend(ln, n, "{\"epoch\":%lu,\"ms\":%lu", (unsigned long)epochLocal(), (unsigned long)millis());
+    appendPos(ln, n);
+    lnAppend(ln, n, ",\"evt\":\"devinfo\",\"src\":\"BLE\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\",\"at\":\"%s\",\"rssi\":%d,\"rd\":\"%s\"",
+             d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5], d.addrType ? "static" : "public", (int)d.rssi, rd);
+    if (name[0])  lnAppend(ln, n, ",\"name\":\"%s\"", name);
+    if (d.have & DI_APPEAR) lnAppend(ln, n, ",\"app\":%u", (unsigned)d.appearance);
+    if (mfr[0])   lnAppend(ln, n, ",\"mfr\":\"%s\"", mfr);
+    if (model[0]) lnAppend(ln, n, ",\"model\":\"%s\"", model);
+    if (fw[0])    lnAppend(ln, n, ",\"fw\":\"%s\"", fw);
+    if (hw[0])    lnAppend(ln, n, ",\"hw\":\"%s\"", hw);
+    if (d.have & DI_NAME_WITHHELD) lnAppend(ln, n, ",\"nw\":1");
+    if (d.have & DI_AUTH)         lnAppend(ln, n, ",\"auth\":1");
+    // The same values already logged in an earlier file (New Session / a new file): a copy, not a new read. re:1 + the
+    // read's age in s, so readers don't count it as a read (agreed with scan-analyzer 2026-11-25).
+    if (e->loggedFile && e->loggedFile != fid && e->loggedHash == h)
+      lnAppend(ln, n, ",\"re\":1,\"age\":%lu", (unsigned long)((millis() - e->readMs) / 1000));
+    if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
+      lnAppend(ln, n, "}\n");
+      if (!f) f = SD.open(st.path, FILE_APPEND);
+      if (!f) return;               // stays pending: tried again next cycle
+      if (n <= (int)LOG_LINE && f.write((const uint8_t*)ln, n) != (size_t)n) continue;
+    }
+    e->loggedFile = fid; e->loggedHash = h; e->pending = false;
+  }
+  if (f) f.close();
 }
 
 // Log one "follow" event line per device currently FOLLOWING (ftier 2), rate-limited per MAC to once

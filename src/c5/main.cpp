@@ -20,6 +20,7 @@
 #include "ieee154.h"
 #include "remoteid.h"
 #include "gps.h"
+#include "gattid.h"
 
 using namespace link_protocol;
 
@@ -93,7 +94,7 @@ static volatile WifiPhase g_phase = PH_SCAN;
 // stretched the dual-band AP scan from ~12 s to ~28.5 s. BLE then gets the inter-scan gap to itself instead
 // (g_bleWinMs, see pauseBleForAp()). g_apBleHold is set only while such an AP scan runs.
 static volatile bool g_apBleHold = false;
-static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_PROMISC5 || g_phase == PH_154 || g_apBleHold; }
+static inline bool blePaused() { return g_phase == PH_PROMISC || g_phase == PH_PROMISC5 || g_phase == PH_154 || g_apBleHold || gattid::holdsRadio(); }
 
 // Active scan-source mask (SourceMask bits), set by the CYD's StartScan payload.
 // Disabled sources are only skipped/dropped here - never transmitted around.
@@ -105,6 +106,8 @@ static ScanPlan g_plan = {};
 static volatile uint8_t g_planPhases = 0;   // copy of g_plan.phases: the only plan field the NimBLE task reads
 static inline bool planAllows(uint8_t bits) { const uint8_t p = g_planPhases; return !(p & PLAN_VALID) || (p & bits); }
 static inline bool bleWanted() { return (g_srcMask & MASK_BLE) && planAllows(PLAN_BLE); }
+
+// (A GATT identification slot, gattid::holdsRadio(), also keeps the BLE scan stopped: it needs the radio for its connection.)
 
 // Pause BLE for the AP scan only in the legacy full time-slice: a fleet BLE role keeps BLE alongside its AP scan (BLE is
 // that unit's job) and the Wi-Fi roles have BLE off anyway. USB console `blepause on|off`, `blewin <ms>` (A/B testing;
@@ -146,6 +149,10 @@ static void mergeDetection(const Detection& d) {
       // Don't lose identifying info a later, sparser advertisement might omit.
       uint32_t keepIe  = d.ie_hash ? d.ie_hash : g_table[i].d.ie_hash;
       uint16_t keepFl  = d.flags | g_table[i].d.flags;                  // flags are sticky
+      // FLAG_BLE_NAME_CACHED is the exception: it describes the name currently held, so a real advertised name clears it,
+      // and a cache fill never overrides a real name already held.
+      const bool keepPrevName = (d.flags & FLAG_BLE_NAME_CACHED) && g_table[i].d.name[0] && !(g_table[i].d.flags & FLAG_BLE_NAME_CACHED);
+      if (keepPrevName || (d.name[0] && !(d.flags & FLAG_BLE_NAME_CACHED))) keepFl &= ~FLAG_BLE_NAME_CACHED;
       uint16_t keepCid = d.companyId ? d.companyId : g_table[i].d.companyId;
       uint16_t keepPan = d.panId ? d.panId : g_table[i].d.panId;
       bool     haveSvc = false;
@@ -169,7 +176,7 @@ static void mergeDetection(const Detection& d) {
       // Keep a previously-captured name when this (often nameless ADV_IND) packet omits it:
       // the complete local name usually rides only in the scan response, so otherwise an
       // interleaved nameless advert clobbers it and the device streams out as <hidden>.
-      if (!d.name[0] && prev.name[0]) strncpy(g_table[i].d.name, prev.name, sizeof(g_table[i].d.name) - 1);
+      if ((!d.name[0] || keepPrevName) && prev.name[0]) strncpy(g_table[i].d.name, prev.name, sizeof(g_table[i].d.name) - 1);
       g_table[i].lastSeen = millis();
       xSemaphoreGive(g_mux);
       return;
@@ -276,6 +283,28 @@ static void countAggregates(uint8_t& evil, uint8_t& rid) {
   rid  = rd > 255 ? 255 : (uint8_t)rd;
 }
 
+// Last advertised name of each public / random-static BLE address (128 entries, oldest replaced): fills a later advert of
+// the same device that carries none, so its row keeps the name (FLAG_BLE_NAME_CACHED). NimBLE task only. GATT-read names
+// never go in here, nor into Detection.name.
+static constexpr int NAME_CACHE = 128;
+static struct NameEnt { uint8_t mac[6]; char name[32]; } g_nameCache[NAME_CACHE];
+static uint8_t g_nameHead = 0;
+static NameEnt* nameFind(const uint8_t* mac) {
+  for (int i = 0; i < NAME_CACHE; i++) if (g_nameCache[i].name[0] && !memcmp(g_nameCache[i].mac, mac, 6)) return &g_nameCache[i];
+  return nullptr;
+}
+static void nameNote(Detection& d, bool stable) {
+  if (!stable) return;
+  NameEnt* e = nameFind(d.mac);
+  if (d.name[0]) {
+    if (!e) { e = &g_nameCache[g_nameHead]; g_nameHead = (uint8_t)((g_nameHead + 1) % NAME_CACHE); memcpy(e->mac, d.mac, 6); }
+    memcpy(e->name, d.name, sizeof(e->name));
+  } else if (e) {
+    memcpy(d.name, e->name, sizeof(d.name));
+    d.flags |= FLAG_BLE_NAME_CACHED;
+  }
+}
+
 // --- BLE: continuous scan, merging each advertisement into the table ---
 class ScanCB : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* dev) override {
@@ -287,6 +316,8 @@ class ScanCB : public NimBLEScanCallbacks {
     if (sscanf(dev->getAddress().toString().c_str(), "%x:%x:%x:%x:%x:%x",
                &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6)
       for (int i = 0; i < 6; i++) d.mac[i] = (uint8_t)v[i];
+    const bool stable = gattid::stableAddr(dev->getAddressType(), d.mac);
+    gattid::observe(dev, d.mac, d.rssi);
     std::string nm = dev->getName();
     if (!nm.empty()) strncpy(d.name, nm.c_str(), sizeof(d.name) - 1);
 
@@ -334,6 +365,7 @@ class ScanCB : public NimBLEScanCallbacks {
       for (uint8_t k = 0; k < nsvc16; k++) if (d.svc16[k] == v) { dup = true; break; }
       if (!dup) d.svc16[nsvc16++] = v;
     }
+    nameNote(d, stable);
     mergeDetection(d);
   }
   void onScanEnd(const NimBLEScanResults&, int) override {
@@ -519,6 +551,7 @@ static void bleResume() {
 
 // Field diagnostic: one line per AP-scan cycle (cycle length, AP-scan length, BLE scanning time, BLE devices heard).
 static uint32_t g_cycleStart = 0, g_cycleApMs = 0;
+static uint32_t g_cycleCount = 0;   // +1 per cycle, also when the AP scan is off (the GATT budget's "one attempt per cycle")
 static volatile uint32_t g_bleOnMs = 0;   // accumulated in loop() while the BLE scan runs
 static void cycleReport(uint32_t now) {
   if (g_cycleStart) {
@@ -534,11 +567,13 @@ static void cycleReport(uint32_t now) {
       }
     }
     xSemaphoreGive(g_mux);
-    Serial.printf("[C5] cycle %lu ms: ap %lu ms, ble on %lu ms, heard ble=%d ap=%d prb=%d (blepause %s, win %lu)\n",
+    Serial.printf("[C5] cycle %lu ms: ap %lu ms, ble on %lu ms, heard ble=%d ap=%d prb=%d (blepause %s, win %lu) gatt %lu/%lu/%lums\n",
                   (unsigned long)(now - g_cycleStart), (unsigned long)g_cycleApMs, (unsigned long)g_bleOnMs, ble, wifi, prb,
-                  pauseBleForAp() ? "on" : "off", (unsigned long)g_bleWinMs);
+                  pauseBleForAp() ? "on" : "off", (unsigned long)g_bleWinMs,
+                  (unsigned long)gattid::attempts(), (unsigned long)gattid::successes(), (unsigned long)gattid::lastSlotMs());
   }
   g_cycleStart = now; g_cycleApMs = 0; g_bleOnMs = 0;
+  g_cycleCount++;
 }
 
 static void endApScan() {
@@ -554,7 +589,9 @@ static void wifiTick() {
     if (!g_wifiScanning) {
       const uint32_t gap = pauseBleForAp() && g_bleWinMs > g_gapMs ? g_bleWinMs : g_gapMs;
       if (millis() - g_lastWifiDone < gap) return;
+      if (gattid::busy()) return;     // a GATT identification slot is closing its link: the radio is not free yet
       if (!(g_srcMask & (MASK_WIFI24 | MASK_WIFI5)) || !planAllows(PLAN_AP24 | PLAN_AP5)) {  // AP scan disabled / not in the plan
+        g_cycleCount++;
         afterScanPhase();
         return;
       }
@@ -697,6 +734,9 @@ static void streamTable() {
   }
   link_protocol::DeauthInfo di;
   if (promisc::deauthSnapshot(di)) { sendFrame((uint8_t)Reply::Deauth, &di, sizeof(di)); delay(2); }
+  link_protocol::DevInfo diBuf[4];   // GATT identification results for devices still in the table
+  int diCnt = gattid::collect(g_streamBuf, cnt, diBuf, 4);
+  for (int i = 0; i < diCnt; i++) { sendFrame((uint8_t)Reply::DevInfo, &diBuf[i], sizeof(diBuf[i])); delay(2); }
   sendStatus(0, cnt);
   Serial.printf("[C5] streamed %d detections\n", cnt);
   while (LinkSerial.available()) LinkSerial.read();  // drop stale commands
@@ -745,6 +785,7 @@ static void handleFrame(uint8_t type, const uint8_t* payload, uint16_t len) {
         const ScanConfig* c = (const ScanConfig*)payload;
         g_srcMask = c->sources;
         applyPlan(c->plan);
+        gattid::applyHint(len >= sizeof(ScanConfig) + sizeof(GattHint) ? (const GattHint*)(payload + sizeof(ScanConfig)) : nullptr);
         applyBleMask();
       }
       streamTable();
@@ -770,12 +811,15 @@ static void randomizeWifiMac() {
   }
   if (e != ESP_OK) Serial.printf("[C5] Wi-Fi MAC not randomized (%d): probes keep the fixed address\n", (int)e);
 }
-static void randomizeBleAddr() {
+static bool randomizeBleAddr() {
   uint8_t a[6];                                  // little-endian: a[5] is the top byte
   esp_fill_random(a, sizeof(a));
   a[5] |= 0xC0;                                  // random static
-  if (!NimBLEDevice::setOwnAddr(a) || !NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM))
+  if (!NimBLEDevice::setOwnAddr(a) || !NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_RANDOM)) {
     Serial.println("[C5] BLE address not randomized: scan requests keep the fixed address");
+    return false;
+  }
+  return true;
 }
 
 void setup() {
@@ -806,7 +850,8 @@ void setup() {
   ieee154::begin(&on154);      // 802.15.4 presence feeds the same table
 
   NimBLEDevice::init("");
-  randomizeBleAddr();                        // before the first scan
+  gattid::begin();
+  if (!randomizeBleAddr()) gattid::disable("no random BLE address");   // a connection would show the fixed address
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setScanCallbacks(&g_scanCB, /*wantDuplicates=*/true);  // refresh lastSeen
   scan->setActiveScan(true);
@@ -825,23 +870,43 @@ void setup() {
 
 // USB console (A/B testing of the AP-scan BLE pause; settings are not saved): `blepause on|off`, `blewin <ms>`.
 static void serviceConsole() {
-  static char buf[32]; static uint8_t n = 0;
+  static char buf[48]; static uint8_t n = 0;
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c != '\n' && c != '\r') { if (n < sizeof(buf) - 1) buf[n++] = c; continue; }
     buf[n] = 0;
     if (!n) continue;
     n = 0;
+    if (gattid::console(buf)) continue;
     if (!strcmp(buf, "blepause on"))       g_bleApPause = true;
     else if (!strcmp(buf, "blepause off")) g_bleApPause = false;
     else if (!strncmp(buf, "blewin ", 7)) { long v = atol(buf + 7); if (v >= 0 && v <= 60000) g_bleWinMs = (uint32_t)v; }
-    else { Serial.println("[C5] commands: blepause on|off, blewin <ms>"); continue; }
+    else { Serial.println("[C5] commands: blepause on|off, blewin <ms>, gatt ..."); continue; }
     Serial.printf("[C5] blepause %s, ble window %lu ms (takes effect next cycle)\n", g_bleApPause ? "on" : "off",
                   (unsigned long)g_bleWinMs);
   }
 }
 
+// May a GATT identification slot start now? Only with the Wi-Fi radio idle and BLE wanted by this unit.
+//  - Full time-slice with the AP-scan BLE pause: the slot must sit in the BLE window before the AP scan (BLE has scanned
+//    >= 1.5 s) and the whole worst case (gattid::worstSlotMs()) must fit before it, so the AP scan is not delayed.
+//  - Fleet plans / `blepause off` (BLE runs beside the AP scan, gap 3 s): no fixed window, so a slot opens >= 1 s after the
+//    last Wi-Fi phase ended and the next AP scan waits on busy(). One attempt per cycle, so the cycle grows by at most
+//    ~4.5 s once (legacy cycle with AP scan + both promiscuous windows ~24 s -> ~28.5 s, inside the 30 s table TTL).
+static bool gattSlotOpen() {
+  if (g_phase != PH_SCAN || g_wifiScanning || !bleWanted() || g_apBleHold) return false;
+  const uint32_t el = millis() - g_lastWifiDone;
+  if (!pauseBleForAp()) return el >= 1000;
+  const uint32_t gap = g_bleWinMs > g_gapMs ? g_bleWinMs : g_gapMs;
+  return el >= 1500 && el < gap && gap - el >= gattid::worstSlotMs();
+}
+
 void loop() {
+  static bool gattHeld = false;
+  gattid::tick(millis(), gattSlotOpen(), g_cycleCount);
+  const bool gh = gattid::holdsRadio();
+  if (gattHeld && !gh) bleResume();   // slot over: the scan comes back at once (the watchdog is the backstop)
+  gattHeld = gh;
   wifiTick();
   ieee154::tick();
   gps::poll();  // drain NMEA (non-blocking)

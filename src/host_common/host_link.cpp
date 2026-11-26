@@ -5,6 +5,7 @@
 #include "phone.h"
 #include "fleet.h"
 #include "host_log.h"
+#include "devinfo.h"
 
 HardwareSerial LinkSerial(1);  // UART1 (pins are supplied by the board via hostlink::begin)
 FrameParser    parser;
@@ -67,7 +68,12 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
   cfg.sources  = g_srcMask;
   cfg.dwell_ms = 0;
   cfg.plan     = fleet::currentPlan();   // v12: this unit's fleet scan role (all-zero = legacy full time-slice)
-  sendFrame((uint8_t)Command::StartScan, &cfg, sizeof(cfg));
+  GattHint hint;                                         // GATT identification: on/off, skip + priority MACs (docs/gatt-identify.md)
+  devinfo::fillHint(hint);
+  uint8_t scanPayload[sizeof(ScanConfig) + sizeof(GattHint)];
+  memcpy(scanPayload, &cfg, sizeof(cfg));
+  memcpy(scanPayload + sizeof(cfg), &hint, sizeof(hint));
+  sendFrame((uint8_t)Command::StartScan, scanPayload, sizeof(scanPayload));
   uint32_t t0 = millis();
   uint32_t lastByte = millis();
   while (!done && millis() - t0 < timeoutMs) {
@@ -106,6 +112,10 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
       } else if (t == (uint8_t)Reply::Deauth && parser.length() >= sizeof(DeauthInfo)) {
         memcpy(&g_deauthInfo, parser.payload(), sizeof(DeauthInfo));
         if (g_deauthInfo.n > DEAUTH_SENDERS_MAX) g_deauthInfo.n = DEAUTH_SENDERS_MAX;
+      } else if (t == (uint8_t)Reply::DevInfo && parser.length() >= sizeof(DevInfo)) {
+        DevInfo di;                                         // inside the burst; kept per MAC across polls
+        memcpy(&di, parser.payload(), sizeof(di));
+        devinfo::ingest(di);
       } else if (t == (uint8_t)Reply::Status && parser.length() >= sizeof(Status)) {
         const Status* st = reinterpret_cast<const Status*>(parser.payload());
         g_deauthRecent = st->deauth_recent; g_evilCount = st->evil_count; g_ridCount = st->rid_count;

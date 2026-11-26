@@ -16,6 +16,7 @@
 #include "fleet.h"
 #include "webshare.h"
 #include "whitelist.h"
+#include "devinfo.h"
 
 const char* srcTag(const Detection& d) {
   if (d.source == (uint8_t)Source::BleScan)   return "BLE";
@@ -61,6 +62,7 @@ void loadSrcMask() {  // also loads the time/GPS source preferences (both boards
   g_timePref = p.getUChar("tpref", SRC_PREFER_PHONE);
   g_gpsPref  = p.getUChar("gpref", SRC_PREFER_PHONE);
   p.end();
+  devinfo::load();   // GATT identification on/off (cydui/gattrd)
   if (g_timePref > SRC_DEVICE_ONLY) g_timePref = SRC_PREFER_PHONE;
   if (g_gpsPref  > SRC_DEVICE_ONLY) g_gpsPref  = SRC_PREFER_PHONE;
 }
@@ -517,9 +519,24 @@ int      g_groupCount = 0;
 // nameless devices stay individually identifiable instead of all collapsing to one "<hidden>".
 // Returns either a pointer into g_dets[] (persistent) or a single static buffer; every caller
 // consumes the result (copies/draws it) before the next call, so one buffer is safe.
+// A GATT read of this device (BLE members only): its name, or "<maker> <model>"; "" when none / not read. Uses `buf`.
+static const char* gattNameOf(const DevGroup* g, char* buf, size_t cap) {
+  if (!g || !(g->srcMask & (1u << 2))) return "";      // srcTypeOf(): 2 = BLE
+  const DevInfo* gi = devinfo::find(g->mac);
+  return gi ? devinfo::nameOf(*gi, buf, cap) : "";
+}
+
+// An advertised name wins; a GATT name only replaces it when the advertised one is just its start (a truncated local name).
 const char* groupName(const DevGroup* g) {
-  if (g && g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) return g_dets[g->nameIdx].name;
-  static char buf[28];  // "<vendor> AA:BB" or "AA:BB:CC:DD:EE:FF" + NUL
+  static char buf[32];  // "<vendor> AA:BB" or "AA:BB:CC:DD:EE:FF" + NUL; also the GATT "<maker> <model>"
+  const char* gn = gattNameOf(g, buf, sizeof(buf));
+  if (g && g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) {
+    const char* adv = g_dets[g->nameIdx].name;
+    const size_t al = strlen(adv);
+    if (gn[0] && strlen(gn) > al && !strncmp(gn, adv, al)) return gn;
+    return adv;
+  }
+  if (gn[0]) return gn;
   if (!g) { snprintf(buf, sizeof(buf), "?"); return buf; }
   // Nameless: if the OUI resolves to a known vendor (sigdb 'vendor,' rule), show "<vendor> <tail>" —
   // human-readable yet still distinguishable between same-vendor devices. Only for a real
@@ -534,6 +551,19 @@ const char* groupName(const DevGroup* g) {
     snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
              g->mac[0], g->mac[1], g->mac[2], g->mac[3], g->mac[4], g->mac[5]);
   return buf;
+}
+
+char groupNameSrc(const DevGroup* g) {
+  if (!g) return 0;
+  char b[32];
+  const char* gn = gattNameOf(g, b, sizeof(b));
+  if (g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) {
+    const char* adv = g_dets[g->nameIdx].name;
+    const size_t al = strlen(adv);
+    if (gn[0] && strlen(gn) > al && !strncmp(gn, adv, al)) return 'g';
+    return (g_dets[g->nameIdx].flags & FLAG_BLE_NAME_CACHED) ? 'c' : 0;
+  }
+  return gn[0] ? 'g' : 0;
 }
 
 bool     g_scanActive = false;   // C5 polling on (START/STOP); independent of the screen
@@ -1101,6 +1131,7 @@ ScanCycleResult core::runScanCycle() {
   lap(LP_PROC);
   int newCount = logNewDetections();
   logRidEvents();   // rate-limited per-MAC Remote-ID event lines
+  logDevInfoEvents(); // GATT identification results, once per device per log file
   logFollowEvents(); // rate-limited per-MAC FOLLOWING event lines
   logDevPos();      // fleet: this unit's own GPS fix vs the fleet position (devpos lines)
   lap(LP_LOG);

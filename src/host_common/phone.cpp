@@ -116,6 +116,7 @@ char     g_expPath[48]= {0};
 bool     g_srcReq     = false;
 uint8_t  g_srcVal     = 0;
 bool     g_prefReq    = false;  // "P:<t><g>" time / GPS source preference
+volatile uint8_t g_gattReq = 0;  // "C:<0|1>" GATT identification reads off / on: 0 none, 1 off, 2 on
 volatile uint8_t g_prefVal = 0;  // (t << 4) | g, one byte so the NimBLE task can't hand loop() a mixed pair
 // File explorer: "Z:<op>:<arg>" ops + "U<raw bytes>" upload chunks. The phone waits for each reply
 // (an FS= payload) before its next write, so one slot of each is enough; loop() does all the SD work.
@@ -620,6 +621,11 @@ class WriteCB : public NimBLECharacteristicCallbacks {
           g_prefReq = true;
           Serial.printf("[phone] cmd source pref time=%c gps=%c\n", val[2], val[3]);
         }
+      } else if (c0 == 'C' || c0 == 'c') {           // "C:<0|1>" GATT identification reads (docs/gatt-identify.md)
+        if (val.size() == 3 && val[1] == ':' && (val[2] == '0' || val[2] == '1')) {
+          g_gattReq = val[2] == '1' ? 2 : 1;
+          Serial.printf("[phone] cmd gatt reads %c\n", val[2]);
+        }
       } else if (c0 == 'T' || c0 == 't') {           // "T:<mode>[:<minutes>][:<path>]" filtered export
         // mode 0 = whole file, 1 = past 24 h, 2 = past <minutes>. Optional /logs/ path (default =
         // the current session), or "*" = every log file. ('E' is taken by whitelist-remove, hence 'T'.)
@@ -1039,6 +1045,14 @@ bool sourcePrefRequested(uint8_t* timePref, uint8_t* gpsPref) {
   g_prefReq = false;
   uint8_t v = g_prefVal;
   *timePref = v >> 4; *gpsPref = v & 0x0F;
+  return true;
+}
+
+bool gattReadRequested(bool* on) {
+  const uint8_t r = g_gattReq;
+  if (!r) return false;
+  g_gattReq = 0;
+  *on = r == 2;
   return true;
 }
 
