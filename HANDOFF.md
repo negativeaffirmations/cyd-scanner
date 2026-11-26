@@ -1,6 +1,6 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser
+## RESUME HERE - 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser (DEPLOYED)
 - **Why:** drive 7's no-position rows (all at scan start) lasted ~1 min longer on SOPAFE/ZUDIMU because the phone joined
   BEMOPU first, and a member's phone fix was never shared.
 - **fw 0.47.5 (flashed on all 3 hosts, committed on `hardening`):** a member with no live GPS sends its phone's fix (<10 s old,
@@ -11,8 +11,10 @@
 - **Web `20261126b` / app (committed on `hardening`, NOT on main / not deployed yet):** `features/unitrole.js` remembers each unit's
   STATUS `flt` role by device id (localStorage `cflo.unitRoles`); the app chooser (`shim-bluetooth.js`) lists the leader first
   with "· fleet leader" (then used-before, then new). The chooser placed rows by advert arrival, so BEMOPU came first by chance.
-  It learns a role on the next connection to each unit. Android tests 59/59. Needs a merge to main to ship (owner approval).
-- At the end the phone was on BEMOPU (dropped by its reflash); reconnect it to SOPAFE.
+  It learns a role on the next connection to each unit. Android tests 59/59.
+- **Deployed (main `1e9d176`): web `20261126b` live, app build 30 installed on the owner phone over adb and checked:** the chooser
+  first showed BEMOPU on top (role not yet learned); after one connection to SOPAFE it lists "CFLO-MINI-SOPAFE · fleet leader" first.
+  Phone left connected to SOPAFE: SOPAFE `pos` src 1 (phone), BEMOPU + ZUDIMU src 4 (fleet).
 
 ## RESUME HERE - 2026-11-26: drive 7 analysed; live push 3.5x faster (fw 0.47.3 on all 3 hosts); web Disconnect button
 - **Drive 7 (11:21-12:20, live upload, server-checked by scan-analyzer):** nothing lost (orows continuous, .cflo added 0 rows), no alerts,
