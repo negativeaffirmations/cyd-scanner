@@ -51,6 +51,7 @@ enum class Reply : uint8_t {
   Detection = 0x90,  // payload = Detection (one per detected device)
   RemoteId  = 0x91,  // payload = RemoteId (ASTM F3411 Remote-ID broadcast, keyed to a Detection by MAC)
   Deauth    = 0x92,  // payload = DeauthInfo (who sent the observed deauth/disassoc frames; only while there are any)
+  DevInfo   = 0x93,  // payload = DevInfo (GATT identification read of a BLE device, docs/gatt-identify.md; additive, no version bump)
   Status    = 0xA0,  // payload = Status
   Error     = 0xEF,  // payload = 1 byte error code
 };
@@ -96,7 +97,10 @@ enum DetFlags : uint16_t {
   FLAG_WIFI_ENC_OPEN  = 1 << 10,
   FLAG_WIFI_ENC_WEP   = 1 << 11,
   FLAG_WIFI_ENC_SEC   = 1 << 12,  // WPA / WPA2 / WPA3 / OWE
-  // bits 13..15 reserved for future detectors
+  // BLE rows only (docs/gatt-identify.md): `name` was filled from the C5's advert-name cache (this advert carried none).
+  // Not notable: no tier, never shown as a threat. Additive in a reserved bit, so no PROTOCOL_VERSION bump.
+  FLAG_BLE_NAME_CACHED = 1 << 13,
+  // bits 14..15 reserved for future detectors
 };
 
 #pragma pack(push, 1)
@@ -212,6 +216,42 @@ struct DeauthInfo {
   DeauthSender senders[DEAUTH_SENDERS_MAX];
 };
 
+// GATT identification (docs/gatt-identify.md). Additive, no PROTOCOL_VERSION bump: a host that doesn't know Reply::DevInfo
+// skips the frame, and a C5 that doesn't know the GattHint ignores the longer StartScan payload.
+enum DevInfoHave : uint8_t {
+  DI_NAME = 1, DI_APPEAR = 2, DI_MFR = 4, DI_MODEL = 8, DI_FW = 16, DI_HW = 32,
+  DI_NAME_WITHHELD = 64,   // a name was read but is not kept (personal appearance, or it carries "'s ")
+  DI_AUTH = 128,           // a read was refused for lack of encryption/authentication (never followed by pairing)
+};
+// What one read-by-type pass found for one BLE device (Reply::DevInfo payload); strings are printable ASCII, NUL-terminated.
+struct DevInfo {
+  uint8_t  mac[6];
+  uint8_t  addrType;      // 0 public, 1 random (static)
+  uint8_t  have;          // DevInfoHave bits
+  uint16_t appearance;    // valid with DI_APPEAR
+  uint8_t  tried;         // DevInfoHave bits (DI_NAME..DI_HW) of the fields the C5 attempted to read (a name skipped for privacy counts)
+  int8_t   rssi;          // dBm of the advert that triggered the connection
+  // Strings hold at most size-1 printable ASCII chars (name 31, mfr 23, model 23, fw 15, hw 15); longer values are cut.
+  char     name[32];      // 0x2A00
+  char     mfr[24];       // 0x2A29
+  char     model[24];     // 0x2A24
+  char     fw[16];        // 0x2A26
+  char     hw[16];        // 0x2A27
+};
+
+// Host -> C5, appended to ScanConfig in StartScan (payload length >= sizeof(ScanConfig) + sizeof(GattHint)).
+static constexpr uint8_t GATT_HINT_MAX = 10;
+enum GattHintFlags : uint8_t {
+  GH_VALID  = 1,   // the hint is meaningful (an older host sends none)
+  GH_ENABLE = 2,   // identification reads allowed
+};
+struct GattHint {
+  uint8_t flags;          // GattHintFlags
+  int8_t  rssiFloor;      // dBm, 0 = C5 default
+  uint8_t nSkip, nPrio;   // mac[0..nSkip) never read, mac[nSkip..nSkip+nPrio) read first
+  uint8_t mac[GATT_HINT_MAX][6];   // big-endian text order, as Detection.mac
+};
+
 // Fixed header prepended to every frame's payload on the wire.
 struct FrameHeader {
   uint8_t  start;    // == FRAME_START
@@ -226,6 +266,8 @@ static_assert(sizeof(Detection) == 81, "Detection wire size changed - bump PROTO
 static_assert(sizeof(RemoteId)  == 75, "RemoteId wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(Status)    == 34, "Status wire size changed - bump PROTOCOL_VERSION");
 static_assert(sizeof(DeauthSender) == 25 && sizeof(DeauthInfo) == 105, "DeauthInfo wire size changed - bump PROTOCOL_VERSION");
+static_assert(sizeof(DevInfo) == 124, "DevInfo wire size changed");
+static_assert(sizeof(GattHint) == 64 && sizeof(ScanConfig) + sizeof(GattHint) <= MAX_PAYLOAD, "GattHint does not fit StartScan");
 static_assert(sizeof(ScanPlan) == 18 && sizeof(ScanConfig) == 21, "ScanConfig wire size changed - bump PROTOCOL_VERSION");
 
 // XOR checksum over a byte range.

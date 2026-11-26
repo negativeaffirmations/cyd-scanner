@@ -35,6 +35,18 @@ devices, not transmitting as such:
   the on-demand Wi-Fi SoftAP (log download), active scan requests, and (contemplated) a link so
   **multiple of the user's own scanner devices talk to each other** (share detections / correlate
   sightings across a small fleet).
+- **Brief read-only GATT queries are in scope (owner decision, 2026-11-25).** To identify devices,
+  the scanner may connect briefly to a connectable BLE device that does not require pairing and
+  read the standard identification characteristics a device exposes to any central by design:
+  GAP Device Name (0x2A00) / Appearance (0x2A01), and Device Information (0x180A) manufacturer,
+  model, firmware / hardware revision. Limits that keep it from becoming interference: **read only**
+  (no writes, no notify / indicate subscriptions, no pairing or bonding, no attribute discovery past
+  those services); **one connection at a time, a hard timeout of a few seconds**, then disconnect;
+  **rarely per device** (once, retried only after a long back-off; an address that refuses or times
+  out is not hammered); skip devices that are not connectable or that the user whitelists; never read
+  serial numbers or other unique identifiers beyond what the device already broadcasts. Anything
+  beyond this (writes, pairing, holding connections, probing services for vulnerabilities) is still
+  out of scope.
 - When in doubt whether a feature crosses from "scan / fingerprint / coordinate our own devices"
   into "interfere with / attack / DoS someone else's device," stop and ask.
 
@@ -268,7 +280,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   C5 sends empty names (no protocol involvement). The NDJSON
   log is unchanged — it still omits `name` when blank and carries `mac` separately; readers
   apply the MAC fallback at display time.
-- **SD logging (CYD) — per-session NDJSON files, two parallel streams.** **fw 0.46.0: ONE own stream** — every scan logs to g_fg (`/logs/sess-NNNNN` -> `YYYYMMDD-HHMMSS`), g_bg is never opened, old `bg-` files stay readable; the meta line carries `"start":"boot|user|auto"`, a scan started after a stop begins a new file (and a leader's fleet file), STATUS part 3 = `sfid;sst`, live-POST session = `<sid>-<file_id>`. The two-stream text below is the pre-0.46 history. The log is **NDJSON**
+- **SD logging (CYD) — per-session NDJSON files, two parallel streams.** **fw 0.46.0: ONE own stream** — every scan logs to g_fg (`/logs/sess-NNNNN` -> `YYYYMMDD-HHMMSS`), g_bg is never opened, old `bg-` files stay readable; the meta line carries `"start":"boot|user|auto"`, a scan started after a stop begins a new file (and a leader's fleet file), STATUS part 3 = `sfid;sst`, live-POST session = `<sid>-<file_id>`. The two-stream text below is the pre-0.46 history. **fw 0.47 (GATT identification, docs/gatt-identify.md):** the C5 briefly reads Device Name / Appearance / Device Information of nearby connectable public/static BLE devices (read only, Security Manager compiled out, denylist, rare per device; only the unit whose plan includes BLE reads) and the host logs one `{"evt":"devinfo","mac","at","rssi","rd",name,app,mfr,model,fw,hw[,nw][,auth][,re,age]}` line per device per file; rows carry `"nc":1` when the name came from the C5's advert-name cache; DETS v11 appends `nsrc` (g/c); CMD `C:<0|1>`, STATUS part 3 `gatt=`. The log is **NDJSON**
   (one JSON object per line, `logNewDetections` in `main.cpp`). There are **two independent streams**
   (each a `LogStream` with its own dedup set): a **foreground** stream for on-screen scan sessions
   (`/logs/sess-NNNNN.jsonl`, renamed to `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync) and a dedicated

@@ -155,6 +155,9 @@ bool srcMaskRequested(uint8_t* out);
 // 1 prefer device / 2 device only); fills both.
 bool sourcePrefRequested(uint8_t* timePref, uint8_t* gpsPref);
 
+// True once if the app turned the GATT identification reads off / on ("C:<0|1>"); fills `on`.
+bool gattReadRequested(bool* on);
+
 // Whitelist commands, each true once (consumed on read): "W" reload, "Y" list,
 // "A:<csv rule line>" add (fills `out`), "E:<index>" remove the Nth active rule.
 bool wlReloadRequested();

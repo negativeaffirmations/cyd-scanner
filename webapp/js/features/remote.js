@@ -198,7 +198,7 @@ function liveRow(r, u, sess, epoch, ms, fix){
   if(fix){ o.lat = +fix.lat.toFixed(6); o.lon = +fix.lon.toFixed(6);
     if(fix.fixAge !== undefined) o.fix_age = fix.fixAge;
     if(u.scanner) o.pos_src = "fleet"; }
-  const nm = realName(r); if(nm) o.name = nm;
+  const nm = realName(r); if(nm){ o.name = nm; if(r.nsrc === "g") o.nsrc = "gatt"; else if(r.nsrc === "c") o.nsrc = "cache"; }   // DETS v11 provenance
   if(r.ie && !/^0+$/.test(r.ie)) o.ie = r.ie;
   if(r.cidHex) o.cid = r.cidHex;
   if(r.uuid) o.uuid = r.uuid;

@@ -1,6 +1,16 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-25 (evening): live upload done on the bench; next = a drive on fw 0.46.x
+## RESUME HERE - 2026-11-25 (late): GATT identification shipped (hosts 0.47.1, C5s 0.47.0)
+- **Scope widened by the owner** (CLAUDE.md scope bullet): brief read-only GATT identification reads. Design + as built:
+  docs/gatt-identify.md (C5 src/c5/gattid.*, host src/host_common/devinfo.*). Security + code reviews done, all findings fixed.
+- **Bench:** SOPAFE (fleet BLE role) read 11 devices in ~5 min (9 "C by GE" bulbs mfr GE fw V1.x, an Anker SOLIX C300, an HP
+  OfficeJet), server read-back OK (scan-analyzer schema v18 + /devices/{mac}/devinfo). Members (Wi-Fi roles) don't read: by design.
+- 0.47.1: devinfo lines copied into a new file carry re:1 + age. Web 20261125g / build 28: devinfo not a map pin, Settings
+  "Identify nearby devices" (C:0/1), maker from the full Bluetooth SIG list in the live list, live-POST nsrc.
+- **Next:** a drive (also tests 0.46.x naming + the stop-then-wait tail). Deauth false alarm to fix: an Espressif client
+  sending ~20 reason-8 disassocs to its own Google mesh AP (17:12 + 20:10 at the start spot) trips the alert.
+
+## 2026-11-25 (evening, superseded above): live upload done on the bench; next = a drive on fw 0.46.x
 - **State:** SOPAFE (leader, COM15) fw 0.46.1; BEMOPU (COM10) + ZUDIMU (CYD, COM17) fw 0.46.0 (the 0.46.1 change is leader-only); C5s unchanged.
   App build 27 / web `20261125f`, all on `main` (`cf0ff6f`). scan-analyzer schema v17 stores meta `start` (from 17:25:38). TOLUBA still out.
 - **Live upload, final picture:** push backlog fixed (drive 6: max 17 KB waiting, data <= 31 s old at the phone); scan-end tail fetched by the
