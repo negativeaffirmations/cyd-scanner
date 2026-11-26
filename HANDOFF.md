@@ -11,7 +11,9 @@
   its limit now. Console: `live`, `live hold <s>`, `live rewind <bytes>` (phone drops what it has), `live ra on|off`; "[CYD] live prof" line.
 - **Web `20261126a` + app build 29 (main `669cb1e`, installed on the owner phone over adb + checked: popup button disconnects, service stops, no "link lost" note; Settings button enabled while connected):** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
   had no in-app way to disconnect (only the notification button).
-- **Open:** a 3.5 s loop stall every ~10 min (seen as push gap=3.5 s; likely `enforceLogCap` listing /logs, same slow-folder cause; also
+- **fw 0.47.4 (all 3 hosts, 14:10):** the 10-min stall WAS `enforceLogCap` (full /logs scan; ZUDIMU boot scan 60 files / 16 MB = 675 ms);
+  rotation + timer checks now skip it while far under the 512 MB cap (boot still scans).
+- **Open:** (FIXED in 0.47.4, see above: the 3.5 s stall every ~10 min; also
   stalls scanning); devinfo 0 lines on the drive is EXPLAINED (C5 `gatt stat` 11/11 OK = the bench devices, already logged once per file; nothing readable from the car); an 8 s
   push gap when the app came to the foreground at 12:05; 488 own rows without lat (before the phone connected?).
 - **Next drive:** confirm live lag stays under ~30 s on a busy stretch.

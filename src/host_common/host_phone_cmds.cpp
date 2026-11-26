@@ -161,6 +161,6 @@ void core::tickLogCap(bool sdBusy) {
   static uint32_t lastCap = 0;
   if (g_sdOk && millis() - lastCap >= 600000UL && !sdBusy) {
     lastCap = millis();
-    enforceLogCap();
+    enforceLogCap(false);   // skipped while far under the cap (each full scan stalls the loop ~3.5 s)
   }
 }
