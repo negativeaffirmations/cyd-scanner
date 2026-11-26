@@ -35,6 +35,18 @@ devices, not transmitting as such:
   the on-demand Wi-Fi SoftAP (log download), active scan requests, and (contemplated) a link so
   **multiple of the user's own scanner devices talk to each other** (share detections / correlate
   sightings across a small fleet).
+- **Brief read-only GATT queries are in scope (owner decision, 2026-11-25).** To identify devices,
+  the scanner may connect briefly to a connectable BLE device that does not require pairing and
+  read the standard identification characteristics a device exposes to any central by design:
+  GAP Device Name (0x2A00) / Appearance (0x2A01), and Device Information (0x180A) manufacturer,
+  model, firmware / hardware revision. Limits that keep it from becoming interference: **read only**
+  (no writes, no notify / indicate subscriptions, no pairing or bonding, no attribute discovery past
+  those services); **one connection at a time, a hard timeout of a few seconds**, then disconnect;
+  **rarely per device** (once, retried only after a long back-off; an address that refuses or times
+  out is not hammered); skip devices that are not connectable or that the user whitelists; never read
+  serial numbers or other unique identifiers beyond what the device already broadcasts. Anything
+  beyond this (writes, pairing, holding connections, probing services for vulnerabilities) is still
+  out of scope.
 - When in doubt whether a feature crosses from "scan / fingerprint / coordinate our own devices"
   into "interfere with / attack / DoS someone else's device," stop and ask.
 
