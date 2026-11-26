@@ -1,5 +1,19 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE - 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser
+- **Why:** drive 7's no-position rows (all at scan start) lasted ~1 min longer on SOPAFE/ZUDIMU because the phone joined
+  BEMOPU first, and a member's phone fix was never shared.
+- **fw 0.47.5 (flashed on all 3 hosts, committed on `hardening`):** a member with no live GPS sends its phone's fix (<10 s old,
+  not device-only) in MStat with `gpsFix`=2; the leader prefers a member's PHONE fix over a member's GPS (`fixPhone`,
+  `memberFix()`); a client whose fix IS the fleet position (Sync.fixSlot) stamps its own phone/GPS, not the echo. Serial
+  `pos` = position source/age, no coordinates. **Bench-checked:** phone on BEMOPU -> BEMOPU `src 1 ... fleet pos is mine 1`,
+  SOPAFE `src 4` (fleet), ZUDIMU `src 4` (ahead of its own GPS under prefer-phone); ZUDIMU's GPS as the fleet pos -> it stamps `src 2`.
+- **Web `20261126b` / app (committed on `hardening`, NOT on main / not deployed yet):** `features/unitrole.js` remembers each unit's
+  STATUS `flt` role by device id (localStorage `cflo.unitRoles`); the app chooser (`shim-bluetooth.js`) lists the leader first
+  with "· fleet leader" (then used-before, then new). The chooser placed rows by advert arrival, so BEMOPU came first by chance.
+  It learns a role on the next connection to each unit. Android tests 59/59. Needs a merge to main to ship (owner approval).
+- At the end the phone was on BEMOPU (dropped by its reflash); reconnect it to SOPAFE.
+
 ## RESUME HERE - 2026-11-26: drive 7 analysed; live push 3.5x faster (fw 0.47.3 on all 3 hosts); web Disconnect button
 - **Drive 7 (11:21-12:20, live upload, server-checked by scan-analyzer):** nothing lost (orows continuous, .cflo added 0 rows), no alerts,
   Ring 27 / Wyze 8 / Reolink 3 / Nest 2 / Tile 1 likely, Find My 287 suspect, no Flock/ALPR/Axon. Live data fell ~5.5 min behind 11:26-11:46
@@ -9,11 +23,15 @@
 - **fw 0.47.3 (SOPAFE COM15, BEMOPU COM10, ZUDIMU COM17 flashed; C5s unchanged):** read-ahead 4 KB (CYD 2 KB) per open, size checks every 2 s.
   Bench A/B in one build (`live ra off` = old): old 2.0-2.4 KB/s, new ~8-9 KB/s (65 KB backlog in < 9 s); one refused notify, so BLE is near
   its limit now. Console: `live`, `live hold <s>`, `live rewind <bytes>` (phone drops what it has), `live ra on|off`; "[CYD] live prof" line.
-- **Web `20261126a`:** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
+- **Web `20261126a` + app build 29 (main `669cb1e`, installed on the owner phone over adb + checked: popup button disconnects, service stops, no "link lost" note; Settings button enabled while connected):** Disconnect buttons (status popup Bluetooth row + Settings > Device(s) > Scanners, `features/disconnect.js`). The owner
   had no in-app way to disconnect (only the notification button).
-- **Open:** a 3.5 s loop stall every ~10 min (seen as push gap=3.5 s; likely `enforceLogCap` listing /logs, same slow-folder cause; also
-  stalls scanning); devinfo 0 lines on the drive (check the C5 `gatt stat` on SOPAFE: driving makes reads unlikely, but unconfirmed); an 8 s
-  push gap when the app came to the foreground at 12:05; 488 own rows without lat (before the phone connected?).
+- **fw 0.47.4 (all 3 hosts, 14:10):** the 10-min stall WAS `enforceLogCap` (full /logs scan; ZUDIMU boot scan 60 files / 16 MB = 675 ms);
+  rotation + timer checks now skip it while far under the 512 MB cap (boot still scans).
+- **Open:** (FIXED in 0.47.4, see above: the 3.5 s stall every ~10 min; also
+  stalls scanning); devinfo 0 lines on the drive is EXPLAINED (C5 `gatt stat` 11/11 OK = the bench devices, already logged once per file; nothing readable from the car); an 8 s
+  push gap when the app came to the foreground at 12:05; the rows without lat are EXPLAINED (scan-analyzer: all at scan start, before each unit's first fix,
+  none mid-drive; SOPAFE 488 until 11:24:07, BEMOPU 415, ZUDIMU 230; the phone joined BEMOPU first at 11:23:33 and
+  a member's phone fix is not shared as the fleet position, so SOPAFE/ZUDIMU waited until the phone moved to SOPAFE at 11:24:17).
 - **Next drive:** confirm live lag stays under ~30 s on a busy stretch.
 
 ## 2026-11-25 (late, superseded above): GATT identification shipped (hosts 0.47.1, C5s 0.47.0)

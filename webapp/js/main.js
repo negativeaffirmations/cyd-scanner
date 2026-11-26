@@ -43,6 +43,7 @@ import { initServerHistory } from './features/serverhist.js?v=20261121a';   // n
 import { initServerFind } from './features/serverfind.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initServerMap } from './features/servermap.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initDisconnect, disconnectScanner } from './features/disconnect.js?v=20261126a';   // new module: versioned so it loads fresh with main.js
+import { initUnitRole } from './features/unitrole.js?v=20261126b';   // new module: remembers each unit's fleet role for the app's chooser
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -167,6 +168,7 @@ initServerHistory();    // device popup: the paired server's history of this MAC
 initServerFind();       // Map page 'Server data' dialog: devices near me + search on the paired server (features/serverfind.js)
 initServerMap();        // Map page 'Server devices' layer from the paired server (features/servermap.js)
 initDisconnect();       // Disconnect buttons: status popup Bluetooth row + Settings > Device(s) > Scanners (features/disconnect.js)
+initUnitRole();         // remember each unit's fleet role (the Android app's chooser lists the leader first)
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;

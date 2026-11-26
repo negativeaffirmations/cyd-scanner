@@ -69,8 +69,9 @@ struct MemberRt {
   char     fw[13];
   uint16_t heapKB, txFailPm;
   uint8_t  bleMac[6];                  // its BLE advert MAC (JoinAck; zeros for a CYD client): a fleet "self" MAC
-  float    fixLat, fixLon;             // its OWN live GPS fix from MStat (P3: fleet position fallback)
+  float    fixLat, fixLon;             // its OWN live GPS fix from MStat (P3: fleet position fallback; fw 0.47.5: or its phone's, gpsFix 2)
   uint32_t fixAtMs;                    // 0 = never
+  bool     fixPhone;                   // fw 0.47.5: that fix came from its phone (MStat gpsFix 2)
   uint8_t  phoneMac[6];                // its own connected phone (MStat), a fleet self MAC
   uint32_t joinedAtMs, lostAtMs;       // P4 role hysteresis / grace
   uint8_t  role;                       // assigned scan role (PlanRole)
@@ -500,7 +501,7 @@ void onMStat(const Rx& f) {
   if (m.planGen != L->planGen && r.planSentGen == L->planGen && millis() - r.lastPlanMs > 1000)
     r.planSentGen = (uint8_t)(L->planGen - 1);                     // it missed the last Plan: resend on the next tick
   if (m.gpsFix && m.lat >= -900000000 && m.lat <= 900000000 && m.lon >= -1800000000 && m.lon <= 1800000000) {
-    r.fixLat = m.lat / 1e7f; r.fixLon = m.lon / 1e7f; r.fixAtMs = r.lastRxMs;
+    r.fixLat = m.lat / 1e7f; r.fixLon = m.lon / 1e7f; r.fixAtMs = r.lastRxMs; r.fixPhone = m.gpsFix == 2;
   }
 }
 
@@ -1019,10 +1020,14 @@ bool memberFix(float* lat, float* lon, uint32_t* ageMs, bool* live) {
     const MemberRt& r = L->rt[i];
     return i >= 0 && i < L->st.n && r.state == M_JOINED && r.fixAtMs && now - r.fixAtMs < MEMBER_FIX_LIVE_MS;
   };
-  int pick = isLive(L->fixMember) ? L->fixMember : -1;
+  // Keep the member in use while it stays live, except that a live phone fix beats a GPS one (fw 0.47.5: the phone is the
+  // preferred source fleet-wide too; it fuses A-GPS / cell).
+  bool anyPhone = false;
+  for (int i = 0; i < L->st.n; i++) if (isLive(i) && L->rt[i].fixPhone) anyPhone = true;
+  int pick = isLive(L->fixMember) && (L->rt[L->fixMember].fixPhone || !anyPhone) ? L->fixMember : -1;
   if (pick < 0) {
     for (int i = 0; i < L->st.n; i++)
-      if (isLive(i) && (pick < 0 || L->rt[i].fixAtMs > L->rt[pick].fixAtMs)) pick = i;
+      if (isLive(i) && (L->rt[i].fixPhone || !anyPhone) && (pick < 0 || L->rt[i].fixAtMs > L->rt[pick].fixAtMs)) pick = i;
     L->fixMember = (int8_t)pick;
   }
   if (pick < 0) {                                                  // none live: the most recent fix ever seen

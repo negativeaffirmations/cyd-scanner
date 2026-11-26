@@ -75,6 +75,8 @@
     try{ localStorage.setItem(KNOWN_KEY, JSON.stringify(list.slice(0, 32))); }catch(e){}
   }
   const unitName = id => readJson(NAMES_KEY, {})[id] || "";
+  const ROLES_KEY = "cflo.unitRoles";                    // fleet role by device id, 2 = leader (webapp/js/features/unitrole.js)
+  const isLeader = id => readJson(ROLES_KEY, {})[id] === 2;
 
   // ---------- one shared LE scan (chooser + presence) ----------
   // Android ignores a scan that starts more than 5 times in 30 s (no results, no error) and throttles one that runs
@@ -339,7 +341,8 @@
       };
       const label = s => unitName(s.id) || (known().find(k => k.id === s.id) || {}).name || s.name || "CFLO";
       // One row per scanner, kept in place and updated in place (REV-003): rebuilding and re-sorting by signal every
-      // tick swapped rows under the finger. A row is placed once (used-before units first) and leaves after 10 s quiet.
+      // tick swapped rows under the finger. A row is placed once (the fleet leader first, then used-before units: on the
+      // 2026-11-26 drive a member that answered first got the phone) and leaves after 10 s quiet.
       const rowEls = new Map();
       function render(){
         const now = Date.now(), list = $r("list");
@@ -354,12 +357,13 @@
             row.type = "button";
             row.innerHTML = '<span class="material-symbols-outlined">bluetooth</span><span class="grow"></span><span class="sub"></span>';
             row.addEventListener("click", () => finish(deviceFor(s.id, s.name)));
-            row.dataset.used = usedBefore ? "1" : "";
-            const firstNew = usedBefore ? [...list.children].find(c => !c.dataset.used) : null;
-            list.insertBefore(row, firstNew || null);
+            const rank = isLeader(s.id) ? 0 : usedBefore ? 1 : 2;
+            row.dataset.rank = String(rank);
+            const after = [...list.children].find(c => +c.dataset.rank > rank);
+            list.insertBefore(row, after || null);
             rowEls.set(s.id, row);
           }
-          row.children[1].textContent = label(s) + (usedBefore ? "" : " (new)");
+          row.children[1].textContent = label(s) + (usedBefore ? (isLeader(s.id) ? " · fleet leader" : "") : " (new)");
           row.children[2].textContent = s.rssi + " dBm";
         }
         $r("msg").textContent = rowEls.size ? "Tap a scanner. Ones you have used before show their name." : "Looking for scanners… Make sure the scanner is on and nearby.";

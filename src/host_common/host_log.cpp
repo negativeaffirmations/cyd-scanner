@@ -298,7 +298,7 @@ void startNewSession(bool forceFg) {
     fleetLogRotate();
   }
   resetFollow();
-  enforceLogCap();        // rotation trigger: trim /logs/ to the cap
+  enforceLogCap(false);   // rotation trigger: trim /logs/ to the cap (skipped while far under it)
   syncSharePath();
 }
 
@@ -468,7 +468,7 @@ void initSD() {
   if (!g_sdOk) { Serial.println("[CYD] SD unavailable - logging disabled"); return; }
   reseedDbIfNeeded();  // delete an outdated /signatures.csv so sigdb::begin() re-seeds it
   openSession();       // create this boot's /logs/sess-NNNNN.jsonl (renamed on time sync)
-  enforceLogCap();     // rotation trigger: boot
+  enforceLogCap(true); // rotation trigger: boot (always scans: measures the total)
   syncSharePath();
   Serial.println("[CYD] SD ready");
 }
@@ -1048,7 +1048,7 @@ static void axFinish(bool complete) {
   g_streamingPath[0] = 0;
   delete x;
   g_ax = nullptr;
-  if (g_capPending) { g_capPending = false; enforceLogCap(); }
+  if (g_capPending) { g_capPending = false; enforceLogCap(false); }
 }
 
 // A new transfer (only when none runs: callers are gated by servicePhoneCommands). nullptr = out of memory.
@@ -1765,11 +1765,29 @@ bool logPathProtected(const char* full) {
          (g_fleetLog.path[0] && strcasecmp(full, g_fleetLog.path) == 0) || hostui::exploreHolds(full) ||
          (g_streamingPath[0] && strcasecmp(full, g_streamingPath) == 0) || files::uploadHolds(full);
 }
-void enforceLogCap() {
+// A full scan opens every file in /logs (the SD library stats each entry): ~3.5 s for ~150 files on the
+// 2026-11-26 drive, a loop stall every 10 min that also held up scanning and the live push. So (fw 0.47.4) the
+// periodic and rotation checks skip the scan while the last measured total plus a generous allowance for growth
+// since then (LOG_CAP_GROW_BPS: drives log ~4-5 KB/s, + LOG_CAP_SLACK for file uploads) stays under the cap.
+// Boot always scans.
+static constexpr uint64_t LOG_CAP_GROW_BPS = 16 * 1024, LOG_CAP_SLACK = 48ULL * 1024 * 1024;
+static bool     s_capKnown = false;
+static uint64_t s_capTotal = 0;
+static uint32_t s_capAt = 0;
+static bool logCapDue() {
+  if (!s_capKnown) return true;
+  const uint64_t est = s_capTotal + (uint64_t)((millis() - s_capAt) / 1000u) * LOG_CAP_GROW_BPS + LOG_CAP_SLACK;
+  return est >= LOG_CAP_BYTES;
+}
+void enforceLogCap(bool always) {
   if (!g_sdOk) return;
+  if (!always && !logCapDue()) return;
   if (g_ax) { g_capPending = true; return; }   // after the transfer (axFinish)
   XferScope xs;                                  // up to 64 full directory scans on a full card
-  int removed = 0;
+  const uint32_t t0 = millis();
+  int removed = 0, files = 0;
+  uint64_t last = 0;
+  bool complete = false;
   for (int pass = 0; pass < 64; pass++) {
     File dir = SD.open("/logs");
     if (!dir) return;
@@ -1780,6 +1798,7 @@ void enforceLogCap() {
       xferKeepAlive();
       if (!e.isDirectory()) {
         total += (uint64_t)e.size();
+        files++;
         char full[48];
         snprintf(full, sizeof(full), "/logs/%s", logBase(e.name()).c_str());
         // Eviction order = oldest filesystem last-write time. NOTE: before the phone syncs the clock
@@ -1793,12 +1812,18 @@ void enforceLogCap() {
       e.close();
     }
     dir.close();
-    if (total <= LOG_CAP_BYTES || !oldest[0]) break;
+    last = total;
+    if (total <= LOG_CAP_BYTES || !oldest[0]) { complete = true; break; }
     if (!SD.remove(oldest)) break;
     removed++;
+    files = 0;
     Serial.printf("[CYD] log cap: removed oldest %s (was %llu MB total)\n", oldest, (unsigned long long)(total >> 20));
   }
   if (removed) Serial.printf("[CYD] log cap: %d file(s) removed\n", removed);
+  s_capKnown = complete;                         // an unfinished trim (remove failed / 64 passes) scans again next time
+  s_capTotal = last;
+  s_capAt = millis();
+  Serial.printf("[CYD] log cap: %d file(s), %llu MB, scan %lu ms\n", files, (unsigned long long)(last >> 20), (unsigned long)(millis() - t0));
 }
 
 // Send the list of session logs to the phone: a "SESS=<n>" header then <n> bytes of

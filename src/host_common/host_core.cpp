@@ -311,7 +311,9 @@ PosFix posSnapshot() {
   f.phoneOk = phHad && phone::authed() && phAge < phone::PHONE_GPS_STALE_MS;
   f.onbOk   = g_onbValid && onbAge < ONB_STALE_MS;
   f.fleetOk = flHad && flLive;
-  if (fleet::isClient() && f.fleetOk) f.src = 4;
+  // A client whose own fix IS the fleet position (fw 0.47.5: its phone or GPS, relayed by the leader) stamps it directly,
+  // not the copy that came back a Sync later.
+  if (fleet::isClient() && f.fleetOk && !(fleet::gpsIsFleetPosition() && (f.phoneOk || f.onbOk))) f.src = 4;
   else if (g_gpsPref == SRC_PREFER_PHONE && f.phoneOk && (!f.onbOk || phAge < PHONE_FIX_FRESH_MS)) f.src = 1;
   else if (f.onbOk)   f.src = 2;
   else if (f.phoneOk) f.src = 1;  // prefer-device: the phone fills in only while the device has no fix

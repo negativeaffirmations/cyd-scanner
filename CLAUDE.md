@@ -365,7 +365,9 @@ back (5 GHz included). Things that matter, learned the hard way:
 - **Log retention — 512 MB cap with auto-rotation.** `enforceLogCap()` keeps total `/logs/` size
   under `LOG_CAP_BYTES` (512 MB) by deleting the **oldest** files (by FS timestamp), never the live
   fg/bg/Explore-held/currently-streaming file. Runs at boot, on each session rotation, and on a
-  ~10 min loop timer (suppressed during downloads).
+  ~10 min loop timer (suppressed during downloads). From fw 0.47.4 only boot always scans: the rotation + timer checks skip
+  the full folder scan (it opens every file: ~11 ms each, ~3.5 s stall on a ~150-file card) while the last total + 16 KB/s
+  growth + 48 MB stays under the cap; each real scan prints `[CYD] log cap: N file(s), M MB, scan T ms`.
 - **Log download + time-filtered export.** Download (BLE + Wi-Fi) serves the **current** stream
   (`webshare::setLogPath`, kept in sync with the active screen). A **time-filtered export** streams
   only matching lines, filtered **on the CYD** (two-pass, never the whole 512 MB file): BLE CMD
@@ -930,7 +932,7 @@ MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` 
 **Self filter (fw 0.30.0, fleet proto v4, docs §23):** every unit's BLE advert, C5 Wi-Fi and AP MAC sit in fixed per-unit slots, shared in Sync and kept
 in NVS `fltself`, so units filter each other while booting or un-joined too; each MAC only matches its own kind of row; a role change to off clears them.
 **P3 (docs §18):** the leader's Sync carries UTC + tz + the ONE fleet position (its phone by default, else its GPS,
-else a member's live GPS) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
+else a member's live fix: fw 0.47.5 a member with no GPS sends its phone's fix, MStat `gpsFix`=2, preferred over a member's GPS; the member whose fix it is stamps its own directly; serial `pos`; the app's chooser lists the unit last seen as leader first, localStorage `cflo.unitRoles`) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
 client stamps the fleet time/position ahead of its own (not under device-only), its tz follows the leader, and
 `isSelfDet()` drops the fleet's own radios. `devpos` lines + fleet meta keys wait for the P6 scan-analyzer contract.
 **P4 (docs §19):** link **v12** — `ScanConfig.plan` (`ScanPlan`, 18 B) rides every StartScan (all-zero = legacy); the C5
