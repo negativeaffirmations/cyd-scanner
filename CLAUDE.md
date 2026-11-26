@@ -932,7 +932,7 @@ MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` 
 **Self filter (fw 0.30.0, fleet proto v4, docs §23):** every unit's BLE advert, C5 Wi-Fi and AP MAC sit in fixed per-unit slots, shared in Sync and kept
 in NVS `fltself`, so units filter each other while booting or un-joined too; each MAC only matches its own kind of row; a role change to off clears them.
 **P3 (docs §18):** the leader's Sync carries UTC + tz + the ONE fleet position (its phone by default, else its GPS,
-else a member's live GPS) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
+else a member's live fix: fw 0.47.5 a member with no GPS sends its phone's fix, MStat `gpsFix`=2, preferred over a member's GPS; the member whose fix it is stamps its own directly; serial `pos`; the app's chooser lists the unit last seen as leader first, localStorage `cflo.unitRoles`) + `selfMacs`; host_core source **4 = fleet** (`tsrc`/`gpssrc`=4, `tav`/`gav` bit2): a joined
 client stamps the fleet time/position ahead of its own (not under device-only), its tz follows the leader, and
 `isSelfDet()` drops the fleet's own radios. `devpos` lines + fleet meta keys wait for the P6 scan-analyzer contract.
 **P4 (docs §19):** link **v12** — `ScanConfig.plan` (`ScanPlan`, 18 B) rides every StartScan (all-zero = legacy); the C5

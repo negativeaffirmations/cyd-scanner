@@ -8,6 +8,7 @@
 #include "phone.h"
 #include "fleet.h"
 #include "host_board.h"
+#include "host_core.h"  // posSnapshot()
 #include <nvs.h>
 #include <esp_heap_caps.h>
 
@@ -33,6 +34,7 @@ void help() {
   Serial.println("[cmd] download           CYD: restart into the Wi-Fi download (as the web app's Download over Wi-Fi)");
   Serial.println("[cmd] gatt on|off        GATT identification reads (the C5 connects briefly to read name / maker / model)");
   Serial.println("[cmd] mem                free heap (now, lowest, largest block) and NVS entries used / free");
+  Serial.println("[cmd] pos                where the logged position comes from (source, age; no coordinates)");
   Serial.println("[cmd] fleet              fleet status; also: fleet leave | client | leader on|off | ch <1-13> | remac");
 }
 
@@ -122,6 +124,12 @@ void handle(char* cmd) {
   if (!strcmp(cmd, "gatt") || !strcmp(cmd, "gatt on") || !strcmp(cmd, "gatt off")) {
     if (cmd[4]) { devinfo::setEnabled(cmd[6] == 'n'); pushStatus(); }
     Serial.printf("[gatt] identification reads %s (C5 side: its console `gatt stat`)\n", devinfo::enabled() ? "on" : "off");
+    return;
+  }
+  if (!strcmp(cmd, "pos")) {   // fw 0.47.5: where the position stamped on the log comes from (no coordinates printed)
+    PosFix f = posSnapshot();
+    Serial.printf("[pos] src %u from %u live %d age %lu ms  avail phone %d gps %d fleet %d  fleet pos is mine %d\n",
+                  f.src, f.from, f.live, (unsigned long)f.ageMs, f.phoneOk, f.onbOk, f.fleetOk, fleet::gpsIsFleetPosition());
     return;
   }
   if (!strcmp(cmd, "mem")) {

@@ -258,6 +258,19 @@ void sendMStat() {
   const bool ownFix = g_onbValid && g_onbAtMs && millis() - g_onbAtMs < 10000;
   m->gpsFix = ownFix ? 1 : 0;
   if (ownFix) { m->lat = (int32_t)lroundf(g_onbLat * 1e7f); m->lon = (int32_t)lroundf(g_onbLon * 1e7f); }
+  else {
+    // fw 0.47.5: no live GPS here, but a phone on THIS unit has a fresh fix (2026-11-26: the phone joined a member
+    // first and the leader + the other member logged ~1 min with no position). gpsFix = 2 = "its phone"; an older
+    // leader reads any non-zero gpsFix as a fix, which is what we want. Never a fleet-derived position (no loop).
+    float pla, plo; uint32_t pat;
+    if (g_gpsPref != SRC_DEVICE_ONLY && phone::authed() && phone::gpsFix(&pla, &plo, &pat)) {
+      const int32_t age = (int32_t)(millis() - pat);
+      if (age < 10000) {
+        m->gpsFix = 2;
+        m->lat = (int32_t)lroundf(pla * 1e7f); m->lon = (int32_t)lroundf(plo * 1e7f);
+      }
+    }
+  }
   phone::peerMac(m->phoneMac);                                     // a mini client's own phone: the fleet must not log it
   phone::ownMac(m->bleMac);                                        // its advert's address now (zeros for a CYD client's BLE)
   phone::ownIrk(m->irk);                                           // the key that resolves any of its addresses (zeros: none)
