@@ -1180,7 +1180,8 @@ void xferService() {
     if (!x.mx->beginStep(AX_BUDGET_MS)) return;
     x.preparing = false;
     x.nFiles = x.mx->count();
-    Serial.printf("[CYD] BLE multi export: %d file(s) picked in %lu ms\n", x.nFiles, (unsigned long)(millis() - x.t0));
+    Serial.printf("[CYD] BLE multi export: %d file(s) picked in %lu ms (%d older fleet file(s) skipped)\n", x.nFiles,
+                  (unsigned long)(millis() - x.t0), x.mx->fleetSkipped());
     return;                                          // count from the next pass (the budget may be spent)
   }
   if (!x.sending) {                                  // counting pass
