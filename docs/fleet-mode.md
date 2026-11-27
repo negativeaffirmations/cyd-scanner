@@ -1217,6 +1217,24 @@ Supersedes §16.7 where they differ. scan-analyzer server `343a5d4` (schema v12)
   3 files (a unit that reboots many times without ever joining drops the oldest tails -- they stay on its own card), and a
   sync-renamed file beyond the 150-entry /logs scan window is given up on.
 
+### 22.2 Relay pacing and export pruning (fw 0.47.7 / 0.47.8, 2026-11-26)
+
+- **Pacing from the send (0.47.7).** A member used to schedule its next `LogRows` frame `len / 8 KB/s` after the ACK. On a
+  busy mini (about one loop pass per second) that moved every frame to the next pass: about 2 s per 1.4 KB frame
+  (~0.7 KB/s), below the ~1 KB/s a member logs at speed, so a member fell ~60 s behind on a drive and caught up once
+  parked. The ceiling is now counted from the send (`inflMs`), so the next frame usually goes in the same pass as the ACK.
+- **Log traffic during the C5 wait (0.47.7, S3 hosts).** `fleet::serviceLight()` runs inside `requestScan()`'s wait for
+  the C5's table (beside the live-log push): a leader handles `LogRows` (store + ack), a client handles `LogAck` and sends its
+  next frame. Every other frame is set aside, in arrival order, in `g_defer` and handled first by the next `service()`, so
+  nothing that touches the detection table runs mid-scan. Log frames may overtake set-aside frames; the 32-wide seq window
+  and the session checks accept that. CYD hosts keep only the pacing change.
+- **Export pruning (0.47.8).** §22.1 keeps fleet files out of the tail-epoch pruning, so every all-logs export used to
+  filter every fleet file on the card row by row. The leader starts a new fleet file only after the previous one stops
+  taking lines, and a synced fleet file's name (`fleet-YYYYMMDD-HHMMSS`, local time like the epochs) is at or after its
+  creation, so the next dated fleet file's name time bounds every row of a file. `MultiExport::pruneFleet()` skips a
+  non-live fleet file whose successor began more than 10 min (`FLEET_SLACK_S`) before the cutoff. A file without a dated
+  successor is always read.
+
 ## 23. Fleet self filter (fw 0.30.0, fleet proto v4, link v13)
 
 Field finding (2026-11-06): a C5's active Wi-Fi scan sends probe requests from its own station MAC, and no host knew that

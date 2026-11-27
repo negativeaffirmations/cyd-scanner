@@ -1,6 +1,12 @@
-# Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
+# Handoff — 2026-11-26 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-26 night: lower live-upload lag (fw 0.47.6 + web 20261126c) + member relay (fw 0.47.7)
+## RESUME HERE - 2026-11-26 night: live-upload lag, member relay, download progress, faster exports (fw 0.47.8, web 20261126e)
+- **State:** SOPAFE (leader, COM15), BEMOPU (COM10), ZUDIMU (CYD, COM17) all on fw 0.47.8; C5s unchanged; no link or
+  fleet protocol change tonight. Web `20261126e` / app build 33 deployed (main `bfb1168`+) and installed on the owner phone
+  over adb. Docs: fleet-mode.md §22.2, phone-analysis.md phase 2 "Latency".
+- **Next:** on the next drive ask scan-analyzer for each unit's OLDEST-row age per post while moving: BEMOPU was 60 s on
+  drive 9 (0.47.6); with 0.47.7 it should be near ZUDIMU's 3-5 s. If not, measure the member's forwarding backlog (serial
+  `fleet`, "backlog N B") during a drive.
 - **Why:** drive 8 (19:49-20:12, all fine server-side; the 19:51 POST timeouts were the server box rebooting after a power
   surge) showed own rows 3-13 s, members up to ~50 s behind. Owner: a few seconds is fine, do the cheap parts.
 - **Phone (the biggest delay):** pushed bytes were saved into the live copy only once per livesync pass (20 s < 2 MB, 60 s
@@ -28,8 +34,11 @@
   epochs), so every export filtered EVERY fleet file on the card. `pruneFleet()` now skips a non-live fleet file when the
   NEXT dated fleet file's name time + 10 min is before the cutoff (a new fleet file starts only after the previous stops
   taking lines). SOPAFE since-boot: 456 s / 656 KB -> 25.7 s / 73 KB (61 fleet files skipped, picking 16 s). The
-  64-file cap still drops the oldest before pruning (safe direction: fewer successors, fewer skips). Also seen: "Fleet: no reply from the scanner" every ~55 s while an export runs (Settings fleet poll), cosmetic.
-- **Open:** next drive -> ask scan-analyzer for BEMOPU's oldest-row age while moving (was 60 s).
+  64-file cap still drops the oldest before pruning (safe direction: fewer successors, fewer skips). Picking still opens
+  every file (~16 s on SOPAFE). Also seen: "Fleet: no reply from the scanner" every ~55 s while an export runs (the
+  Settings fleet poll waits behind the transfer), cosmetic, not fixed.
+- **Lesson (adb UI driving):** the Data page shifts when the live-copy text grows (a fleet line appears ~10 s after
+  connecting); two taps meant for the time-range section toggled "Keep a live copy" off. Screenshot right before each tap.
 
 ## 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser (DEPLOYED)
 - **Why:** drive 7's no-position rows (all at scan start) lasted ~1 min longer on SOPAFE/ZUDIMU because the phone joined

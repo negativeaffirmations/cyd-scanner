@@ -368,7 +368,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   ~10 min loop timer (suppressed during downloads). From fw 0.47.4 only boot always scans: the rotation + timer checks skip
   the full folder scan (it opens every file: ~11 ms each, ~3.5 s stall on a ~150-file card) while the last total + 16 KB/s
   growth + 48 MB stays under the cap; each real scan prints `[CYD] log cap: N file(s), M MB, scan T ms`.
-- **Log download + time-filtered export.** Download (BLE + Wi-Fi) serves the **current** stream
+- **Log download + time-filtered export.** (Web 20261126e: one-shot downloads show progress in the toast: the collecting time from the scanner's 5 s `WAIT` notifies, then bytes / % / time left for files > 64 KB; an all-logs export waits up to 10 min for data while connected (`fileIdleMs`), a lost link cancels at once; `ble/download.js`.) Download (BLE + Wi-Fi) serves the **current** stream
   (`webshare::setLogPath`, kept in sync with the active screen). A **time-filtered export** streams
   only matching lines, filtered **on the CYD** (two-pass, never the whole 512 MB file): BLE CMD
   `T:<mode>[:min][:path]` and HTTP `/dlf?f=&mode=&arg=` — mode `0` = since boot (whole file), `1` =
