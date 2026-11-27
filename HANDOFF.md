@@ -14,8 +14,9 @@
   5 files fetched in ~1.5 min, 24c58e75 resumed at 109392, 749f9a80 at 43780, all 200, all deduped.
 - **scan-analyzer catch-up ack (option A, owner-approved, built, deploy pending):** the query answers the longest prefix held
   from ANY key or post-deploy upload; a mismatching prefix hash -> 409 with this key's own ack (client resends at once, new
-  branch in `handle()`). Pre-v19 uploads still need one whole re-send. **Next:** when they say it's live, rerun the dev-app
-  test: no more whole re-sends from offset 0.
+  branch in `handle()`). Pre-v19 uploads still need one whole re-send. **LIVE 17:50 (scan-analyzer e04d525, schema v19);
+  re-tested with the RELEASE app (build 35, key that never streamed those files) on SOPAFE: 6 takeovers answered full size,
+  catch-up queued nothing, no bodies for finished files, no 409/4xx. Done.**
 
 ## RESUME HERE - 2026-11-27: GATT names visible + client-leaving-AP deauth filter (fw 0.47.9 flashed; web NOT committed/deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.47.9, fleet rejoined with normal roles; C5s unchanged.
