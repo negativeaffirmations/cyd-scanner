@@ -19,13 +19,29 @@ import { reqBusy, connGen } from './xfer.js';
 import { syncWait } from './syncwait.js';
 import { gattWrite } from './gattq.js';
 
+// Progress toast for the one-shot file sinks (2026-11-26: a 12.9 MB all-logs export showed "Collecting…" for 14 min).
+// Before the SIZE header the scanner is still collecting (a "WAIT" notify every 5 s): elapsed time, when the request
+// set state.dl.prep. Then bytes, percent and the time left, at most once a second. Small files get no progress.
+const PROG_MIN = 64 * 1024;
+const mb = b=>b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+const mmss = ms=>{ const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 // Idle watchdog for the one-shot sinks (save/map/explore/upload): if a transfer stalls mid-file (link
 // hiccup, a short send), give up after IDLE_MS instead of leaving state.dl stuck in "file" mode, which
 // would swallow every later SESS=/SIZE= header as file data. (bleFetch has its own watchdog.)
-const IDLE_MS = 20000;
+// d.fileIdleMs (the all-logs export) replaces IDLE_MS once the file is coming: its send pass filters every fleet file on
+// the card and can go minutes without a matching row, and nothing can be sent in between (every byte is file data). A
+// lost link ends it at once instead (2026-11-26: a "since boot" export was cancelled 20 s into a quiet stretch).
+const IDLE_MS = 20000, QUIET_SAY_MS = 8000;
 setInterval(()=>{
-  const d = state.dl;
-  if ((d.mode===null && !d.waiting) || d.sink==="promise" || !d.lastRx || Date.now()-d.lastRx < IDLE_MS) return;
+  const d = state.dl, now = Date.now();
+  if ((d.mode===null && !d.waiting) || d.sink==="promise" || !d.lastRx) return;
+  const lim = d.mode==="file" && d.fileIdleMs && state.connected ? d.fileIdleMs : IDLE_MS;
+  if (state.connected && now-d.lastRx < lim) {   // no link: cancel now (nothing else clears a one-shot download)
+    if (d.mode==="file" && d.fileIdleMs && d.expect >= PROG_MIN && now-d.lastRx >= QUIET_SAY_MS)
+      toast((d.label || "Downloading " + d.name) + ": " + mb(d.got) + " of " + mb(d.expect) + " (" + Math.floor(100 * d.got / d.expect) +
+            "%). The scanner is still filtering older logs (" + mmss(now - d.lastRx) + " without new rows).", {work:true, sticky:true});
+    return;
+  }
   if (d.holdUntil && Date.now() < d.holdUntil) return;   // a claimed list reply (ble/syncwait.js) may take a while
   log("Transfer stalled ("+d.got+" of "+d.expect+" bytes) — cancelled. Try again.");
   toast("Transfer stalled — cancelled. Try again.", {err:true});
@@ -40,12 +56,6 @@ function settlePromise(text){
   if(res) res(text);
 }
 
-// Progress toast for the one-shot file sinks (2026-11-26: a 12.9 MB all-logs export showed "Collecting…" for 14 min).
-// Before the SIZE header the scanner is still collecting (a "WAIT" notify every 5 s): elapsed time, when the request
-// set state.dl.prep. Then bytes, percent and the time left, at most once a second. Small files get no progress.
-const PROG_MIN = 64 * 1024;
-const mb = b=>b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
-const mmss = ms=>{ const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 function progress(d, now){
   if(now - (d.progAt || 0) < 1000) return;
   d.progAt = now;
@@ -55,7 +65,7 @@ function progress(d, now){
   }
   if(d.expect < PROG_MIN) return;
   const el = now - (d.sizeAt || now), pct = Math.floor(100 * d.got / d.expect);
-  const left = d.got > 0 && el > 3000 ? (d.expect - d.got) * el / d.got : 0;
+  const left = d.got >= Math.max(32768, d.expect / 20) && el > 5000 ? (d.expect - d.got) * el / d.got : 0;   // too early = wild
   toast((d.label || "Downloading " + d.name) + ": " + mb(d.got) + " of " + mb(d.expect) + " (" + pct + "%)" +
         (left ? ", about " + (left < 60000 ? Math.max(1, Math.round(left / 1000)) + " s" : Math.round(left / 60000) + " min") + " left" : ""),
         {work:true, sticky:true});
@@ -183,7 +193,7 @@ export async function downloadFilteredAll(){
   if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
   try{ const prep="Collecting "+sp.tag+" from all logs on the device…";
     state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true,waiting:true,lastRx:Date.now(),
-              t0:Date.now(), prep, label:"Downloading "+sp.tag+" (all logs)"};  // saved as <first>-<last>.jsonl
+              t0:Date.now(), prep, label:"Downloading "+sp.tag+" (all logs)", fileIdleMs:10*60000};  // saved as <first>-<last>.jsonl
     toast(prep, {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode(exportCmd(sp, "*"))); log("Requesting "+state.dl.name+" (all logs, filtered on device)…"); }
   catch(e){ log("Filtered download failed: "+e.message); toast("Filtered download failed: "+e.message, {err:true}); }
