@@ -19,8 +19,14 @@
   next frame; every other frame is set aside in `g_defer` and handled first by the next `service()`. CYD hosts get only the
   pacing fix. Bench: a 32-row / 6.6 KB burst on BEMOPU forwarded inside one 3 s sample, 0 bad frames, 2 resends in 5 min.
   A bench backlog can't be built with a phone download: cooperative transfers don't block fleet appends.
-- **Seen on the bench:** a 24 h all-logs export on SOPAFE is 12.9 MB (~15 KB/s, ~14 min); the web app shows only the
-  "Collecting…" toast the whole time (no progress) -> looks hung. Small web UX fix, not started.
+- **Web 20261126d/e, app builds 32/33 (installed over adb):** download progress in `ble/download.js`: the scanner's WAIT
+  keepalives show the collecting time, then bytes / % / time left (only after 5 % / 32 KB) for files > 64 KB. An all-logs
+  export waits up to 10 min (`fileIdleMs`) for data while the link is up and says the scanner "is still filtering older
+  logs"; a lost link cancels a one-shot download at once. Checked on the phone: SOPAFE "since boot" = 3:36 collecting,
+  then 520 KB with quiet stretches of 13-27 s (the old 20 s timer cancelled it), saved 532,115 B.
+- **Why exports are slow (not fixed):** MultiExport never prunes fleet files by date (non-monotonic member epochs), so every
+  export picks + filters EVERY fleet file on the card (~3.5 min picking on SOPAFE). A date bound for fleet files would fix
+  it. Also seen: "Fleet: no reply from the scanner" every ~55 s while an export runs (Settings fleet poll), cosmetic.
 - **Open:** next drive -> ask scan-analyzer for BEMOPU's oldest-row age while moving (was 60 s).
 
 ## 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser (DEPLOYED)
