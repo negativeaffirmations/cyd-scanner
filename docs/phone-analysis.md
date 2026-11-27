@@ -84,7 +84,7 @@ The scanner pushes every log byte to the phone as it writes it, instead of the p
   request (same `file_id` + prefix-CRC check) and answers one LOGDATA notify: `LLOK=<n>`, or `LLERR=parse|path|id|off|many|none`
   with nothing subscribed. A bare `J` stops; a new `J:` replaces the set.
 - **Frames.** From then on, while no BLE transfer runs (never inside another reply), it sends single LOGDATA notifies
-  `LL=<file_id>:<offset>:<bytes>`, up to 4 per file every 250 ms, each as big as the link's MTU allows. It reads the
+  `LL=<file_id>:<offset>:<bytes>`, several per call (fullest file first, see Latency below), each as big as the link's MTU allows. It reads the
   bytes from the card each round instead of queueing them in RAM, so a busy link or a full notify buffer only delays
   them. A file renamed on time sync is followed by its `file_id`. The subscription ends with the authenticated session.
 - **Phone side** (`features/livesync.js`): the frames collect in RAM and are saved into the copy on each pass (or once
@@ -95,6 +95,13 @@ The scanner pushes every log byte to the phone as it writes it, instead of the p
   the new files up to date, and subscribes again.
 - **For phase 3:** every pushed piece is announced as a window `cflo-livelog` event `{sid, path, fid, off, bytes}`.
 - Old web apps never send `J`, so they never get frames.
+
+**Latency (2026-11-26, fw 0.47.6 + web 20261126c).** The scanner used to look at a subscribed file's size every 2 s;
+now every log append marks the file, which is checked 0.5 s later, and that open is reused for the send. With more than
+4 KB waiting it sends for 120 ms per call, 10 ms apart. On the phone, the live upload (`features/loglines.js`) no longer
+waits for the pushed bytes to be saved into the copy (20 s to 5 min, see above): `state.livePending()` hands it the unsaved
+pieces when they continue the copy exactly, and it runs every 2 s. On the bench the oldest row of each upload was 2-6 s
+old on arrival (was 20-60 s); on a drive the own rows stayed at about 2 s.
 
 Still to do: storing the copy in chunks instead of re-saving the whole file (the re-save cost is why the save interval
 grows with size), and a STATUS key for the leader's live fleet file (STATUS part 2 is at its size limit, so the
