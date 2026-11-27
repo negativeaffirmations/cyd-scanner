@@ -6,6 +6,7 @@
 .vscode/launch.json
 .vscode/ipch
 compile_commands.json
+.tmp
 
 # Claude Code personal/local settings (may hold machine-specific paths)
 .claude/settings.local.json

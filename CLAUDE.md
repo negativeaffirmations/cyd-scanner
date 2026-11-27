@@ -409,7 +409,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   Pwnagotchi/Evil-twin → likely, iBeacon → label only. Deauth-flood + evil-twin also surface as
   live **alerts** (red banner + LED) and `evt` log lines. **Deauth alert filter (fw 0.42.0, `updateEvents()`):** every
   burst ≥ `DEAUTH_ALERT` (20/s) is still logged, but one shaped like a router dropping its own client (one sender, no
-  broadcast, sender = the BSSID it names, `count == total`) raises no alert unless the same sender is still at it
+  broadcast, sender = the BSSID it names, `count == total`; from fw 0.47.9 also the mirror, a client leaving its own AP: target = the BSSID) raises no alert unless the same sender is still at it
   `DEAUTH_SUSTAIN_MS` (20 s) later; `deauthAlertRate()` feeds STATUS `deauth=` + fleet `MStat.deauth`, so the web
   banner / notification follow without a web change. First real burst (2026-11-22 drive): 21 reason-7 frames from a
   NETGEAR AP to one client.

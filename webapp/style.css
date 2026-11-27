@@ -1739,6 +1739,16 @@ body {
   background: #39c5cf;
 }
 
+.detsmorehdr {
+  margin: 0.9em 0 0.3em;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.detsmorehdr .sub {
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+
 .folbanner {
   display: none;
   align-items: center;
@@ -2011,7 +2021,7 @@ body {
   pointer-events: none;
 }
 
-#detServer:not(:empty), #detPhone:not(:empty) {
+#detServer:not(:empty), #detPhone:not(:empty), #detGatt:not(:empty) {
   margin-top: 0.8em;
   padding-top: 0.5em;
   border-top: 1px solid #30363d;

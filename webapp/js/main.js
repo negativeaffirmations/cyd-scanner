@@ -30,7 +30,7 @@ import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261124c';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
-import { initEngine } from './analysis/engine.js?v=20261124c';   // phone analysis engine (docs/phone-analysis.md phase 3)
+import { initEngine } from './analysis/engine.js?v=20261127a';   // phone analysis engine (docs/phone-analysis.md phase 3)
 import { initHistory } from './analysis/history.js?v=20261123f';
 import { initAlerts } from './analysis/alerts.js?v=20261124c';
 import { initVendors } from './analysis/vendors.js?v=20261124a';   // phone analysis: full maker lists (phase 3d)   // phone analysis: its own alerts (phase 3c)   // phone analysis: saved-scan history (phase 3b)
@@ -43,7 +43,9 @@ import { initServerHistory } from './features/serverhist.js?v=20261121a';   // n
 import { initServerFind } from './features/serverfind.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initServerMap } from './features/servermap.js?v=20261121b';   // new module: versioned so it loads fresh with main.js
 import { initDisconnect, disconnectScanner } from './features/disconnect.js?v=20261126a';   // new module: versioned so it loads fresh with main.js
-import { initUnitRole } from './features/unitrole.js?v=20261126b';   // new module: remembers each unit's fleet role for the app's chooser
+import { initUnitRole } from './features/unitrole.js?v=20261126b';
+import { initMoreList } from './features/morelist.js?v=20261127a';   // live list past the top 12, from the live log copy
+import { initGattView } from './features/gattview.js?v=20261127a';   // device popup: what a GATT read identified   // new module: remembers each unit's fleet role for the app's chooser
 import { openFiles, closeFiles, onFilesClosed, fsUp, fsRefresh, fsMkdir, fsListClick, fsDownload, fsRename, fsDelete, fsUpload } from './features/files.js';
 
 // The OS drops the screen wake lock whenever the page is hidden; re-take it when it returns.
@@ -169,6 +171,8 @@ initServerFind();       // Map page 'Server data' dialog: devices near me + sear
 initServerMap();        // Map page 'Server devices' layer from the paired server (features/servermap.js)
 initDisconnect();       // Disconnect buttons: status popup Bluetooth row + Settings > Device(s) > Scanners (features/disconnect.js)
 initUnitRole();         // remember each unit's fleet role (the Android app's chooser lists the leader first)
+initMoreList();         // Scanner: 'Also in range' rows past the scanner's top 12 (features/morelist.js)
+initGattView();         // device popup: 'Identified' (GATT name / maker / model / firmware; features/gattview.js)
 $("wfCancelBtn").onclick  = stopWifiFlow;
 $("listBtn").onclick = refreshSessions;
 $("sessDlBtn").onclick = downloadSession;

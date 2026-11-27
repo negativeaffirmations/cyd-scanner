@@ -18,6 +18,7 @@ import { state } from '../state.js';
 import { connGen } from '../ble/xfer.js';
 import { find, getBlob } from '../data/logcache.js';
 import { onUnitReset } from '../unitreset.js';
+import { noteDevinfo } from '../data/devinfo.js';
 
 const PLACE_M = 300, FOLLOW_PLACES = 3, FOLLOW_SPREAD_M = 1000, FOLLOW_SPAN_S = 600;
 const STOP_M = 120, STOP_S = 300;             // a stop: this long within this distance (longer than a light or short jam)
@@ -85,12 +86,14 @@ function line(text, f){
   const t = rowTime(o, f);
   if(typeof o.fix_age !== "number") addTrack(t, o.lat, o.lon);   // a held fix isn't where you are
   if(o.evt){
+    if(o.evt === "devinfo"){ noteDevinfo(o, t); return; }   // GATT identification (data/devinfo.js)
     if(o.evt === "lastseen" && o.mac){
       const d = devices.get(String(o.mac).toUpperCase());
       if(d && typeof o.last_ms === "number" && typeof o.ms === "number" && t){
         const last = t - (o.ms - o.last_ms) / 1000;
         if(last > d.last) d.last = last;
       }
+      if(d) d.here.delete(o.scanner || sid);   // that unit's presence period ended (lines are in each unit's own order)
     } else if(o.evt !== "fleet" && o.evt !== "phonecfg" && o.evt !== "devpos") events.push({ t, ...o });
     return;
   }
@@ -99,10 +102,14 @@ function line(text, f){
   let d = devices.get(mac);
   if(!d){
     d = { mac, first:t || 0, last:t || 0, n:0, src:new Set(), names:new Set(), scanners:new Set(), sight:[],
-          tier:"", score:0, sig:"", flags:new Set(), rssiMax:-999, wl:false, cid:"", bssid:"" };
+          tier:"", score:0, sig:"", flags:new Set(), rssiMax:-999, wl:false, cid:"", bssid:"",
+          here:new Set(), rowT:0, rssi:-999, lastSrc:"", lastName:"" };
     devices.set(mac, d);
   }
   d.n++;
+  d.here.add(o.scanner || sid);   // in range for that unit until its lastseen line
+  if(t >= d.rowT){ d.rowT = t; if(typeof o.rssi === "number") d.rssi = o.rssi; if(o.src) d.lastSrc = o.src; }
+  if(o.name) d.lastName = o.name;
   if(t){ if(!d.first || t < d.first) d.first = t; if(t > d.last) d.last = t; }
   if(o.bssid) d.bssid = String(o.bssid).toUpperCase();   // the AP a data-frame client talks to
   if(o.src) d.src.add(o.src);
@@ -285,6 +292,25 @@ export function analysisFor(macIn){
 const km = m=>m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m";
 const mins = s=>s >= 3600 ? (s / 3600).toFixed(1) + " h" : Math.max(1, Math.round(s / 60)) + " min";
 
+// Devices the log says are in range now (features/morelist.js): a row and no "lastseen" since, from any unit, with a
+// row in the last maxAgeS seconds (a scanner re-logs a device every 5 min while it stays; a stopped scan writes no
+// lastseen lines). Shaped like DETS rows so the live list can draw them; fromLog marks them.
+const FLAG_BITS = { ibeacon:8, findmy:16, pwnagotchi:32, eviltwin:64, droneid:128 };
+export function presentDevices(maxAgeS){
+  const now = Date.now() / 1000 - new Date().getTimezoneOffset() * 60;
+  const out = [];
+  for(const d of devices.values()){
+    if(!d.here.size || !d.rowT || Math.abs(now - d.rowT) > maxAgeS) continue;
+    let flags = 0;
+    for(const f of d.flags) flags |= FLAG_BITS[f] || 0;
+    const tier = tierRank(d.tier);
+    out.push({ mac:d.mac, name:d.lastName, rssi:d.rssi, tier, sources:d.lastSrc ? [{ tag:d.lastSrc, rssi:d.rssi }] : [],
+               flags, cat:0, cid:"", cidHex:d.cid, sig:d.sig, muted:d.wl, ftier:0, via:1, fromLog:true, rowT:d.rowT,
+               scanners:[...d.here] });
+  }
+  return out;
+}
+
 // MACs the whole-scan analysis currently calls following (analysis/alerts.js).
 export function followers(){
   const out = [];
@@ -311,5 +337,5 @@ export function initEngine(){
   onUnitReset(reset);
   // The one way other modules reach the engine (features/phoneview.js): importing engine.js under a different URL
   // than main.js's ?v= one would load a second, empty instance. Also handy over DevTools.
-  state.engine = { analysisFor, engineStats, onEngineChange, followers, eventsFrom, recentEvents, engineGen };
+  state.engine = { analysisFor, engineStats, onEngineChange, followers, eventsFrom, recentEvents, engineGen, presentDevices };
 }

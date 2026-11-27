@@ -1,4 +1,19 @@
-# Handoff — 2026-11-26 (working branch: `hardening`; trunk `main`)
+# Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
+
+## RESUME HERE - 2026-11-27: GATT names visible + client-leaving-AP deauth filter (fw 0.47.9 flashed; web NOT committed/deployed)
+- **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.47.9, fleet rejoined with normal roles; C5s unchanged.
+  Web changes are in the working tree only (ui `2026-11-27a`), tested in the `.dev` app over adb; the release app is untouched.
+- **Why no GATT names (the 11-25 open item):** (1) the app list only got the scanner's top 12 DETS rows, and GATT-read devices
+  are weak untiered BLE gadgets; (2) the GE bulbs advertise a hex ID ("82D7FD3FAEC57791") and an advert name always won.
+- **fw 0.47.9:** `gattBeatsAdvert()` (host_core.cpp): a GATT name also replaces an advert name that is only 8+ hex digits
+  (groupName + DETS nsrc). Deauth `deauthBenignShape()` also exempts the mirror shape: one unicast sender whose target is the
+  BSSID it names (a client leaving its own AP; scan-analyzer found 4 such BEMOPU lines, EC:64:C9 Espressif -> Google mesh,
+  reason 8, 11-25/26). Still alerts if sustained 20 s. Logging unchanged.
+- **Web:** `features/morelist.js` "Also in range" below the live list = engine `presentDevices()` (rows with no lastseen since,
+  row <= 7 min old) from the live copy; `data/devinfo.js` = devinfo lines from the engine + parse.js (Explore names too,
+  same hex-ID rule, `preferName`); `features/gattview.js` = popup "Identified" (name / maker / model / fw / hw / appearance).
+  Checked on the phone: 61 extra rows, all 9 bulbs "C by GE", popup shows GE / V1.3 / 4.0. Android tests pass.
+- **Next:** owner OK to commit + deploy (push main -> Pages + app build); then a real disassoc burst should log without the alert.
 
 ## RESUME HERE - 2026-11-26 night: live-upload lag, member relay, download progress, faster exports (fw 0.47.8, web 20261126e)
 - **State:** SOPAFE (leader, COM15), BEMOPU (COM10), ZUDIMU (CYD, COM17) all on fw 0.47.8; C5s unchanged; no link or
