@@ -88,7 +88,11 @@ async function handle(f, blob, r, posted){
     const before = f.ack, a = await accept(f, blob, r.body);
     if(a === "ok"){
       fine();
-      if(posted && f.ack <= before){ if(++f.stuck >= 3) stop(f, "the server made no progress"); else trouble(r.status); return false; }   // a backward 409 gets another try, not an endless loop
+      if(posted && f.ack <= before){
+        if(++f.stuck >= 3){ stop(f, "the server made no progress"); return false; }   // a backward 409 gets another try, not an endless loop
+        if(r.status === 409 && f.ack < before) return true;   // a taken-over prefix didn't match (catch-up): resend from this key's own ack now
+        trouble(r.status); return false;
+      }
       f.stuck = 0;
       return true;
     }
@@ -175,8 +179,19 @@ async function run(){
   finally{ busy = false; }
 }
 
+// How much of a file the server already holds, for livesync.js's catch-up of files that finished before this connection:
+// the empty-body query, no copy needed. -> { ack, complete } or null (not wanted / not supported / no answer: don't guess).
+async function ackOf(sid, fid, path){
+  if(!wanted() || (haltKey && haltKey === who()) || !await supported()) return null;
+  const r = await call("/api/v1/loglines", { method:"POST", headers:headers({ sid, fid, path }, 0, ""), body:"" });
+  if(r.status === 401 || r.status === 403){ haltKey = who(); return null; }
+  if((r.status !== 200 && r.status !== 409) || !r.body || !Number.isInteger(r.body.ack) || r.body.ack < 0) return null;
+  return { ack:r.body.ack, complete:r.body.complete === true };
+}
+
 export function initLogLines(){
   state.logLinesOn = active;
+  state.logLinesAck = ackOf;
   state.serverScreens = async ()=>{ await supported(); return capScreen && capFor === who(); };   // features/screen.js
   setInterval(run, 1000);
   window.addEventListener("online", ()=>{ holdUntil = 0; });   // the network is back: no need to wait out the backoff

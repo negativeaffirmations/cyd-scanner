@@ -669,6 +669,9 @@ back (5 GHz included). Things that matter, learned the hard way:
       counted, the pass stops at its next request) in rawFetch / bleFetch / downloads / files / fleet; list-answered
       commands (Q, wipe-all, whitelist A / E / Y) go through `claimWrite()` (refuse when busy, claim state.dl, gattWrite).
       Data page switch "Keep a live copy of the current scan on this phone" (localStorage `cflo.livesync`).
+      **Catch-up (webapp 2026-11-27b):** once per connection the phone asks the server (`state.logLinesAck`, the empty-body
+      loglines query) about the unit's finished files from the last 24 h (newest 8) and queues the missing ones as old files
+      (one fetch per pass, whole files only <= 1 MB) for loglines to upload: files that finished while no phone streamed.
       **Live push (fw 0.44.0, phase 2):** once the copies are current the page sends CMD **`J:<path>@<off>:<file_id>:<crc>[|…]`**
       (<= 2 files, checked like a tail; reply `LLOK=<n>` / `LLERR=parse|path|id|off|many|none|mtu`, bare `J` = stop); the
       scanner then pushes appended bytes as single LOGDATA notifies `LL=<file_id>:<offset>:<bytes>` (one per 30 ms, only

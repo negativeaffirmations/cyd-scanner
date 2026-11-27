@@ -17,7 +17,7 @@
 // NEW file, wired from main.js (stale-module rule).
 import { state } from '../state.js';
 import { enc } from '../config.js';
-import { $ } from '../util/dom.js';
+import { $, log } from '../util/dom.js';
 import { canTail, fwAtLeast } from '../ble/logfetch.js';
 import { resetDl } from '../ble/transfer.js';
 import { reqBusy, connGen } from '../ble/xfer.js';
@@ -41,7 +41,7 @@ let running = false, nextAt = 0;
 let cur = null;   // per connection, see fresh()
 function fresh(gen, sid){
   return { gen, sid, files:{}, known:{}, fleet:null, listAt:0, listSess:"", listFlt:"", relist:false, missN:0, missAt:0,
-           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(), old:[], seenF:null, extras:[],
+           err:"", errN:0, stop:"", allowFull:new Set(), hadCopy:new Set(), tried:new Set(), old:[], seenF:null, extras:[], cu:null, cuAt:0,
            push:{ on:false, subs:{}, wait:null, blockUntil:0, why:"" } };
 }
 // push.subs[fid] = { label, path, fid, bufStart, end, chunks, bytes, lastAt }: bytes pushed since the last save
@@ -327,9 +327,47 @@ async function subscribe(want, gen, sid){
 // Fetch what is left of files that stopped being current: at once, and again OLD_AGAIN_MS later (the scanner may still
 // append departure lines). Only ever a tail of a copy we have; loglines.js uploads the bytes.
 const OLD_AGAIN_MS = 90000;
+
+// Catch-up (2026-11-27): files that finished BEFORE this connection (the phone dropped off mid-scan, another phone or app
+// install streamed them, nobody was connected) are only on the card unless someone uploads them by hand; the live
+// upload follows the current files only. Once per connection, after the current copies are in hand, ask the server
+// (loglines.js, no BLE) how much it holds of each recent finished file, and queue the ones it is missing as old files:
+// finishOld fetches a tail of a saved copy, or a whole file up to AUTO_FULL_MAX, and loglines.js uploads them. Bigger
+// files without a copy are only counted (Data page: Upload). Server unreachable / live upload off: retried later.
+const CU_AGE_S = 24 * 3600, CU_MAX = 8, CU_RETRY_MS = 5 * 60000;
+async function catchUp(gen, sid){
+  if(!state.logLinesAck || Date.now() < cur.cuAt) return;
+  const nowLocal = Math.floor(Date.now() / 1000) - new Date().getTimezoneOffset() * 60;
+  const live = [cur.files.own, cur.files.fleet].filter(Boolean).map(f=>f.fid);
+  const cand = Object.values(cur.known)
+    .filter(k=>k.fid && k.size > 0 && k.last > 0 && nowLocal - k.last <= CU_AGE_S && !live.includes(k.fid) &&
+               !cur.old.some(o=>o.fid === k.fid) && !cur.extras.some(x=>x.fid === k.fid))
+    .sort((a, b)=>b.last - a.last).slice(0, CU_MAX);
+  const cu = { checked:0, queued:0, big:0, bytes:0 };
+  for(const k of cand){
+    const a = await state.logLinesAck(sid, k.fid, k.path);
+    if(!cur || cur.gen !== gen) return;
+    if(a === null){ cur.cuAt = Date.now() + CU_RETRY_MS; return; }   // nothing decided: all again later
+    cu.checked++;
+    if(a.complete || a.ack >= k.size) continue;
+    const meta = find(sid, k.path, k.fid), have = !!(meta && meta.fileId === k.fid);
+    if(!have && k.size > AUTO_FULL_MAX){ cu.big++; continue; }
+    cur.old.push({ path:k.path, fid:k.fid, at:0, n:1, fails:0, full:true, size:k.size, cu:true });   // n:1 = one fetch is enough
+    cu.queued++;
+    cu.bytes += have ? Math.max(0, k.size - meta.size) : k.size;
+  }
+  cur.cu = cu;
+  cur.cuAt = Infinity;
+  if(cu.queued || cu.big)
+    log("Catch-up: " + cu.checked + " earlier file(s) checked with the server; sending " + cu.queued + " (" + kb(cu.bytes) + ")" +
+        (cu.big ? ", " + cu.big + " too big to send automatically (Data page: Upload)" : "") + ".");
+}
+
 async function finishOld(gen, sid){
+  let cuDone = false;   // at most one catch-up file per pass: the current scan's copy and push keep their turn
   for(const o of [...cur.old]){
     if(Date.now() < o.at) continue;
+    if(o.cu){ if(cuDone) continue; cuDone = true; }
     if([cur.files.own, cur.files.fleet].some(f=>f && f.fid === o.fid)){ cur.old = cur.old.filter(x=>x !== o); continue; }   // it is a current file
     if(Object.values(cur.known).some(k=>k.fid === o.fid)) o.path = Object.values(cur.known).find(k=>k.fid === o.fid).path;   // renamed
     const meta = find(sid, o.path, o.fid);
@@ -414,6 +452,8 @@ async function pass(){
         await subscribe(cand, gen, sid);
     }
     cur.err = ""; cur.errN = 0;
+    const o = cur.files.own;
+    if(o && o.fid && (o.at || o.need)) await catchUp(gen, sid);   // the current scan first
     await finishOld(gen, sid);
   }catch(e){
     if(e instanceof Yield) interval = 3000;   // try again soon, after the user's request
@@ -468,6 +508,9 @@ function render(){
     t = [describe(mine.files.own, "Current scan"), describe(mine.files.fleet, "Fleet file")].filter(Boolean).join(". ") + ".";
     if(mine.push.on) t += " Live: the scanner sends new lines as it writes them.";
     else if(mine.push.why && canPush()) t += " (Live push off: " + mine.push.why + "; it updates by asking instead, and tries the push again shortly.)";
+    const cuLeft = mine.old.filter(o=>o.cu).length;
+    if(cuLeft) t += " Sending " + cuLeft + " earlier file(s) the server is missing.";
+    if(mine.cu && mine.cu.big) t += " " + mine.cu.big + " earlier file(s) the server is missing are too big to send automatically: use Upload below.";
     if(mine.err) t += " Last update failed (" + mine.err + "); trying again shortly.";
     for(const f of [mine.files.own, mine.files.fleet]) if(f && f.need && !f.big) need += f.need;
   }
