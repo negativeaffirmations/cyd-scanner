@@ -40,6 +40,27 @@ function settlePromise(text){
   if(res) res(text);
 }
 
+// Progress toast for the one-shot file sinks (2026-11-26: a 12.9 MB all-logs export showed "Collecting…" for 14 min).
+// Before the SIZE header the scanner is still collecting (a "WAIT" notify every 5 s): elapsed time, when the request
+// set state.dl.prep. Then bytes, percent and the time left, at most once a second. Small files get no progress.
+const PROG_MIN = 64 * 1024;
+const mb = b=>b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+const mmss = ms=>{ const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function progress(d, now){
+  if(now - (d.progAt || 0) < 1000) return;
+  d.progAt = now;
+  if(d.mode === null){
+    if(d.prep) toast(d.prep + " (" + mmss(now - (d.t0 || now)) + ")", {work:true, sticky:true});
+    return;
+  }
+  if(d.expect < PROG_MIN) return;
+  const el = now - (d.sizeAt || now), pct = Math.floor(100 * d.got / d.expect);
+  const left = d.got > 0 && el > 3000 ? (d.expect - d.got) * el / d.got : 0;
+  toast((d.label || "Downloading " + d.name) + ": " + mb(d.got) + " of " + mb(d.expect) + " (" + pct + "%)" +
+        (left ? ", about " + (left < 60000 ? Math.max(1, Math.round(left / 1000)) + " s" : Math.round(left / 60000) + " min") + " left" : ""),
+        {work:true, sticky:true});
+}
+
 export function onLogData(ev){
   const dv = ev.target.value;
   const v = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
@@ -54,8 +75,9 @@ export function onLogData(ev){
   const isPromise = state.dl.sink==="promise";
   if (state.dl.mode === null) {               // expecting a header
     const txt = new TextDecoder().decode(v);
+    if (!isPromise && txt === "WAIT") { progress(state.dl, Date.now()); return; }   // still collecting on the scanner
     if (txt.startsWith("SIZE=")) {
-      state.dl.mode="file"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[];
+      state.dl.mode="file"; state.dl.expect=parseInt(txt.slice(5),10)||0; state.dl.got=0; state.dl.chunks=[]; state.dl.sizeAt=Date.now();
       if (state.dl.expect===0){
         if(isPromise){ settlePromise(""); return; }
         log(state.dl.sink==="map"||state.dl.sink==="explore"?"That session is empty.":"No log on device yet (or no rows in that time range).");
@@ -94,6 +116,7 @@ export function onLogData(ev){
   }
   state.dl.chunks.push(new Uint8Array(v)); state.dl.got += v.length;
   if (isPromise && state.dl.mode==="file" && state.dl.progress) state.dl.progress(state.dl.got, state.dl.expect);
+  if (!isPromise && state.dl.mode==="file" && state.dl.got < state.dl.expect) progress(state.dl, Date.now());
   if (state.dl.got >= state.dl.expect) {
     // octet-stream, not the default empty/text type: otherwise Android Chrome sniffs the content as
     // text and appends ".txt" to the .jsonl download name. octet-stream = "save the bytes as named".
@@ -158,8 +181,10 @@ export async function downloadFilteredAll(){
   const sp=exportSpec(); if(!sp) return;
   await syncWait();   // features/livesync.js pass
   if(reqBusy()){ toast("Another transfer is in progress — wait for it to finish.", {err:true}); return; }
-  try{ state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true,waiting:true,lastRx:Date.now()};  // saved as <first>-<last>.jsonl
-    toast("Collecting "+sp.tag+" from all logs on the device…", {work:true, sticky:true});
+  try{ const prep="Collecting "+sp.tag+" from all logs on the device…";
+    state.dl={mode:null,expect:0,got:0,chunks:[],name:"all-"+sp.tag+".jsonl",sink:"save",spanName:true,waiting:true,lastRx:Date.now(),
+              t0:Date.now(), prep, label:"Downloading "+sp.tag+" (all logs)"};  // saved as <first>-<last>.jsonl
+    toast(prep, {work:true, sticky:true});
     await state.chars.cmd.writeValue(enc.encode(exportCmd(sp, "*"))); log("Requesting "+state.dl.name+" (all logs, filtered on device)…"); }
   catch(e){ log("Filtered download failed: "+e.message); toast("Filtered download failed: "+e.message, {err:true}); }
 }
