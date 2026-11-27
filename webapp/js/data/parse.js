@@ -1,3 +1,5 @@
+import { noteDevinfo, preferName } from './devinfo.js';
+
 // Scan-log parsers. The CYD logs NDJSON (.jsonl); older sessions are legacy CSV. Both are
 // normalized to the SAME row shape so the map and Scan Viewer don't care which they loaded.
 
@@ -31,6 +33,7 @@ export function parseScanNdjson(text){
     if(!ln.trim()) continue;
     let o; try{ o=JSON.parse(ln); }catch(e){ continue; }
     if(o && o.evt==="timesync"){ const e=parseInt(o.epoch,10)||0; if(e>0) sync[o.ofile||""]={epoch:e, ms:parseInt(o.ms,10)||0}; continue; }
+    if(o && o.evt==="devinfo"){ noteDevinfo(o, parseInt(o.epoch,10)||0); continue; }   // GATT read: names nameless rows below
     if(!o || typeof o!=="object" || !o.mac || o.evt) continue;   // evt lines (incl. "rid", which carries a mac) are events, not rows
     const s=v=>v==null?"":String(v);
     rows.push({epoch:parseInt(o.epoch,10)||0, ms:parseInt(o.ms,10)||0,
@@ -41,6 +44,7 @@ export function parseScanNdjson(text){
       flags:s(o.flags), wl:(o.wl==1||o.wl===true), ofile:s(o.ofile)});
   }
   backfillEpoch(rows, sync);   // pre-sync rows (epoch:0) -> real time from their ms + the timesync anchor
+  for(const r of rows) if(r.source==="BLE"){ const p=preferName(r.name, r.mac); if(p.gatt){ r.name=p.name; r.nsrc="g"; } }   // fw 0.47.0 devinfo (same rule as the scanner)
   return rows;
 }
 // Pre-sync rows/events carry epoch:0 + ms-since-boot; the CYD appends one {"evt":"timesync"} anchor

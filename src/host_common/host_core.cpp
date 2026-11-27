@@ -443,13 +443,19 @@ bool eventAlertActive()  { return deauthAlertActive() || evilAlertActive(); }
 // Receive-side only, like everything here.
 static bool s_deauthQuiet = false;   // this poll's burst is the benign shape and not sustained
 
+// fw 0.47.9: the mirror shape is ordinary too: one client telling its own AP it is leaving (from = the client, to = the
+// BSSID it names). Seen 4x on 2026-11-25/26: an Espressif client sending ~20 reason-8 disassocs to its Google mesh AP
+// while roaming between two of its nodes. A tool forging both directions still shows two senders; a one-way flood still
+// trips the DEAUTH_SUSTAIN_MS check.
 static bool deauthBenignShape(const link_protocol::DeauthInfo& di) {
   if (!di.total || di.bcast || di.n != 1) return false;
   const link_protocol::DeauthSender& s = di.senders[0];
   if (s.count != di.total) return false;                 // frames from senders that no longer fit the table
-  if (memcmp(s.src, s.bssid, 6) != 0) return false;      // not from the BSSID it names
   static const uint8_t kBcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-  return memcmp(s.dst, kBcast, 6) != 0;
+  if (!memcmp(s.dst, kBcast, 6) || !memcmp(s.src, s.dst, 6)) return false;
+  const bool apToClient = !memcmp(s.src, s.bssid, 6);    // the AP dropping one of its clients
+  const bool clientToAp = !memcmp(s.dst, s.bssid, 6);    // a client leaving its own AP
+  return apToClient || clientToAp;
 }
 
 // Track benign-shaped senders across polls; returns true while `src` has been at it for DEAUTH_SUSTAIN_MS.
@@ -528,15 +534,22 @@ static const char* gattNameOf(const DevGroup* g, char* buf, size_t cap) {
   return gi ? devinfo::nameOf(*gi, buf, cap) : "";
 }
 
-// An advertised name wins; a GATT name only replaces it when the advertised one is just its start (a truncated local name).
+// An advertised name wins; a GATT name only replaces it when the advertised one is just its start (a truncated local
+// name) or, fw 0.47.9, when it is only a hex ID (8+ hex digits, e.g. GE "C by GE" bulbs advertise "82D7FD3FAEC57791").
+static bool gattBeatsAdvert(const char* gn, const char* adv) {
+  if (!gn[0]) return false;
+  const size_t al = strlen(adv);
+  if (strlen(gn) > al && !strncmp(gn, adv, al)) return true;
+  if (al < 8) return false;
+  for (size_t i = 0; i < al; i++) if (!isxdigit((unsigned char)adv[i])) return false;
+  return true;
+}
 const char* groupName(const DevGroup* g) {
   static char buf[32];  // "<vendor> AA:BB" or "AA:BB:CC:DD:EE:FF" + NUL; also the GATT "<maker> <model>"
   const char* gn = gattNameOf(g, buf, sizeof(buf));
   if (g && g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) {
     const char* adv = g_dets[g->nameIdx].name;
-    const size_t al = strlen(adv);
-    if (gn[0] && strlen(gn) > al && !strncmp(gn, adv, al)) return gn;
-    return adv;
+    return gattBeatsAdvert(gn, adv) ? gn : adv;
   }
   if (gn[0]) return gn;
   if (!g) { snprintf(buf, sizeof(buf), "?"); return buf; }
@@ -561,8 +574,7 @@ char groupNameSrc(const DevGroup* g) {
   const char* gn = gattNameOf(g, b, sizeof(b));
   if (g->nameIdx >= 0 && g_dets[g->nameIdx].name[0]) {
     const char* adv = g_dets[g->nameIdx].name;
-    const size_t al = strlen(adv);
-    if (gn[0] && strlen(gn) > al && !strncmp(gn, adv, al)) return 'g';
+    if (gattBeatsAdvert(gn, adv)) return 'g';
     return (g_dets[g->nameIdx].flags & FLAG_BLE_NAME_CACHED) ? 'c' : 0;
   }
   return gn[0] ? 'g' : 0;

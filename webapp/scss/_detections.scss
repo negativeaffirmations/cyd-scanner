@@ -151,3 +151,7 @@
   &.v0 { background:#c9d1d9; } &.v1 { background:#58a6ff; } &.v2 { background:#3fb950; } &.v3 { background:#d29922; }
   &.v4 { background:#f778ba; } &.v5 { background:#a371f7; } &.v6 { background:#39c5cf; }
 }
+
+// "Also in range" (features/morelist.js): devices past the scanner's top 12, from the phone's live copy of the log.
+.detsmorehdr { margin:.9em 0 .3em; font-size:.95rem; font-weight:600;
+  .sub { font-weight:400; font-size:.8rem; } }
