@@ -222,11 +222,13 @@ class MultiExport {
       finishEnt();
     }
     endScan();
+    pruneFleet();
     for (int i = 1; i < n_; i++)  // insertion sort by tail epoch (oldest first)
       for (int j = i; j > 0 && files_[j].tail < files_[j - 1].tail; j--) { Ent t = files_[j]; files_[j] = files_[j - 1]; files_[j - 1] = t; }
     return true;
   }
   int dropped() const { return dropped_; }
+  int fleetSkipped() const { return fleetSkipped_; }
 
   // First and last non-zero epoch found in a file's head / tail block (0 = none there). Cheap (two
   // 1 KB reads); used by the session list so the phone can group a scan's files by time.
@@ -418,6 +420,47 @@ class MultiExport {
     if (en.tail > files_[lo].tail) files_[lo] = en;
     dropped_++;
   }
+  // fw 0.47.8: a fleet file's rows can't be dated by its tail (members' lines arrive out of order), so every fleet file on
+  // the card used to be filtered row by row: a "since boot" export spent minutes on other days' fleet files. But the
+  // leader starts a new fleet file only after the previous one stopped taking lines, and the name of a time-synced one
+  // ("fleet-YYYYMMDD-HHMMSS", local time like the epochs) is at or after its creation. So the NEXT dated fleet file's
+  // name time bounds every row of a file; when that is FLEET_SLACK_S before the cutoff, the whole file is older and is
+  // skipped. A file with no dated successor (the newest, an unsynced fleet-NNNNN) or a live one is always kept.
+  static constexpr uint32_t FLEET_SLACK_S = 600;   // clock steps between units / the leader
+  static uint32_t fleetNameEpoch(const char* path) {
+    const char* b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    if (strncmp(b, "fleet-", 6)) return 0;
+    b += 6;
+    for (int i = 0; i < 15; i++) if (i == 8 ? b[i] != '-' : (b[i] < '0' || b[i] > '9')) return 0;
+    auto num = [&](int at, int n) { int v = 0; for (int i = 0; i < n; i++) v = v * 10 + (b[at + i] - '0'); return v; };
+    int y = num(0, 4), m = num(4, 2), d = num(6, 2), hh = num(9, 2), mi = num(11, 2), ss = num(13, 2);
+    if (y < 2020 || m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || mi > 59 || ss > 59) return 0;
+    y -= m <= 2;                                    // days from civil (Howard Hinnant), 1970-01-01 = 0
+    const int era = y / 400, yoe = y - era * 400;
+    const int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const long days = (long)era * 146097 + doe - 719468;
+    return (uint32_t)days * 86400u + (uint32_t)(hh * 3600 + mi * 60 + ss);   // unsigned: long is 32 bit here
+  }
+  void pruneFleet() {
+    if (!cutEpoch_) return;
+    for (int i = 0; i < n_; i++) {
+      if (!files_[i].fleet || files_[i].live) continue;
+      const uint32_t mine = fleetNameEpoch(files_[i].path);
+      if (!mine) continue;
+      uint32_t next = 0;
+      for (int j = 0; j < n_; j++) {
+        if (j == i || !files_[j].fleet) continue;
+        const uint32_t t = fleetNameEpoch(files_[j].path);
+        if (t > mine && (!next || t < next)) next = t;
+      }
+      if (!next || next + FLEET_SLACK_S >= cutEpoch_) continue;
+      files_[i] = files_[--n_];                     // every row is older than the cutoff
+      fleetSkipped_++;
+      i--;
+    }
+  }
   void endScan() {
     if (ancF_) ancF_.close();
     if (dir_) dir_.close();
@@ -429,6 +472,7 @@ class MultiExport {
   char (*boot_)[48] = nullptr;   // owned copy of this boot's file paths
   int nBoot_ = 0;
   bool bootOom_ = false;          // the boot-list copy failed (beginStart refuses)
+  int fleetSkipped_ = 0;          // fleet files wholly older than the cutoff (pruneFleet)
   Ent* files_ = nullptr;
   int n_ = 0, dropped_ = 0;
   // beginStart()/beginStep() state

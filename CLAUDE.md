@@ -387,7 +387,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   The **session list** (`Q` → `SESS=`) lines are `path\tsize\tflag\tfirstEpoch\tlastEpoch\tfileId` (the
   file's dated span, 0 = unknown, `MultiExport::fileSpan`) so the phone can group parts into scans; **`fileId`**
   (fw 0.26.0) = line 1's meta `file_id` (8 hex, `readFileId()`), empty for older files; older web apps ignore it.
-  Filtering lives in `src/host_common/logfilter.h`.
+  Filtering lives in `src/host_common/logfilter.h`. fw 0.47.8: a non-live fleet file is skipped when the next dated fleet file (`fleet-YYYYMMDD-HHMMSS`) began > 10 min before the cutoff (`pruneFleet()`; a since-boot export on SOPAFE went 456 s -> 26 s).
 - SD is on its own HSPI bus (display=VSPI, link=UART1), so no bus contention. Touch is
   NOT used in the scanner build — it shares HSPI with the SD card, so an on-screen touch
   UI would need a software-SPI touch driver first. The physical BOOT button drives a
