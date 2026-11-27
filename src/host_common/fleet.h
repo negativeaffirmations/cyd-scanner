@@ -33,6 +33,9 @@ bool    beginClient();             // Wi-Fi STA + ESP-NOW + heap buffers; false 
 bool    beginLeader();
 bool    active();                  // ESP-NOW is up (webshare keeps the STA, joins the fleet channel)
 void    service();                 // drain <= 8 RX frames, debug ping/stats, boot-guard timer. Cheap + safe when inactive.
+// fw 0.47.7: log forwarding only, for the host's wait on the C5's table: a leader stores LogRows (+ acks them), a client
+// takes LogAck and sends its next log frame. Every other frame is set aside, in order, for the next service().
+void    serviceLight();
 // Randomize the STA MAC again. Only while NOT joined (a joined unit never changes MAC): deinit ESP-NOW ->
 // esp_wifi_stop -> set_mac -> start -> re-init. Prints the elapsed ms. A client calls it before answering the first
 // Probe after it lost or left a session (docs §16.4); at boot the MAC is already fresh.

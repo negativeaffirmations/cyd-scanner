@@ -135,7 +135,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
 #if CONFIG_IDF_TARGET_ESP32S3
     // The C5's table takes over a second on a busy drive: push the live log meanwhile (<= 120 ms + a file open; the RX
     // buffer holds ~0.7 s). Nothing else of this unit's phone handling runs here, and no file is open.
-    if (!done) liveService();
+    if (!done) { liveService(); fleet::serviceLight(); }   // fw 0.47.7: + fleet log forwarding (LogRows / LogAck only)
 #endif
     if (!got) delay(1);  // yield instead of a tight spin
   }

@@ -929,6 +929,7 @@ MAC. Phone CMD **`M<seq>:<op>`** → LOGDATA **`FLT=<n>:<seq>`** (`l` list, `a` 
 `webapp/js/ble/fleetcrypto.js` —, `r` remove, `x` release, `c` channel, `L1/L0`, `j` become client); STATUS part 2
 `flt=<role>,<joined>/<enrolled>,<ch>`; web **Settings → Fleet** card (`features/fleet.js`). Code: `fleet_leader.cpp`,
 `fleet_client.cpp`, `fleet_internal.h`. Debug-only bench enrollment: `fleet fk` / `fleet add` / `fleet m <cmd>`.
+**Log relay pacing (fw 0.47.7):** a member paces LogRows from the send, not the ack; S3 hosts run `fleet::serviceLight()` (LogRows / LogAck only, other frames set aside for the next `service()`) while waiting for the C5.
 **Self filter (fw 0.30.0, fleet proto v4, docs §23):** every unit's BLE advert, C5 Wi-Fi and AP MAC sit in fixed per-unit slots, shared in Sync and kept
 in NVS `fltself`, so units filter each other while booting or un-joined too; each MAC only matches its own kind of row; a role change to off clears them.
 **P3 (docs §18):** the leader's Sync carries UTC + tz + the ONE fleet position (its phone by default, else its GPS,

@@ -788,7 +788,9 @@ void onLogAck(const Rx& f) {
   if (W->inflFlLen) { P->flOff = W->inflFlOff; P->flRow = W->inflFlRow; P->flLen = W->inflFlLen; }
   P->ackOff += W->inflLen; P->ackRow += W->inflLines; P->torn = 0;
   W->rowsFwd += W->inflLines; W->frames++;
-  W->nextMs = now + W->inflLen * 1000UL / LOG_BYTES_PER_S;           // ~8 KB/s ceiling
+  // ~8 KB/s ceiling, counted from the SEND (fw 0.47.7): counted from the ack it pushed the next frame to the next loop
+  // pass (~1 s on a busy mini), so a member forwarded ~0.7 KB/s and fell ~1 min behind at speed (2026-11-26 drive).
+  W->nextMs = W->inflMs + W->inflLen * 1000UL / LOG_BYTES_PER_S;
 }
 
 const char* stName(CState s) { return s == C_JOINED ? "joined" : s == C_JOINING ? "joining" : s == C_HELLO ? "hello sent" : "searching"; }
@@ -827,6 +829,9 @@ void onFrame(const Rx& f) {
     default: break;
   }
 }
+
+// fw 0.47.7: forward the next log frame from fleet::serviceLight() (while the host waits for the C5's table).
+void pumpLight() { pumpLog(); }
 
 void tick() {
   if (!C) return;

@@ -61,6 +61,10 @@ uint8_t* g_pool = nullptr;
 uint16_t g_slotSize = 0;
 uint8_t  g_slots = 0;
 QueueHandle_t g_freeQ = nullptr, g_fullQ = nullptr;
+// Slots serviceLight() set aside (not log traffic), handled first by the next service(), in arrival order. Each slot is in
+// at most one place (free queue, full queue, here), so LEADER_SLOTS entries always suffice.
+uint8_t g_defer[LEADER_SLOTS];
+int g_deferN = 0;
 uint32_t g_txOk = 0, g_txFail = 0, g_rxFrames = 0, g_rxDrop = 0;   // written by the Wi-Fi task, read by loop()
 #define BUMP(c) __atomic_fetch_add(&(c), 1u, __ATOMIC_RELAXED)
 
@@ -317,6 +321,7 @@ bool nowInit() {
 }
 
 void freeBuffers() {   // also the partial-failure cleanup: every pointer is checked before use elsewhere
+  g_deferN = 0;
   if (g_freeQ) { vQueueDelete(g_freeQ); g_freeQ = nullptr; }
   if (g_fullQ) { vQueueDelete(g_fullQ); g_fullQ = nullptr; }
   if (g_pool)  { heap_caps_free(g_pool); g_pool = nullptr; }
@@ -696,6 +701,36 @@ bool beginClient() { return begin(false); }
 bool beginLeader() { return begin(true); }
 bool active()      { return g_active; }
 
+// Handle one received slot and return it to the free queue.
+static void handleSlot(uint8_t i) {
+  const Slot* s = slotAt(i);
+  const uint8_t type = s->len >= 2 ? s->data[1] : 0;
+#ifdef FLEET_DEBUG
+  if (type == (uint8_t)Msg::DbgPing || type == (uint8_t)Msg::DbgPong) { dbgHandle(s); xQueueSend(g_freeQ, &i, 0); return; }
+#endif
+  if (g_active && !(s->flags & SF_TRUNC) && s->len >= sizeof(Hdr)) {   // (a handler may stop the radio mid-drain)
+    Rx f{ s->mac, s->rssi, s->data, s->len };
+    if (g_leader) leader::onFrame(f); else client::onFrame(f);
+  }
+  xQueueSend(g_freeQ, &i, 0);
+}
+
+void serviceLight() {
+  if (!g_active || !g_fullQ) return;
+  for (int n = 0; n < DRAIN_MAX; n++) {
+    uint8_t i;
+    if (xQueueReceive(g_fullQ, &i, 0) != pdTRUE) break;
+    const Slot* s = slotAt(i);
+    const uint8_t type = s->len >= 2 ? s->data[1] : 0;
+    const bool log = g_leader ? type == (uint8_t)Msg::LogRows : type == (uint8_t)Msg::LogAck;
+    if (log) handleSlot(i);                            // seq window + session checks take it out of order
+    else if (g_deferN < (int)(sizeof(g_defer) / sizeof(g_defer[0]))) g_defer[g_deferN++] = i;
+    else handleSlot(i);                                // (can't happen: every slot fits)
+    if (!g_active) return;
+  }
+  if (!g_leader) client::pumpLight();
+}
+
 void service() {
   knownFlush();
   if (g_bootCounted && millis() > STABLE_MS) {   // stable for 60 s: the last boots were not a crash loop
@@ -709,19 +744,12 @@ void service() {
     Serial.printf("[FLT] ignoring fleet proto v%u frames (this unit speaks v%u): reflash every unit together\n",
                   (unsigned)g_badVer, (unsigned)FLEET_PROTO_VERSION);
   }
+  for (int k = 0; k < g_deferN; k++) handleSlot(g_defer[k]);   // set aside by serviceLight(): they came first
+  g_deferN = 0;
   for (int n = 0; n < DRAIN_MAX; n++) {
     uint8_t i;
     if (xQueueReceive(g_fullQ, &i, 0) != pdTRUE) break;
-    const Slot* s = slotAt(i);
-    const uint8_t type = s->len >= 2 ? s->data[1] : 0;
-#ifdef FLEET_DEBUG
-    if (type == (uint8_t)Msg::DbgPing || type == (uint8_t)Msg::DbgPong) { dbgHandle(s); xQueueSend(g_freeQ, &i, 0); continue; }
-#endif
-    if (g_active && !(s->flags & SF_TRUNC) && s->len >= sizeof(Hdr)) {   // (a handler may stop the radio mid-drain)
-      Rx f{ s->mac, s->rssi, s->data, s->len };
-      if (g_leader) leader::onFrame(f); else client::onFrame(f);
-    }
-    xQueueSend(g_freeQ, &i, 0);
+    handleSlot(i);
   }
   if (!g_active) return;   // a frame handler can stop the radio (rerandomizeMac failure)
   if (g_leader) leader::tick(); else client::tick();

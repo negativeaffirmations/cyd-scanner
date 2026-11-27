@@ -103,6 +103,7 @@ namespace client {
 void begin();
 void onFrame(const Rx& f);
 void tick();
+void pumpLight();                                           // log forwarding only (fleet::serviceLight)
 void fillUi(Ui& u);
 void printStatus();
 bool joined();
