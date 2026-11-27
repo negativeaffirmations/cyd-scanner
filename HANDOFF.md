@@ -1,6 +1,18 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser
+## RESUME HERE - 2026-11-26 night: lower live-upload lag (fw 0.47.6 + web 20261126c)
+- **Why:** drive 8 (19:49-20:12, all fine server-side; the 19:51 POST timeouts were the server box rebooting after a power
+  surge) showed own rows 3-13 s, members up to ~50 s behind. Owner: a few seconds is fine, do the cheap parts.
+- **Phone (the biggest delay):** pushed bytes were saved into the live copy only once per livesync pass (20 s < 2 MB, 60 s
+  < 10 MB, 5 min above) and loglines posts only from the copy. Now `state.livePending(sid,fid)` (livesync.js) hands loglines
+  the unsaved pushed pieces when they continue the copy exactly, and loglines runs every 2 s (was 5).
+- **fw 0.47.6 (all 3 hosts flashed, chip-ID checked: SOPAFE COM15, BEMOPU COM10, ZUDIMU COM17; C5s unchanged; no protocol
+  change):** every log append goes through `openAppend()`, which marks a subscribed file dirty; a dirty file is size-checked
+  after 500 ms (`LIVE_DIRTY_MS`, the 2 s poll stays as fallback) and that open is reused for the send; > 4 KB waiting ->
+  120 ms per call, 10 ms apart (`LIVE_BACKLOG`, `LIVE_BUDGET_BUSY_MS`, `LIVE_GAP_BUSY_MS`).
+- **Open:** members' remaining lag is the ESP-NOW forwarding (option 3: measure it on the next drive before changing it).
+
+## 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser (DEPLOYED)
 - **Why:** drive 7's no-position rows (all at scan start) lasted ~1 min longer on SOPAFE/ZUDIMU because the phone joined
   BEMOPU first, and a member's phone fix was never shared.
 - **fw 0.47.5 (flashed on all 3 hosts, committed on `hardening`):** a member with no live GPS sends its phone's fix (<10 s old,
@@ -11,8 +23,10 @@
 - **Web `20261126b` / app (committed on `hardening`, NOT on main / not deployed yet):** `features/unitrole.js` remembers each unit's
   STATUS `flt` role by device id (localStorage `cflo.unitRoles`); the app chooser (`shim-bluetooth.js`) lists the leader first
   with "· fleet leader" (then used-before, then new). The chooser placed rows by advert arrival, so BEMOPU came first by chance.
-  It learns a role on the next connection to each unit. Android tests 59/59. Needs a merge to main to ship (owner approval).
-- At the end the phone was on BEMOPU (dropped by its reflash); reconnect it to SOPAFE.
+  It learns a role on the next connection to each unit. Android tests 59/59.
+- **Deployed (main `1e9d176`): web `20261126b` live, app build 30 installed on the owner phone over adb and checked:** the chooser
+  first showed BEMOPU on top (role not yet learned); after one connection to SOPAFE it lists "CFLO-MINI-SOPAFE · fleet leader" first.
+  Phone left connected to SOPAFE: SOPAFE `pos` src 1 (phone), BEMOPU + ZUDIMU src 4 (fleet).
 
 ## RESUME HERE - 2026-11-26: drive 7 analysed; live push 3.5x faster (fw 0.47.3 on all 3 hosts); web Disconnect button
 - **Drive 7 (11:21-12:20, live upload, server-checked by scan-analyzer):** nothing lost (orows continuous, .cflo added 0 rows), no alerts,

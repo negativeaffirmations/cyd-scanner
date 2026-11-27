@@ -17,7 +17,7 @@ import { connGen } from '../ble/xfer.js';
 import { find, getBlob } from '../data/logcache.js';
 import { isPaired, serverUrl } from './remote.js';
 
-const MAX_POST = 256 * 1024, HASH_N = 4096, TICK_MS = 5000, TIMEOUT_MS = 30000, CAP_OK_MS = 5 * 60000;
+const MAX_POST = 256 * 1024, HASH_N = 4096, TICK_MS = 2000, TIMEOUT_MS = 30000, CAP_OK_MS = 5 * 60000;
 const BACKOFF = [5000, 10000, 20000];
 const ls = k=>{ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } };
 const base = ()=>serverUrl().replace(/\/+$/, "");
@@ -106,8 +106,12 @@ async function handle(f, blob, r, posted){
 
 async function sendFile(f){
   for(let k = 0; k < 8; k++){          // a few posts per run, then the next file gets its turn
-    const meta = find(f.sid, f.path, f.fid), blob = meta && meta.fileId === f.fid ? await getBlob(meta) : null;
+    const meta = find(f.sid, f.path, f.fid);
+    let blob = meta && meta.fileId === f.fid ? await getBlob(meta) : null;
     if(!blob) return;
+    // + what the scanner pushed since the copy was last saved (livesync.js), when it continues this copy exactly
+    const pend = state.livePending ? state.livePending(f.sid, f.fid) : null;
+    if(pend && pend.from === blob.size && pend.pieces.length) blob = new Blob([blob, ...pend.pieces]);
     if(f.ack < 0){
       if(!await handle(f, blob, await call("/api/v1/loglines", { method:"POST", headers:headers(f, 0, ""), body:"" }), false)) return;
       continue;

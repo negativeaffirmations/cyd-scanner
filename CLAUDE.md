@@ -672,7 +672,7 @@ back (5 GHz included). Things that matter, learned the hard way:
       **Live push (fw 0.44.0, phase 2):** once the copies are current the page sends CMD **`J:<path>@<off>:<file_id>:<crc>[|…]`**
       (<= 2 files, checked like a tail; reply `LLOK=<n>` / `LLERR=parse|path|id|off|many|none|mtu`, bare `J` = stop); the
       scanner then pushes appended bytes as single LOGDATA notifies `LL=<file_id>:<offset>:<bytes>` (one per 30 ms, only
-      while !xferBusy, read from the card 4 KB at a time (CYD 2 KB, fw 0.47.3: one file open is ~30-40 ms in a long /logs), sizes checked every 2 s (was 250 ms), serial `live [hold <s>|rewind <n>|ra on|off]` for bench tests, a rename followed by file_id, held 25 s
+      while !xferBusy, read from the card 4 KB at a time (CYD 2 KB, fw 0.47.3: one file open is ~30-40 ms in a long /logs), sizes checked every 2 s (was 250 ms; fw 0.47.6: also 0.5 s after an append, that open reused for the send, 120 ms sends 10 ms apart while > 4 KB wait; the uploader also posts pushed bytes not yet saved into the copy, every 2 s), serial `live [hold <s>|rewind <n>|ra on|off]` for bench tests, a rename followed by file_id, held 25 s
       after a short raw send, ends with the auth epoch; `liveSubscribe`/`liveService` in host_log.cpp). download.js routes
       them (mode null only) to `state.onLiveLog`; livesync saves them into the copy each pass (snapshot, only past the copy's
       size), ends the push on a gap / lost copy / 60 s of silence and falls back to tails, and fires a window

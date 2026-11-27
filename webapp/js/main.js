@@ -25,7 +25,7 @@ import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined,
 import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261125b';   // new module: versioned so it loads fresh with main.js
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
-import { initLiveSync } from './features/livesync.js?v=20261125f';   // live copy of the current scan (docs/phone-analysis.md)
+import { initLiveSync } from './features/livesync.js?v=20261126c';   // live copy of the current scan (docs/phone-analysis.md)
 import { initSwitcher } from './features/switcher.js';
 import { initNotify } from './features/notify.js?v=20261124c';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
@@ -34,7 +34,7 @@ import { initEngine } from './analysis/engine.js?v=20261124c';   // phone analys
 import { initHistory } from './analysis/history.js?v=20261123f';
 import { initAlerts } from './analysis/alerts.js?v=20261124c';
 import { initVendors } from './analysis/vendors.js?v=20261124a';   // phone analysis: full maker lists (phase 3d)   // phone analysis: its own alerts (phase 3c)   // phone analysis: saved-scan history (phase 3b)
-import { initLogLines } from './features/loglines.js?v=20261125f';   // live upload of the full log
+import { initLogLines } from './features/loglines.js?v=20261126c';   // live upload of the full log
 import { initLiveStats } from './features/livestats.js?v=20261125c';   // live-upload timing for the background log
 import { initGattId } from './features/gattid.js?v=20261125g';   // Settings: identify nearby devices (fw >= 0.47.0)
 import { initScreen } from './features/screen.js?v=20261124c';   // checks weak alerts with the paired server
