@@ -1,5 +1,22 @@
 # Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE - 2026-11-27 evening: fleet drive checked; live-upload catch-up of earlier files (web 20261127b, no firmware)
+- **Drive (16:27-16:45, fw 0.47.9, release app):** clean server-side (1830 requests, all 200). SOPAFE's own file stopped at
+  16:36:38 = the owner's Stop tap after parking at home (confirmed by GPS), not a bug. b02b's epoch-0 rows were placed
+  correctly (server backfill; the export shows raw lines). Member relay lag 3-12 s: the 0.47.7 pacing fix works.
+- **40-row hole (ZUDIMU 3485d0ba orow 165-204, 13:54-14:00):** the dev app streamed 13:44-13:54:37 and then stopped; loglines
+  follows only the files current at connect, so the finished fleet/own files' tails never went up (and scan 13:18-13:35 was
+  never streamed at all). Fixed by a .cflo upload from SOPAFE over adb (all three units' rows now in).
+- **Catch-up (`livesync.js` `catchUp()`, `loglines.js` `state.logLinesAck`):** once per connection, after the own copy is in
+  hand, the phone asks the server (empty-body loglines query) about the connected unit's finished files from the last 24 h
+  (newest 8) and queues those it is missing as old files (`o.cu`): finishOld fetches one per pass (tail of a saved copy, or a
+  whole file <= 1 MB), loglines uploads them; bigger ones are only counted (Data page text). Tested with the dev app on SOPAFE:
+  5 files fetched in ~1.5 min, 24c58e75 resumed at 109392, 749f9a80 at 43780, all 200, all deduped.
+- **scan-analyzer catch-up ack (option A, owner-approved, built, deploy pending):** the query answers the longest prefix held
+  from ANY key or post-deploy upload; a mismatching prefix hash -> 409 with this key's own ack (client resends at once, new
+  branch in `handle()`). Pre-v19 uploads still need one whole re-send. **Next:** when they say it's live, rerun the dev-app
+  test: no more whole re-sends from offset 0.
+
 ## RESUME HERE - 2026-11-27: GATT names visible + client-leaving-AP deauth filter (fw 0.47.9 flashed; web NOT committed/deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.47.9, fleet rejoined with normal roles; C5s unchanged.
   Web changes are in the working tree only (ui `2026-11-27a`), tested in the `.dev` app over adb; the release app is untouched.
