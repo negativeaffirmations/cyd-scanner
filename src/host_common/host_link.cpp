@@ -133,7 +133,7 @@ bool requestScan(uint32_t noRespMs, uint32_t timeoutMs) {
     // Idle-gap backstop: burst started but the closing Status was lost -> don't wait the full timeout.
     if ((sawStart || g_detCount > 0) && millis() - lastByte > 250) done = true;
 #if CONFIG_IDF_TARGET_ESP32S3
-    // The C5's table takes over a second on a busy drive: push the live log meanwhile (<= 60 ms + a file open; the RX
+    // The C5's table takes over a second on a busy drive: push the live log meanwhile (<= 120 ms + a file open; the RX
     // buffer holds ~0.7 s). Nothing else of this unit's phone handling runs here, and no file is open.
     if (!done) liveService();
 #endif

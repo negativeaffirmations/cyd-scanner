@@ -17,6 +17,12 @@
 #include "whitelist.h"
 #include "devinfo.h"
 
+// Every log append goes through openAppend(): it marks a live-pushed file as grown, so the push looks at its size on
+// the next pass instead of waiting for the 2 s poll (fw 0.47.6). Same task as liveService(), and the write finishes
+// before it runs again, so the size it then reads includes the new line.
+static void liveNoteAppend(const char* path);
+static File openAppend(const char* path) { liveNoteAppend(path); return SD.open(path, FILE_APPEND); }
+
 // Copy a device-controlled free-text field, replacing delimiter-breaking characters
 // (comma, tab, CR/LF and other control chars) with a space so plain delimiter-split
 // parsing of the tab-delimited DETS rows stays correct (the log uses jsonEscape instead).
@@ -355,7 +361,7 @@ static void renameStreamOnSync(LogStream& st, const char* prefix) {   // prefix:
     // (row.ms - sync.ms)/1000 (same formula epochNow() uses; valid because it's one boot).
     // (Not the fleet file: its rows are members' lines on foreign clocks, each origin's own forwarded timesync dates them.)
     File mf;
-    if (&st != &g_fleetLog) mf = SD.open(st.path, FILE_APPEND);
+    if (&st != &g_fleetLog) mf = openAppend(st.path);
     if (mf) {
       mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
                 (unsigned long)epochLocal(), (unsigned long)millis());
@@ -380,7 +386,7 @@ void renameSessionOnSync() {
       if (b.anchored) continue;
       b.anchored = true;
       if (!SD.exists(b.path)) continue;
-      File mf = SD.open(b.path, FILE_APPEND);
+      File mf = openAppend(b.path);
       if (!mf) continue;
       mf.printf("{\"epoch\":%lu,\"ms\":%lu,\"evt\":\"timesync\"}\n",
                 (unsigned long)epochLocal(), (unsigned long)millis());
@@ -521,7 +527,7 @@ int logNewDetections() {
       if (si < 0) continue;
       n++;  // "new" = first sighting this session
     }
-    if (!f && ensureLogFile(st)) f = SD.open(st.path, FILE_APPEND);
+    if (!f && ensureLogFile(st)) f = openAppend(st.path);
     if (!f) continue;
     char safe[97];  // escaped name (32 B name, worst case \uXXXX per byte truncates safely)
     jsonEscape(safe, sizeof(safe), d.name);
@@ -602,7 +608,7 @@ static void writeDepartures(LogStream& st, uint32_t ms, bool all) {
     if (st.seen[i].present && (all || ms - st.seen[i].lastSeen >= DEPART_MS)) any = true;
   if (!any) return;
   if (!g_sdOk || !st.path[0] || !ensureLogFile(st)) { if (evict) g_evictedN = 0; return; }
-  File f = SD.open(st.path, FILE_APPEND);
+  File f = openAppend(st.path);
   if (!f) { if (evict) g_evictedN = 0; return; }
   uint32_t epoch = epochLocal();
   if (evict) {
@@ -715,7 +721,7 @@ void logEvent(const char* evt, int count) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!ensureLogFile(st)) return;
-  File f = SD.open(st.path, FILE_APPEND);
+  File f = openAppend(st.path);
   if (!f) return;
   if (!strcmp(evt, "eviltwin")) { logEvilTwin(f, count); f.close(); return; }
   char ln[LOG_LINE];
@@ -737,7 +743,7 @@ void logPhoneCfg(const char* op, const char* path, const char* to) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!g_sdOk || !ensureLogFile(st)) return;
-  File f = SD.open(st.path, FILE_APPEND);
+  File f = openAppend(st.path);
   if (!f) return;
   char ln[LOG_LINE];
   int n = 0;
@@ -760,7 +766,7 @@ static void appendActiveLine(const char* ln, int n) {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!g_sdOk || !ensureLogFile(st)) return;
-  File f = SD.open(st.path, FILE_APPEND);
+  File f = openAppend(st.path);
   if (!f) return;
   f.write((const uint8_t*)ln, n);
   f.close();
@@ -825,7 +831,7 @@ void logRidEvents() {
     LogStream& st = activeStream();
     if (bgCtx() && !st.path[0]) openBgSession();
     if (!ensureLogFile(st)) return;
-    File f = SD.open(st.path, FILE_APPEND);
+    File f = openAppend(st.path);
     if (!f) return;
     char uas[LOG_ID_ESC], oid[LOG_ID_ESC];
     jsonEscape(uas, sizeof(uas), r.uasId);
@@ -919,7 +925,7 @@ void logDevInfoEvents() {
     }
     if (n <= (int)LOG_LINE - 2) {  // room to close the object; else drop (never write truncated JSON)
       lnAppend(ln, n, "}\n");
-      if (!f) f = SD.open(st.path, FILE_APPEND);
+      if (!f) f = openAppend(st.path);
       if (!f) return;               // stays pending: tried again next cycle
       if (n <= (int)LOG_LINE && f.write((const uint8_t*)ln, n) != (size_t)n) continue;
     }
@@ -969,7 +975,7 @@ void logFollowEvents() {
     LogStream& st = activeStream();
     if (bgCtx() && !st.path[0]) openBgSession();
     if (!ensureLogFile(st)) return;
-    File f = SD.open(st.path, FILE_APPEND);
+    File f = openAppend(st.path);
     if (!f) return;
     char ln[LOG_LINE];
     int n = 0;
@@ -1434,7 +1440,7 @@ void transferFile(const char* path) {
 // file (or one that has waited LIVE_TURN_MS: the smaller file starved, fw 0.45.2), at least LIVE_GAP_MS between calls; a refused notify ends the call, leaving room for DETS / STATUS. Each file's
 // size is looked up at most every LIVE_CHECK_MS; the card is only searched (rename) when the file can't be opened, and
 // a file that stays missing for LIVE_MISS_MAX checks is dropped (the phone notices the silence and re-subscribes).
-struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs, servedMs; uint8_t miss; uint32_t raOff, raLen; };
+struct LiveSub { char path[48]; char fid[9]; uint32_t off, size, checkMs, servedMs; uint8_t miss; bool dirty; uint32_t raOff, raLen; };
 uint32_t g_loopMs[LP_N];
 static LiveSub g_live[2];
 static int g_liveN = 0, g_liveNext = 0;
@@ -1442,6 +1448,14 @@ static uint32_t g_liveEpoch = 0, g_liveSendMs = 0;
 // LIVE_CHECK_MS: a size check is a file open (~30-40 ms in a long /logs folder); 250 ms cost ~1/3 of the loop with
 // two files (2026-11-26). 2 s adds at most 2 s to a push the phone posts every ~20 s.
 static constexpr uint32_t LIVE_GAP_MS = 30, LIVE_CHECK_MS = 2000;
+// fw 0.47.6: a file written since its last check (openAppend) is checked after LIVE_DIRTY_MS, so a new line goes out
+// within a pass or two; the 2 s poll stays as the fallback (a rename, a write that bypassed openAppend). The check's
+// open is kept for the push that follows, so new bytes cost one open, as before.
+static constexpr uint32_t LIVE_DIRTY_MS = 500;   // bounds the opens on a fleet file that grows many times a second
+// fw 0.47.6: with more than LIVE_BACKLOG bytes waiting, calls may come LIVE_GAP_BUSY_MS apart and send for
+// LIVE_BUDGET_BUSY_MS (the 2026-11-26 drive had up to 16 KB waiting at ~3 KB/s while the loop gave the push ~1/4).
+static constexpr uint32_t LIVE_BACKLOG = 4096, LIVE_GAP_BUSY_MS = 10, LIVE_BUDGET_BUSY_MS = 120;
+static bool g_liveBusy = false;     // bytes beyond LIVE_BACKLOG were waiting after the last call
 #if CONFIG_IDF_TARGET_ESP32S3
 static constexpr uint32_t LIVE_RA = 4096;   // read-ahead per subscribed file (heap, made on the first push)
 #else
@@ -1463,6 +1477,10 @@ static struct { uint32_t open, read, notify, sleep, size, sends, maxCall; } g_lp
 static uint32_t g_liveHoldDbg = 0;   // serial `live hold <s>`: no push until then (builds a backlog on the bench)
 
 static void liveReply(const char* s) { phone::logNotify((const uint8_t*)s, strlen(s)); }
+
+static void liveNoteAppend(const char* path) {
+  for (int i = 0; i < g_liveN; i++) if (!strcmp(g_live[i].path, path)) g_live[i].dirty = true;
+}
 
 void liveSubscribe(const char* arg) {
   g_liveN = 0;
@@ -1490,6 +1508,7 @@ void liveSubscribe(const char* arg) {
     tmp[n].size = sz;
     tmp[n].checkMs = millis();
     tmp[n].miss = 0;
+    tmp[n].dirty = false;
     tmp[n].servedMs = millis();
     tmp[n].raOff = tmp[n].raLen = 0;
     n++;
@@ -1564,18 +1583,24 @@ void liveService() {
   if (!phone::peerAlive(g_liveEpoch)) { g_liveN = 0; return; }   // the phone that subscribed is gone
   const uint32_t now = millis();
   if ((int32_t)(g_liveHoldUntil - now) > 0) return;               // a short raw send: the phone still expects file bytes
-  if (now - g_liveSendMs < LIVE_GAP_MS) return;
+  if (now - g_liveSendMs < (g_liveBusy ? LIVE_GAP_BUSY_MS : LIVE_GAP_MS)) return;
   if (g_liveHoldDbg && (int32_t)(g_liveHoldDbg - now) > 0) return;
   g_liveHoldDbg = 0;
   g_lst.calls++;
   if (now - g_lst.lastCall > g_lst.maxGap) g_lst.maxGap = now - g_lst.lastCall;
   g_lst.lastCall = now;
   liveStats(now);
-  // Refresh the sizes that are due (open + size + close; a FAT read handle doesn't see later appends).
+  // Refresh the sizes that are due (open + size; a FAT read handle doesn't see later appends). A handle that shows new
+  // bytes is kept for the push below (one open per new data, fw 0.47.6).
+  File held[2];
   for (int i = 0; i < g_liveN; i++) {
     LiveSub& s = g_live[i];
-    if (s.off < s.size || now - s.checkMs < (g_liveOld ? 250u : LIVE_CHECK_MS)) continue;
+    if (s.off < s.size) continue;
+    const bool due = g_liveOld ? now - s.checkMs >= 250u
+                               : (now - s.checkMs >= LIVE_CHECK_MS || (s.dirty && now - s.checkMs >= LIVE_DIRTY_MS));
+    if (!due) continue;
     s.checkMs = now;
+    s.dirty = false;
     File f = liveOpen(s);
     if (!f) {
       if (++s.miss >= LIVE_MISS_MAX) {                            // gone for good: drop it
@@ -1588,7 +1613,8 @@ void liveService() {
     }
     s.miss = 0;
     s.size = f.size();
-    f.close();
+    if (s.off < s.size && i < 2 && !g_liveOld) held[i] = f;
+    else f.close();
   }
   g_lprof.size += millis() - now;
   // The file with the most bytes waiting (a busy drive's fleet file grows several times faster than the own file), as
@@ -1598,7 +1624,11 @@ void liveService() {
     const int i = (g_liveNext + k) % g_liveN;
     if (g_live[i].off < g_live[i].size && (best < 0 || g_live[i].size - g_live[i].off > g_live[best].size - g_live[best].off)) best = i;
   }
-  if (best < 0) return;
+  uint32_t waiting = 0;
+  for (int i = 0; i < g_liveN; i++) waiting += g_live[i].size - g_live[i].off;
+  g_liveBusy = waiting > LIVE_BACKLOG;
+  const uint32_t budget = g_liveBusy ? LIVE_BUDGET_BUSY_MS : LIVE_BUDGET_MS;
+  if (best < 0) { for (File& h : held) if (h) h.close(); return; }
   for (int i = 0; i < g_liveN; i++)   // a file whose bytes have waited too long goes first, however few
     if (g_live[i].off < g_live[i].size && now - g_live[i].servedMs >= LIVE_TURN_MS && now - g_live[i].servedMs > now - g_live[best].servedMs) best = i;
   g_liveNext = (best + 1) % g_liveN;                              // ties alternate
@@ -1623,7 +1653,8 @@ void liveService() {
     int got = 0;
     if (!(s.raLen && s.off >= s.raOff && s.off < s.raOff + s.raLen) && !opened) {   // not buffered: open (once per call) at s.off
       tp = millis();
-      f = liveOpen(s);
+      if (held[best]) { f = held[best]; held[best] = File(); }   // the size check's open (fw 0.47.6)
+      else f = liveOpen(s);
       opened = true;
       if (!f) break;
       if (!f.seek(s.off)) { f.close(); s.size = s.off; break; }  // re-check the size next time
@@ -1664,12 +1695,16 @@ void liveService() {
     s.servedMs = millis();
     g_lst.bytes += (uint32_t)got;
     g_lst.frames++;
-    if (s.off >= s.size || millis() - t0 >= LIVE_BUDGET_MS) break;
+    if (s.off >= s.size || millis() - t0 >= budget) break;
     tp = millis();
     delay(LIVE_FRAME_MS);
     g_lprof.sleep += millis() - tp;
   }
   if (f) f.close();
+  for (File& h : held) if (h) h.close();
+  waiting = 0;                                                    // what is left decides the next call's pacing
+  for (int i = 0; i < g_liveN; i++) waiting += g_live[i].size - g_live[i].off;
+  g_liveBusy = waiting > LIVE_BACKLOG;
   g_loopMs[LP_LIVE] += millis() - now;
   if (millis() - now > g_lprof.maxCall) g_lprof.maxCall = millis() - now;
 }
@@ -1942,7 +1977,7 @@ void logDevPos() {
   LogStream& st = activeStream();
   if (bgCtx() && !st.path[0]) openBgSession();
   if (!g_sdOk || !ensureLogFile(st)) return;
-  File f = SD.open(st.path, FILE_APPEND);
+  File f = openAppend(st.path);
   if (!f) return;
   const bool used = fleet::role() == fleet::ROLE_LEADER ? posSnapshot().from == 2 : fleet::gpsIsFleetPosition();
   char ln[LOG_LINE];
@@ -2147,7 +2182,7 @@ bool fleetLogStore(const char* sidHex, const char* ofile, uint32_t firstRow, boo
   if (g_xferDepth || !g_sdOk) return false;   // a transfer is counting/sending file sizes: the client resends later
   if (!g_fleetLog.path[0]) fleetLogBegin();
   if (!ensureLogFile(g_fleetLog)) return false;
-  File f = SD.open(g_fleetLog.path, FILE_APPEND);
+  File f = openAppend(g_fleetLog.path);
   if (!f) return false;
   uint32_t pos = f.size();                     // before any write (see copyAnchors): tracked by hand from here on
   if (an && an->gen != g_fleetGen) {           // first store for this origin file in this fleet file

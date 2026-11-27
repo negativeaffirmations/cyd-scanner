@@ -509,6 +509,13 @@ export function initLiveSync(){
   // features/loglines.js: finished files of this connection that are no longer current (they still need uploading).
   state.liveExtras = ()=>!cur || cur.gen !== connGen() ? [] :
     cur.extras.map(x=>{ const m = find(cur.sid, x.path, x.fid); return { label:"old", sid:cur.sid, path:m ? m.path : x.path, fid:x.fid, ok:!!(m && m.fileId === x.fid) }; });
+  // features/loglines.js: pushed bytes not yet saved into the copy (a pass saves them only every 20 s - 5 min), so the
+  // live upload needn't wait for the save. {from, pieces}: they continue the copy at byte `from`; null = none.
+  state.livePending = (sid, fid)=>{
+    if(!cur || cur.gen !== connGen() || cur.sid !== sid || !cur.push.on) return null;
+    const s = cur.push.subs[fid];
+    return s && s.bytes ? { from:s.bufStart, pieces:s.chunks.slice() } : null;
+  };
   state.onLiveLog = onLiveLog;   // ble/download.js hands over the scanner's pushed frames (fw >= 0.44.0)
   setInterval(tick, 2000);
   window.addEventListener("cflo-bg-tick", tick);   // Android app: hidden-page timers are throttled (shim-background.js)
