@@ -1,6 +1,6 @@
 # Handoff — 2026-11-21 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-26 night: lower live-upload lag (fw 0.47.6 + web 20261126c)
+## RESUME HERE - 2026-11-26 night: lower live-upload lag (fw 0.47.6 + web 20261126c) + member relay (fw 0.47.7)
 - **Why:** drive 8 (19:49-20:12, all fine server-side; the 19:51 POST timeouts were the server box rebooting after a power
   surge) showed own rows 3-13 s, members up to ~50 s behind. Owner: a few seconds is fine, do the cheap parts.
 - **Phone (the biggest delay):** pushed bytes were saved into the live copy only once per livesync pass (20 s < 2 MB, 60 s
@@ -10,7 +10,18 @@
   change):** every log append goes through `openAppend()`, which marks a subscribed file dirty; a dirty file is size-checked
   after 500 ms (`LIVE_DIRTY_MS`, the 2 s poll stays as fallback) and that open is reused for the send; > 4 KB waiting ->
   120 ms per call, 10 ms apart (`LIVE_BACKLOG`, `LIVE_BUDGET_BUSY_MS`, `LIVE_GAP_BUSY_MS`).
-- **Open:** members' remaining lag is the ESP-NOW forwarding (option 3: measure it on the next drive before changing it).
+- **Drive 9 (21:02-21:16, 0.47.6 / build 31):** nothing lost; own oldest row median 2 s (max 4), ZUDIMU 3-5 s (max 27),
+  BEMOPU up to 60 s at 21:10-21:12 while ZUDIMU rows in the same posts were ~5 s: BEMOPU's relay to the leader, not the phone.
+- **fw 0.47.7 (all 3 hosts flashed; ZUDIMU's CH340 wedged mid-upload once, owner replugged, re-flashed fine):** cause = a
+  member paced its next LogRows frame from the ACK (`nextMs = ack + len/8 KB/s`), which on a ~1 s mini loop pushed every frame
+  to the next pass: ~2 s per 1.4 KB frame (~0.7 KB/s) vs ~1 KB/s logged at speed. Now paced from the send (`inflMs`), and S3
+  hosts call `fleet::serviceLight()` during the C5-table wait: a leader handles LogRows (store + ack), a client LogAck + its
+  next frame; every other frame is set aside in `g_defer` and handled first by the next `service()`. CYD hosts get only the
+  pacing fix. Bench: a 32-row / 6.6 KB burst on BEMOPU forwarded inside one 3 s sample, 0 bad frames, 2 resends in 5 min.
+  A bench backlog can't be built with a phone download: cooperative transfers don't block fleet appends.
+- **Seen on the bench:** a 24 h all-logs export on SOPAFE is 12.9 MB (~15 KB/s, ~14 min); the web app shows only the
+  "Collecting…" toast the whole time (no progress) -> looks hung. Small web UX fix, not started.
+- **Open:** next drive -> ask scan-analyzer for BEMOPU's oldest-row age while moving (was 60 s).
 
 ## 2026-11-26 evening: fleet position from a member's phone (fw 0.47.5) + leader first in the app chooser (DEPLOYED)
 - **Why:** drive 7's no-position rows (all at scan start) lasted ~1 min longer on SOPAFE/ZUDIMU because the phone joined
