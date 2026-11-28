@@ -150,6 +150,20 @@
   font-size:.62rem; font-weight:700; color:#0d1117; background:#8b949e;
 }
 
+// The threat named in its row (features/threattag.js): category pill in CAT_COL (tier colour when no category), the matched
+// signature, and a bell on a row that sent a phone alert ("probably false" when the server explained it).
+.detrow .r3 { display:flex; align-items:center; gap:7px; min-width:0; flex-wrap:wrap; }
+.ttag {
+  --tc:#8b949e;
+  display:inline-flex; align-items:center; padding:.1em .6em; border-radius:999px; font-size:.72rem; font-weight:700;
+  letter-spacing:.03em; text-transform:uppercase; white-space:nowrap;
+  color:var(--tc); border:1px solid var(--tc); background:color-mix(in srgb, var(--tc) 16%, transparent);
+}
+.tsig { font-size:.72rem; color:$color-text-muted; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1 1 0; }
+.talert { color:#f85149; font-size:1.05rem; line-height:1;
+  &.low { font-family:inherit; font-size:.7rem; color:$color-text-muted; border:1px dashed $color-text-muted;
+          border-radius:999px; padding:.05em .5em; } }
+
 // Per-scanner colour dot (features/unitcolors.js): Home name, Scanners, Fleet members, Scanner keys, the device popup.
 .unitdot {
   display:inline-block; flex:none; width:.8rem; height:.8rem; border-radius:50%; margin-right:.45em;

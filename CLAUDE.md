@@ -720,6 +720,10 @@ back (5 GHz included). Things that matter, learned the hard way:
   status/detections/sessions/explore/map/whitelist/fleet/files register with `onUnitReset()` (readouts, DETS buffers,
   Remote-ID, session list, Explore rows, a device-sourced Map — a local file loaded with `plotCsvText(...,true)` stays —
   whitelist view, fleet members, file-explorer state). New webapp state/exports go in NEW files (the stale-module rule).
+  **Threats in rows (webapp 2026-11-27e, `features/threattag.js`):** a threat row (tier >= 1 or a category) gets a third
+  line: a pill "CATEGORY · tier" in `CAT_COL` (tier colour when the category is Other), the matched `sig` label, and a bell
+  when it raised a phone notification in the last 30 min (`state.alerted`, written by `notify.js`; "probably false" when
+  the server check explained it). Live list and Explore viewer (shared `renderDetList`).
   **Scanner colours (webapp 2026-11-27d, `features/unitcolors.js`; no firmware):** one colour per scanner, keyed by sid,
   assigned on first sight (first free of 8) and kept on the phone (localStorage `cflo.unitColors`, plus `cflo.unitSids`
   name / device id -> sid and `cflo.unitHex` sid -> hex for the app chooser in `android-app/native/shim-bluetooth.js`).

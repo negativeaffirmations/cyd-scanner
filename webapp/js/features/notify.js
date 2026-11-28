@@ -123,6 +123,7 @@ function evalSnapshot(rows){
   for(const f of held) state.screen.device(f.r).then(v => {
     if(!cfg.on || !state.connected) return;
     if(v && v.low){
+      markAlerted(f, true);
       log("Alert (probably false): " + titleFor(f.r, f.kinds) + " - " + devLine(f.r) + " - " + v.why);
       show("Probably a false alarm: " + titleFor(f.r, f.kinds), devLine(f.r) + "\n" + v.why, { mac:f.r.mac, kind:f.kinds[0] },
            "cflo-" + normMac(f.r.mac), "threat", undefined, true);
@@ -131,8 +132,14 @@ function evalSnapshot(rows){
   const now2 = fresh.filter(f => !held.includes(f));
   if(now2.length) present(now2);
 }
+// Which devices raised an alert (state.alerted, MAC -> {t, low, kinds}): features/threattag.js puts a bell on their row.
+function markAlerted(f, low){
+  if(!state.alerted) state.alerted = new Map();
+  state.alerted.set(normMac(f.r.mac), { t:Date.now(), low:!!low, kinds:f.kinds.slice() });
+  if(state.alerted.size > 300) state.alerted.delete(state.alerted.keys().next().value);
+}
 function present(fresh){
-  fresh.forEach(f => log("Alert: " + titleFor(f.r, f.kinds) + " - " + devLine(f.r)));
+  fresh.forEach(f => { markAlerted(f, false); log("Alert: " + titleFor(f.r, f.kinds) + " - " + devLine(f.r)); });
   if(fresh.length === 1){
     const { r, kinds } = fresh[0];
     const sk = [...new Set(kinds.map(styleKind))];

@@ -1718,6 +1718,54 @@ body {
   background: #8b949e;
 }
 
+.detrow .r3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.ttag {
+  --tc:#8b949e;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.6em;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--tc);
+  border: 1px solid var(--tc);
+  background: color-mix(in srgb, var(--tc) 16%, transparent);
+}
+
+.tsig {
+  font-size: 0.72rem;
+  color: #8b949e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.talert {
+  color: #f85149;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.talert.low {
+  font-family: inherit;
+  font-size: 0.7rem;
+  color: #8b949e;
+  border: 1px dashed #8b949e;
+  border-radius: 999px;
+  padding: 0.05em 0.5em;
+}
+
 .unitdot {
   display: inline-block;
   flex: none;

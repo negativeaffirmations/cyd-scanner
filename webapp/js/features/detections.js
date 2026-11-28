@@ -18,6 +18,7 @@ import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.j
 import { recordSightings } from './sightings.js';
 import { maybePostLive } from './remote.js';
 import { viaColor } from './unitcolors.js';   // one colour per scanner (by sid), the same everywhere in the app
+import { threatTag } from './threattag.js';   // the threat named in its row
 // Fleet "seen by" (DETS v9 `via`: bit 0 = the connected scanner, bit k = fleet member slot k). Names come from the
 // Fleet card's member list (state.fleetMembers, set by features/fleet.js). Kept local to this module on purpose: a
 // new export in a shared module would break a phone still holding a cached copy of it.
@@ -147,11 +148,13 @@ export function renderDetList(el, rows, opts){
     if (!viewer && mk) extra.push(`<span class="mk">${esc(mk)}</span>`);
     if (viewer && r.channel) extra.push("ch"+esc(r.channel));
     if (viewer) extra.push(fmtTimecode(r));
+    const tt = threatTag(r);
     return `<div class="detrow clk ${sc}${muted?" muted":""}${ft===2?" following":""}" data-ri="${ri}">`+
            `<span class="tiercol"><span class="badge b${tn}"></span></span>`+
            `<div class="detmain">`+
              `<div class="r1"><span class="nm t${tn}">${nm}</span><span class="rssi">${r.rssi} dBm</span></div>`+
              `<div class="r2"><span class="sigcol">${pills}${roles}${vias}</span><span class="r2sub">${extra.filter(Boolean).join("  ·  ")}</span></div>`+
+             (tt ? `<div class="r3">${tt}</div>` : "")+   // the threat itself (threattag.js), only on threat / alerted rows
            `</div></div>`;
   }).join("");
   el.querySelectorAll(".detrow[data-ri]").forEach(d=>{ d.onclick = ()=> opts.onRowClick && opts.onRowClick(rows[+d.dataset.ri]); });
