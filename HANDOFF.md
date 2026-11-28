@@ -1,14 +1,19 @@
 # Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-27 late: scanner colours + threats in rows (web 20261127e, NOT deployed) = owner ideas 1 + 2
+## RESUME HERE - 2026-11-27 late: owner ideas 1-3 built (web 20261127f, NOT deployed): scanner colours, threats in rows, custom notifications
 - **Owner ideas list (`.tmp/ideas.md`, git-ignored):** 1 colour-coded fleet devices (DONE here), 2 mark the threat in its
   scan row, 3 per-threat custom notifications ("Create custom notification" with triggers; a three-dot / long-press menu
-  per threat type for sound + vibration; extra conditions). 1 + 2 DONE (owner: ship them together); next = 3.
+  per threat type for sound + vibration; extra conditions). All 3 built; owner: ship 1 + 2 together (3 can join them).
 - **Built:** `features/unitcolors.js` (see CLAUDE.md "Scanner colours"). Checked in the `.dev` app on SOPAFE: chips
   S/B/Z, popup Seen by with per-unit RSSI, Home dot, Fleet rows + coverage, Scanner keys, app chooser icons, picker +
   swap + live repaint. Not seen: the web Switch scanner dialog with a second remembered unit. Android tests 59/59.
 - **Idea 2 built:** `features/threattag.js` (CLAUDE.md "Threats in rows"). Checked: Wyze row "CAM · LIKELY  Wyze", bell after
   a Cam alert (Cam alerts were switched on for the test and back off). Not seen: the "probably false" mark, Explore rows.
+- **Idea 3 built:** `features/notifyrules.js` (CLAUDE.md "Custom notifications"); owner spec: Triggers + Conditions each
+  grow with "+" (dropdown + input); tiles stay quick on/off. Checked: ⋮ menu, editor (category, signal, time rows), save,
+  a "Cam test" rule fired on the Wyze camera with Cam's tile off (own channel cflo-r<id>-…), delete with confirm (test rule
+  removed). Not checked: moving / once / deauth / evil triggers live, the app sound picker for a rule. A deleted rule's
+  Android channel stays in the phone's settings (cosmetic).
 
 ## RESUME HERE - 2026-11-27 night: fw 0.48.0 faster export picking + open items (flashed on all 3 hosts; web 20261127c NOT deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.48.0; C5s unchanged; no link / fleet protocol change.

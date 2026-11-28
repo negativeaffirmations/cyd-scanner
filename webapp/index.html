@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@200&display=swap">
-<link rel="stylesheet" href="style.css?v=20261127e">
+<link rel="stylesheet" href="style.css?v=20261127f">
 </head>
 <body>
   <!-- Persistent top app bar: title + connection pill (shown on every page) -->
@@ -73,7 +73,7 @@
 
       <h3 style="margin-bottom:.3em">Activity</h3>
       <div id="log"></div>
-      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-27e&nbsp;·&nbsp;scanner colours, threats in rows</div>
+      <div id="uiver" style="text-align:center; color:#8b949e; font-size:.7rem; margin:10px 0 4px">ui&nbsp;2026-11-27f&nbsp;·&nbsp;colours, threats in rows, custom alerts</div>
     </section>
 
     <!-- ============================ SCANNER ============================ -->
@@ -354,7 +354,7 @@
           <option value="5">5 minutes</option><option value="15">15 minutes</option>
           <option value="30">30 minutes</option><option value="60">1 hour</option>
         </select>
-        <label style="display:block;margin-top:.5em" hidden><input type="checkbox" id="nfVib"> Vibrate</label>  <!-- old notify.js only; Alert style replaces it -->
+        <label hidden><input type="checkbox" id="nfVib"> Vibrate</label>  <!-- old notify.js only; Alert style replaces it -->
         <div id="nfStyle" class="nfstyle"></div>  <!-- js/features/notifystyle.js -->
         <button id="nfTestBtn" class="secondary" disabled style="margin-top:.6em">Send a test notification</button>
         <div class="sub" style="margin-top:.5em">Alerts come only while this page is open and connected to a scanner. Keep the screen on: Android pauses a screen-off or long-backgrounded tab, and then nothing fires. Connected to a fleet leader, alerts cover the whole fleet.</div>
@@ -725,6 +725,6 @@
       <span class="material-symbols-outlined">settings</span><span class="navlbl">Settings</span></button>
   </nav>
 
-<script type="module" src="js/main.js?v=20261127e"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
+<script type="module" src="js/main.js?v=20261127f"></script>  <!-- BUMP ?v= on every webapp deploy (same rule as style.css) so the entry module updates with the page -->
 </body>
 </html>

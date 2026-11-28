@@ -535,6 +535,134 @@ summary {
   color: #fff;
 }
 
+#nfCats .tcard {
+  position: relative;
+}
+
+.tmenu {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  font-size: 1.05rem;
+  color: #8b949e;
+  padding: 2px;
+  line-height: 1;
+}
+
+.nrbox {
+  margin-top: 0.9em;
+  padding-top: 0.7em;
+  border-top: 1px solid #30363d;
+}
+
+.nrrule {
+  cursor: default;
+}
+.nrrule.off .sessmain {
+  opacity: 0.55;
+}
+.nrrule .sessmain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.nrrule .sesssub {
+  overflow-wrap: anywhere;
+}
+.nrrule button {
+  width: auto;
+  margin: 0;
+  flex: none;
+}
+.nrrule .nrsw input {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.nrnew {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+  margin-top: 0.5em;
+}
+
+.nrdlg {
+  max-height: 88dvh;
+  overflow: auto;
+}
+
+.nrsec {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 1em 0 0.35em;
+}
+.nrsec .sub {
+  flex: 1 1 auto;
+}
+
+.nradd {
+  width: 2.2rem;
+  height: 2.2rem;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #aa00aa;
+  color: #fff;
+}
+.nradd[disabled] {
+  opacity: 0.4;
+}
+
+.nrrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0.3em 0;
+  padding: 0.45em 0.5em;
+  background: #0b0e13;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+}
+.nrrow > select:first-child {
+  flex: 1 1 11em;
+  min-width: 0;
+}
+.nrrow > input, .nrrow > select:not(:first-child) {
+  flex: 1 1 9em;
+  min-width: 0;
+}
+.nrrow .xbtn {
+  margin-left: auto;
+}
+
+.nrnum {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  flex: 1 1 9em;
+}
+.nrnum input {
+  flex: 1 1 5em;
+  min-width: 0;
+  width: auto;
+}
+
+.nrempty {
+  margin: 0.2em 0 0.4em;
+}
+
+.nrbtns {
+  display: grid;
+  gap: 0.5em;
+  margin-top: 1em;
+}
+
 .sessbar {
   display: flex;
   align-items: center;

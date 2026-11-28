@@ -160,6 +160,39 @@ summary { cursor:pointer; font-weight:600; }
   &.on { background:$color-accent; color:#fff; }
 }
 
+// --- Notifications -> Custom notifications (js/features/notifyrules.js) ---
+#nfCats .tcard { position:relative; }
+.tmenu { position:absolute; top:1px; right:0; font-size:1.05rem; color:$color-text-muted; padding:2px; line-height:1; }
+.nrbox { margin-top:.9em; padding-top:.7em; border-top:1px solid $color-border; }
+.nrrule { cursor:default;
+  &.off .sessmain { opacity:.55; }
+  .sessmain { flex:1 1 auto; min-width:0; }
+  .sesssub { overflow-wrap:anywhere; }
+  button { width:auto; margin:0; flex:none; }
+  .nrsw input { width:1.25em; height:1.25em; }
+}
+.nrnew { display:flex; align-items:center; justify-content:center; gap:.3em; margin-top:.5em; }
+.nrdlg { max-height:88dvh; overflow:auto; }
+.nrsec { display:flex; align-items:center; gap:.5em; margin:1em 0 .35em;
+  .sub { flex:1 1 auto; }
+}
+.nradd {
+  width:2.2rem; height:2.2rem; margin:0; padding:0; flex:none; border-radius:50%;
+  display:inline-flex; align-items:center; justify-content:center; background:$color-accent; color:#fff;
+  &[disabled] { opacity:.4; }
+}
+.nrrow {
+  display:flex; flex-wrap:wrap; align-items:center; gap:.4em; margin:.3em 0; padding:.45em .5em;
+  background:$color-surface-inset; border:1px solid $color-border; border-radius:10px;
+  > select:first-child { flex:1 1 11em; min-width:0; }
+  > input, > select:not(:first-child) { flex:1 1 9em; min-width:0; }
+  .xbtn { margin-left:auto; }
+}
+.nrnum { display:inline-flex; align-items:center; gap:.4em; flex:1 1 9em;
+  input { flex:1 1 5em; min-width:0; width:auto; } }
+.nrempty { margin:.2em 0 .4em; }
+.nrbtns { display:grid; gap:.5em; margin-top:1em; }
+
 // --- Session logs: multi-select list of scans (a scan = one or more joined part files) ---
 .sessbar { display:flex; align-items:center; justify-content:space-between; gap:.6em; margin:.5em 0 .2em; font-size:.9rem; }
 .sessbar label { display:flex; align-items:center; gap:.4em; cursor:pointer; }

@@ -28,7 +28,7 @@ import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
 import { initLiveSync } from './features/livesync.js?v=20261126c';   // live copy of the current scan (docs/phone-analysis.md)
 import { initSwitcher } from './features/switcher.js';
-import { initNotify } from './features/notify.js?v=20261124c';   // new module: versioned so it loads fresh with main.js
+import { initNotify } from './features/notify.js?v=20261127e';   // new module: versioned so it loads fresh with main.js
 import { initSettingsPages } from './features/settingspages.js?v=20261119b';   // new module: versioned so it loads fresh with main.js
 import { initDisplayTimeout } from './features/displaytimeout.js?v=20261120b';   // new module: versioned so it loads fresh with main.js
 import { initEngine } from './analysis/engine.js?v=20261127a';   // phone analysis engine (docs/phone-analysis.md phase 3)
