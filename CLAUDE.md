@@ -280,20 +280,25 @@ back (5 GHz included). Things that matter, learned the hard way:
   C5 sends empty names (no protocol involvement). The NDJSON
   log is unchanged — it still omits `name` when blank and carries `mac` separately; readers
   apply the MAC fallback at display time.
-- **SD logging (CYD) — per-session NDJSON files, two parallel streams.** **fw 0.46.0: ONE own stream** — every scan logs to g_fg (`/logs/sess-NNNNN` -> `YYYYMMDD-HHMMSS`), g_bg is never opened, old `bg-` files stay readable; the meta line carries `"start":"boot|user|auto"`, a scan started after a stop begins a new file (and a leader's fleet file), STATUS part 3 = `sfid;sst`, live-POST session = `<sid>-<file_id>`. The two-stream text below is the pre-0.46 history. **fw 0.47 (GATT identification, docs/gatt-identify.md):** the C5 briefly reads Device Name / Appearance / Device Information of nearby connectable public/static BLE devices (read only, Security Manager compiled out, denylist, rare per device; only the unit whose plan includes BLE reads) and the host logs one `{"evt":"devinfo","mac","at","rssi","rd",name,app,mfr,model,fw,hw[,nw][,auth][,re,age]}` line per device per file; rows carry `"nc":1` when the name came from the C5's advert-name cache; DETS v11 appends `nsrc` (g/c); CMD `C:<0|1>`, STATUS part 3 `gatt=`. The log is **NDJSON**
-  (one JSON object per line, `logNewDetections` in `main.cpp`). There are **two independent streams**
-  (each a `LogStream` with its own dedup set): a **foreground** stream for on-screen scan sessions
-  (`/logs/sess-NNNNN.jsonl`, renamed to `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync) and a dedicated
-  **background** stream for the always-on background scan (`/logs/bg-NNNNN.jsonl` → `/logs/bg-…`).
-  The headless background cycle (any screen but `SCR_SCAN`) logs to the bg stream; the on-screen scan
-  logs to the fg stream. **One scan = one file, and logging never stops:** each stream's dedup table
-  (`MAX_SEEN`=400 per stream, `SeenKey` with `lastSeen`/`lastLogged`) is an **LRU** — when full, the
+- **SD logging (host) — per-session NDJSON files, ONE own stream (fw 0.46.0).** Every scan (on-screen or headless) logs to
+  `g_fg` (a `LogStream`): `/logs/sess-NNNNN.jsonl`, renamed `/logs/YYYYMMDD-HHMMSS.jsonl` on time sync (from fw 0.48.0 a file
+  that ended before its rename ran is renamed at the next sync check too). `g_bg` is never opened; old `bg-` files from
+  before 0.46 stay readable/exportable. A leader also writes `/logs/fleet-*.jsonl` (members' forwarded lines, `g_fleetLog`).
+  The meta line carries `"start":"boot|user|auto"`; a scan started after a stop begins a new file (and a leader's fleet
+  file); STATUS part 3 = `sfid;sst[;ffid];gatt`; live-POST session = `<sid>-<file_id>`. The log is **NDJSON** (one JSON
+  object per line, `logNewDetections` in `host_log.cpp`). **fw 0.47 (GATT identification, docs/gatt-identify.md):** the C5
+  briefly reads Device Name / Appearance / Device Information of nearby connectable public/static BLE devices (read only,
+  Security Manager compiled out, denylist, rare per device; only the unit whose plan includes BLE reads) and the host logs
+  one `{"evt":"devinfo","mac","at","rssi","rd",name,app,mfr,model,fw,hw[,nw][,auth][,re,age]}` line per device per file;
+  rows carry `"nc":1` when the name came from the C5's advert-name cache; DETS v11 appends `nsrc` (g/c); CMD `C:<0|1>`.
+  **One scan = one file, and logging never stops:** the stream's dedup table
+  (`MAX_SEEN`=400, `SeenKey` with `lastSeen`/`lastLogged`) is an **LRU** — when full, the
   least-recently-*seen* device is evicted (and simply logged again if it returns), so a dense drive
   never fills it. (Before 2026-10-22 a full set *skipped* new MACs and rotated to a new file at most
   every 5 min — data gaps + a 13-file drive; both removed.) A device is appended on first sight and
   **re-logged every `RELOG_MS` (5 min)** while still/again in range (fresh position + RSSI), so a
   file can hold several rows per MAC (web Explore collapses them to one device with a sighting trail;
-  scan-analyzer takes many rows per MAC). The file only changes on a boot or "New Session".
+  scan-analyzer takes many rows per MAC). The file changes on a boot, a Start after a Stop, or "New Session".
   `LogStream.uniqCount` (devices first-logged this session; STATUS `uniq`, CYD `U:`) and `rowCount`
   replace the old `seenCount` readouts. One object per row; optional keys omitted when blank:
   `{"epoch":…,"ms":…,"lat":…,"lon":…,"src":"…","mac":"…","bssid":"…","rssi":…,"ch":…,"ie":"…","cid":"…","uuid":"…","pan":"…","name":"…","score":…,"tier":"…","sig":"…","wl":0|1,"flags":"…"}`.
@@ -340,8 +345,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   `epoch − (ms − x)/1000`; `last_ms` may run up to the C5's 30 s TTL late); `rssi_max` the period's
   strongest RSSI; `pan` only for 802.15.4 short addresses. A returning device starts a new period.
   **File log only** (not DETS / live-POST). The web Map skips it (not a pin); joins/exports keep it.
-  The per-stream `SeenKey` tables (24 B × `MAX_SEEN` × 2) are now **heap-allocated** in
-  `beginSessionNamed` — they no longer fit the CYD's static DRAM.
+  The `SeenKey` table (24 B × `MAX_SEEN`) is **heap-allocated** in `beginSessionNamed` (it doesn't fit the CYD's static DRAM).
   **Time backfill — `{"epoch":…,"ms":…,"evt":"timesync"}` anchor.** Rows logged before the phone syncs
   the clock carry `epoch:0` (only `ms`, ms-since-boot, is meaningful). When the phone sets the time,
   `renameStreamOnSync` appends ONE `timesync` anchor line (the sync epoch + its `ms`) to any stream that
@@ -354,7 +358,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   grows without breaking old parsers), JSON escaping kills the comma/formula-injection bug class.
   Old `.csv` sessions still list/read (readers branch by extension; no timesync backfill for legacy CSV).
   **Scan provenance — `{"evt":"meta","scanner_id":…,"fw":…,"db_gen":…}` anchor.** `writeSessionMeta()`
-  writes ONE `meta` line as the **first line of every stream** (fg + bg, in `ensureLogFile()`, before
+  writes ONE `meta` line as the **first line of every file** (own + fleet, in `ensureLogFile()`, before
   the first detection row — same slot as the timesync anchor) so a scan's origin travels with the file
   no matter who uploads it. `scanner_id` = `scannerIdHex()` (the 48-bit factory eFuse MAC as 12
   lowercase hex, stable across reflashes, OPAQUE — the base MAC, won't equal any row `mac`); `fw` =
@@ -364,7 +368,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   learned from STATUS `sid`/`fw`/`dbgen`, to each live-POST batch. First-party (owner's own device).
 - **Log retention — 512 MB cap with auto-rotation.** `enforceLogCap()` keeps total `/logs/` size
   under `LOG_CAP_BYTES` (512 MB) by deleting the **oldest** files (by FS timestamp), never the live
-  fg/bg/Explore-held/currently-streaming file. Runs at boot, on each session rotation, and on a
+  own/fleet/Explore-held/currently-streaming file. Runs at boot, on each session rotation, and on a
   ~10 min loop timer (suppressed during downloads). From fw 0.47.4 only boot always scans: the rotation + timer checks skip
   the full folder scan (it opens every file: ~11 ms each, ~3.5 s stall on a ~150-file card) while the last total + 16 KB/s
   growth + 48 MB stays under the cap; each real scan prints `[CYD] log cap: N file(s), M MB, scan T ms`.
@@ -374,12 +378,13 @@ back (5 GHz included). Things that matter, learned the hard way:
   `T:<mode>[:min][:path]` and HTTP `/dlf?f=&mode=&arg=` — mode `0` = since boot (whole file), `1` =
   past 24 h, `2` = custom minutes. Before the phone syncs time it falls back to `ms`-since-boot.
   **All-logs range export** (the web app's time-range download): path **`*`** (`T:<mode>[:min]:*`) /
-  `/dlf?f=all` — `logfilter::MultiExport` collects the window from **every** `/logs/*.jsonl` (fg + bg,
+  `/dlf?f=all` — `logfilter::MultiExport` collects the window from **every** `/logs/*.jsonl` (own, old bg-, fleet,
   New Session, earlier boots) into ONE NDJSON stream: files picked by their tail epoch (cheap 1 KB
-  head/tail reads), each file's pre-sync `epoch:0` rows **rewritten** with the epoch backfilled from
+  head/tail reads; fw 0.48.0: `/logs` is first listed by name only, and a dated file whose stream (own / bg- / fleet-) has
+  a newer dated file named > 27 h (any tz step) before the cutoff is skipped without opening it, `MultiExport::nameSkip()`), each file's pre-sync `epoch:0` rows **rewritten** with the epoch backfilled from
   that file's own timesync anchor (a live file with no anchor uses the current clock; undatable rows
-  from old never-synced files are dropped; "this boot" = the live fg/bg files plus up to 8 earlier
-  ones ended by New Session/bg toggle (`thisBootFiles()`), and `renameSessionOnSync` also appends a
+  from old never-synced files are dropped; "this boot" = the live own/fleet files plus up to 16 earlier
+  ones ended by New Session / Stop (`thisBootFiles()`), and `renameSessionOnSync` also appends a
   timesync anchor to those if they ended pre-sync; tail epochs only count complete numbers so a torn
   last line can't misdate a file; a short send pass is newline-padded to the SIZE= header), per-file meta/timesync lines dropped and ONE fresh meta
   line written first, files oldest-first (cap 64, newest kept). Mode 0 = since this boot (epoch ≥
@@ -502,7 +507,7 @@ back (5 GHz included). Things that matter, learned the hard way:
   - `…0001` TIME (write) — `"utcEpoch;tzOffsetMinutes"` (bare epoch also accepted)
   - `…0002` GPS (write) — `"lat,lon"`
   - `…0003` CMD (write) — `"1"/"0"` Wi-Fi download · `"R"` reload DB · `"L"` BLE download
-    current session · `"G"/"X"` start/stop scan · `"N"` new log session (fw 0.37.2: rotates BOTH the fg and the bg stream, + a leader's fleet file; the web app toasts the new name) · `"Q"` list sessions · `"F:<path>"` download
+    current session · `"G"/"X"` start/stop scan · `"N"` new log session (rotates the own file, + a leader's fleet file when the own file changed; the web app toasts the new name) · `"Q"` list sessions · `"F:<path>"` download
     any file (fw 0.18.0: any `files::safePath` path, was `/logs/` only) · **`"F:<path>@<offset>:<file_id>:<crc>"`** tail
     download (fw 0.26.0, `transferTail`; `<crc>` = 8 lowercase hex CRC-32 (IEEE) of the up-to-64 bytes before `<offset>`,
     `00000000` at offset 0, so a file replaced under the same line 1 is refused): the device checks line 1's `file_id` and
@@ -918,7 +923,7 @@ owner decisions: **[docs/fleet-mode.md](docs/fleet-mode.md)** (§16 overrides ea
 boot modes only** (no pairing/crypto, no scan plan, no link-protocol change): NVS `fltrole` (0 off / 1 client /
 2 leader, minis only), `fltch`, `fltboot` (3 crash boots -> role cleared, `evt:fleet op:fallback`); a **CYD fleet
 client** boots with `esp_bt_mem_release` BEFORE anything touches BT, never calls `phone::begin()` (no phone link;
-SoftAP download disabled), forces scanning on / logs to the bg stream, and shows `SCR_FLEET` as its root (Settings
+SoftAP download disabled), forces scanning on, and shows `SCR_FLEET` as its root (Settings
 -> "Fleet client..." enters, "Leave fleet" exits; both reboot). Minis keep NimBLE in either role. Code:
 `src/host_common/fleet*.{h,cpp}`; serial `fleet` / `fleet leave|client|leader on|off|ch <n>|remac` (`fleet` also prints `N BLE keys (M rows by key)`, fw 0.34.0; + `fleet rate 1|12`, `fleet pad 250|1300|0`, `fleet trace on|off` = per-ping tx/rx lines with the actual RF channel, `fleet crash` = boot-guard test panic, in debug builds). `-DFLEET_DEBUG`
 (envs `cyd_fleetdbg`, `xiao_s3_rgb_fleetdbg`) adds the cleartext ping/pong bench frames. Normal-mode static footprint is

@@ -163,17 +163,39 @@ class MultiExport {
   // an anchor search (a pre-sync file is read up to its timesync line, which can be deep in a big file).
   bool beginStart() {
     endScan();
-    free(files_); files_ = nullptr; n_ = 0; dropped_ = 0;
+    free(files_); files_ = nullptr; n_ = 0; dropped_ = 0; nameSkipped_ = fleetSkipped_ = 0;
     files_ = (Ent*)malloc(sizeof(Ent) * MAX_FILES);
     if (!files_ || bootOom_) return false;           // without the boot list every live file would look old
     dir_ = SD.open("/logs");
     if (!dir_) return false;
+    listing_ = true;                                // pass 1: names only (no file open)
     scanning_ = true;
     return true;
   }
   bool beginStep(uint32_t budgetMs) {
     const uint32_t t0 = millis();
     auto spent = [&]() { return budgetMs && millis() - t0 >= budgetMs; };
+    // fw 0.48.0: pass 1 reads every name in /logs WITHOUT opening the file (an open in a long folder costs ~11-40 ms, a
+    // readdir next to nothing) and keeps the time in each dated name. Pass 2 then skips, still unopened, every dated
+    // file whose stream has a NEWER dated file named well before the cutoff (nameSkip()).
+    while (listing_) {
+      if (spent()) return false;
+      bool isDir = false;
+      String nm = dir_.getNextFileName(&isDir);
+      if (!nm.length()) { listing_ = false; dir_.rewindDirectory(); break; }
+      if (isDir) continue;
+      uint8_t kind;
+      uint32_t t = nameEpoch(nm.c_str(), kind);
+      if (!t) continue;
+      if (nNames_ == capNames_) {
+        if (capNames_ >= MAX_NAMES) continue;      // more dated files than that: the rest just aren't successors
+        int nc = capNames_ ? capNames_ * 2 : 64;
+        NameT* nn = (NameT*)realloc(names_, sizeof(NameT) * (size_t)nc);
+        if (!nn) continue;                          // out of memory: fewer successors = fewer skips (safe)
+        names_ = nn; capNames_ = nc;
+      }
+      names_[nNames_++] = NameT{t, kind};
+    }
     while (scanning_) {
       if (anc_) {                                   // resume the anchor search of cur_
         if (!ancLine_) ancLine_ = (char*)malloc(LINE_CAP);
@@ -191,20 +213,20 @@ class MultiExport {
         continue;
       }
       if (spent()) return false;
-      File e = dir_.openNextFile();
-      if (!e) break;
-      String nm = e.name();
-      bool ok = !e.isDirectory() && nm.endsWith(".jsonl");
+      bool isDir = false;
+      String nm = dir_.getNextFileName(&isDir);
+      if (!nm.length()) break;
+      if (isDir || !nm.endsWith(".jsonl")) continue;
       Ent en{};
-      if (ok) {
-        int sl = nm.lastIndexOf('/');
-        snprintf(en.path, sizeof(en.path), "/logs/%s", (sl >= 0 ? nm.substring(sl + 1) : nm).c_str());
-        en.live = isLive(en.path);
-        en.size = (uint32_t)e.size();   // every pass reads this many bytes, however much the file grows meanwhile
-        en.fleet = !strncmp(en.path, "/logs/fleet-", 12);   // forwarded member lines: foreign ms, own epochs only
-        if (!nowEpoch_ && !en.live) ok = false;  // no clock: only this boot's files can be windowed
-      }
-      if (!ok) { e.close(); continue; }
+      int sl = nm.lastIndexOf('/');
+      snprintf(en.path, sizeof(en.path), "/logs/%s", (sl >= 0 ? nm.substring(sl + 1) : nm).c_str());
+      en.live = isLive(en.path);
+      if (!nowEpoch_ && !en.live) continue;         // no clock: only this boot's files can be windowed
+      if (!en.live && nameSkipOn_ && nameSkip(en.path)) { nameSkipped_++; continue; }
+      File e = SD.open(en.path, "r");
+      if (!e) continue;
+      en.size = (uint32_t)e.size();   // every pass reads this many bytes, however much the file grows meanwhile
+      en.fleet = !strncmp(en.path, "/logs/fleet-", 12);   // forwarded member lines: foreign ms, own epochs only
       uint32_t head = 0;
       bool headZero = false;
       ends(e, head, headZero, en.tail);
@@ -229,6 +251,8 @@ class MultiExport {
   }
   int dropped() const { return dropped_; }
   int fleetSkipped() const { return fleetSkipped_; }
+  int nameSkipped() const { return nameSkipped_; }   // skipped by name alone, never opened (fw 0.48.0)
+  void setNameSkip(bool on) { nameSkipOn_ = on; }      // bench (serial `xpick ... old`): compare with the 0.47 picking
 
   // First and last non-zero epoch found in a file's head / tail block (0 = none there). Cheap (two
   // 1 KB reads); used by the session list so the phone can group a scan's files by time.
@@ -427,12 +451,17 @@ class MultiExport {
   // name time bounds every row of a file; when that is FLEET_SLACK_S before the cutoff, the whole file is older and is
   // skipped. A file with no dated successor (the newest, an unsynced fleet-NNNNN) or a live one is always kept.
   static constexpr uint32_t FLEET_SLACK_S = 600;   // clock steps between units / the leader
-  static uint32_t fleetNameEpoch(const char* path) {
+  // Local epoch in a dated log name: "YYYYMMDD-HHMMSS.jsonl" (own, kind 0), "bg-..." (1), "fleet-..." (2). 0 = not one
+  // (sess-NNNNN, bg-NNNNN, fleet-NNNNN, anything else). The name is the sync time (a rename) or the creation time, so it
+  // is at or after the moment the file began; the previous file of that stream stopped taking lines before it.
+  static uint32_t nameEpoch(const char* path, uint8_t& kind) {
     const char* b = strrchr(path, '/');
     b = b ? b + 1 : path;
-    if (strncmp(b, "fleet-", 6)) return 0;
-    b += 6;
+    if (!strncmp(b, "fleet-", 6)) { kind = 2; b += 6; }
+    else if (!strncmp(b, "bg-", 3)) { kind = 1; b += 3; }
+    else kind = 0;
     for (int i = 0; i < 15; i++) if (i == 8 ? b[i] != '-' : (b[i] < '0' || b[i] > '9')) return 0;
+    if (strcmp(b + 15, ".jsonl")) return 0;
     auto num = [&](int at, int n) { int v = 0; for (int i = 0; i < n; i++) v = v * 10 + (b[at + i] - '0'); return v; };
     int y = num(0, 4), m = num(4, 2), d = num(6, 2), hh = num(9, 2), mi = num(11, 2), ss = num(13, 2);
     if (y < 2020 || m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || mi > 59 || ss > 59) return 0;
@@ -442,6 +471,23 @@ class MultiExport {
     const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     const long days = (long)era * 146097 + doe - 719468;
     return (uint32_t)days * 86400u + (uint32_t)(hh * 3600 + mi * 60 + ss);   // unsigned: long is 32 bit here
+  }
+  static uint32_t fleetNameEpoch(const char* path) { uint8_t k; uint32_t t = nameEpoch(path, k); return k == 2 ? t : 0; }
+  // A stream (own / bg / fleet) writes one file at a time, so the NEXT dated file of the same stream bounds every row of
+  // this one. When that next name is NAME_SLACK_S before the cutoff, the whole file is older: skip it unopened. The slack
+  // is wide (a clock that steps by a tz offset: GPS UTC before the first phone tz, a westward trip); the files it skips are
+  // older than about two days. A file with no dated successor (the newest, an unsynced one) is always opened.
+  static constexpr uint32_t NAME_SLACK_S = 27 * 3600;   // any tz difference (-12..+14 h) + DST: a GPS clock before the phone tz, travel
+  static constexpr int MAX_NAMES = 1024;
+  bool nameSkip(const char* path) const {
+    if (!cutEpoch_) return false;
+    uint8_t kind;
+    const uint32_t mine = nameEpoch(path, kind);
+    if (!mine) return false;
+    uint32_t next = 0;
+    for (int j = 0; j < nNames_; j++)
+      if (names_[j].kind == kind && names_[j].t > mine && (!next || names_[j].t < next)) next = names_[j].t;
+    return next && next + NAME_SLACK_S < cutEpoch_;
   }
   void pruneFleet() {
     if (!cutEpoch_) return;
@@ -465,7 +511,8 @@ class MultiExport {
     if (ancF_) ancF_.close();
     if (dir_) dir_.close();
     free(ancLine_); ancLine_ = nullptr;
-    anc_ = scanning_ = false;
+    free(names_); names_ = nullptr; nNames_ = capNames_ = 0;
+    anc_ = scanning_ = listing_ = false;
   }
 
   uint32_t nowEpoch_, nowMs_, cutEpoch_ = 0, cutMs_ = 0;
@@ -473,6 +520,12 @@ class MultiExport {
   int nBoot_ = 0;
   bool bootOom_ = false;          // the boot-list copy failed (beginStart refuses)
   int fleetSkipped_ = 0;          // fleet files wholly older than the cutoff (pruneFleet)
+  int nameSkipped_ = 0;           // files skipped by their name alone (nameSkip), never opened
+  struct NameT { uint32_t t; uint8_t kind; };
+  NameT* names_ = nullptr;        // pass-1 list of dated names (freed by endScan)
+  int nNames_ = 0, capNames_ = 0;
+  bool listing_ = false;
+  bool nameSkipOn_ = true;
   Ent* files_ = nullptr;
   int n_ = 0, dropped_ = 0;
   // beginStart()/beginStep() state

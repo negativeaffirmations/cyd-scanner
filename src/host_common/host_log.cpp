@@ -211,7 +211,7 @@ static void sweepEmptySessions() {
 // Session files that ENDED this boot (New Session / bg toggle). They keep valid ms-since-boot, so the
 // time-window export can still date them, and renameSessionOnSync() appends a timesync anchor to
 // any that ended before the clock was known (else their epoch:0 rows could never be dated).
-struct BootFile { char path[48]; char fileId[9]; bool anchored; };
+struct BootFile { char path[48]; char fileId[9]; bool anchored; bool named; uint32_t endMs; };   // named: has its date-time name; endMs: when it ended (boot clock)
 static constexpr int BOOT_FILES = 16;   // fw 0.46.0: 8 -> 16, Stop then Start ends a file too
 static BootFile g_bootFiles[BOOT_FILES];
 static int g_bootFileN = 0;  // ring write count
@@ -222,6 +222,8 @@ static void rememberBootFile(const LogStream& st) {
   snprintf(b.path, sizeof(b.path), "%s", st.path);
   memcpy(b.fileId, st.fileId, sizeof(b.fileId));
   b.anchored = st.named;  // a date-named file was created/renamed after sync (rows dated or anchored)
+  b.named = st.named;
+  b.endMs = millis();
 }
 int thisBootFiles(const char** out, int cap) {
   int n = 0;
@@ -326,6 +328,18 @@ const char* ownFileId() { makeFileId(g_fg); return g_fg.fileId; }
 bool ensureLogFile(LogStream& st) {
   if (st.started) return true;
   if (!g_sdOk || !st.path[0]) return false;
+  // fw 0.48.0 backstop: FILE_WRITE truncates. A file already at this not-yet-created stream's name (another rename
+  // took it) is never overwritten: this stream takes "<name>-b.jsonl" instead (a name no date parser treats as dated).
+  if (SD.exists(st.path)) {
+    char alt[48];
+    const size_t n = strlen(st.path);
+    if (n > 6 && n + 2 < sizeof(alt)) {
+      snprintf(alt, sizeof(alt), "%.*s-b.jsonl", (int)(n - 6), st.path);
+      Serial.printf("[CYD] log name %s already taken: using %s\n", st.path, alt);
+      snprintf(st.path, sizeof(st.path), "%s", alt);
+    }
+    if (SD.exists(st.path)) return false;
+  }
   File f = SD.open(st.path, FILE_WRITE);
   if (!f) return false;
   makeFileId(st);   // P6 item 6: the file's own random id, fixed for its life (survives the sync rename)
@@ -392,6 +406,38 @@ void renameSessionOnSync() {
                 (unsigned long)epochLocal(), (unsigned long)millis());
       mf.close();
       Serial.printf("[CYD] timesync anchor appended to earlier session %s\n", b.path);
+    }
+    // fw 0.48.0: a file that ended before its rename ran (a 2 s scan while a phone transfer held the sync check off) kept
+    // its sess-NNNNN / bg-NNNNN name for good. Rename it now, like the live file (its anchor was appended above).
+    // Named by when the file ENDED (not now): the stream's next file began after that, so names keep increasing within
+    // the stream, which the export's name skip (logfilter nameSkip) relies on. Never a live stream's name; a taken name
+    // steps one second earlier (up to 30 tries). An Explore-held file waits (its hold is by path).
+    for (int i = 0; i < have; i++) {
+      BootFile& b = g_bootFiles[i];
+      if (b.named) continue;
+      if (!SD.exists(b.path)) { b.named = true; continue; }
+      if (hostui::exploreHolds(b.path)) continue;                // retried on the next sync check
+      const char* base = strrchr(b.path, '/');
+      const char* prefix = (base && !strncmp(base + 1, "bg-", 3)) ? "bg-" : "";
+      const uint32_t agoS = (millis() - b.endMs) / 1000;
+      const uint32_t now = epochLocal();
+      if (now <= agoS) { b.named = true; continue; }
+      char nn[48];
+      bool done = false;
+      for (uint32_t back = 0; back < 30 && !done; back++) {
+        time_t t = (time_t)(now - agoS - back);
+        struct tm tmv;
+        gmtime_r(&t, &tmv);
+        snprintf(nn, sizeof(nn), "/logs/%s%04d%02d%02d-%02d%02d%02d.jsonl", prefix, tmv.tm_year + 1900, tmv.tm_mon + 1,
+                 tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+        if (!strcasecmp(nn, g_fg.path) || !strcasecmp(nn, g_bg.path) || !strcasecmp(nn, g_fleetLog.path) || SD.exists(nn))
+          continue;
+        done = true;
+      }
+      b.named = true;                                            // one try per file: a failed rename keeps its name
+      if (!done || !SD.rename(b.path, nn)) continue;
+      Serial.printf("[CYD] earlier session renamed %s -> %s\n", b.path, nn);
+      snprintf(b.path, sizeof(b.path), "%s", nn);
     }
   }
   syncSharePath();
@@ -1044,6 +1090,19 @@ bool   g_capPending = false;             // a log-cap sweep was skipped while a 
 
 bool xferBusy() { return g_ax != nullptr; }
 
+void exportPickBench(int mode, int minutes, bool old) {
+  if (xferBusy() || !g_sdOk) { Serial.println("[xpick] busy (a phone transfer runs) or no SD"); return; }
+  const char* boot[THIS_BOOT_MAX];
+  int nb = thisBootFiles(boot, THIS_BOOT_MAX);
+  logfilter::MultiExport mx(mode, minutes < 1 ? 1 : (uint32_t)minutes, epochLocal(), millis(), boot, nb);
+  mx.setNameSkip(!old);
+  const uint32_t t0 = millis();
+  int n = mx.begin();
+  Serial.printf("[xpick] mode %d%s: %d file(s) picked in %lu ms (%d skipped by name, %d older fleet, %d beyond cap)\n", mode,
+                old ? " (0.47 picking)" : "", n, (unsigned long)(millis() - t0), mx.nameSkipped(), mx.fleetSkipped(), mx.dropped());
+  for (int i = 0; i < n; i++) Serial.printf("[xpick]   %s %lu B\n", mx.filePath(i), (unsigned long)mx.fileSize(i));
+}
+
 static void axFinish(bool complete) {
   AXfer* x = g_ax;
   if (!x) return;
@@ -1180,8 +1239,8 @@ void xferService() {
     if (!x.mx->beginStep(AX_BUDGET_MS)) return;
     x.preparing = false;
     x.nFiles = x.mx->count();
-    Serial.printf("[CYD] BLE multi export: %d file(s) picked in %lu ms (%d older fleet file(s) skipped)\n", x.nFiles,
-                  (unsigned long)(millis() - x.t0), x.mx->fleetSkipped());
+    Serial.printf("[CYD] BLE multi export: %d file(s) picked in %lu ms (%d skipped by name, %d older fleet file(s) skipped)\n", x.nFiles,
+                  (unsigned long)(millis() - x.t0), x.mx->nameSkipped(), x.mx->fleetSkipped());
     return;                                          // count from the next pass (the budget may be spent)
   }
   if (!x.sending) {                                  // counting pass
