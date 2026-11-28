@@ -10,6 +10,7 @@ import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
 import { syncWait } from '../ble/syncwait.js';
 import { anyBusy } from '../ble/xfer.js';
+import { unitDot, sidForName } from './unitcolors.js';
 import { onUnitReset } from '../unitreset.js';
 import { askConfirm, listKeys } from '../ble/auth.js';
 import { learnKeyNames } from '../ble/unitname.js';
@@ -122,7 +123,8 @@ function renderPlan(){
   box.hidden = !joined.length;
   if (!joined.length) return;
   const { lines, missing } = coverage([{ name: state.scannerName || "This scanner", role: leaderRole }, ...joined]);
-  box.innerHTML = lines.filter(l => l.names.length).map(l => `<div>${esc(l.band)}: ${esc(l.names.join(", "))}</div>`).join("") +
+  box.innerHTML = lines.filter(l => l.names.length).map(l => `<div>${esc(l.band)}: ` +
+      l.names.map(n => unitDot(n === state.scannerName ? state.scannerId : sidForName(n)) + esc(n)).join(", ") + `</div>`).join("") +
     (missing.length ? `<div class="fltcovwarn">Nobody is assigned ${esc(missing.join(" or "))}.</div>` : "");
 }
 
@@ -136,7 +138,7 @@ function renderMembers(){
                  live ? `${m.age} s ago` : "", m.fw ? `fw ${m.fw}` : ""]
       .filter(Boolean).join(" · ");
     return `<div class="sessrow keyrow"><span class="material-symbols-outlined" style="color:${STATE_COL[m.state] || "#8b949e"}">radio_button_checked</span>` +
-      `<div class="sessmain"><span class="sessdate">${esc(m.name)}</span><span class="sesssub">${esc(sub)}</span>${roleSelect(m)}</div>` +
+      `<div class="sessmain"><span class="sessdate">${unitDot(m.sid, { pick:true, title:"Scanner colour" })}${esc(m.name)}</span><span class="sesssub">${esc(sub)}</span>${roleSelect(m)}</div>` +
       `<div class="fltacts">` +   // stacked: two side-by-side buttons squeezed the name/details into wrapping
       (live ? `<button class="secondary" data-act="x" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Release</button>` : "") +
       `<button class="danger" data-act="r" data-sid="${esc(m.sid)}" data-name="${esc(m.name)}">Remove</button></div></div>`;

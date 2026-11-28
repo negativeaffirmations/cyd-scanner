@@ -23,6 +23,7 @@ import { CAT_COL, TIER_NAMES, DEAUTH_ALERT } from '../config.js';
 import { openLiveDetail } from './categories.js';
 import { showPage } from '../nav.js';
 import { cleanStyle, styleFor, plainTitle, PLAIN_BODY, initStyleUI } from './notifystyle.js';
+import { initRules, evalRules, coveredKinds, coveredEvent, tickRules } from './notifyrules.js';   // custom notifications
 
 // DETS `cat` id -> name (CYD Category enum order). Local copy on purpose: categories.js keeps its own private.
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -62,9 +63,11 @@ async function ensureSw(){
 }
 // kind: a notifystyle.js KINDS id, "many" (kinds = the folded types) or "general"; picks the alert style.
 // quiet = no sound, no vibration (an alert the server explains, features/screen.js).
+// kind may also be a ready style object (a custom notification's own, features/notifyrules.js).
 async function show(title, body, data, tag, kind, kinds, quiet){
   if(!supported() || Notification.permission !== "granted") return false;
-  let st = styleFor(cfg, kind || "general", kinds);
+  let st = kind && typeof kind === "object" ? kind : styleFor(cfg, kind || "general", kinds);
+  if(typeof kind === "object") kind = "general";
   if(quiet) st = { ...st, sound:"", vibration:[] };
   if(!st.details){ title = plainTitle(kind || "general"); body = PLAIN_BODY; }   // nothing about the device in the text
   const opts = { body, tag: tag || "cflo", renotify: true, data: data || {}, cfloStyle: st };
@@ -104,6 +107,7 @@ function titleFor(r, kinds){
 }
 
 function evalSnapshot(rows){
+  evalRules(rows);   // custom notifications first: what one of them handles gets no second (quick) alert
   const now = Date.now(), q = quietMs(), fresh = [];
   for(const r of rows){
     const kinds = reasons(r); if(!kinds.length) continue;
@@ -113,7 +117,9 @@ function evalSnapshot(rows){
       if(last === undefined || now - last > q) newKinds.push(k);
       seen.set(key, now);
     }
-    if(newKinds.length) fresh.push({ r, kinds:newKinds });
+    const cov = coveredKinds(mac);                           // only the kinds a custom rule handles for this device
+    const left = cov ? newKinds.filter(k => !cov.has(k)) : newKinds;
+    if(left.length) fresh.push({ r, kinds:left });
   }
   for(const [k, t] of seen) if(now - t > q) seen.delete(k);   // forget long-gone devices
   if(!fresh.length) return;
@@ -123,6 +129,7 @@ function evalSnapshot(rows){
   for(const f of held) state.screen.device(f.r).then(v => {
     if(!cfg.on || !state.connected) return;
     if(v && v.low){
+      markAlerted(f, true);
       log("Alert (probably false): " + titleFor(f.r, f.kinds) + " - " + devLine(f.r) + " - " + v.why);
       show("Probably a false alarm: " + titleFor(f.r, f.kinds), devLine(f.r) + "\n" + v.why, { mac:f.r.mac, kind:f.kinds[0] },
            "cflo-" + normMac(f.r.mac), "threat", undefined, true);
@@ -131,8 +138,14 @@ function evalSnapshot(rows){
   const now2 = fresh.filter(f => !held.includes(f));
   if(now2.length) present(now2);
 }
+// Which devices raised an alert (state.alerted, MAC -> {t, low, kinds}): features/threattag.js puts a bell on their row.
+function markAlerted(f, low){
+  if(!state.alerted) state.alerted = new Map();
+  state.alerted.set(normMac(f.r.mac), { t:Date.now(), low:!!low, kinds:f.kinds.slice() });
+  if(state.alerted.size > 300) state.alerted.delete(state.alerted.keys().next().value);
+}
 function present(fresh){
-  fresh.forEach(f => log("Alert: " + titleFor(f.r, f.kinds) + " - " + devLine(f.r)));
+  fresh.forEach(f => { markAlerted(f, false); log("Alert: " + titleFor(f.r, f.kinds) + " - " + devLine(f.r)); });
   if(fresh.length === 1){
     const { r, kinds } = fresh[0];
     const sk = [...new Set(kinds.map(styleKind))];
@@ -149,11 +162,11 @@ function evalStatus(){
   const s = state.status || {}, now = Date.now(), q = quietMs();
   const da = +s.deauth || 0, ev = +s.evil || 0;
   const daOn = da >= DEAUTH_ALERT, evOn = ev > 0;
-  if(cfg.deauth && daOn && !evState.deauth && now - evState.deauthAt > q){
+  if(cfg.deauth && daOn && !evState.deauth && now - evState.deauthAt > q && !coveredEvent("deauth")){
     evState.deauthAt = now; log("Alert: deauth flood " + da + " frames/s");
     show("Deauth flood", da + " deauth / disassoc frames per second nearby", { kind:"deauth" }, "cflo-deauth", "deauth");
   }
-  if(cfg.evil && evOn && !evState.evil && now - evState.evilAt > q){
+  if(cfg.evil && evOn && !evState.evil && now - evState.evilAt > q && !coveredEvent("evil")){
     evState.evilAt = now;
     (state.screen && cfg.screen ? state.screen.evil(ev) : Promise.resolve(null)).then(v => {
       if(!cfg.on || !state.connected) return;
@@ -168,6 +181,7 @@ function tick(){
   if(!cfg.on || !state.connected || !supported() || Notification.permission !== "granted") return;
   const rows = state.lastDetRows;
   if(rows && rows !== lastRows){ lastRows = rows; evalSnapshot(rows); }
+  tickRules();       // custom notifications: position samples ("while moving") + deauth / evil-twin triggers
   evalStatus();
 }
 
@@ -200,7 +214,8 @@ function renderCard(){
     const on = cfg.cats.includes(c), col = CAT_COL[c] || "#8b949e";
     html += `<button class="tcard${on ? " hot" : ""}" data-cat="${c}" aria-pressed="${on}" ` +
       `style="border-color:${col};${on ? `background:${col}22;` : ""}">` +
-      `<span class="tn">${esc(CAT_NAMES[c])}</span><span class="tc" style="color:${on ? col : ""}">${on ? "on" : "off"}</span></button>`;
+      `<span class="tn">${esc(CAT_NAMES[c])}</span><span class="tc" style="color:${on ? col : ""}">${on ? "on" : "off"}</span>` +
+      `<span class="tmenu material-symbols-outlined" data-nrmenu="${c}" title="Custom notification">more_vert</span></button>`;
   }
   $("nfCats").innerHTML = html;
   $("nfTier").value = String(cfg.tierMin);
@@ -314,6 +329,9 @@ export function initNotify(){
   });
   ["nfTier","nfQuiet","nfFol","nfRid","nfDeauth","nfEvil","nfScreen"].forEach(id => $(id) && $(id).addEventListener("change", onCardChange));
   initStyleUI(cfg, save, testKind);
+  initRules(cfg, save, { show: (t, b, d, tag, st, quiet) => show(t, b, d, tag, st, undefined, quiet), quietMs,
+    ensureOn: async () => { if(!(cfg.on && supported() && Notification.permission === "granted")) await toggleOn();
+                            return cfg.on && supported() && Notification.permission === "granted"; } });
   $("nfWatch").addEventListener("click", e => {
     const b = e.target.closest(".keyforget"); if(!b) return;
     cfg.watch = cfg.watch.filter(w => w.mac !== b.dataset.mac); save(); renderCard();

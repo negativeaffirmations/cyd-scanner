@@ -13,6 +13,7 @@ import { state } from '../state.js';
 import { $, esc, toast, log } from '../util/dom.js';
 import { anyBusy } from '../ble/xfer.js';
 import { allDevices, getEntry, onDevicesChange, loadRemembered, unitNameFor, setUnitName, canGetDevices } from '../ble/devices.js';
+import { unitDot, sidForDevice, sidForName } from './unitcolors.js';
 
 const PRESENT_MS = 10000;     // "not seen" after this long without an advertisement
 const TICK_MS = 2000;
@@ -24,6 +25,7 @@ export const presenceSupported = ()=>typeof BluetoothDevice !== "undefined" && t
 const inRange = e=>!!e.lastSeen && Date.now() - e.lastSeen < PRESENT_MS;
 const isCurrent = e=>!!(state.connected && state.device && state.device.id === e.id);
 const labelOf = e=>(isCurrent(e) && state.scannerName) || unitNameFor(e.id) || e.device.name || "Scanner";
+const sidOf = e=>(isCurrent(e) && state.scannerId) || sidForDevice(e.id) || sidForName(labelOf(e)) || "";   // unit colour (unitcolors.js)
 const others = ()=>allDevices().filter(e=>!isCurrent(e));
 
 // --- browser identification (shown so the user can tell which flags to look at) ---
@@ -99,7 +101,7 @@ function render(){
     const cur = isCurrent(e), live = presenceSupported() ? inRange(e) : true;
     const col = cur ? "#3fb950" : presenceSupported() ? (live ? "#388bfd" : "#8b949e") : "#8b949e";
     return `<div class="sessrow keyrow"><span class="material-symbols-outlined" style="color:${col}">bluetooth</span>` +
-      `<div class="sessmain"><span class="sessdate">${esc(labelOf(e))}</span><span class="sesssub">${esc(stateText(e))}</span></div>` +
+      `<div class="sessmain"><span class="sessdate">${unitDot(sidOf(e), { pick:true, title:"Scanner colour" })}${esc(labelOf(e))}</span><span class="sesssub">${esc(stateText(e))}</span></div>` +
       (cur ? "" : `<button class="secondary swgo" data-id="${esc(e.id)}"${live && !switching ? "" : " disabled"}>Switch</button>`) + `</div>`;
   }).join("") : '<div class="sub" style="padding:6px;margin:0">No remembered scanners yet. Use Add scanner to pick one.</div>';
   $("switchAddBtn").disabled = switching;

@@ -535,6 +535,134 @@ summary {
   color: #fff;
 }
 
+#nfCats .tcard {
+  position: relative;
+}
+
+.tmenu {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  font-size: 1.05rem;
+  color: #8b949e;
+  padding: 2px;
+  line-height: 1;
+}
+
+.nrbox {
+  margin-top: 0.9em;
+  padding-top: 0.7em;
+  border-top: 1px solid #30363d;
+}
+
+.nrrule {
+  cursor: default;
+}
+.nrrule.off .sessmain {
+  opacity: 0.55;
+}
+.nrrule .sessmain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.nrrule .sesssub {
+  overflow-wrap: anywhere;
+}
+.nrrule button {
+  width: auto;
+  margin: 0;
+  flex: none;
+}
+.nrrule .nrsw input {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.nrnew {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+  margin-top: 0.5em;
+}
+
+.nrdlg {
+  max-height: 88dvh;
+  overflow: auto;
+}
+
+.nrsec {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 1em 0 0.35em;
+}
+.nrsec .sub {
+  flex: 1 1 auto;
+}
+
+.nradd {
+  width: 2.2rem;
+  height: 2.2rem;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #aa00aa;
+  color: #fff;
+}
+.nradd[disabled] {
+  opacity: 0.4;
+}
+
+.nrrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0.3em 0;
+  padding: 0.45em 0.5em;
+  background: #0b0e13;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+}
+.nrrow > select:first-child {
+  flex: 1 1 11em;
+  min-width: 0;
+}
+.nrrow > input, .nrrow > select:not(:first-child) {
+  flex: 1 1 9em;
+  min-width: 0;
+}
+.nrrow .xbtn {
+  margin-left: auto;
+}
+
+.nrnum {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  flex: 1 1 9em;
+}
+.nrnum input {
+  flex: 1 1 5em;
+  min-width: 0;
+  width: auto;
+}
+
+.nrempty {
+  margin: 0.2em 0 0.4em;
+}
+
+.nrbtns {
+  display: grid;
+  gap: 0.5em;
+  margin-top: 1em;
+}
+
 .sessbar {
   display: flex;
   align-items: center;
@@ -1717,26 +1845,129 @@ body {
   color: #0d1117;
   background: #8b949e;
 }
-.via.v0 {
-  background: #c9d1d9;
+
+.detrow .r3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
-.via.v1 {
-  background: #58a6ff;
+
+.ttag {
+  --tc:#8b949e;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.6em;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--tc);
+  border: 1px solid var(--tc);
+  background: color-mix(in srgb, var(--tc) 16%, transparent);
 }
-.via.v2 {
-  background: #3fb950;
+
+.tsig {
+  font-size: 0.72rem;
+  color: #8b949e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 0;
 }
-.via.v3 {
-  background: #d29922;
+
+.talert {
+  color: #f85149;
+  font-size: 1.05rem;
+  line-height: 1;
 }
-.via.v4 {
-  background: #f778ba;
+.talert.low {
+  font-family: inherit;
+  font-size: 0.7rem;
+  color: #8b949e;
+  border: 1px dashed #8b949e;
+  border-radius: 999px;
+  padding: 0.05em 0.5em;
 }
-.via.v5 {
-  background: #a371f7;
+
+.unitdot {
+  display: inline-block;
+  flex: none;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  margin-right: 0.45em;
+  vertical-align: -0.05em;
+  background: #6e7681;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
-.via.v6 {
-  background: #39c5cf;
+.unitdot.lt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #0d1117;
+}
+.unitdot.pick {
+  cursor: pointer;
+  width: 1rem;
+  height: 1rem;
+  vertical-align: -0.12em;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+
+.seenby {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.2em;
+  max-width: 100%;
+}
+
+.seenu {
+  overflow-wrap: anywhere;
+}
+
+.ucgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5em;
+}
+
+.ucbtn {
+  display: flex;
+  align-items: center;
+  gap: 0.2em;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.55em 0.6em;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+.ucbtn.cur {
+  border-color: var(--uc);
+  box-shadow: inset 0 0 0 1px var(--uc);
+}
+.ucbtn .unitdot {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.ucbtn .uctxt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8b949e;
 }
 
 .detsmorehdr {

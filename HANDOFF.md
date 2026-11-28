@@ -1,5 +1,25 @@
 # Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE - 2026-11-27 late: owner ideas 1-3 DEPLOYED (web 20261127g): scanner colours, threats in rows, custom notifications
+- **Owner ideas list (`.tmp/ideas.md`, git-ignored):** 1 colour-coded fleet devices (DONE here), 2 mark the threat in its
+  scan row, 3 per-threat custom notifications ("Create custom notification" with triggers; a three-dot / long-press menu
+  per threat type for sound + vibration; extra conditions). All 3 built; owner: ship 1 + 2 together (3 can join them).
+- **Built:** `features/unitcolors.js` (see CLAUDE.md "Scanner colours"). Checked in the `.dev` app on SOPAFE: chips
+  S/B/Z, popup Seen by with per-unit RSSI, Home dot, Fleet rows + coverage, Scanner keys, app chooser icons, picker +
+  swap + live repaint. Not seen: the web Switch scanner dialog with a second remembered unit. Android tests 59/59.
+- **Idea 2 built:** `features/threattag.js` (CLAUDE.md "Threats in rows"). Checked: Wyze row "CAM · LIKELY  Wyze", bell after
+  a Cam alert (Cam alerts were switched on for the test and back off). Not seen: the "probably false" mark, Explore rows.
+- **Idea 3 built:** `features/notifyrules.js` (CLAUDE.md "Custom notifications"); owner spec: Triggers + Conditions each
+  grow with "+" (dropdown + input); tiles stay quick on/off. Checked: ⋮ menu, editor (category, signal, time rows), save,
+  a "Cam test" rule fired on the Wyze camera with Cam's tile off (own channel cflo-r<id>-…), delete with confirm (test rule
+  removed). Not checked: moving / once / deauth / evil triggers live, the app sound picker for a rule. A deleted rule's
+  Android channel stays in the phone's settings (cosmetic).
+- **Review fixes (web 20261127g):** a rule covers a device on TRIGGER match and only for the quick kinds that trigger stands for
+  (`KIND_OF`; a Flock rule no longer hides that device's follower / watch / Remote-ID alert), weak hits + evil-twin go through
+  the server check (quiet + "Probably a false alarm"), unknown speed = wait (no quick double), once keyed on STATUS `sfid` and
+  per event kind, editor closes only on a real backdrop tap, quote-safe attributes, Explore rows use `signature`, corrupt
+  colour storage ignored, speed samples reset on a unit change. Node test of the rule logic passed (9 checks, scratch only).
+
 ## RESUME HERE - 2026-11-27 night: fw 0.48.0 faster export picking + open items (flashed on all 3 hosts; web 20261127c NOT deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.48.0; C5s unchanged; no link / fleet protocol change.
   Web `20261127c` (fleet.js only) built into the `.dev` app and installed over adb; NOT pushed to main / Pages yet.

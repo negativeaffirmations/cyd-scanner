@@ -720,6 +720,23 @@ back (5 GHz included). Things that matter, learned the hard way:
   status/detections/sessions/explore/map/whitelist/fleet/files register with `onUnitReset()` (readouts, DETS buffers,
   Remote-ID, session list, Explore rows, a device-sourced Map — a local file loaded with `plotCsvText(...,true)` stays —
   whitelist view, fleet members, file-explorer state). New webapp state/exports go in NEW files (the stale-module rule).
+  **Threats in rows (webapp 2026-11-27e, `features/threattag.js`):** a threat row (tier >= 1 or a category) gets a third
+  line: a pill "CATEGORY · tier" in `CAT_COL` (tier colour when the category is Other), the matched `sig` label, and a bell
+  when it raised a phone notification in the last 30 min (`state.alerted`, written by `notify.js`; "probably false" when
+  the server check explained it). Live list and Explore viewer (shared `renderDetList`).
+  **Custom notifications (webapp 2026-11-27f, `features/notifyrules.js`):** on top of the quick tiles (unchanged). A rule =
+  name + TRIGGERS (any: category / tier / MAC / name contains / signature contains / detector flag / follower / Remote-ID /
+  deauth / evil twin) + CONDITIONS (all: signal >= dBm / tier >= / following / moving >= km/h from STATUS `pos` / between
+  two times / once per device per session) + its own style (sound / vibration / details / lock screen, unset = all
+  alerts). Both lists grow with "+" (dropdown + the input that kind needs). Saved as `cfg.rules` in `cflo.notify`.
+  `evalRules()` runs before the quick rules; a MAC / event a rule covers gets no second quick alert. Each rule is its
+  own Android channel kind `r<id>`. A tile's ⋮ (or long-press) opens a menu with "Custom notification" for that category.
+  **Scanner colours (webapp 2026-11-27d, `features/unitcolors.js`; no firmware):** one colour per scanner, keyed by sid,
+  assigned on first sight (first free of 8) and kept on the phone (localStorage `cflo.unitColors`, plus `cflo.unitSids`
+  name / device id -> sid and `cflo.unitHex` sid -> hex for the app chooser in `android-app/native/shim-bluetooth.js`).
+  Shown in the live list "seen by" chips (by via bit -> sid, no longer by fleet slot), the device popup "Seen by" (+ each
+  unit's RSSI), the Home name, Scanners, Fleet members + coverage, Scanner keys and the app chooser. `unitDot(sid,
+  {pick})` draws a dot; a `data-unitpick` dot opens the picker, and picking a taken colour swaps the two units.
   **Notifications (webapp 2026-11-19, `features/notify.js` + `webapp/notify-sw.js`; no firmware involved):** LOCAL
   notifications the page raises from the live BLE data (no push server; Android needs the service worker, which only
   shows / focuses and caches nothing). Rules saved on the phone (localStorage `cflo.notify`): threat categories, a tier

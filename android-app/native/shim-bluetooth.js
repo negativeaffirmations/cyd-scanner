@@ -19,6 +19,16 @@
 
   // ---------- helpers ----------
   const lc = s => String(s || "").toLowerCase();
+  // The web app's per-scanner colour (webapp/js/features/unitcolors.js keeps cflo.unitHex = sid -> hex and
+  // cflo.unitSids = "d:<device id>" / "n:<name>" -> sid). "" = not known yet.
+  function unitColorFor(id, name){
+    try{
+      const sids = JSON.parse(localStorage.getItem("cflo.unitSids") || "{}") || {};
+      const hex = JSON.parse(localStorage.getItem("cflo.unitHex") || "{}") || {};
+      const sid = sids["d:" + id] || sids["n:" + name];
+      return (sid && hex[sid]) || "";
+    }catch(e){ return ""; }
+  }
   function toHex(data){
     let u8;
     if(data instanceof Uint8Array) u8 = data;
@@ -364,6 +374,7 @@
             rowEls.set(s.id, row);
           }
           row.children[1].textContent = label(s) + (usedBefore ? (isLeader(s.id) ? " · fleet leader" : "") : " (new)");
+          { const c = unitColorFor(s.id, label(s)); row.children[0].style.color = c || ""; }   // per-scanner colour (web unitcolors.js)
           row.children[2].textContent = s.rssi + " dBm";
         }
         $r("msg").textContent = rowEls.size ? "Tap a scanner. Ones you have used before show their name." : "Looking for scanners… Make sure the scanner is on and nearby.";
