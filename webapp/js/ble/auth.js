@@ -13,6 +13,7 @@
 // This is a NEW file (so it is never served stale from the 10-min cache alongside a fresh main.js);
 // its UUID is defined here rather than in config.js for the same reason.
 import { $, log, esc, toast } from '../util/dom.js';
+import { unitDot, learnUnit } from '../features/unitcolors.js';
 
 export const AUTH_UUID = "9a1e0007-2b7e-4c1a-9b00-1a2b3c4d5e6f";
 
@@ -437,9 +438,10 @@ export async function renderKeysUI(){
   }
   const el = $("keyList"); if(!el) return;
   const keys = await listKeys();
+  keys.forEach(k => learnUnit(k.sid, k.name));   // name -> sid, so lists that only know a name can colour the unit
   el.innerHTML = keys.length ? keys.map(k =>
     `<div class="sessrow keyrow"><span class="material-symbols-outlined">key</span>` +
-    `<div class="sessmain"><span class="sessdate">${esc(k.name || "Scanner")}</span>` +
+    `<div class="sessmain"><span class="sessdate">${unitDot(k.sid, { pick:true, title:"Tap to change this scanner's colour" })}${esc(k.name || "Scanner")}</span>` +
     `<span class="sesssub">${esc(k.sid)} · gen ${k.kg == null ? "?" : esc(String(k.kg))}</span></div>` +
     `<button class="danger keyforget" data-sid="${esc(k.sid)}">Forget</button></div>`).join("")
     : '<div class="sub" style="padding:6px;margin:0">No scanner keys stored.</div>';

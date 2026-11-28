@@ -17,6 +17,7 @@ import { wifiRoles } from '../util/format.js';
 import { renderCatChips, renderScanCounts, openLiveDetail } from './categories.js';
 import { recordSightings } from './sightings.js';
 import { maybePostLive } from './remote.js';
+import { viaColor } from './unitcolors.js';   // one colour per scanner (by sid), the same everywhere in the app
 // Fleet "seen by" (DETS v9 `via`: bit 0 = the connected scanner, bit k = fleet member slot k). Names come from the
 // Fleet card's member list (state.fleetMembers, set by features/fleet.js). Kept local to this module on purpose: a
 // new export in a shared module would break a phone still holding a cached copy of it.
@@ -137,7 +138,7 @@ export function renderDetList(el, rows, opts){
     const roles = wifiRoles(tags).map(x=>`<span class="sp prole">${x}</span>`).join("");  // AP / CLIENT pill(s)
     // Fleet: one small chip per unit that heard it -- only when a member did (a lone scanner looks unchanged).
     const vias = (!viewer && (r.via & ~1)) ? `<span class="vias">` + viaUnits(r.via).map(u =>
-      `<span class="via v${u.k}" title="Seen by ${esc(u.name)}">${esc(u.letter)}</span>`).join("") + `</span>` : "";
+      `<span class="via" style="background:${viaColor(u.k)}" title="Seen by ${esc(u.name)}">${esc(u.letter)}</span>`).join("") + `</span>` : "";
     const sc = srcs.length ? (srcClass[srcs[0].tag] || "") : "";  // tint row by strongest source
     const extra = [esc(r.mac || "")];
     // BLE company maker, in addition to the MAC: the scanner's label, else the full Bluetooth SIG list (analysis/vendors.js,

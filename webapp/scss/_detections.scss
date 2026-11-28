@@ -143,13 +143,32 @@
 .tcard:active { filter:brightness(1.25); }
 
 // Fleet "seen by" chips (DETS v9 `via`, features/detections.js): one small letter per unit that heard the device,
-// coloured by fleet slot (0 = the connected scanner). Shown only when a fleet member contributed.
+// coloured by UNIT (features/unitcolors.js, one colour per scanner id, inline style). Shown only when a member contributed.
 .vias { display:inline-flex; gap:2px; margin-left:6px; vertical-align:middle; }
 .via {
   display:inline-flex; align-items:center; justify-content:center; width:1.15rem; height:1.15rem; border-radius:50%;
   font-size:.62rem; font-weight:700; color:#0d1117; background:#8b949e;
-  &.v0 { background:#c9d1d9; } &.v1 { background:#58a6ff; } &.v2 { background:#3fb950; } &.v3 { background:#d29922; }
-  &.v4 { background:#f778ba; } &.v5 { background:#a371f7; } &.v6 { background:#39c5cf; }
+}
+
+// Per-scanner colour dot (features/unitcolors.js): Home name, Scanners, Fleet members, Scanner keys, the device popup.
+.unitdot {
+  display:inline-block; flex:none; width:.8rem; height:.8rem; border-radius:50%; margin-right:.45em;
+  vertical-align:-.05em; background:#6e7681; box-shadow:0 0 0 1px rgba(0,0,0,.35);
+  &.lt { display:inline-flex; align-items:center; justify-content:center; width:1.15rem; height:1.15rem;
+         font-size:.62rem; font-weight:700; color:#0d1117; }
+  &.pick { cursor:pointer; width:1rem; height:1rem; vertical-align:-.12em;
+           box-shadow:0 0 0 2px rgba(255,255,255,.18); }
+}
+.seenby { display:inline-flex; flex-direction:column; gap:.2em; max-width:100%; }
+.seenu { overflow-wrap:anywhere; }
+// colour picker dialog (unitcolors.js #unitColorDlg)
+.ucgrid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:.5em; }
+.ucbtn {
+  display:flex; align-items:center; gap:.2em; width:100%; min-width:0; margin:0; padding:.55em .6em; text-align:left;
+  background:transparent; color:inherit; border:1px solid #30363d; border-radius:10px; font-size:.85rem;
+  &.cur { border-color:var(--uc); box-shadow:inset 0 0 0 1px var(--uc); }
+  .unitdot { width:1.1rem; height:1.1rem; }
+  .uctxt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#8b949e; }
 }
 
 // "Also in range" (features/morelist.js): devices past the scanner's top 12, from the phone's live copy of the log.

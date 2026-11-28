@@ -22,7 +22,8 @@ import { applyLiveFilter, togglePause } from './features/detections.js';
 import { handlePairHash, renderRemoteUI, pairFromForm, toggleLive, unpair, uploadCurrentSession } from './features/remote.js';
 import { state } from './state.js';
 import { openWifiFlow, stopWifiFlow, copyPassword, openWifiSettings, markJoined, pageOpened, reopenPage } from './features/wififlow.js?v=20261108c';
-import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261125b';   // new module: versioned so it loads fresh with main.js
+import { initFleet, fleetAdd, fleetChannel, fleetLeader, fleetLeave, fleetMakeClient, fleetPlanMode, onMemberChange, onMemberClick } from './features/fleet.js?v=20261127d';   // new module: versioned so it loads fresh with main.js
+import { initUnitColors } from './features/unitcolors.js';   // per-scanner colours (NEW file)
 import { enc } from './config.js';
 import { initCacheUI } from './features/cacheui.js';
 import { initLiveSync } from './features/livesync.js?v=20261126c';   // live copy of the current scan (docs/phone-analysis.md)
@@ -151,6 +152,7 @@ $("fltMembers").addEventListener("click", onMemberClick);
 $("fltMembers").addEventListener("change", onMemberChange);
 $("fltPlanSel")?.addEventListener("change", fleetPlanMode);
 initFleet();
+initUnitColors();
 initCacheUI();   // Data page: saved-log cache readout + Clear button
 initLiveSync();  // Data page: keep the current scan (+ a leader's fleet file) mirrored into that cache
 initSwitcher({ switchTo, addScanner: connect });   // app-bar Switch scanner + Settings card (features/switcher.js)

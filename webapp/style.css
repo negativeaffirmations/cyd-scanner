@@ -1717,26 +1717,81 @@ body {
   color: #0d1117;
   background: #8b949e;
 }
-.via.v0 {
-  background: #c9d1d9;
+
+.unitdot {
+  display: inline-block;
+  flex: none;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  margin-right: 0.45em;
+  vertical-align: -0.05em;
+  background: #6e7681;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
-.via.v1 {
-  background: #58a6ff;
+.unitdot.lt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #0d1117;
 }
-.via.v2 {
-  background: #3fb950;
+.unitdot.pick {
+  cursor: pointer;
+  width: 1rem;
+  height: 1rem;
+  vertical-align: -0.12em;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
 }
-.via.v3 {
-  background: #d29922;
+
+.seenby {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.2em;
+  max-width: 100%;
 }
-.via.v4 {
-  background: #f778ba;
+
+.seenu {
+  overflow-wrap: anywhere;
 }
-.via.v5 {
-  background: #a371f7;
+
+.ucgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5em;
 }
-.via.v6 {
-  background: #39c5cf;
+
+.ucbtn {
+  display: flex;
+  align-items: center;
+  gap: 0.2em;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.55em 0.6em;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+.ucbtn.cur {
+  border-color: var(--uc);
+  box-shadow: inset 0 0 0 1px var(--uc);
+}
+.ucbtn .unitdot {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.ucbtn .uctxt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8b949e;
 }
 
 .detsmorehdr {

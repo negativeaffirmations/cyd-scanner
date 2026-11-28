@@ -1,5 +1,13 @@
 # Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE - 2026-11-27 late: scanner colours (web 20261127d, NOT deployed) = owner idea 1 of .tmp/ideas.md
+- **Owner ideas list (`.tmp/ideas.md`, git-ignored):** 1 colour-coded fleet devices (DONE here), 2 mark the threat in its
+  scan row, 3 per-threat custom notifications ("Create custom notification" with triggers; a three-dot / long-press menu
+  per threat type for sound + vibration; extra conditions). Next = 2, then 3.
+- **Built:** `features/unitcolors.js` (see CLAUDE.md "Scanner colours"). Checked in the `.dev` app on SOPAFE: chips
+  S/B/Z, popup Seen by with per-unit RSSI, Home dot, Fleet rows + coverage, Scanner keys, app chooser icons, picker +
+  swap + live repaint. Not seen: the web Switch scanner dialog with a second remembered unit. Android tests 59/59.
+
 ## RESUME HERE - 2026-11-27 night: fw 0.48.0 faster export picking + open items (flashed on all 3 hosts; web 20261127c NOT deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.48.0; C5s unchanged; no link / fleet protocol change.
   Web `20261127c` (fleet.js only) built into the `.dev` app and installed over adb; NOT pushed to main / Pages yet.

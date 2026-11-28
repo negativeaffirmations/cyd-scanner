@@ -8,6 +8,7 @@ import { TIER_COL, TIER_NAMES, FLAG_BADGES, CAT_COL } from '../config.js';
 import { fillDetailWhitelist } from './whitelist.js';
 import { renderDetailMap } from './detail.js';
 import { getSightings, haveAnyFix } from './sightings.js';
+import { viaColor } from './unitcolors.js';
 
 // DETS v5 category id -> name (must match the CYD's Category enum order).
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -103,7 +104,12 @@ export function openLiveDetail(r){
     ["Signals", sig],
     ...(()=>{ const ro = wifiRoles((r.sources||[]).map(s=>s.tag)); return ro.length ? [["Wi-Fi role", ro.join(" + ")]] : []; })(),
     ["Strongest RSSI", r.rssi + " dBm"], ["Threat tier", TIER_NAMES[tn] || "none"]];
-  if (r.via & ~1) rowsKv.push(["Seen by", viaUnits(r.via).map(u => u.name).join(", ")]);   // fleet (DETS v9)
+  // fleet (DETS v9): one coloured dot per unit (unitcolors.js), with that unit's own RSSI when known (DETS v10 `units`)
+  if (r.via & ~1) rowsKv.push(["Seen by", null, `<span class="seenby">` + viaUnits(r.via).map(u => {
+    const rs = r.units && r.units[u.k] != null ? ` ${r.units[u.k]} dBm` : "";
+    const short = String(u.name).replace(/^CFLO-(MINI-|CYD-)?/i, "");   // the unit's own word; the full name in the tooltip
+    return `<span class="seenu" title="${esc(u.name)}"><span class="unitdot" style="background:${viaColor(u.k)}"></span>${esc(short)}${rs}</span>`;
+  }).join("") + `</span>`]);
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
   if (r.cid) rowsKv.push(["BLE company", r.cid]);
   if (r.flags) rowsKv.push(["Flags", FLAG_BADGES.filter(f=>r.flags&f[0]).map(f=>f[2]).join(", ")]);
@@ -117,8 +123,8 @@ export function openLiveDetail(r){
     if (rid.spd != null) rowsKv.push(["Remote-ID · Speed", rid.spd.toFixed(1) + " m/s"]);
     if (rid.hdg != null) rowsKv.push(["Remote-ID · Heading", rid.hdg + "°"]);
   }
-  $("detInfo").innerHTML = rowsKv.map(([k,v])=>
-    `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${esc(String(v))}</span></div>`).join("");
+  $("detInfo").innerHTML = rowsKv.map(([k,v,html])=>   // html: a pre-escaped value (the Seen by dots)
+    `<div class="kv"><span class="k">${k}</span><span class="vv t${k==="Threat tier"?tn:0}">${html != null ? html : esc(String(v))}</span></div>`).join("");
   fillDetailWhitelist(r.mac, r.muted);
   const pts = getSightings(r.mac);
   const msg = pts.length ? "" : (haveAnyFix()
