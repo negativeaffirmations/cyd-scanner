@@ -5,7 +5,8 @@
 // Used by the live list and the Explore viewer (features/detections.js renderDetList). NEW file (stale-module rule).
 // state.alerted (Map MAC -> {t, low, kinds}) is written by features/notify.js when an alert goes out.
 import { state } from '../state.js';
-import { esc } from '../util/dom.js';
+import { esc as escStr } from '../util/dom.js';
+const esc = v => escStr(String(v == null ? "" : v)).replace(/"/g, "&quot;").replace(/'/g, "&#39;");   // also safe inside attributes
 import { CAT_COL, TIER_COL, TIER_NAMES } from '../config.js';
 import { tierNum } from '../util/format.js';
 
@@ -29,9 +30,10 @@ export function threatTag(r){
   if(tn || cat){
     const col = cat ? CAT_COL[cat] : (TIER_COL[tn] || "");
     const label = (cat ? CAT_NAMES[cat] : "Threat") + (tn ? " · " + TIER_NAMES[tn] : "");
-    const why = r.sig ? label + " (" + r.sig + ")" : label;     // the signature that matched, on long-press / hover
+    const sig = r.sig || r.signature || "";                      // live rows: sig; Explore (parse.js) rows: signature
+    const why = sig ? label + " (" + sig + ")" : label;     // the signature that matched, on long-press / hover
     html += `<span class="ttag"${col ? ` style="--tc:${col}"` : ""} title="${esc(why)}">${esc(label)}</span>`;
-    if(r.sig) html += `<span class="tsig">${esc(r.sig)}</span>`;
+    if(sig) html += `<span class="tsig">${esc(sig)}</span>`;
   }
   if(a) html += a.low
     ? `<span class="talert low" title="Alert sent, marked probably a false alarm">probably false</span>`

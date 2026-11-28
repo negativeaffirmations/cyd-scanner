@@ -7,7 +7,8 @@
 // Name -> sid is learned too (cflo.unitSids: names + Bluetooth device ids), so lists that only know a unit's name or
 // device id (the Scanners dialog) can still colour it.
 import { state } from '../state.js';
-import { esc } from '../util/dom.js';
+import { esc as escStr } from '../util/dom.js';
+const esc = v => escStr(String(v == null ? "" : v)).replace(/"/g, "&quot;").replace(/'/g, "&#39;");   // also safe inside attributes
 
 export const UNIT_PALETTE = [
   "#58a6ff",  // blue
@@ -23,7 +24,9 @@ const UNKNOWN = "#6e7681";
 const COLORS_KEY = "cflo.unitColors", SIDS_KEY = "cflo.unitSids";
 const HEX12 = /^[0-9a-f]{12}$/;
 
-function readJson(k){ try{ return JSON.parse(localStorage.getItem(k) || "{}") || {}; }catch(e){ return {}; } }
+function readJson(k){   // a plain object, whatever is saved (a corrupt value must not break the live list)
+  try{ const o = JSON.parse(localStorage.getItem(k) || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; }catch(e){ return {}; }
+}
 function writeJson(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 // Also the resolved hex per sid (cflo.unitHex): the Android app's own chooser (android-app/native) reads that, no palette copy.
 function saveColors(){

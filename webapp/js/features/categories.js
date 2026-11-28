@@ -108,7 +108,7 @@ export function openLiveDetail(r){
   if (r.via & ~1) rowsKv.push(["Seen by", null, `<span class="seenby">` + viaUnits(r.via).map(u => {
     const rs = r.units && r.units[u.k] != null ? ` ${r.units[u.k]} dBm` : "";
     const short = String(u.name).replace(/^CFLO-(MINI-|CYD-)?/i, "");   // the unit's own word; the full name in the tooltip
-    return `<span class="seenu" title="${esc(u.name)}"><span class="unitdot" style="background:${viaColor(u.k)}"></span>${esc(short)}${rs}</span>`;
+    return `<span class="seenu" title="${esc(u.name).replace(/"/g, "&quot;")}"><span class="unitdot" style="background:${viaColor(u.k)}"></span>${esc(short)}${rs}</span>`;
   }).join("") + `</span>`]);
   if (r.muted) rowsKv.push(["Whitelisted","yes (muted)"]);
   if (r.cid) rowsKv.push(["BLE company", r.cid]);

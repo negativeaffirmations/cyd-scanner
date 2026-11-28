@@ -12,7 +12,7 @@
 import { state } from '../state.js';
 import { $, esc as escStr, toast, log } from '../util/dom.js';
 import { askConfirm } from '../ble/auth.js';
-const esc = v => escStr(String(v == null ? "" : v));   // dom.js esc() takes strings only; ids and dBm here are numbers
+const esc = v => escStr(String(v == null ? "" : v)).replace(/"/g, "&quot;").replace(/'/g, "&#39;");   // dom.js esc(): strings only, no quotes
 import { CAT_COL, TIER_NAMES, FLAG_BADGES, DEAUTH_ALERT } from '../config.js';
 import { VIB, STYLE_DEFAULTS, parsePattern, styleFor } from './notifystyle.js';
 
@@ -69,18 +69,27 @@ function cleanRules(){
 }
 
 // ---- matching ----
-function speedKmh(){
-  if(pos.length < 2) return 0;
+// Coverage (review REV-001/003/004): a rule COVERS a device as soon as one of its triggers matches (conditions, cooldown,
+// "once" or a pending server check don't matter), but only for the quick alert kinds that trigger stands for
+// (KIND_OF). So the quick tile never sends a second alert for what a rule handles, and a rule about Flock never hides
+// that same device's follower / watched / Remote-ID alert.
+const KIND_OF = { cat: ["cat", "tier"], tier: ["cat", "tier"], name: ["cat", "tier"], sig: ["cat", "tier"],
+                  flag: ["cat", "tier"], mac: ["watch"], follow: ["follow"], rid: ["rid"] };
+let posUnit = "";
+function speedKmh(){            // null = not known yet (under 20 s of samples): "while moving" waits, it doesn't say no
+  if(pos.length < 2) return null;
   const a = pos[0], b = pos[pos.length - 1], dt = (b.t - a.t) / 1000;
-  if(dt < 20) return 0;
+  if(dt < 20) return null;
   const R = 6371000, toR = Math.PI / 180;
   const dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h)) / dt * 3.6;
 }
 function samplePos(){
+  const unit = state.connected ? String(state.scannerId || "") : "";
+  if(unit !== posUnit){ pos = []; posUnit = unit; }          // another scanner (or none): its positions don't mix (REV-011)
   const p = String((state.status || {}).pos || "").split(",").map(Number), now = Date.now();
-  if(p.length === 2 && p.every(isFinite) && (p[0] || p[1])) pos.push({ t: now, lat: p[0], lon: p[1] });
+  if(unit && p.length === 2 && p.every(isFinite) && (p[0] || p[1])) pos.push({ t: now, lat: p[0], lon: p[1] });
   pos = pos.filter(x => now - x.t <= 90000);   // speed over the last ~1.5 min
 }
 function inTime(v){
@@ -89,7 +98,16 @@ function inTime(v){
   const d = new Date(), now = d.getHours() * 60 + d.getMinutes(), from = m(a), to = m(b);
   return from <= to ? now >= from && now <= to : now >= from || now <= to;   // wraps past midnight
 }
-const session = () => String((state.status || {}).sess || "");
+// "Drive" = the scanner's current own log file: STATUS sfid (its file_id, kept across the time-sync rename), with the
+// unit's id so two scanners don't share one (REV-006). Before the first STATUS it is "" and an entry made then counts
+// for the drive that follows.
+const drive = () => String(state.scannerId || "") + "/" + String((state.status || {}).sfid || "");
+const onceKey = (ruleId, what) => ruleId + "|" + what + "|";
+function onceUsed(ruleId, what){
+  const k = onceKey(ruleId, what);
+  return once.has(k + drive()) || once.has(k + String(state.scannerId || "") + "/");
+}
+function onceMark(ruleId, what){ once.add(onceKey(ruleId, what) + drive()); }
 function trigHits(t, r){
   switch(t.t){
     case "cat":    return tierOf(r) >= 1 && (r.cat || 0) === +t.v;
@@ -103,18 +121,20 @@ function trigHits(t, r){
   }
   return false;
 }
-function condOk(c, r, ruleId){   // r = a device row, or null for an event
+// true / false, or null = can't tell yet (speed unknown): no alert now, and the quick one stays quiet too.
+function condOk(c, r, ruleId, evKind){   // r = a device row, or null for an event (evKind "deauth" / "evil")
   if(!r && DEVICE_ONLY.has(c.c)) return true;
   switch(c.c){
     case "rssi":   return r.rssi >= (+c.v || -200);
     case "tier":   return tierOf(r) >= (+c.v || 1);
     case "follow": return (r.ftier || 0) === 2;
-    case "moving": return speedKmh() >= (+c.v || 0);
+    case "moving": { const s = speedKmh(); return s === null ? null : s >= (+c.v || 0); }
     case "time":   return inTime(c.v);
-    case "once":   return !once.has(ruleId + "|" + (r ? normMac(r.mac) : "event") + "|" + session());
+    case "once":   return !onceUsed(ruleId, r ? normMac(r.mac) : "ev:" + evKind);
   }
   return true;
 }
+const allOk = (rule, r, evKind) => rule.cond.every(c => condOk(c, r, rule.id, evKind) === true);
 function ruleStyle(rule){
   const base = styleFor(C, "general"), s = rule.style || {};
   const vibId = s.vib || C.style.vib;
@@ -127,18 +147,28 @@ function ruleStyle(rule){
     details: "details" in s ? !!s.details : base.details, lockscreen: "lock" in s ? !!s.lock : base.lockscreen,
     sound: "sound" in s ? String(s.sound) : base.sound, vibration };
 }
-function markAlerted(r, rule){
+function markAlerted(r, rule, low){
   if(!state.alerted) state.alerted = new Map();
-  state.alerted.set(normMac(r.mac), { t: Date.now(), low: false, kinds: ["custom: " + (rule.name || "rule")] });
+  state.alerted.set(normMac(r.mac), { t: Date.now(), low: !!low, kinds: ["custom: " + (rule.name || "rule")] });
 }
 const devLine = r => [CAT_NAMES[r.cat || 0] && r.cat && r.cat <= CAT_SHOWN ? CAT_NAMES[r.cat] : "",
   r.name && normMac(r.name) !== normMac(r.mac) ? r.name : r.mac, r.rssi + " dBm"].filter(Boolean).join(" · ");
 const titleOf = rule => rule.name || summary(rule) || "Custom alert";
+const screenOn = () => !!(C.screen && state.screen);
 
-let covered = new Set(), coveredEv = new Set();
-/** Called by notify.js with each new snapshot. Fires the custom rules; returns nothing (see coveredMacs). */
+let covered = new Map(), coveredEv = new Set();   // MAC -> Set(quick kinds); event kinds
+function cover(mac, trigs){
+  let s = covered.get(mac); if(!s){ s = new Set(); covered.set(mac, s); }
+  for(const t of trigs) (KIND_OF[t.t] || []).forEach(k => s.add(k));
+}
+function sendOne(rule, r, quiet, why){
+  const line = devLine(r) + (devLine(r).indexOf(r.mac) < 0 ? "\n" + r.mac : "");
+  H.show((quiet ? "Probably a false alarm: " : "") + titleOf(rule), line + (why ? "\n" + why : ""),
+         { mac: r.mac, kind: "rule" }, "cflo-r" + rule.id + "-" + normMac(r.mac), ruleStyle(rule), quiet);
+}
+/** Called by notify.js with each new snapshot. Fires the custom rules (see coveredKinds). */
 export function evalRules(rows){
-  covered = new Set();
+  covered = new Map();
   if(!C || !C.rules.length) return;
   const now = Date.now(), q = H.quietMs();
   for(const rule of C.rules){
@@ -148,28 +178,42 @@ export function evalRules(rows){
       const mt = rule.trig.filter(t => !TRIG_BY[t.t][3] && trigHits(t, r));
       if(!mt.length) continue;
       if(r.muted && !mt.some(t => t.t === "mac")) continue;            // whitelisted: only a MAC trigger still alerts
-      if(!rule.cond.every(c => condOk(c, r, rule.id))) continue;
-      const mac = normMac(r.mac), key = rule.id + "|" + mac, last = seen.get(key);
-      covered.add(mac);
+      const mac = normMac(r.mac);
+      cover(mac, mt);
+      if(!allOk(rule, r)) continue;
+      const key = rule.id + "|" + mac, last = seen.get(key);
       seen.set(key, now);
       if(last !== undefined && now - last <= q) continue;               // still the same appearance
-      hits.push(r);
+      hits.push({ r, mt });
     }
     if(!hits.length) continue;
-    hits.forEach(r => { markAlerted(r, rule); if(rule.cond.some(c => c.c === "once")) once.add(rule.id + "|" + normMac(r.mac) + "|" + session()); });
-    hits.sort((a, b) => tierOf(b) - tierOf(a) || b.rssi - a.rssi);
-    const r = hits[0];
-    log("Alert (custom " + titleOf(rule) + "): " + hits.map(devLine).join("; "));
-    if(hits.length === 1) H.show(titleOf(rule), devLine(r) + (devLine(r).indexOf(r.mac) < 0 ? "\n" + r.mac : ""),
-      { mac: r.mac, kind: "rule" }, "cflo-r" + rule.id + "-" + normMac(r.mac), ruleStyle(rule));
-    else H.show(titleOf(rule) + ": " + hits.length + " devices", hits.slice(0, 5).map(devLine).join("\n") +
-      (hits.length > 5 ? "\n+" + (hits.length - 5) + " more" : ""), { kind: "many" }, "cflo-r" + rule.id, ruleStyle(rule));
+    hits.forEach(h => { if(rule.cond.some(c => c.c === "once")) onceMark(rule.id, normMac(h.r.mac)); });
+    // Weak signature hits go through the paired server first, like the quick tiles (notify.js, features/screen.js):
+    // an explained one is still sent, quietly and labelled (owner rule: label or lower, never hide).
+    const held = screenOn() ? hits.filter(h => h.mt.every(t => KIND_OF[t.t] && KIND_OF[t.t][0] === "cat") && state.screen.wants(h.r)) : [];
+    for(const h of held) state.screen.device(h.r).then(v => {
+      if(!C.on || !state.connected) return;
+      const low = !!(v && v.low);
+      markAlerted(h.r, rule, low);
+      log("Alert (custom " + titleOf(rule) + (low ? ", probably false: " + v.why : "") + "): " + devLine(h.r));
+      sendOne(rule, h.r, low, low ? v.why : "");
+    });
+    const now2 = hits.filter(h => !held.includes(h)).map(h => h.r);
+    if(!now2.length) continue;
+    now2.forEach(r => markAlerted(r, rule, false));
+    now2.sort((a, b) => tierOf(b) - tierOf(a) || b.rssi - a.rssi);
+    log("Alert (custom " + titleOf(rule) + "): " + now2.map(devLine).join("; "));
+    if(now2.length === 1) sendOne(rule, now2[0], false, "");
+    else H.show(titleOf(rule) + ": " + now2.length + " devices", now2.slice(0, 5).map(devLine).join("\n") +
+      (now2.length > 5 ? "\n+" + (now2.length - 5) + " more" : ""), { kind: "many" }, "cflo-r" + rule.id, ruleStyle(rule));
   }
   for(const [k, t] of seen) if(now - t > q) seen.delete(k);
 }
-/** MACs a custom rule matched in the last snapshot: notify.js gives them no quick alert. */
-export const coveredMacs = () => covered;
-/** "deauth" / "evil": a custom rule handles that event right now, so the quick one stays quiet. */
+/** Quick alert kinds a custom rule handles for this MAC in the last snapshot (notify.js skips those, and only those). */
+export const coveredKinds = mac => covered.get(normMac(mac)) || null;
+/** Old name, kept: a set of every covered MAC. */
+export const coveredMacs = () => new Set(covered.keys());
+/** "deauth" / "evil": a custom rule's trigger matches that live event, so the quick one stays quiet. */
 export const coveredEvent = k => coveredEv.has(k);
 
 function evalEvents(){
@@ -181,16 +225,26 @@ function evalEvents(){
     if(!rule.on) continue;
     for(const k of ["deauth", "evil"]){
       if(!rule.trig.some(t => t.t === k)) continue;
+      if(live[k]) coveredEv.add(k);                                    // matched: the rule decides, not the quick switch
       const st = evState[rule.id + "|" + k] || (evState[rule.id + "|" + k] = { on: false, at: 0 });
-      const ok = live[k] && rule.cond.every(c => condOk(c, null, rule.id));
-      if(ok) coveredEv.add(k);
+      const ok = live[k] && allOk(rule, null, k);
       if(ok && !st.on && now - st.at > q){
         st.at = now;
-        if(rule.cond.some(c => c.c === "once")) once.add(rule.id + "|event|" + session());
+        if(rule.cond.some(c => c.c === "once")) onceMark(rule.id, "ev:" + k);
         const body = k === "deauth" ? (+s.deauth) + " deauth / disassoc frames per second nearby"
                                     : (+s.evil) + " SSID(s) broadcast by APs with different security";
-        log("Alert (custom " + titleOf(rule) + "): " + body);
-        H.show(titleOf(rule), body, { kind: k }, "cflo-r" + rule.id + "-" + k, ruleStyle(rule));
+        const tag = "cflo-r" + rule.id + "-" + k;
+        if(k === "evil" && screenOn()){
+          state.screen.evil(+s.evil).then(v => {
+            if(!C.on || !state.connected) return;
+            const low = !!(v && v.low);
+            log("Alert (custom " + titleOf(rule) + (low ? ", probably false: " + v.why : "") + "): " + body);
+            H.show((low ? "Probably a false alarm: " : "") + titleOf(rule), low ? v.why : body, { kind: k }, tag, ruleStyle(rule), low);
+          });
+        } else {
+          log("Alert (custom " + titleOf(rule) + "): " + body);
+          H.show(titleOf(rule), body, { kind: k }, tag, ruleStyle(rule));
+        }
       }
       st.on = ok;
     }
@@ -327,7 +381,11 @@ function openEditor(rule, preset){
 }
 function rowsOf(list){ return list === "t" ? draft.trig : draft.cond; }
 async function onDlgClick(e){
-  if(e.target === dlg){ dlg.close(); return; }   // backdrop
+  if(e.target === dlg){                          // the backdrop, not the dialog's own padding (that would lose the edits)
+    const r = dlg.getBoundingClientRect();
+    if(e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dlg.close();
+    return;
+  }
   const b = e.target.closest("[data-act]"); if(!b) return;
   const act = b.dataset.act;
   if(act === "close") dlg.close();
@@ -458,7 +516,7 @@ function wireTiles(){
   }, true);
 }
 
-/** Called once by notify.js initNotify(). hooks: show(title, body, data, tag, style), quietMs(), ensureOn() -> bool. */
+/** Called once by notify.js initNotify(). hooks: show(title, body, data, tag, style, quiet), quietMs(), ensureOn() -> bool. */
 export function initRules(cfg, save, hooks){
   C = cfg; SAVE = save; H = hooks;
   cleanRules();

@@ -1,6 +1,6 @@
 # Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
 
-## RESUME HERE - 2026-11-27 late: owner ideas 1-3 built (web 20261127f, NOT deployed): scanner colours, threats in rows, custom notifications
+## RESUME HERE - 2026-11-27 late: owner ideas 1-3 DEPLOYED (web 20261127g): scanner colours, threats in rows, custom notifications
 - **Owner ideas list (`.tmp/ideas.md`, git-ignored):** 1 colour-coded fleet devices (DONE here), 2 mark the threat in its
   scan row, 3 per-threat custom notifications ("Create custom notification" with triggers; a three-dot / long-press menu
   per threat type for sound + vibration; extra conditions). All 3 built; owner: ship 1 + 2 together (3 can join them).
@@ -14,6 +14,11 @@
   a "Cam test" rule fired on the Wyze camera with Cam's tile off (own channel cflo-r<id>-…), delete with confirm (test rule
   removed). Not checked: moving / once / deauth / evil triggers live, the app sound picker for a rule. A deleted rule's
   Android channel stays in the phone's settings (cosmetic).
+- **Review fixes (web 20261127g):** a rule covers a device on TRIGGER match and only for the quick kinds that trigger stands for
+  (`KIND_OF`; a Flock rule no longer hides that device's follower / watch / Remote-ID alert), weak hits + evil-twin go through
+  the server check (quiet + "Probably a false alarm"), unknown speed = wait (no quick double), once keyed on STATUS `sfid` and
+  per event kind, editor closes only on a real backdrop tap, quote-safe attributes, Explore rows use `signature`, corrupt
+  colour storage ignored, speed samples reset on a unit change. Node test of the rule logic passed (9 checks, scratch only).
 
 ## RESUME HERE - 2026-11-27 night: fw 0.48.0 faster export picking + open items (flashed on all 3 hosts; web 20261127c NOT deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.48.0; C5s unchanged; no link / fleet protocol change.

@@ -23,7 +23,7 @@ import { CAT_COL, TIER_NAMES, DEAUTH_ALERT } from '../config.js';
 import { openLiveDetail } from './categories.js';
 import { showPage } from '../nav.js';
 import { cleanStyle, styleFor, plainTitle, PLAIN_BODY, initStyleUI } from './notifystyle.js';
-import { initRules, evalRules, coveredMacs, coveredEvent, tickRules } from './notifyrules.js';   // custom notifications
+import { initRules, evalRules, coveredKinds, coveredEvent, tickRules } from './notifyrules.js';   // custom notifications
 
 // DETS `cat` id -> name (CYD Category enum order). Local copy on purpose: categories.js keeps its own private.
 const CAT_NAMES = ["","Flock","Axon","ALPR","Cam","Ring","Raven","Glass","Tracker","Drone","Deauth","Flipper","Skim","Other"];
@@ -107,8 +107,7 @@ function titleFor(r, kinds){
 }
 
 function evalSnapshot(rows){
-  evalRules(rows);   // custom notifications first: a device one of them covers gets no second (quick) alert
-  const covered = coveredMacs();
+  evalRules(rows);   // custom notifications first: what one of them handles gets no second (quick) alert
   const now = Date.now(), q = quietMs(), fresh = [];
   for(const r of rows){
     const kinds = reasons(r); if(!kinds.length) continue;
@@ -118,7 +117,9 @@ function evalSnapshot(rows){
       if(last === undefined || now - last > q) newKinds.push(k);
       seen.set(key, now);
     }
-    if(newKinds.length && !covered.has(mac)) fresh.push({ r, kinds:newKinds });
+    const cov = coveredKinds(mac);                           // only the kinds a custom rule handles for this device
+    const left = cov ? newKinds.filter(k => !cov.has(k)) : newKinds;
+    if(left.length) fresh.push({ r, kinds:left });
   }
   for(const [k, t] of seen) if(now - t > q) seen.delete(k);   // forget long-gone devices
   if(!fresh.length) return;
@@ -328,7 +329,7 @@ export function initNotify(){
   });
   ["nfTier","nfQuiet","nfFol","nfRid","nfDeauth","nfEvil","nfScreen"].forEach(id => $(id) && $(id).addEventListener("change", onCardChange));
   initStyleUI(cfg, save, testKind);
-  initRules(cfg, save, { show: (t, b, d, tag, st) => show(t, b, d, tag, st), quietMs,
+  initRules(cfg, save, { show: (t, b, d, tag, st, quiet) => show(t, b, d, tag, st, undefined, quiet), quietMs,
     ensureOn: async () => { if(!(cfg.on && supported() && Notification.permission === "granted")) await toggleOn();
                             return cfg.on && supported() && Notification.permission === "granted"; } });
   $("nfWatch").addEventListener("click", e => {
