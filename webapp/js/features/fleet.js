@@ -9,6 +9,7 @@ import { enc } from '../config.js';
 import { $, esc, log, toast } from '../util/dom.js';
 import { gattWrite } from '../ble/gattq.js';
 import { syncWait } from '../ble/syncwait.js';
+import { anyBusy } from '../ble/xfer.js';
 import { onUnitReset } from '../unitreset.js';
 import { askConfirm, listKeys } from '../ble/auth.js';
 import { learnKeyNames } from '../ble/unitname.js';
@@ -170,7 +171,7 @@ export async function refreshMembers(){
     renderPlan();
     await learnKeyNames(members);                // the leader knows its members' names; stored keys added from a QR don't
     await renderAddChoices();
-  } catch (e) { if (!/busy|download/.test(e.message)) log("Fleet: " + e.message); }
+  } catch (e) { if (!/busy|download/.test(e.message) && !anyBusy()) log("Fleet: " + e.message); }
   finally { busy = false; lastPoll = Date.now(); }
 }
 
@@ -264,7 +265,9 @@ export function initFleet(){
     const st = fltStatus();
     // Member list: every 5 s while the Fleet card is open, every 30 s otherwise (the live list's "seen by" names).
     const due = settingsOpen() ? POLL_MS : 30000;
-    if (state.connected && st && st.role === 2 && state.dl.mode === null && !state.liveSyncP && Date.now() - lastPoll >= due) refreshMembers();
+    // Not while any phone transfer runs (an export, a whole copy): the scanner answers M only after it, so the poll
+    // timed out every ~55 s and logged "Fleet: no reply from the scanner".
+    if (state.connected && st && st.role === 2 && !anyBusy() && !state.liveSyncP && Date.now() - lastPoll >= due) refreshMembers();
     if (!state.connected && members.length) { members = []; state.fleetMembers = []; renderMembers(); }
   }, 1000);
   renderFleet();

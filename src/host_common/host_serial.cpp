@@ -35,6 +35,7 @@ void help() {
   Serial.println("[cmd] gatt on|off        GATT identification reads (the C5 connects briefly to read name / maker / model)");
   Serial.println("[cmd] mem                free heap (now, lowest, largest block) and NVS entries used / free");
   Serial.println("[cmd] pos                where the logged position comes from (source, age; no coordinates)");
+  Serial.println("[cmd] xpick [m] [min] [old]  time the all-logs export's file picking (m 0 boot / 1 24 h / 2 min; old = 0.47 way)");
   Serial.println("[cmd] fleet              fleet status; also: fleet leave | client | leader on|off | ch <1-13> | remac");
 }
 
@@ -124,6 +125,12 @@ void handle(char* cmd) {
   if (!strcmp(cmd, "gatt") || !strcmp(cmd, "gatt on") || !strcmp(cmd, "gatt off")) {
     if (cmd[4]) { devinfo::setEnabled(cmd[6] == 'n'); pushStatus(); }
     Serial.printf("[gatt] identification reads %s (C5 side: its console `gatt stat`)\n", devinfo::enabled() ? "on" : "off");
+    return;
+  }
+  if (!strcmp(cmd, "xpick") || !strncmp(cmd, "xpick ", 6)) {   // fw 0.48.0 bench: all-logs export file picking only
+    int mode = 0, mins = 60; char o[8] = "";
+    sscanf(cmd + 5, "%d %d %7s", &mode, &mins, o);
+    exportPickBench(mode, mins, strstr(cmd, "old") != nullptr);
     return;
   }
   if (!strcmp(cmd, "pos")) {   // fw 0.47.5: where the position stamped on the log comes from (no coordinates printed)

@@ -834,6 +834,11 @@ bool peerMac(uint8_t out[6]) {
   return true;
 }
 
+static constexpr int ST_RETRY_N = 3;
+static String   g_stRetry[ST_RETRY_N];   // refused STATUS parts, newest per first key
+static uint16_t g_stRetryH = 0xFFFF;
+static uint32_t g_stRetryMs = 0;
+
 void setStatus(const String& s) {
   uint16_t h = gateHandle();   // snapshot: NONE would make NimBLE broadcast to every peer
   if (!g_status || h == NO_CONN || !s.length()) return;
@@ -841,7 +846,33 @@ void setStatus(const String& s) {
   // reads the attribute when it transmits -- so pushStatus()'s two back-to-back parts collapsed into
   // part 2 twice and part 1 (link/time/gps/scan/sess…) never reached the phone. It also keeps the live
   // STATUS (SoftAP creds…) out of the attribute, where an unauthenticated central could read it.
-  g_status->notify((const uint8_t*)s.c_str(), s.length(), h);
+  const bool ok = g_status->notify((const uint8_t*)s.c_str(), s.length(), h);
+  // fw 0.48.0 (REV-006): a refused notify (the stack's buffers full after back-to-back parts) used to be lost until
+  // the next push, which never comes while the scan is stopped (part 3 = the file id the phone follows). Keep the
+  // newest refused value of each part (keyed by its first key) and retry it from service().
+  int slot = -1, freeSlot = -1;
+  const int eq = s.indexOf('=');
+  for (int i = 0; i < ST_RETRY_N; i++) {
+    if (!g_stRetry[i].length()) { if (freeSlot < 0) freeSlot = i; continue; }
+    if (eq > 0 && g_stRetry[i].startsWith(s.substring(0, eq + 1))) { slot = i; break; }
+  }
+  if (ok) { if (slot >= 0) g_stRetry[slot] = String(); return; }
+  if (slot < 0) slot = freeSlot;
+  if (slot < 0) slot = 0;                              // more distinct parts than slots: the oldest one is dropped
+  g_stRetry[slot] = s;
+  g_stRetryH = h;
+}
+
+static void retryStatus() {
+  if (millis() - g_stRetryMs < 150) return;
+  g_stRetryMs = millis();
+  const uint16_t h = gateHandle();
+  for (int i = 0; i < ST_RETRY_N; i++) {
+    if (!g_stRetry[i].length()) continue;
+    if (h == NO_CONN || h != g_stRetryH || !g_status) { g_stRetry[i] = String(); continue; }   // another connection
+    if (!g_status->notify((const uint8_t*)g_stRetry[i].c_str(), g_stRetry[i].length(), h)) return;   // still full
+    g_stRetry[i] = String();
+  }
 }
 
 bool     connected()        { return g_connected; }
@@ -854,6 +885,7 @@ void service() {
   // it touches nothing a transfer is using, so a nested call is harmless.
   uint16_t kh;
   while (popKick(&kh)) if (g_server) g_server->disconnect(kh);
+  retryStatus();
   if (g_server && millis() - g_advCheckMs >= ADV_CHECK_MS) {
     g_advCheckMs = millis();
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();

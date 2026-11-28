@@ -1,5 +1,27 @@
 # Handoff — 2026-11-27 (working branch: `hardening`; trunk `main`)
 
+## RESUME HERE - 2026-11-27 night: fw 0.48.0 faster export picking + open items (flashed on all 3 hosts; web 20261127c NOT deployed)
+- **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.48.0; C5s unchanged; no link / fleet protocol change.
+  Web `20261127c` (fleet.js only) built into the `.dev` app and installed over adb; NOT pushed to main / Pages yet.
+- **Export picking (`logfilter.h` MultiExport):** pass 1 lists `/logs` by name only (`getNextFileName`, no open); pass 2
+  skips, unopened, a dated file (own / bg- / fleet-) whose stream has a newer dated file named > 27 h before the cutoff
+  (`nameSkip`, slack covers any tz step). Serial bench `xpick [0|1|2] [min] [old]`. SOPAFE: since-boot 10.9 s -> 3.2 s,
+  24 h 11.2 s -> 7.0 s (same files both ways); ZUDIMU since-boot 3.2 s -> 0.86 s. Phone export (with 3 h slack, before the
+  review fix) picked in 1.2 s, 161 KB in 33 s total.
+- **Earlier-file rename:** a file that ended before its sync rename (the 2 s `sess-` file) is renamed at the next sync check
+  by its END time (never a live name, a taken name steps back up to 30 s, an Explore-held file waits). `ensureLogFile`
+  backstop: never FILE_WRITE over an existing file (takes `<name>-b.jsonl`). Not reproduced on the bench (needs a sync
+  arriving after a file ended).
+- **REV-006 done:** a refused STATUS notify is kept per first key (3 slots) and retried from `phone::service()`.
+- **Web:** the fleet member poll waits while any transfer runs (`anyBusy()`), so no more "Fleet: no reply" during exports.
+- **Reviewed** (reviewer pass; its 2 P1 + 3 P2 fixed). Left: live push doesn't follow a rename of an EARLIER file by fid
+  (the phone refetches it whole; minor); SD-explorer-uploaded `YYYYMMDD-HHMMSS.jsonl` files from another unit count as
+  successors (rare).
+- **Not changed (owner decision):** `.cflo` grouping of a short fleet file with the PREVIOUS scan: its member rows were
+  logged during that scan and forwarded after the Stop/Start, so the overlap rule attaches it there by design. REV-004
+  (mini download exit resumes in the same file): a download pause isn't a user Stop, so resuming looks intended.
+- **Next:** owner OK to commit-merge + deploy web 20261127c; the drive checks from the evening section still stand.
+
 ## RESUME HERE - 2026-11-27 evening: fleet drive checked; live-upload catch-up of earlier files (web 20261127b, no firmware)
 - **Drive (16:27-16:45, fw 0.47.9, release app):** clean server-side (1830 requests, all 200). SOPAFE's own file stopped at
   16:36:38 = the owner's Stop tap after parking at home (confirmed by GPS), not a bug. b02b's epoch-0 rows were placed
