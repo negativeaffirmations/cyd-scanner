@@ -19,6 +19,19 @@
   the server check (quiet + "Probably a false alarm"), unknown speed = wait (no quick double), once keyed on STATUS `sfid` and
   per event kind, editor closes only on a real backdrop tap, quote-safe attributes, Explore rows use `signature`, corrupt
   colour storage ignored, speed samples reset on a unit change. Node test of the rule logic passed (9 checks, scratch only).
+- **State:** main `275c186` (hardening = main), Pages shows ui `2026-11-27g`, Android app build succeeded (owner updates via
+  Obtainium). Hosts still fw 0.48.0 (nothing firmware-side since). The `.dev` app on the owner phone runs the same web code;
+  the owner's Notifications settings are as before (test rule deleted, Cam tile off).
+- **TODO (owner asked, later): clean up a deleted custom rule's Android notification channel.** Deleting a rule leaves
+  `cflo-r<id>-<hash>` in the phone's app notification settings (review REV-010). Idea: on delete (and on startup for ids no
+  longer in `cfg.rules`), ask the app to remove every channel with prefix `cflo-r<id>-`: add a `deleteKind(kind)` to
+  `CfloNotifyPlugin.java` (it already deletes a kind's OLD channels when a style changes, `pruneOld`) + a stand-in on
+  `window.__cfloApp.notifyStyle` in `android-app/native/shim-platform.js`; call it from `notifyrules.js` delete (no-op in a
+  browser). Careful: prefix `cflo-r<id>-` must never match `cflo-rid-` (ids are 6 letters, so `cflo-rid-` can't match).
+- **Next drive checks (new):** custom-rule "while moving", "once per drive", deauth / evil-twin triggers live; a rule's sound
+  picker in the app; the "probably false" mark on a row. Plus the older ones below (member lag, deauth filter, catch-up,
+  export picking speed from the phone).
+- **Idea from the review, not done:** two rules matching one device each send their own alert (REV-012; probably fine).
 
 ## RESUME HERE - 2026-11-27 night: fw 0.48.0 faster export picking + open items (flashed on all 3 hosts; web 20261127c NOT deployed)
 - **State:** SOPAFE (COM15), BEMOPU (COM10), ZUDIMU (COM17) on fw 0.48.0; C5s unchanged; no link / fleet protocol change.
